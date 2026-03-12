@@ -1,0 +1,11 @@
+{
+  "name": "arena-bot-sdk",
+  "version": "0.1.0",
+  "description": "Node.js SDK for AI Battle Arena bots",
+  "type": "module",
+  "main": "src/ArenaBot.js",
+  "exports": "./src/ArenaBot.js",
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}

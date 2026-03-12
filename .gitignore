@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+node_modules/
+arena_pgdata/
+arena_redis_data/
+.DS_Store

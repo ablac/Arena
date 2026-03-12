@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arena-bot-sdk"
+version = "0.1.0"
+description = "Python SDK for AI Battle Arena bots"
+requires-python = ">=3.11"
+dependencies = ["websockets>=12.0", "aiohttp>=3.9"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
