@@ -49,7 +49,8 @@ class ArenaMap:
             self._last_shrink_tick = tick_count
 
     def get_random_spawn_point(self) -> tuple[float, float]:
-        """Generate a random spawn position inside the current safe zone."""
+        """Generate a random spawn position inside the current safe zone, avoiding obstacles."""
+        from server.game.obstacles import collides_with_obstacle
         for _ in range(100):
             angle = random.uniform(0, 2 * math.pi)
             r = self.safe_zone_radius * math.sqrt(random.random()) * 0.8
@@ -57,7 +58,7 @@ class ArenaMap:
             y = self.center_y + r * math.sin(angle)
             x = max(0.0, min(float(self.width), x))
             y = max(0.0, min(float(self.height), y))
-            if self.is_in_safe_zone(x, y):
+            if self.is_in_safe_zone(x, y) and collides_with_obstacle(x, y, self.obstacles) is None:
                 return (x, y)
         return (self.center_x, self.center_y)
 

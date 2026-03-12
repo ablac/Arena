@@ -1,102 +1,139 @@
 'use strict';
 
 /**
- * Babylon.js engine setup with WebGPU fallback to WebGL2.
- * Creates the scene and orchestrates rendering sub-modules.
+ * Babylon.js engine — scene setup, render loop, module orchestration.
  * @module renderer/engine
  */
 
 import { CameraController } from './camera.js';
 import { BotRenderer } from './bots.js';
 import { EnvironmentRenderer } from './environment.js';
+import { ObstacleRenderer } from './obstacles.js';
 import { PickupRenderer } from './pickups.js';
 import { EffectRenderer } from './effects.js';
+import { TrailRenderer } from './trails.js';
+
+const TICK_INTERVAL = 100; // 10 Hz server ticks
 
 export class ArenaEngine {
-  /**
-   * @param {HTMLCanvasElement} canvas
-   * @param {Object} options - { arenaWidth, arenaHeight }
-   */
-  constructor(canvas, options = {}) {
+  /** @param {HTMLCanvasElement} canvas @param {Object} opts */
+  constructor(canvas, opts = {}) {
     this.canvas = canvas;
-    this.arenaWidth = options.arenaWidth || 2000;
-    this.arenaHeight = options.arenaHeight || 2000;
-    /** @type {BABYLON.Engine|null} */
+    this.arenaWidth = opts.arenaWidth || 2000;
+    this.arenaHeight = opts.arenaHeight || 2000;
     this.engine = null;
-    /** @type {BABYLON.Scene|null} */
     this.scene = null;
     this.camera = null;
     this.botRenderer = null;
     this.envRenderer = null;
+    this.obstacleRenderer = null;
     this.pickupRenderer = null;
     this.effectRenderer = null;
+    this.trailRenderer = null;
     this.state = null;
     this.ready = false;
+    this._lastStateTime = 0;
   }
 
-  /** Initialize Babylon engine — try WebGPU first, fall back to WebGL2. */
+  /** Initialize Babylon engine. */
   async init() {
-    const BABYLON = window.BABYLON;
+    const B = window.BABYLON;
     let engine;
     try {
-      engine = new BABYLON.WebGPUEngine(this.canvas, { antialias: true });
+      engine = new B.WebGPUEngine(this.canvas, { antialias: true });
       await engine.initAsync();
-      console.log('[Arena] Using WebGPU');
-    } catch (err) {
-      console.warn('[Arena] WebGPU unavailable, falling back to WebGL2:', err.message);
-      engine = new BABYLON.Engine(this.canvas, true, { preserveDrawingBuffer: true });
+      console.log('[Arena] WebGPU');
+    } catch {
+      engine = new B.Engine(this.canvas, true, { preserveDrawingBuffer: true });
     }
     this.engine = engine;
-    this.scene = new BABYLON.Scene(engine);
-    this.scene.clearColor = new BABYLON.Color4(0.02, 0.03, 0.06, 1);
+    this.scene = new B.Scene(engine);
+    this.scene.clearColor = new B.Color4(0.03, 0.03, 0.05, 1);
+    this.scene.fogMode = B.Scene.FOGMODE_EXP2;
+    this.scene.fogDensity = 0.00015;
+    this.scene.fogColor = new B.Color3(0.03, 0.03, 0.05);
 
     this.camera = new CameraController(this.scene, this.canvas, this.arenaWidth, this.arenaHeight);
     this.envRenderer = new EnvironmentRenderer(this.scene, this.arenaWidth, this.arenaHeight);
+    this.obstacleRenderer = new ObstacleRenderer(this.scene);
     this.botRenderer = new BotRenderer(this.scene);
     this.pickupRenderer = new PickupRenderer(this.scene);
     this.effectRenderer = new EffectRenderer(this.scene);
+    this.trailRenderer = new TrailRenderer(this.scene);
 
-    this._addLight();
-    engine.runRenderLoop(() => this.scene.render());
+    this._addLights();
+    this._addBloom();
+
+    const self = this;
+    engine.runRenderLoop(() => {
+      if (self.botRenderer && self._lastStateTime > 0) {
+        const alpha = Math.min((performance.now() - self._lastStateTime) / TICK_INTERVAL, 1);
+        self.botRenderer.interpolate(alpha);
+      }
+      self.scene.render();
+    });
     window.addEventListener('resize', () => engine.resize());
     this.ready = true;
   }
 
   /** @private */
-  _addLight() {
-    const BABYLON = window.BABYLON;
-    const light = new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), this.scene);
-    light.intensity = 1.0;
+  _addLights() {
+    const B = window.BABYLON;
+    // Warm directional (sun-like)
+    const dir = new B.DirectionalLight('sun', new B.Vector3(-0.4, -1, 0.3), this.scene);
+    dir.intensity = 0.7;
+    dir.diffuse = new B.Color3(1, 0.95, 0.85);
+    dir.specular = new B.Color3(0.3, 0.3, 0.3);
+
+    // Ambient hemisphere
+    const hemi = new B.HemisphericLight('hemi', new B.Vector3(0, 1, 0), this.scene);
+    hemi.intensity = 0.4;
+    hemi.diffuse = new B.Color3(0.6, 0.65, 0.8);
+    hemi.specular = B.Color3.Black();
+    hemi.groundColor = new B.Color3(0.15, 0.12, 0.1);
+  }
+
+  /** @private */
+  _addBloom() {
+    const B = window.BABYLON;
+    if (!B.DefaultRenderingPipeline) return;
+    try {
+      const p = new B.DefaultRenderingPipeline('bloom', true, this.scene, [this.camera.camera]);
+      p.bloomEnabled = true;
+      p.bloomThreshold = 0.35;
+      p.bloomWeight = 0.4;
+      p.bloomKernel = 32;
+      p.bloomScale = 0.5;
+      p.imageProcessingEnabled = true;
+      p.imageProcessing.contrast = 1.15;
+      p.imageProcessing.exposure = 1.1;
+    } catch (e) { console.warn('[Arena] Bloom failed:', e.message); }
   }
 
   /**
-   * Update arena state from spectator WebSocket.
-   * @param {Object} state - Arena state message
+   * Feed arena state from spectator WS.
+   * @param {Object} state
    */
   setState(state) {
     if (!this.ready || state.type !== 'arena_state') return;
     this.state = state;
-    this.envRenderer.update(state.safe_zone, state.obstacles);
+    this._lastStateTime = performance.now();
+    this.envRenderer.update(state.safe_zone);
+    this.obstacleRenderer.update(state.obstacles);
     this.botRenderer.update(state.bots);
+    this.trailRenderer.update(state.bots);
     this.pickupRenderer.update(state.pickups || []);
     this.effectRenderer.update(state.bots);
     this.camera.updateBotPositions(state.bots);
   }
 
-  /** Set camera zoom level. */
-  setZoom(zoom) { if (this.camera) this.camera.setZoom(zoom); }
-
-  /** Follow a specific bot by ID. */
-  followBot(botId) { if (this.camera) this.camera.followBot(botId); }
-
-  /** Toggle auto-pan to action. */
-  setAutoPan(enabled) { if (this.camera) this.camera.setAutoPan(enabled); }
-
-  /** Get current state for HUD/minimap rendering. */
+  setZoom(z) { if (this.camera) this.camera.setZoom(z); }
+  followBot(id) { if (this.camera) this.camera.followBot(id); }
+  setAutoPan(on) { if (this.camera) this.camera.setAutoPan(on); }
   getState() { return this.state; }
 
-  /** Clean up resources. */
   dispose() {
+    if (this.trailRenderer) this.trailRenderer.dispose();
     if (this.engine) {
       this.engine.stopRenderLoop();
       this.scene.dispose();

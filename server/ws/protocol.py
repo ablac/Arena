@@ -78,6 +78,25 @@ class RoundEndMessage(BaseModel):
     next_round_in: int
 
 
+class LobbyMessage(BaseModel):
+    """Sent to bots while waiting in the lobby for enough players."""
+
+    type: Literal["lobby"] = "lobby"
+    bots_connected: int
+    bots_needed: int
+    countdown: int | None = None  # seconds until round starts, None if waiting
+    players: list[dict]  # [{name, avatar_color, weapon}]
+
+
+class RoundStartMessage(BaseModel):
+    """Sent to all bots when a round begins."""
+
+    type: Literal["round_start"] = "round_start"
+    round_number: int
+    position: tuple[float, float]
+    bots_in_round: int
+
+
 class ErrorMessage(BaseModel):
     """Generic error sent to the bot."""
 
@@ -109,15 +128,16 @@ class LoadoutSelectMessage(BaseModel):
 class ActionMessage(BaseModel):
     """Per-tick action submitted by a bot.
 
-    Supported actions: move, attack, dodge, use_item, idle.
+    Supported actions: move, move_to, attack, dodge, use_item, idle.
     """
 
     type: Literal["action"] = "action"
     tick: int
-    action: str  # move, attack, dodge, use_item, idle
+    action: str  # move, move_to, attack, dodge, use_item, idle
     target: str | None = None
     direction: tuple[float, float] | None = None
     item_id: str | None = None
+    target_position: tuple[float, float] | None = None
 
 
 # ---------------------------------------------------------------------------

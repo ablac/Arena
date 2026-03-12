@@ -12,6 +12,7 @@ class ActionType(str, Enum):
     """Valid bot action types."""
 
     MOVE = "move"
+    MOVE_TO = "move_to"
     ATTACK = "attack"
     DODGE = "dodge"
     USE_ITEM = "use_item"
@@ -83,6 +84,9 @@ class BotState:
     stun_ticks: int = 0
     # Shield bubble absorb
     shield_absorb: int = 0
+    # Pathfinding (move_to)
+    current_path: list[tuple[float, float]] = field(default_factory=list)
+    path_target: tuple[float, float] | None = None
     # Round stats (reset each round)
     round_kills: int = 0
     round_deaths: int = 0
@@ -162,3 +166,5 @@ class RoundState:
     time_remaining: float = 0.0
     in_intermission: bool = False
     intermission_ticks: int = 0
+    in_lobby: bool = True
+    lobby_countdown_ticks: int = 0

@@ -67,9 +67,14 @@ def line_intersects_obstacle(
 ) -> bool:
     """Check if a line segment from (x1,y1) to (x2,y2) intersects any obstacle.
 
-    Uses parametric line-rectangle intersection.
+    Uses parametric line-rectangle intersection and start/end point collision.
     """
     for obs in obstacles:
+        # Check if endpoints are inside
+        if (obs.x <= x1 <= obs.x + obs.width and obs.y <= y1 <= obs.y + obs.height) or \
+           (obs.x <= x2 <= obs.x + obs.width and obs.y <= y2 <= obs.y + obs.height):
+            return True
+        # Check for edge crossing
         if _line_rect_intersect(x1, y1, x2, y2, obs):
             return True
     return False

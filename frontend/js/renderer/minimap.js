@@ -28,6 +28,7 @@ export class Minimap {
       border-radius:8px; background:rgba(10,14,23,0.9); z-index:10;
     `;
     container.appendChild(this.canvas);
+    this.canvas.style.display = 'none';
     this.ctx = this.canvas.getContext('2d');
   }
 
@@ -37,6 +38,9 @@ export class Minimap {
    */
   update(state) {
     if (!state) return;
+    const hasBots = state.bots && state.bots.some(b => b.is_alive);
+    this.canvas.style.display = hasBots ? '' : 'none';
+    if (!hasBots) return;
     const ctx = this.ctx;
     const s = this.scale;
 

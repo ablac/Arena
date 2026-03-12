@@ -18,6 +18,7 @@ export class HudRenderer {
     this.statusEl = statusEl;
     this.kills = [];
     this.maxKills = 10;
+    this.killfeedEl.style.display = 'none';
   }
 
   /**
@@ -26,8 +27,41 @@ export class HudRenderer {
    */
   updateState(state) {
     if (!state) return;
+    if (state.type === 'lobby_state') {
+      this._updateLobbyInfo(state);
+      return;
+    }
+    this._inLobby = false;
     this._updateRoundInfo(state);
     this._updateKillFeed(state.kill_feed || []);
+  }
+
+  /** @private */
+  _updateLobbyInfo(state) {
+    this._inLobby = true;
+    this.killfeedEl.style.display = 'none';
+    const players = state.players || [];
+    let countdownHtml = '';
+    if (state.countdown) {
+      countdownHtml = `<div style="color:var(--accent-gold);font-size:1.2em;margin-top:4px">
+        Round starts in: <span style="color:#fff">${state.countdown}s</span></div>`;
+    } else {
+      const needed = (state.bots_needed || 2) - (state.bots_connected || 0);
+      countdownHtml = `<div style="color:var(--text-muted);margin-top:4px">
+        Waiting for ${needed} more bot${needed !== 1 ? 's' : ''}...</div>`;
+    }
+    const playerList = players.map(p =>
+      `<div style="padding:2px 0">
+        <span style="color:${this._esc(p.avatar_color || '#fff')}">\u25CF</span>
+        ${this._esc(p.name)} <span style="color:var(--text-muted)">[${this._esc(p.weapon)}]</span>
+      </div>`
+    ).join('');
+    this.roundEl.innerHTML = `
+      <div style="font-size:1.1em;color:var(--accent-blue);margin-bottom:4px">LOBBY</div>
+      <div>Players: <span style="color:var(--accent-gold)">${state.bots_connected || 0}</span></div>
+      ${countdownHtml}
+      <div style="margin-top:6px;font-size:0.85em">${playerList}</div>
+    `;
   }
 
   /** @private */
@@ -43,7 +77,11 @@ export class HudRenderer {
 
   /** @private */
   _updateKillFeed(kills) {
-    if (!kills || kills.length === 0) return;
+    if (!kills || kills.length === 0) {
+      this.killfeedEl.style.display = this.kills.length === 0 ? 'none' : '';
+      return;
+    }
+    this.killfeedEl.style.display = '';
     // Merge new kills (avoid duplicates by tick)
     const existingTicks = new Set(this.kills.map(k => `${k.killer}-${k.victim}-${k.tick}`));
     for (const kill of kills) {

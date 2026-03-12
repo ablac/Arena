@@ -21,6 +21,12 @@ export class SpectatorSocket {
     this.reconnectDelay = 1000;
     this.maxReconnectDelay = 30000;
     this.shouldConnect = false;
+    /** @type {number|null} */
+    this._pingInterval = null;
+    /** @type {number|null} */
+    this._staleTimer = null;
+    /** Milliseconds of silence before forcing a reconnect. */
+    this._staleTimeout = 30000;
   }
 
   /** Start connecting to the spectator stream. */
@@ -32,6 +38,8 @@ export class SpectatorSocket {
   /** Disconnect and stop reconnecting. */
   disconnect() {
     this.shouldConnect = false;
+    this._stopPing();
+    this._clearStaleTimer();
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -54,9 +62,12 @@ export class SpectatorSocket {
       console.log('[SpectatorWS] Connected');
       this.onStatus('connected');
       this.reconnectDelay = 1000;
+      this._startPing();
+      this._resetStaleTimer();
     };
 
     this.ws.onmessage = (event) => {
+      this._resetStaleTimer();
       try {
         const data = JSON.parse(event.data);
         this.onState(data);
@@ -67,6 +78,8 @@ export class SpectatorSocket {
 
     this.ws.onclose = (event) => {
       console.log('[SpectatorWS] Disconnected:', event.code);
+      this._stopPing();
+      this._clearStaleTimer();
       this.onStatus('disconnected');
       this._scheduleReconnect();
     };
@@ -75,6 +88,44 @@ export class SpectatorSocket {
       console.error('[SpectatorWS] Error:', err);
       this.onStatus('error');
     };
+  }
+
+  /** @private Reset the stale-connection timer. Forces reconnect if no messages arrive. */
+  _resetStaleTimer() {
+    this._clearStaleTimer();
+    this._staleTimer = setTimeout(() => {
+      console.warn('[SpectatorWS] No messages received, forcing reconnect');
+      if (this.ws) {
+        this.ws.close();
+        this.ws = null;
+      }
+    }, this._staleTimeout);
+  }
+
+  /** @private */
+  _clearStaleTimer() {
+    if (this._staleTimer) {
+      clearTimeout(this._staleTimer);
+      this._staleTimer = null;
+    }
+  }
+
+  /** @private Send periodic pings to keep the connection alive. */
+  _startPing() {
+    this._stopPing();
+    this._pingInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        try { this.ws.send('ping'); } catch { /* reconnect will handle it */ }
+      }
+    }, 15000);
+  }
+
+  /** @private */
+  _stopPing() {
+    if (this._pingInterval) {
+      clearInterval(this._pingInterval);
+      this._pingInterval = null;
+    }
   }
 
   /** @private Exponential backoff reconnect. */

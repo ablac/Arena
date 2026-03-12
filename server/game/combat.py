@@ -130,7 +130,11 @@ def process_staff_impacts(
             dx = bot.position[0] - impact.position[0]
             dy = bot.position[1] - impact.position[1]
             if dx * dx + dy * dy <= radius_sq:
-                _apply_damage(bots, bid, impact.damage, impact.owner_id, "staff", events)
+                # Apply target's defense reduction and shield passive now
+                dmg = impact.damage * (1.0 - bot.defense_reduction)
+                if bot.weapon == "shield":
+                    dmg *= 0.5
+                _apply_damage(bots, bid, dmg, impact.owner_id, "staff", events)
                 attacker = bots.get(impact.owner_id)
                 if attacker:
                     attacker.round_shots_hit += 1
@@ -148,11 +152,14 @@ def _queue_staff_impact(
     if line_intersects_obstacle(*attacker.position, *pos, obstacles):
         return
     cfg = get_weapon_config("staff")
-    dmg = calculate_damage("staff", attacker, attacker)  # base damage calc
+    from server.game.pickups import get_effective_damage_mult
+    eff_mult = get_effective_damage_mult(attacker)
+    # Store damage before target defense
+    base_dmg = cfg["damage"] * eff_mult
     staff_impacts.append(StaffImpact(
         owner_id=attacker.bot_id,
         position=pos,
-        damage=dmg,
+        damage=base_dmg,
         radius=cfg["special_param"],
         ticks_remaining=settings.combat.staff_delay_ticks,
     ))

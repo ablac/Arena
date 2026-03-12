@@ -44,6 +44,7 @@ class GameSettings(BaseSettings):
     arena_width: int = Field(default=2000, description="Arena width")
     arena_height: int = Field(default=2000, description="Arena height")
     spatial_cell_size: int = Field(default=100, description="Spatial grid cell size")
+    pathfinding_cell_size: int = Field(default=20, description="A* pathfinding grid cell size")
 
 
 class CombatSettings(BaseSettings):
@@ -55,6 +56,8 @@ class CombatSettings(BaseSettings):
     respawn_time: int = Field(default=5, description="Respawn delay in seconds")
     round_duration: int = Field(default=600, description="Round duration in seconds")
     intermission_time: int = Field(default=10, description="Intermission between rounds")
+    lobby_countdown: int = Field(default=10, description="Lobby countdown before round starts")
+    min_bots_to_start: int = Field(default=2, description="Minimum bots needed to start a round")
     dodge_speed_mult: float = Field(default=2.0, description="Dodge speed multiplier")
     dodge_invuln_ticks: int = Field(default=3, description="Invulnerability ticks on dodge")
     dodge_cooldown_ticks: int = Field(default=30, description="Dodge cooldown in ticks")
