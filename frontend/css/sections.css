@@ -23,7 +23,7 @@
   min-height: 500px; border-radius: 12px; overflow: hidden;
   border: 1px solid var(--border-color); background: #050810;
 }
-.arena-container canvas { width: 100% !important; height: 100% !important; display: block; }
+.arena-container canvas#arena-canvas { width: 100% !important; height: 100% !important; display: block; }
 .arena-container.fullscreen {
   position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
   z-index: 1000; border-radius: 0;
@@ -119,9 +119,9 @@
 }
 pre.code-block {
   background: var(--bg-secondary); border: 1px solid var(--border-color);
-  border-radius: 8px; padding: 16px; overflow-x: auto;
+  border-radius: 8px; padding: 16px; overflow: auto; max-height: 400px;
   font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5;
-  color: #a5f3fc; margin-top: 16px;
+  color: #a5f3fc; margin-top: 16px; white-space: pre;
 }
 
 /* Footer */

@@ -182,16 +182,25 @@ async def _message_loop(ws: WebSocket, bot: BotState) -> None:
             # It's an ActionMessage
             action_map = {
                 "move": ActionType.MOVE,
+                "move_to": ActionType.MOVE_TO,
                 "attack": ActionType.ATTACK,
                 "dodge": ActionType.DODGE,
                 "use_item": ActionType.USE_ITEM,
                 "idle": ActionType.IDLE,
             }
             action_type = action_map.get(msg.action, ActionType.IDLE)
+            target_pos = None
+            if action_type == ActionType.MOVE_TO and msg.target_position is not None:
+                target_pos = tuple(msg.target_position)
             bot.pending_action = Action(
                 action_type=action_type,
                 target_id=msg.target,
                 direction=msg.direction,
                 item_id=msg.item_id,
+                target_position=target_pos,
             )
+            # Staff uses target_position for area attacks
+            if bot.weapon == "staff" and action_type == ActionType.ATTACK:
+                bot.pending_action.target_position = msg.direction
+
             bot.last_action_tick = _engine.tick_count

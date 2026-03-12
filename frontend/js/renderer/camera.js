@@ -28,7 +28,9 @@ export class CameraController {
     this.camera = new BABYLON.FreeCamera('cam', new BABYLON.Vector3(
       arenaWidth / 2, 500, arenaHeight / 2
     ), scene);
-    this.camera.setTarget(new BABYLON.Vector3(arenaWidth / 2, 0, arenaHeight / 2));
+    this.camera.rotation.x = Math.PI / 2;
+    this.camera.rotation.y = 0;
+    this.camera.rotation.z = 0;
     this.camera.mode = BABYLON.Camera.ORTHOGRAPHIC_CAMERA;
     this._updateOrtho();
 
@@ -52,7 +54,7 @@ export class CameraController {
       const dx = (e.clientX - lastX) / this.zoom;
       const dy = (e.clientY - lastY) / this.zoom;
       this.targetX -= dx;
-      this.targetY -= dy;
+      this.targetY += dy;
       lastX = e.clientX; lastY = e.clientY;
     });
     canvas.addEventListener('pointerup', () => { dragging = false; });
@@ -61,20 +63,33 @@ export class CameraController {
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      this.zoom = Math.max(0.5, Math.min(3.0, this.zoom + delta));
+      this.zoom = Math.max(0.5, Math.min(6.0, this.zoom + delta));
       this._updateOrtho();
     }, { passive: false });
   }
 
   /** @private Update orthographic bounds based on zoom. */
   _updateOrtho() {
-    const aspect = this.scene.getEngine().getRenderWidth() / this.scene.getEngine().getRenderHeight();
-    const halfW = (this.arenaWidth / 2) / this.zoom;
+    const engine = this.scene.getEngine();
+    const aspect = engine.getRenderWidth() / engine.getRenderHeight();
     const halfH = (this.arenaHeight / 2) / this.zoom;
-    this.camera.orthoLeft = -halfW * aspect;
-    this.camera.orthoRight = halfW * aspect;
-    this.camera.orthoTop = halfH;
-    this.camera.orthoBottom = -halfH;
+    const halfW = (this.arenaWidth / 2) / this.zoom;
+
+    // To ensure the whole area is visible regardless of aspect ratio,
+    // we need to adjust ortho bounds.
+    if (aspect > 1) {
+      // Landscape: fit height, expand width
+      this.camera.orthoLeft = -halfH * aspect;
+      this.camera.orthoRight = halfH * aspect;
+      this.camera.orthoTop = halfH;
+      this.camera.orthoBottom = -halfH;
+    } else {
+      // Portrait: fit width, expand height
+      this.camera.orthoLeft = -halfW;
+      this.camera.orthoRight = halfW;
+      this.camera.orthoTop = halfW / aspect;
+      this.camera.orthoBottom = -halfW / aspect;
+    }
   }
 
   /** @private Called each frame — smooth interpolation toward target. */
@@ -92,9 +107,6 @@ export class CameraController {
     const pos = this.camera.position;
     pos.x += (this.targetX - pos.x) * lerp;
     pos.z += (this.targetY - pos.z) * lerp;
-    const target = this.camera.getTarget();
-    target.x = pos.x; target.z = pos.z;
-    this.camera.setTarget(target);
     this._updateOrtho();
   }
 

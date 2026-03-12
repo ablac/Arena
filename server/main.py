@@ -69,5 +69,5 @@ async def health_check() -> dict[str, Any]:
     return {"status": "ok", "bots_online": len(engine.bots)}
 
 
-# Mount frontend — must be last (catch-all for non-API routes)
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+# Mount frontend at /arena/ — must be last (catch-all)
+app.mount("/arena", StaticFiles(directory="frontend", html=True), name="frontend")

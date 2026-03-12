@@ -29,6 +29,8 @@ def spawn_bot(bot: BotState, arena: ArenaMap, grid: SpatialGrid) -> None:
     bot.invuln_ticks = 0
     bot.stun_ticks = 0
     bot.shield_absorb = 0
+    bot.current_path.clear()
+    bot.path_target = None
     grid.insert(bot.bot_id, pos[0], pos[1])
     logger.info("Bot %s spawned at (%.1f, %.1f)", bot.name, pos[0], pos[1])
 
@@ -52,6 +54,8 @@ def check_deaths(
         bot.is_alive = False
         bot.hp = 0
         bot.respawn_timer = float(respawn_time)
+        bot.current_path.clear()
+        bot.path_target = None
         grid.remove(bot_id)
 
         events.append({
@@ -99,6 +103,8 @@ def process_respawns(
             bot.invuln_ticks = 0
             bot.stun_ticks = 0
             bot.shield_absorb = 0
+            bot.current_path.clear()
+            bot.path_target = None
             grid.insert(bot_id, pos[0], pos[1])
 
             events.append({

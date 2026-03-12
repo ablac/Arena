@@ -121,7 +121,13 @@ function setupControls(engine) {
 /** @private Update live bot count in hero. */
 function updateBotCount(state) {
   const el = document.getElementById('live-count');
-  if (!el || !state.bots) return;
+  if (!el) return;
+  if (state.type === 'lobby_state') {
+    const n = state.bots_connected || 0;
+    el.textContent = `${n} bot${n !== 1 ? 's' : ''} in lobby — waiting for battle`;
+    return;
+  }
+  if (!state.bots) return;
   const alive = state.bots.filter(b => b.is_alive).length;
   el.textContent = `${alive} bot${alive !== 1 ? 's' : ''} fighting right now`;
 }

@@ -109,7 +109,7 @@ function startAutoRefresh(tbody) {
 function getStatValue(entry, sort) {
   switch (sort) {
     case 'kills': return entry.kills;
-    case 'kd_ratio': return entry.kd_ratio.toFixed(2);
+    case 'kd_ratio': return (entry.kd_ratio || 0).toFixed(2);
     case 'streak': return entry.best_streak;
     default: return entry.elo;
   }

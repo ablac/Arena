@@ -20,7 +20,7 @@ from server.game.engine_helpers import (
     process_use_items, update_life_tracking,
 )
 from server.game.kill_feed import KillFeed
-from server.game.movement import process_movement
+from server.game.movement import process_movement, reset_nav_grid
 from server.game.persistence import persist_bot_stats
 from server.game.pickups import check_auto_collect, maybe_spawn_pickup, tick_effects
 from server.game.projectiles import update_projectiles
@@ -29,7 +29,7 @@ from server.game.spatial import SpatialGrid
 from server.game.spawner import check_deaths, process_respawns, spawn_bot
 from server.game.state import BotState, Pickup, Projectile, RoundState, StaffImpact
 from server.game.views import bot_to_nearby_dict, build_arena_status, build_spectator_state
-from server.ws.protocol import KickMessage
+from server.ws.protocol import KickMessage, LobbyMessage, RoundStartMessage
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +59,8 @@ class GameEngine:
     async def run(self) -> None:
         """Main tick loop — runs as an asyncio background task."""
         self.running = True
-        self._start_round()
-        logger.info("Game engine started at %d ticks/sec", self._tick_rate)
+        self.round.in_lobby = True
+        logger.info("Game engine started at %d ticks/sec (lobby mode)", self._tick_rate)
         tick_duration = 1.0 / self._tick_rate
         while self.running:
             start = time.monotonic()
@@ -72,6 +72,9 @@ class GameEngine:
     async def tick(self) -> None:
         """Execute one game tick."""
         self.tick_count += 1
+        if self.round.in_lobby:
+            await self._tick_lobby()
+            return
         if self.round.in_intermission:
             self._tick_intermission()
             return
@@ -109,6 +112,7 @@ class GameEngine:
         self.round.start_tick = self.tick_count
         self.round.is_active, self.round.in_intermission = True, False
         self.arena.reset()
+        reset_nav_grid()
         for collection in (self.pickups, self.projectiles, self.staff_impacts):
             collection.clear()
         self.kill_feed.clear()
@@ -127,10 +131,38 @@ class GameEngine:
         self.round.intermission_ticks = settings.combat.intermission_time * self._tick_rate
         logger.info("Round %d ended. Winner: %s", self.round.round_number, winner)
 
+    async def _tick_lobby(self) -> None:
+        """Handle lobby state — wait for enough bots, then countdown and start."""
+        alive_bots = len(self.bots)
+        min_needed = settings.combat.min_bots_to_start
+
+        if alive_bots >= min_needed:
+            if self.round.lobby_countdown_ticks <= 0:
+                # Start the countdown
+                self.round.lobby_countdown_ticks = settings.combat.lobby_countdown * self._tick_rate
+            self.round.lobby_countdown_ticks -= 1
+            if self.round.lobby_countdown_ticks <= 0:
+                # Countdown finished — start the round
+                self.round.in_lobby = False
+                self._start_round()
+                await self._send_round_start()
+                return
+        else:
+            # Not enough bots, reset countdown
+            self.round.lobby_countdown_ticks = 0
+
+        # Broadcast lobby state to bots and spectators every tick
+        if self.tick_count % self._spec_interval == 0:
+            await self._send_lobby_updates()
+
     def _tick_intermission(self) -> None:
         self.round.intermission_ticks -= 1
         if self.round.intermission_ticks <= 0:
-            self._start_round()
+            # Go back to lobby instead of directly starting a new round
+            self.round.in_intermission = False
+            self.round.in_lobby = True
+            self.round.lobby_countdown_ticks = 0
+            logger.info("Intermission ended, returning to lobby")
 
     async def _check_afk(self) -> None:
         for bot_id, bot in list(self.bots.items()):
@@ -173,9 +205,61 @@ class GameEngine:
             if bot:
                 await send_fn(bot, event)
 
+    async def _send_lobby_updates(self) -> None:
+        """Send lobby status to all bots and spectators."""
+        alive_bots = len(self.bots)
+        min_needed = settings.combat.min_bots_to_start
+        countdown = None
+        if self.round.lobby_countdown_ticks > 0:
+            countdown = max(1, self.round.lobby_countdown_ticks // self._tick_rate)
+        players = [
+            {"name": b.name, "avatar_color": b.avatar_color, "weapon": b.weapon}
+            for b in self.bots.values()
+        ]
+        lobby_msg = LobbyMessage(
+            bots_connected=alive_bots,
+            bots_needed=min_needed,
+            countdown=countdown,
+            players=players,
+        ).model_dump()
+
+        # Send to bots
+        for bot in self.bots.values():
+            if bot.websocket:
+                try:
+                    await bot.websocket.send_json(lobby_msg)
+                except Exception:
+                    pass
+
+        # Send to spectators
+        spectator_state = {
+            "type": "lobby_state",
+            "tick": self.tick_count,
+            "bots_connected": alive_bots,
+            "bots_needed": min_needed,
+            "countdown": countdown,
+            "players": players,
+        }
+        await broadcast_to_spectators(self.spectators, spectator_state)
+
+    async def _send_round_start(self) -> None:
+        """Send round_start message to all bots."""
+        for bot in self.bots.values():
+            if bot.websocket:
+                msg = RoundStartMessage(
+                    round_number=self.round.round_number,
+                    position=bot.position,
+                    bots_in_round=len(self.bots),
+                ).model_dump()
+                try:
+                    await bot.websocket.send_json(msg)
+                except Exception:
+                    pass
+
     def add_bot(self, bot: BotState) -> None:
         self.bots[bot.bot_id] = bot
-        spawn_bot(bot, self.arena, self.grid)
+        if not self.round.in_lobby:
+            spawn_bot(bot, self.arena, self.grid)
         bot.round_life_start_tick = self.tick_count
 
     def remove_bot(self, bot_id: str) -> None:

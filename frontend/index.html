@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="css/arena.css">
   <link rel="stylesheet" href="css/sections.css">
   <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <script src="https://cdn.babylonjs.com/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
+  <script src="https://cdn.babylonjs.com/materialsLibrary/babylonjs.materials.min.js"></script>
   <script type="module" src="js/app.js"></script>
 </head>
 <body>
@@ -33,7 +35,7 @@
     <div class="arena-controls" style="padding:16px 20px">
       <div class="control-group">
         <label>Zoom:</label>
-        <input type="range" id="zoom-slider" min="0.5" max="3" step="0.1" value="1">
+        <input type="range" id="zoom-slider" min="0.5" max="6" step="0.1" value="1">
         <span id="zoom-value" style="font-family:var(--font-mono);font-size:0.8rem">1x</span>
       </div>
       <div class="control-group">
@@ -83,12 +85,12 @@
       <ol class="steps">
         <li><a href="#keygen" style="color:var(--accent-blue)">Generate your API key</a> above</li>
         <li>Configure your bot:
-          <pre class="code-block">curl -X PUT https://angel-serv.com/api/v1/bot/config \
+          <pre class="code-block">curl -X PUT https://arena.angel-serv.com/api/v1/bot/config \
   -H "X-API-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"MyBot","avatar_color":"#00d4ff"}'</pre>
         </li>
-        <li>Connect via WebSocket: <code style="color:var(--accent-blue)">wss://angel-serv.com/ws/bot?key=YOUR_KEY</code></li>
+        <li>Connect via WebSocket: <code style="color:var(--accent-blue)">wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY</code></li>
         <li>Respond to tick events with actions</li>
         <li>Climb the leaderboard!</li>
       </ol>
@@ -104,66 +106,80 @@
   </section>
   <script>
     // Inject example code safely via textContent
-    document.getElementById('example-code').textContent = `import asyncio
-import websockets
-import json
+    document.getElementById('example-code').textContent = `import asyncio, websockets, json
+
+API_KEY = "YOUR_KEY"
+URI = "wss://arena.angel-serv.com/ws/bot?key=" + API_KEY
 
 async def my_bot():
-    uri = "wss://angel-serv.com/ws/bot?key=YOUR_KEY"
-    async with websockets.connect(uri) as ws:
-        # Wait for connected message
+    async with websockets.connect(URI) as ws:
+        # 1. Wait for connection confirmation
         connected = json.loads(await ws.recv())
+        print(f"Connected! Bot ID: {connected['bot_id']}")
+        print(f"Weapons: {connected['available_weapons']}")
 
-        # Select loadout
+        # 2. Select loadout (REQUIRED before game starts)
         await ws.send(json.dumps({
             "type": "select_loadout",
-            "weapon": "sword",
+            "weapon": "sword",  # sword|bow|spear|dagger|staff|shield
             "stats": {"hp": 5, "speed": 5, "attack": 5, "defense": 5},
             "fallback_behavior": "aggressive"
         }))
-        confirmed = json.loads(await ws.recv())
+        confirm = json.loads(await ws.recv())
+        print(f"Loadout: {confirm['weapon']} | HP: {confirm['computed']['max_hp']}")
 
-        # Game loop
+        # 3. Game loop — respond to ticks with actions
         while True:
             msg = json.loads(await ws.recv())
+
             if msg["type"] == "tick":
+                me = msg["your_state"]
                 enemies = [e for e in msg["nearby_entities"]
-                           if e.get("is_alive")]
+                           if e.get("is_alive") and e["bot_id"] != connected["bot_id"]]
+
                 if enemies:
-                    closest = min(enemies,
-                                  key=lambda e: sum(
-                                      (a - b) ** 2
-                                      for a, b in zip(e["position"],
-                                                      msg["your_state"]["position"])
-                                  ))
-                    dist = sum(
-                        (a - b) ** 2
-                        for a, b in zip(closest["position"],
-                                        msg["your_state"]["position"])
-                    ) ** 0.5
+                    target = min(enemies, key=lambda e: sum(
+                        (a - b) ** 2 for a, b in zip(e["position"], me["position"])
+                    ))
+                    dist = sum((a - b) ** 2 for a, b in
+                               zip(target["position"], me["position"])) ** 0.5
+
                     if dist <= 2.0:
                         await ws.send(json.dumps({
-                            "type": "action",
-                            "tick": msg["tick_number"],
-                            "action": "attack",
-                            "target": closest["bot_id"]
+                            "type": "action", "tick": msg["tick_number"],
+                            "action": "attack", "target": target["bot_id"]
                         }))
                     else:
-                        dx = closest["position"][0] - msg["your_state"]["position"][0]
-                        dy = closest["position"][1] - msg["your_state"]["position"][1]
+                        dx = target["position"][0] - me["position"][0]
+                        dy = target["position"][1] - me["position"][1]
                         await ws.send(json.dumps({
-                            "type": "action",
-                            "tick": msg["tick_number"],
-                            "action": "move",
-                            "direction": [dx, dy]
+                            "type": "action", "tick": msg["tick_number"],
+                            "action": "move", "direction": [dx, dy]
                         }))
+                else:
+                    # No enemies — idle move toward safe zone center
+                    sz = msg.get("safe_zone", {}).get("center", [1000, 1000])
+                    dx = sz[0] - me["position"][0]
+                    dy = sz[1] - me["position"][1]
+                    await ws.send(json.dumps({
+                        "type": "action", "tick": msg["tick_number"],
+                        "action": "move", "direction": [dx, dy]
+                    }))
+
+            elif msg["type"] == "kill":
+                print(f"Kill! Victim: {msg.get('victim')}")
+            elif msg["type"] == "death":
+                print(f"Died! Killed by: {msg.get('killed_by')}")
+            elif msg["type"] == "match_end":
+                print(f"Match over! Placement: {msg.get('placement')}")
+                break
 
 asyncio.run(my_bot())`;
   </script>
 
   <!-- Footer -->
   <footer class="footer">
-    <p>Built on angel-serv.com</p>
+    <p>Built on arena.angel-serv.com</p>
     <div class="footer-links">
       <a href="#getting-started">API Docs</a>
       <a href="#example">SDK Examples</a>
