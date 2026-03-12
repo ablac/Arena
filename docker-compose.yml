@@ -1,0 +1,66 @@
+services:
+  arena-db:
+    image: postgres:16-alpine
+    container_name: arena-db
+    environment:
+      POSTGRES_DB: ${ARENA_DB_NAME:-arena}
+      POSTGRES_USER: ${ARENA_DB_USER:-arena_user}
+      POSTGRES_PASSWORD: ${ARENA_DB_PASSWORD:-changeme_arena_2026}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - arena_pgdata:/var/lib/postgresql/data
+    networks:
+      arena_net:
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ARENA_DB_USER:-arena_user} -d ${ARENA_DB_NAME:-arena}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  arena-redis:
+    image: redis:7-alpine
+    container_name: arena-redis
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - arena_redis_data:/data
+    networks:
+      arena_net:
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  arena-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arena-server
+    ports:
+      - "127.0.0.1:8700:8000"
+    depends_on:
+      arena-db:
+        condition: service_healthy
+      arena-redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - ./server:/app/server
+      - ./frontend:/app/frontend
+    networks:
+      arena_net:
+
+volumes:
+  arena_pgdata:
+  arena_redis_data:
+
+networks:
+  arena_net:
+    driver: bridge
+    internal: false
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

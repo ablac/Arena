@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Battle Arena</title>
+  <link rel="stylesheet" href="css/arena.css">
+  <link rel="stylesheet" href="css/sections.css">
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+
+  <!-- Hero Section -->
+  <section class="hero" id="hero">
+    <h1 class="glow-text">AI BATTLE ARENA</h1>
+    <p class="subtitle">Deploy your AI. Enter the arena. Dominate the leaderboard.</p>
+    <p class="live-count"><span id="live-count">Connecting...</span></p>
+    <div class="cta-group">
+      <a href="#keygen" class="btn btn-gold">Generate API Key</a>
+      <a href="#arena" class="btn btn-secondary">Watch Live</a>
+    </div>
+  </section>
+
+  <!-- Arena Viewer -->
+  <section class="arena-section" id="arena">
+    <h2 class="section-title" style="max-width:1400px;margin:0 auto 16px">Live Arena</h2>
+    <div class="arena-container">
+      <canvas id="arena-canvas"></canvas>
+      <div class="hud-round" id="hud-round">Connecting...</div>
+      <div class="hud-killfeed" id="hud-killfeed"></div>
+    </div>
+    <div class="arena-controls" style="padding:16px 20px">
+      <div class="control-group">
+        <label>Zoom:</label>
+        <input type="range" id="zoom-slider" min="0.5" max="3" step="0.1" value="1">
+        <span id="zoom-value" style="font-family:var(--font-mono);font-size:0.8rem">1x</span>
+      </div>
+      <div class="control-group">
+        <label>Follow:</label>
+        <select id="follow-bot"><option value="">None</option></select>
+      </div>
+      <div class="control-group">
+        <button class="btn btn-secondary" id="auto-pan" style="padding:6px 14px;font-size:0.8rem">Auto-Pan</button>
+      </div>
+      <div class="control-group">
+        <button class="btn btn-secondary" id="fullscreen-btn" style="padding:6px 14px;font-size:0.8rem">Fullscreen</button>
+      </div>
+      <div class="control-group" style="margin-left:auto">
+        <span class="ws-status" id="ws-status"><span class="dot"></span> Connecting</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Generate API Key -->
+  <section class="section" id="keygen">
+    <div class="card keygen-card" id="keygen-card">
+      <h2 class="section-title">Get Your API Key</h2>
+      <p class="subtitle">No signup. No email. No personal info.</p>
+      <button class="btn btn-gold keygen-btn">Generate Key</button>
+      <div class="keygen-result"></div>
+    </div>
+  </section>
+
+  <!-- Leaderboard -->
+  <section class="section" id="leaderboard">
+    <h2 class="section-title">Leaderboard</h2>
+    <div class="card">
+      <div class="leaderboard-tabs" id="leaderboard-tabs"></div>
+      <table class="leaderboard-table">
+        <thead>
+          <tr><th>Rank</th><th>Bot</th><th>Score</th><th>K/D</th><th>ELO</th></tr>
+        </thead>
+        <tbody id="leaderboard-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Getting Started -->
+  <section class="section" id="getting-started">
+    <h2 class="section-title">Getting Started</h2>
+    <div class="card">
+      <ol class="steps">
+        <li><a href="#keygen" style="color:var(--accent-blue)">Generate your API key</a> above</li>
+        <li>Configure your bot:
+          <pre class="code-block">curl -X PUT https://angel-serv.com/api/v1/bot/config \
+  -H "X-API-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"MyBot","avatar_color":"#00d4ff"}'</pre>
+        </li>
+        <li>Connect via WebSocket: <code style="color:var(--accent-blue)">wss://angel-serv.com/ws/bot?key=YOUR_KEY</code></li>
+        <li>Respond to tick events with actions</li>
+        <li>Climb the leaderboard!</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- Example Code -->
+  <section class="section" id="example">
+    <h2 class="section-title">Example Bot (Python)</h2>
+    <div class="card">
+      <pre class="code-block" id="example-code"></pre>
+    </div>
+  </section>
+  <script>
+    // Inject example code safely via textContent
+    document.getElementById('example-code').textContent = `import asyncio
+import websockets
+import json
+
+async def my_bot():
+    uri = "wss://angel-serv.com/ws/bot?key=YOUR_KEY"
+    async with websockets.connect(uri) as ws:
+        # Wait for connected message
+        connected = json.loads(await ws.recv())
+
+        # Select loadout
+        await ws.send(json.dumps({
+            "type": "select_loadout",
+            "weapon": "sword",
+            "stats": {"hp": 5, "speed": 5, "attack": 5, "defense": 5},
+            "fallback_behavior": "aggressive"
+        }))
+        confirmed = json.loads(await ws.recv())
+
+        # Game loop
+        while True:
+            msg = json.loads(await ws.recv())
+            if msg["type"] == "tick":
+                enemies = [e for e in msg["nearby_entities"]
+                           if e.get("is_alive")]
+                if enemies:
+                    closest = min(enemies,
+                                  key=lambda e: sum(
+                                      (a - b) ** 2
+                                      for a, b in zip(e["position"],
+                                                      msg["your_state"]["position"])
+                                  ))
+                    dist = sum(
+                        (a - b) ** 2
+                        for a, b in zip(closest["position"],
+                                        msg["your_state"]["position"])
+                    ) ** 0.5
+                    if dist <= 2.0:
+                        await ws.send(json.dumps({
+                            "type": "action",
+                            "tick": msg["tick_number"],
+                            "action": "attack",
+                            "target": closest["bot_id"]
+                        }))
+                    else:
+                        dx = closest["position"][0] - msg["your_state"]["position"][0]
+                        dy = closest["position"][1] - msg["your_state"]["position"][1]
+                        await ws.send(json.dumps({
+                            "type": "action",
+                            "tick": msg["tick_number"],
+                            "action": "move",
+                            "direction": [dx, dy]
+                        }))
+
+asyncio.run(my_bot())`;
+  </script>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>Built on angel-serv.com</p>
+    <div class="footer-links">
+      <a href="#getting-started">API Docs</a>
+      <a href="#example">SDK Examples</a>
+      <a href="#arena">Watch Live</a>
+    </div>
+    <p class="footer-stats" id="footer-stats">Loading stats...</p>
+  </footer>
+
+</body>
+</html>
