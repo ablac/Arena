@@ -44,7 +44,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Spectator WebSocket
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${wsProtocol}//${window.location.host}/ws/watch`;
+  const wsUrl = `${wsProtocol}//${window.location.host}/ws/spectator`;
   const spectator = new SpectatorSocket(wsUrl,
     (state) => {
       arenaEngine.setState(state);

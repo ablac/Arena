@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from server.config import settings
 from server.game.state import Action, ActionType
 from server.game.weapons import get_weapon_config
 
@@ -39,7 +40,8 @@ def _direction_away(
     return (-toward[0], -toward[1])
 
 
-ARENA_CENTER = (1000.0, 1000.0)
+def _arena_center() -> tuple[float, float]:
+    return (float(settings.game.arena_width) / 2, float(settings.game.arena_height) / 2)
 
 
 def _find_nearest(bot: BotState, nearby: list[BotState]) -> BotState | None:
@@ -54,7 +56,7 @@ def _find_nearest(bot: BotState, nearby: list[BotState]) -> BotState | None:
 
 def _roam_toward_center(bot: BotState) -> Action:
     """Move toward arena center when no enemies are visible."""
-    d = _direction_toward(bot.position, ARENA_CENTER)
+    d = _direction_toward(bot.position, _arena_center())
     if d == (0.0, 0.0):
         return Action(action_type=ActionType.IDLE)
     return Action(action_type=ActionType.MOVE, direction=d)

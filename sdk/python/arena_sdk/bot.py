@@ -29,6 +29,7 @@ class ArenaBot:
         self._running = False
         self._tick_number = 0
         self._last_pos: dict | tuple = {"x": 0, "y": 0}
+        self._last_action_result: dict | None = None
 
     def set_loadout(self, weapon: str, stats: dict[str, int], fallback: str = "aggressive") -> None:
         """Set loadout to use on connect. Stats must total 20."""

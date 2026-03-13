@@ -13,3 +13,4 @@ node_modules/
 arena_pgdata/
 arena_redis_data/
 .DS_Store
+go-arena/arena-server

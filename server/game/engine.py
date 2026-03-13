@@ -248,8 +248,7 @@ class GameEngine:
                 logger.warning("Kicking bot %s — stat integrity violation: %s", bot.name, reason)
                 if bot.websocket:
                     try:
-                        import asyncio as _aio
-                        _aio.get_event_loop().create_task(
+                        asyncio.create_task(
                             bot.websocket.send_json(
                                 KickMessage(reason=f"Stat violation: {reason}").model_dump()
                             )

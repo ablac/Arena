@@ -1,0 +1,363 @@
+package db
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+// ---------- api_keys ----------
+
+// GetAPIKeyByPrefix retrieves an active API key by its prefix.
+func GetAPIKeyByPrefix(ctx context.Context, prefix string) (*ApiKey, error) {
+	k := &ApiKey{}
+	err := Pool.QueryRow(ctx,
+		`SELECT id, key_hash, key_prefix, created_at, last_seen, is_active, ip_created
+		 FROM api_keys WHERE key_prefix = $1 AND is_active = true`, prefix,
+	).Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.CreatedAt, &k.LastSeen, &k.IsActive, &k.IPCreated)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("GetAPIKeyByPrefix: %w", err)
+	}
+	return k, nil
+}
+
+// CreateAPIKey inserts a new API key row.
+func CreateAPIKey(ctx context.Context, id, keyHash, keyPrefix, ipCreated string) error {
+	_, err := Pool.Exec(ctx,
+		`INSERT INTO api_keys (id, key_hash, key_prefix, created_at, is_active, ip_created)
+		 VALUES ($1, $2, $3, NOW(), true, $4)`,
+		id, keyHash, keyPrefix, ipCreated,
+	)
+	if err != nil {
+		return fmt.Errorf("CreateAPIKey: %w", err)
+	}
+	return nil
+}
+
+// DeactivateAPIKey sets is_active = false for the given key.
+func DeactivateAPIKey(ctx context.Context, id string) error {
+	_, err := Pool.Exec(ctx,
+		`UPDATE api_keys SET is_active = false WHERE id = $1`, id,
+	)
+	if err != nil {
+		return fmt.Errorf("DeactivateAPIKey: %w", err)
+	}
+	return nil
+}
+
+// UpdateAPIKeyLastSeen sets last_seen to NOW() for the given key.
+func UpdateAPIKeyLastSeen(ctx context.Context, id string) error {
+	_, err := Pool.Exec(ctx,
+		`UPDATE api_keys SET last_seen = NOW() WHERE id = $1`, id,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateAPIKeyLastSeen: %w", err)
+	}
+	return nil
+}
+
+// ---------- bots ----------
+
+// GetBotByAPIKeyID retrieves a bot by its associated API key ID.
+func GetBotByAPIKeyID(ctx context.Context, apiKeyID string) (*Bot, error) {
+	b := &Bot{}
+	err := Pool.QueryRow(ctx,
+		`SELECT id, api_key_id, name, avatar_color, default_weapon, default_stats,
+		        default_fallback, created_at, updated_at
+		 FROM bots WHERE api_key_id = $1`, apiKeyID,
+	).Scan(&b.ID, &b.APIKeyID, &b.Name, &b.AvatarColor, &b.DefaultWeapon, &b.DefaultStats,
+		&b.DefaultFallback, &b.CreatedAt, &b.UpdatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("GetBotByAPIKeyID: %w", err)
+	}
+	return b, nil
+}
+
+// CreateBot inserts a new bot row.
+func CreateBot(ctx context.Context, bot *Bot) error {
+	_, err := Pool.Exec(ctx,
+		`INSERT INTO bots (id, api_key_id, name, avatar_color, default_weapon, default_stats,
+		                    default_fallback, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		bot.ID, bot.APIKeyID, bot.Name, bot.AvatarColor, bot.DefaultWeapon, bot.DefaultStats,
+		bot.DefaultFallback, bot.CreatedAt, bot.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("CreateBot: %w", err)
+	}
+	return nil
+}
+
+// UpdateBot updates mutable fields on a bot row.
+func UpdateBot(ctx context.Context, bot *Bot) error {
+	_, err := Pool.Exec(ctx,
+		`UPDATE bots SET name = $1, avatar_color = $2, default_weapon = $3,
+		                 default_stats = $4, default_fallback = $5, updated_at = $6
+		 WHERE id = $7`,
+		bot.Name, bot.AvatarColor, bot.DefaultWeapon, bot.DefaultStats,
+		bot.DefaultFallback, bot.UpdatedAt, bot.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateBot: %w", err)
+	}
+	return nil
+}
+
+// ---------- bot_stats ----------
+
+// GetBotStats retrieves stats for a given bot.
+func GetBotStats(ctx context.Context, botID string) (*BotStats, error) {
+	s := &BotStats{}
+	err := Pool.QueryRow(ctx,
+		`SELECT bot_id, kills, deaths, assists, damage_dealt, damage_taken,
+		        current_streak, best_streak, elo, time_alive_seconds, longest_life_secs,
+		        rounds_played, round_wins, pickups_collected, distance_traveled, updated_at
+		 FROM bot_stats WHERE bot_id = $1`, botID,
+	).Scan(&s.BotID, &s.Kills, &s.Deaths, &s.Assists, &s.DamageDealt, &s.DamageTaken,
+		&s.CurrentStreak, &s.BestStreak, &s.Elo, &s.TimeAliveSecs, &s.LongestLifeSecs,
+		&s.RoundsPlayed, &s.RoundWins, &s.PickupsCollected, &s.DistanceTraveled, &s.UpdatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("GetBotStats: %w", err)
+	}
+	return s, nil
+}
+
+// UpsertBotStats inserts or updates bot_stats using ON CONFLICT.
+func UpsertBotStats(ctx context.Context, stats *BotStats) error {
+	_, err := Pool.Exec(ctx,
+		`INSERT INTO bot_stats (bot_id, kills, deaths, assists, damage_dealt, damage_taken,
+		                        current_streak, best_streak, elo, time_alive_seconds,
+		                        longest_life_secs, rounds_played, round_wins,
+		                        pickups_collected, distance_traveled, updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+		 ON CONFLICT (bot_id) DO UPDATE SET
+		   kills = EXCLUDED.kills,
+		   deaths = EXCLUDED.deaths,
+		   assists = EXCLUDED.assists,
+		   damage_dealt = EXCLUDED.damage_dealt,
+		   damage_taken = EXCLUDED.damage_taken,
+		   current_streak = EXCLUDED.current_streak,
+		   best_streak = EXCLUDED.best_streak,
+		   elo = EXCLUDED.elo,
+		   time_alive_seconds = EXCLUDED.time_alive_seconds,
+		   longest_life_secs = EXCLUDED.longest_life_secs,
+		   rounds_played = EXCLUDED.rounds_played,
+		   round_wins = EXCLUDED.round_wins,
+		   pickups_collected = EXCLUDED.pickups_collected,
+		   distance_traveled = EXCLUDED.distance_traveled,
+		   updated_at = EXCLUDED.updated_at`,
+		stats.BotID, stats.Kills, stats.Deaths, stats.Assists, stats.DamageDealt,
+		stats.DamageTaken, stats.CurrentStreak, stats.BestStreak, stats.Elo,
+		stats.TimeAliveSecs, stats.LongestLifeSecs, stats.RoundsPlayed, stats.RoundWins,
+		stats.PickupsCollected, stats.DistanceTraveled, stats.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("UpsertBotStats: %w", err)
+	}
+	return nil
+}
+
+// ---------- kill_log ----------
+
+// InsertKillLog inserts a new kill log entry.
+func InsertKillLog(ctx context.Context, log *KillLog) error {
+	_, err := Pool.Exec(ctx,
+		`INSERT INTO kill_log (id, round_id, killer_id, victim_id, weapon, damage,
+		                       killer_hp, tick, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		log.ID, log.RoundID, log.KillerID, log.VictimID, log.Weapon, log.Damage,
+		log.KillerHP, log.Tick, log.CreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("InsertKillLog: %w", err)
+	}
+	return nil
+}
+
+// ---------- rounds ----------
+
+// CreateRound inserts a new round row.
+func CreateRound(ctx context.Context, round *Round) error {
+	_, err := Pool.Exec(ctx,
+		`INSERT INTO rounds (id, round_number, started_at, ended_at, bots_participated,
+		                     mvp_bot_id, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		round.ID, round.RoundNumber, round.StartedAt, round.EndedAt,
+		round.BotsParticipated, round.MVPBotID, round.Status,
+	)
+	if err != nil {
+		return fmt.Errorf("CreateRound: %w", err)
+	}
+	return nil
+}
+
+// UpdateRound updates a round's ended_at, status, and mvp_bot_id.
+func UpdateRound(ctx context.Context, round *Round) error {
+	_, err := Pool.Exec(ctx,
+		`UPDATE rounds SET ended_at = $1, status = $2, mvp_bot_id = $3 WHERE id = $4`,
+		round.EndedAt, round.Status, round.MVPBotID, round.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateRound: %w", err)
+	}
+	return nil
+}
+
+// ---------- leaderboard ----------
+
+// validSortColumns maps allowed sort keys to SQL ORDER BY clauses.
+var validSortColumns = map[string]string{
+	"kills":      "s.kills DESC",
+	"elo":        "s.elo DESC",
+	"best_streak": "s.best_streak DESC",
+	"kd_ratio":   "CASE WHEN s.deaths = 0 THEN s.kills ELSE s.kills::float / s.deaths END DESC",
+}
+
+// GetLeaderboard returns a paginated leaderboard with rank, sorted by the given column.
+func GetLeaderboard(ctx context.Context, sortBy string, limit, offset int) ([]LeaderboardEntry, error) {
+	orderClause, ok := validSortColumns[sortBy]
+	if !ok {
+		orderClause = validSortColumns["kills"]
+	}
+
+	query := fmt.Sprintf(
+		`SELECT
+		   ROW_NUMBER() OVER (ORDER BY %s) AS rank,
+		   b.id, b.name, b.avatar_color,
+		   s.kills, s.deaths, s.elo, s.best_streak,
+		   s.damage_dealt, s.rounds_played, s.round_wins
+		 FROM bot_stats s
+		 JOIN bots b ON b.id = s.bot_id
+		 ORDER BY %s
+		 LIMIT $1 OFFSET $2`, orderClause, orderClause,
+	)
+
+	rows, err := Pool.Query(ctx, query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("GetLeaderboard: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []LeaderboardEntry
+	for rows.Next() {
+		var e LeaderboardEntry
+		if err := rows.Scan(
+			&e.Rank, &e.BotID, &e.Name, &e.AvatarColor,
+			&e.Kills, &e.Deaths, &e.Elo, &e.BestStreak,
+			&e.DamageDealt, &e.RoundsPlayed, &e.RoundWins,
+		); err != nil {
+			return nil, fmt.Errorf("GetLeaderboard scan: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetLeaderboard rows: %w", err)
+	}
+	return entries, nil
+}
+
+// GetLeaderboardCount returns the total number of entries in bot_stats.
+func GetLeaderboardCount(ctx context.Context) (int, error) {
+	var count int
+	err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM bot_stats`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("GetLeaderboardCount: %w", err)
+	}
+	return count, nil
+}
+
+// GetBotRank returns the 1-based rank of a bot for a given sort column.
+func GetBotRank(ctx context.Context, botID, sortBy string) (int, error) {
+	orderClause, ok := validSortColumns[sortBy]
+	if !ok {
+		orderClause = validSortColumns["kills"]
+	}
+
+	query := fmt.Sprintf(
+		`SELECT rank FROM (
+		   SELECT bot_id, ROW_NUMBER() OVER (ORDER BY %s) AS rank
+		   FROM bot_stats s
+		 ) ranked WHERE bot_id = $1`, orderClause,
+	)
+
+	var rank int
+	err := Pool.QueryRow(ctx, query, botID).Scan(&rank)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("GetBotRank: %w", err)
+	}
+	return rank, nil
+}
+
+// ---------- rate_limits ----------
+
+// CheckRateLimit checks whether the given IP is allowed to generate another key.
+// It returns (allowed, remaining, error). If the current window has expired (>1 hour),
+// it resets the counter. If under the limit, it increments.
+func CheckRateLimit(ctx context.Context, ip string, maxPerHour int) (bool, int, error) {
+	var rl RateLimit
+	err := Pool.QueryRow(ctx,
+		`SELECT ip_address, keys_generated, window_start
+		 FROM rate_limits WHERE ip_address = $1`, ip,
+	).Scan(&rl.IPAddress, &rl.KeysGenerated, &rl.WindowStart)
+
+	if err != nil && err != pgx.ErrNoRows {
+		return false, 0, fmt.Errorf("CheckRateLimit select: %w", err)
+	}
+
+	now := time.Now()
+
+	// No existing record -- create one and allow.
+	if err == pgx.ErrNoRows {
+		_, insertErr := Pool.Exec(ctx,
+			`INSERT INTO rate_limits (ip_address, keys_generated, window_start)
+			 VALUES ($1, 1, $2)`, ip, now,
+		)
+		if insertErr != nil {
+			return false, 0, fmt.Errorf("CheckRateLimit insert: %w", insertErr)
+		}
+		return true, maxPerHour - 1, nil
+	}
+
+	// Window expired -- reset.
+	if now.Sub(rl.WindowStart) > time.Hour {
+		_, resetErr := Pool.Exec(ctx,
+			`UPDATE rate_limits SET keys_generated = 1, window_start = $1
+			 WHERE ip_address = $2`, now, ip,
+		)
+		if resetErr != nil {
+			return false, 0, fmt.Errorf("CheckRateLimit reset: %w", resetErr)
+		}
+		return true, maxPerHour - 1, nil
+	}
+
+	// Under limit -- increment.
+	if rl.KeysGenerated < maxPerHour {
+		_, incErr := Pool.Exec(ctx,
+			`UPDATE rate_limits SET keys_generated = keys_generated + 1
+			 WHERE ip_address = $1`, ip,
+		)
+		if incErr != nil {
+			return false, 0, fmt.Errorf("CheckRateLimit increment: %w", incErr)
+		}
+		remaining := maxPerHour - rl.KeysGenerated - 1
+		return true, remaining, nil
+	}
+
+	// Over limit.
+	remaining := 0
+	return false, remaining, nil
+}
