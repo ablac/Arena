@@ -9,10 +9,10 @@
 import { makeMat } from './utils.js';
 
 const COLORS = {
-  health:  [0.1, 1.0, 0.3],
-  speed:   [1.0, 1.0, 0.1],
-  damage:  [1.0, 0.25, 0.2],
-  shield:  [0.25, 0.5, 1.0],
+  health_pack:    [0.1, 1.0, 0.3],
+  speed_boost:    [1.0, 1.0, 0.1],
+  damage_boost:   [1.0, 0.25, 0.2],
+  shield_bubble:  [0.25, 0.5, 1.0],
 };
 
 /** @type {Map<string, {shapeMat: BABYLON.StandardMaterial, glowMat: BABYLON.StandardMaterial}>} */
@@ -22,7 +22,7 @@ function _getMats(type, scene) {
   let mats = _typeMats.get(type);
   if (mats && !mats.shapeMat.isDisposed) return mats;
   const B = window.BABYLON;
-  const c = COLORS[type] || COLORS.health;
+  const c = COLORS[type] || COLORS.health_pack;
   const color = new B.Color3(c[0], c[1], c[2]);
   const shapeMat = makeMat(`pumat-${type}`, scene, color, { emissiveFactor: 0.8, noLight: true });
   const glowMat = makeMat(`pugm-${type}`, scene, color, { noLight: true, alpha: 0.2, emissiveFactor: 1 });
@@ -68,22 +68,29 @@ export class PickupRenderer {
   _create(p) {
     const B = window.BABYLON;
     const id = p.pickup_id;
-    const type = p.type || 'health';
+    const type = p.pickup_type || 'health_pack';
     const mats = _getMats(type, this.scene);
     const root = new B.TransformNode(`pu-${id}`, this.scene);
 
     let mesh;
-    if (type === 'health') {
+    if (type === 'health_pack') {
+      // Red/green cross shape
       const h = B.MeshBuilder.CreateBox(`puh-${id}`, { width: 3, height: 8, depth: 3 }, this.scene);
       const v = B.MeshBuilder.CreateBox(`puv-${id}`, { width: 8, height: 3, depth: 3 }, this.scene);
       h.parent = root; v.parent = root;
       h.material = mats.shapeMat; v.material = mats.shapeMat;
       mesh = h; mesh._sibling = v;
-    } else if (type === 'shield') {
+    } else if (type === 'shield_bubble') {
       mesh = B.MeshBuilder.CreateSphere(`pum-${id}`, { diameter: 8, segments: 6 }, this.scene);
       mesh.parent = root;
       mesh.material = mats.shapeMat;
+    } else if (type === 'speed_boost') {
+      // Lightning bolt / arrow shape
+      mesh = B.MeshBuilder.CreateCylinder(`pum-${id}`, { diameterTop: 0, diameterBottom: 7, height: 10, tessellation: 3 }, this.scene);
+      mesh.parent = root;
+      mesh.material = mats.shapeMat;
     } else {
+      // damage_boost and fallback — diamond
       mesh = B.MeshBuilder.CreatePolyhedron(`pum-${id}`, { type: 1, size: 4 }, this.scene);
       mesh.parent = root;
       mesh.material = mats.shapeMat;

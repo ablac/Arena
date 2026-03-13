@@ -95,12 +95,13 @@ type rateLimitResponse struct {
 
 // RateLimitMiddleware returns an HTTP middleware that enforces a per-IP rate
 // limit of rpm requests per 60-second window. If Redis is unavailable, all
-// requests are allowed through.
+// requests are allowed through. Each endpoint gets its own rate-limit bucket
+// based on the request path, so different endpoints don't share counters.
 func RateLimitMiddleware(rpm int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := extractClientIP(r)
-			key := "api:" + ip
+			key := "api:" + r.URL.Path + ":" + ip
 
 			allowed, remaining, resetAt, err := CheckRateLimit(r.Context(), key, rpm, 60)
 			if err != nil {

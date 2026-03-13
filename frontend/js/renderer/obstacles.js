@@ -26,9 +26,11 @@ export class ObstacleRenderer {
     this._mat = makeMat('obsMat', this.scene, new B.Color3(0.3, 0.28, 0.24), {
       emissiveFactor: 0.1, specular: new B.Color3(0.08, 0.08, 0.08), backFace: true
     });
+    this._mat.freeze();
     this._edgeMat = makeMat('obsEdgeMat', this.scene, new B.Color3(0.4, 0.55, 0.7), {
       noLight: true, alpha: 0.4, emissiveFactor: 1
     });
+    this._edgeMat.freeze();
   }
 
   /**
@@ -58,6 +60,8 @@ export class ObstacleRenderer {
       }, this.scene);
       mesh.position.set(obs.x + obs.width / 2, PILLAR_HEIGHT / 2, obs.y + obs.height / 2);
       mesh.material = this._mat;
+      mesh.isPickable = false;
+      mesh.freezeWorldMatrix();
 
       // Glowing edge wireframe on top
       const edge = B.MeshBuilder.CreateBox(`obsEdge-${i}`, {
@@ -65,6 +69,8 @@ export class ObstacleRenderer {
       }, this.scene);
       edge.position.set(obs.x + obs.width / 2, PILLAR_HEIGHT + 0.5, obs.y + obs.height / 2);
       edge.material = this._edgeMat;
+      edge.isPickable = false;
+      edge.freezeWorldMatrix();
 
       this.meshes.set(i, { mesh, edge });
     });

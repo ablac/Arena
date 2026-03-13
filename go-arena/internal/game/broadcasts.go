@@ -3,6 +3,7 @@ package game
 import (
 	"encoding/json"
 	"log/slog"
+	"sort"
 
 	"arena-server/internal/config"
 )
@@ -24,21 +25,29 @@ func SendToBot(bot *BotState, msg interface{}) {
 		slog.Error("failed to marshal bot message", "bot_id", bot.BotID, "error", err)
 		return
 	}
-	select {
-	case bot.SendChan <- data:
-	default:
-		// Channel full; drop the message.
-	}
+	safeSend(bot.SendChan, data)
 }
 
 // SendTickUpdate sends the per-tick game state update to a bot.
-func SendTickUpdate(bot *BotState, yourState map[string]interface{}, nearbyEntities []map[string]interface{}, tickCount int) {
+// hints is optional — when non-nil it provides directional hints to far-away
+// bots and pickups (only sent when no bots are within view radius).
+func SendTickUpdate(bot *BotState, yourState map[string]interface{}, nearbyEntities []map[string]interface{}, tickCount int, arena *ArenaMap, hints []map[string]interface{}) {
 	msg := map[string]interface{}{
 		"type":            "tick",
 		"tick":            tickCount,
 		"your_state":      yourState,
 		"nearby_entities": nearbyEntities,
 		"view_radius":     config.C.ViewRadius,
+		"safe_zone": map[string]interface{}{
+			"center":        arena.ZoneCenter,
+			"radius":        round1(arena.ZoneRadius),
+			"target_center": arena.ZoneTargetCenter,
+			"target_radius": round1(arena.ZoneTargetRadius),
+		},
+		"arena_size": [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
+	}
+	if hints != nil {
+		msg["hints"] = hints
 	}
 	SendToBot(bot, msg)
 }
@@ -121,6 +130,7 @@ func SendRoundStart(bot *BotState, round RoundState, bots map[string]*BotState, 
 		"bots_in_round":  len(bots),
 		"obstacles":      obsList,
 		"all_positions":  allPositions,
+		"arena_size":     [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
 		"safe_zone": map[string]interface{}{
 			"center":        arena.ZoneCenter,
 			"radius":        arena.ZoneRadius,
@@ -141,6 +151,9 @@ func SendLobbyUpdate(bot *BotState, connectedCount, minBots int, countdown *int,
 			"weapon":       b.Weapon,
 		})
 	}
+	sort.Slice(players, func(i, j int) bool {
+		return players[i]["name"].(string) < players[j]["name"].(string)
+	})
 
 	var countdownVal interface{}
 	if countdown != nil {
@@ -215,14 +228,21 @@ func SendLoadoutConfirmed(bot *BotState, derived DerivedStats) {
 }
 
 // BroadcastToSpectators sends pre-serialised data to every spectator
-// connection. Sends are non-blocking.
+// connection. Sends are non-blocking. Safe against closed channels
+// (spectator may disconnect between snapshot and send).
 func BroadcastToSpectators(spectators []*SpectatorConn, data []byte) {
 	for _, s := range spectators {
-		select {
-		case s.SendChan <- data:
-		default:
-			// Channel full; drop for this spectator.
-		}
+		safeSend(s.SendChan, data)
+	}
+}
+
+// safeSend performs a non-blocking send on ch, recovering gracefully if
+// the channel has been closed (e.g. spectator disconnected).
+func safeSend(ch chan []byte, data []byte) {
+	defer func() { recover() }()
+	select {
+	case ch <- data:
+	default:
 	}
 }
 

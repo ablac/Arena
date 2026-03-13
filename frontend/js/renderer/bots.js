@@ -46,14 +46,25 @@ export class BotRenderer {
         this.entries.set(bot.bot_id, entry);
       }
 
-      // Interpolation positions
-      entry.prevPos = entry.currPos
-        ? [entry.currPos[0], entry.currPos[1]]
-        : [bot.position[0], bot.position[1]];
-      entry.currPos = [bot.position[0], bot.position[1]];
-
-      entry.root.position.x = bot.position[0];
-      entry.root.position.z = bot.position[1];
+      // Entity interpolation: store last two server positions + timing.
+      const now = performance.now();
+      if (!entry._interpReady) {
+        // First appearance — snap immediately.
+        entry.root.position.x = bot.position[0];
+        entry.root.position.z = bot.position[1];
+        entry.prevPos = [bot.position[0], bot.position[1]];
+        entry.currPos = [bot.position[0], bot.position[1]];
+        entry._interpStart = now;
+        entry._interpDur = 100;
+        entry._interpReady = true;
+      } else {
+        entry.prevPos = [entry.currPos[0], entry.currPos[1]];
+        entry.currPos = [bot.position[0], bot.position[1]];
+        // Measure actual interval between server updates for accurate lerp.
+        const elapsed = now - entry._interpStart;
+        if (elapsed > 30) entry._interpDur = elapsed;
+        entry._interpStart = now;
+      }
 
       // Visibility
       entry.root.setEnabled(bot.is_alive);
@@ -66,6 +77,9 @@ export class BotRenderer {
         entry.hpBar.position.x = -HP_BAR_W * (1 - hpRatio) / 2;
         setHpColor(entry.hpMat, hpRatio);
       }
+
+      // Status effect visuals (dodge transparency, stun tint)
+      this._updateStatusEffects(entry, bot);
 
       // Attack detection BEFORE animation so triggerAttack takes effect this frame
       const weaponType = bot.weapon || 'sword';
@@ -113,20 +127,22 @@ export class BotRenderer {
   }
 
   /**
-   * Called every render frame — interpolates positions and ticks animations.
-   * @param {number} alpha - interpolation factor 0..1 between last two server states
+   * Called every render frame — linearly interpolates bot positions between
+   * the last two server snapshots at constant speed, then ticks animations.
    */
-  interpolate(alpha) {
+  interpolate() {
     const now = performance.now();
     const dt = Math.min((now - this._lastFrame) / 1000, 0.1);
     this._lastFrame = now;
 
     for (const [, entry] of this.entries) {
-      if (!entry.prevPos || !entry.currPos) continue;
-      // Position interpolation
+      if (!entry._interpReady) continue;
       if (entry.isAlive) {
-        entry.root.position.x = entry.prevPos[0] + (entry.currPos[0] - entry.prevPos[0]) * alpha;
-        entry.root.position.z = entry.prevPos[1] + (entry.currPos[1] - entry.prevPos[1]) * alpha;
+        // Linear interpolation at constant speed between prevPos → currPos.
+        // t = 0..1 maps to prevPos..currPos; clamp at 1 so bot holds until next update.
+        const t = Math.min((now - entry._interpStart) / entry._interpDur, 1);
+        entry.root.position.x = entry.prevPos[0] + (entry.currPos[0] - entry.prevPos[0]) * t;
+        entry.root.position.z = entry.prevPos[1] + (entry.currPos[1] - entry.prevPos[1]) * t;
       }
       // Tick animations every frame for smooth playback
       updateBotAnim(
@@ -135,6 +151,31 @@ export class BotRenderer {
         entry.isAlive, dt, entry.bodyMat
       );
     }
+  }
+
+  /** @private Apply visual indicators for dodge (invulnerability) and stun. */
+  _updateStatusEffects(entry, bot) {
+    // Dodge / invulnerability — semi-transparent
+    if (bot.is_dodging) {
+      entry.bodyMat.alpha = 0.5;
+      entry.headMat.alpha = 0.5;
+    } else {
+      entry.bodyMat.alpha = 1;
+      entry.headMat.alpha = 1;
+    }
+
+    // Stun — red emissive tint
+    if (bot.is_stunned) {
+      entry.bodyMat.emissiveColor.set(0.8, 0.15, 0.1);
+      entry.headMat.emissiveColor.set(0.8, 0.15, 0.1);
+    } else if (entry._stunActive) {
+      // Restore original emissive from diffuse * emissiveFactor
+      const bc = entry.bodyMat.diffuseColor;
+      entry.bodyMat.emissiveColor.set(bc.r * 0.35, bc.g * 0.35, bc.b * 0.35);
+      const hc = entry.headMat.diffuseColor;
+      entry.headMat.emissiveColor.set(hc.r * 0.4, hc.g * 0.4, hc.b * 0.4);
+    }
+    entry._stunActive = !!bot.is_stunned;
   }
 
   /** @private Flash body white on death — minimal allocations. */

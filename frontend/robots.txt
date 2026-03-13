@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+Allow: /index.html
+Allow: /css/
+Allow: /js/
+
+Disallow: /api/
+Disallow: /ws/
+Disallow: /arena/api/
+Disallow: /arena/ws/
+
+Sitemap: https://arena.angel-serv.com/sitemap.xml
