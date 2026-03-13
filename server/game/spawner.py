@@ -105,6 +105,7 @@ def process_respawns(
             bot.shield_absorb = 0
             bot.current_path.clear()
             bot.path_target = None
+            bot.last_damaged_by = None
             grid.insert(bot_id, pos[0], pos[1])
 
             events.append({

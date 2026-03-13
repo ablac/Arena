@@ -40,17 +40,23 @@ def apply_damage(
 
 
 def _apply_hit_knockback(attacker: BotState, target: BotState) -> None:
-    """Push target away from attacker on hit."""
+    """Push target away from attacker on hit, respecting obstacles and arena bounds."""
+    from server.config import settings
+    from server.game.obstacles import slide_along_obstacle
+
     dx = target.position[0] - attacker.position[0]
     dy = target.position[1] - attacker.position[1]
     dist = (dx * dx + dy * dy) ** 0.5
     if dist == 0:
         return
     nx, ny = dx / dist, dy / dist
-    target.position = (
-        target.position[0] + nx * _HIT_KNOCKBACK,
-        target.position[1] + ny * _HIT_KNOCKBACK,
-    )
+    new_x = target.position[0] + nx * _HIT_KNOCKBACK
+    new_y = target.position[1] + ny * _HIT_KNOCKBACK
+    # Clamp to arena bounds
+    w, h = float(settings.game.arena_width), float(settings.game.arena_height)
+    new_x = max(0.0, min(w, new_x))
+    new_y = max(0.0, min(h, new_y))
+    target.position = (new_x, new_y)
 
 
 def tick_timers(bots: dict[str, BotState], tick_rate: int) -> None:

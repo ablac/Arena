@@ -65,7 +65,7 @@ class ArenaMap:
             y = self.center_y + r * math.sin(angle)
             x = max(0.0, min(float(self.width), x))
             y = max(0.0, min(float(self.height), y))
-            if self.is_in_safe_zone(x, y) and collides_with_obstacle(x, y, self.obstacles) is None:
+            if self.is_in_safe_zone(x, y) and collides_with_obstacle(x, y, self.obstacles, settings.game.bot_radius) is None:
                 return (x, y)
         return (self.center_x, self.center_y)
 

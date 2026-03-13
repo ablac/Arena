@@ -36,7 +36,7 @@ services:
   arena-server:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: go-arena/Dockerfile
     container_name: arena-server
     ports:
       - "127.0.0.1:8700:8000"
@@ -47,9 +47,6 @@ services:
         condition: service_healthy
     env_file:
       - .env
-    volumes:
-      - ./server:/app/server
-      - ./frontend:/app/frontend
     networks:
       arena_net:
 

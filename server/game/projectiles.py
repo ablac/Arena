@@ -7,6 +7,7 @@ import math
 from typing import TYPE_CHECKING
 
 from server.config import settings
+from server.game.damage import apply_damage
 from server.game.obstacles import line_intersects_obstacle
 
 if TYPE_CHECKING:
@@ -91,25 +92,13 @@ def update_projectiles(
             dx = bot.position[0] - new_x
             dy = bot.position[1] - new_y
             if dx * dx + dy * dy <= hit_radius_sq:
-                # Check invulnerability
+                # Invulnerable targets consume the projectile but take no damage
                 if bot.invuln_ticks > 0:
                     to_remove.append(i)
                     hit = True
                     break
-                # Apply shield absorb first
-                dmg = int(round(proj.damage))
-                if bot.shield_absorb > 0:
-                    absorbed = min(bot.shield_absorb, dmg)
-                    bot.shield_absorb -= absorbed
-                    dmg -= absorbed
-                bot.hp -= dmg
-                events.append({
-                    "type": "projectile_hit",
-                    "attacker": proj.owner_id,
-                    "target": bot_id,
-                    "damage": dmg,
-                    "weapon": proj.weapon,
-                })
+                # Use apply_damage for proper stat tracking and kill attribution
+                apply_damage(bots, bot_id, proj.damage, proj.owner_id, proj.weapon, events)
                 to_remove.append(i)
                 hit = True
                 break

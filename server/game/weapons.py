@@ -127,12 +127,14 @@ def apply_knockback(
     # Check wall/obstacle hit for bonus damage
     hit_wall = (clamped_x != new_x or clamped_y != new_y)
     from server.game.obstacles import collides_with_obstacle
-    hit_obs = collides_with_obstacle(new_x, new_y, obstacles) is not None
+    bot_r = settings.game.bot_radius
+    hit_obs = collides_with_obstacle(new_x, new_y, obstacles, bot_r) is not None
 
     if hit_obs:
         from server.game.obstacles import slide_along_obstacle
         clamped_x, clamped_y = slide_along_obstacle(
-            target.position[0], target.position[1], new_x, new_y, obstacles
+            target.position[0], target.position[1], new_x, new_y, obstacles,
+            radius=bot_r,
         )
 
     target.position = (clamped_x, clamped_y)

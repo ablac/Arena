@@ -35,28 +35,36 @@ def generate_obstacles() -> list[Obstacle]:
 
 
 def collides_with_obstacle(
-    x: float, y: float, obstacles: list[Obstacle]
+    x: float, y: float, obstacles: list[Obstacle], radius: float = 0.0,
 ) -> Obstacle | None:
-    """Check if a point is inside any obstacle. Returns the obstacle or None."""
+    """Check if a point (or circle) overlaps any obstacle. Returns the obstacle or None.
+
+    When radius > 0, the check treats the entity as a circle and expands
+    each obstacle's bounding box by that radius in every direction.
+    """
     for obs in obstacles:
-        if obs.x <= x <= obs.x + obs.width and obs.y <= y <= obs.y + obs.height:
+        if (obs.x - radius <= x <= obs.x + obs.width + radius and
+                obs.y - radius <= y <= obs.y + obs.height + radius):
             return obs
     return None
 
 
 def slide_along_obstacle(
     old_x: float, old_y: float, new_x: float, new_y: float,
-    obstacles: list[Obstacle],
+    obstacles: list[Obstacle], radius: float = 0.0,
 ) -> tuple[float, float]:
-    """Attempt to move from old to new position, sliding along obstacles."""
+    """Attempt to move from old to new position, sliding along obstacles.
+
+    When radius > 0, treats the entity as a circle and prevents any overlap.
+    """
     # Try full move
-    if collides_with_obstacle(new_x, new_y, obstacles) is None:
+    if collides_with_obstacle(new_x, new_y, obstacles, radius) is None:
         return (new_x, new_y)
     # Try moving only X
-    if collides_with_obstacle(new_x, old_y, obstacles) is None:
+    if collides_with_obstacle(new_x, old_y, obstacles, radius) is None:
         return (new_x, old_y)
     # Try moving only Y
-    if collides_with_obstacle(old_x, new_y, obstacles) is None:
+    if collides_with_obstacle(old_x, new_y, obstacles, radius) is None:
         return (old_x, new_y)
     # Blocked completely
     return (old_x, old_y)

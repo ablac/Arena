@@ -6,7 +6,7 @@ import math
 from typing import TYPE_CHECKING
 
 from server.config import settings
-from server.game.obstacles import slide_along_obstacle
+from server.game.obstacles import collides_with_obstacle, slide_along_obstacle
 from server.game.pathfinding import NavGrid, find_path
 from server.game.pickups import get_effective_speed
 from server.game.state import ActionType
@@ -46,7 +46,8 @@ def _apply_move(
 ) -> None:
     """Slide against obstacles, clamp, track distance, commit position."""
     new_x, new_y = slide_along_obstacle(
-        bot.position[0], bot.position[1], new_x, new_y, obstacles
+        bot.position[0], bot.position[1], new_x, new_y, obstacles,
+        radius=settings.game.bot_radius,
     )
     new_x, new_y = arena.clamp_position(new_x, new_y)
     old_x, old_y = bot.position
@@ -174,11 +175,16 @@ def separate_bots(
                     continue
                 nx, ny = dx / dist, dy / dist
                 push = (BOT_SEPARATION_DIST - dist) * 0.6
-                bx, by = arena.clamp_position(
-                    bot.position[0] + nx * push, bot.position[1] + ny * push)
-                bot.position = (bx, by)
-                grid.update(bot_id, bx, by)
-                ox, oy = arena.clamp_position(
-                    other.position[0] - nx * push, other.position[1] - ny * push)
-                other.position = (ox, oy)
-                grid.update(oid, ox, oy)
+                bot_r = settings.game.bot_radius
+                bx = bot.position[0] + nx * push
+                by = bot.position[1] + ny * push
+                if collides_with_obstacle(bx, by, arena.obstacles, bot_r) is None:
+                    bx, by = arena.clamp_position(bx, by)
+                    bot.position = (bx, by)
+                    grid.update(bot_id, bx, by)
+                ox = other.position[0] - nx * push
+                oy = other.position[1] - ny * push
+                if collides_with_obstacle(ox, oy, arena.obstacles, bot_r) is None:
+                    ox, oy = arena.clamp_position(ox, oy)
+                    other.position = (ox, oy)
+                    grid.update(oid, ox, oy)
