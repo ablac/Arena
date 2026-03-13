@@ -32,9 +32,6 @@ type GameEngine struct {
 	// Anti-teaming
 	AntiTeam *AntiTeamTracker
 
-	// Respawns
-	RespawnTimers []RespawnTimer
-
 	// Spectators
 	Spectators   []*SpectatorConn
 	spectatorsMu sync.RWMutex
@@ -46,8 +43,6 @@ type GameEngine struct {
 	// Events (buffered, drained after each tick)
 	DeathEvents   []DeathEvent
 	KillEvents    []KillEvent
-	RespawnEvents []RespawnEvent
-
 	// Persistence tracking
 	lastPersistTick int
 }
@@ -308,10 +303,8 @@ func (e *GameEngine) startRound() {
 	e.Pickups = nil
 	e.Projectiles = nil
 	e.StaffImpacts = nil
-	e.RespawnTimers = nil
 	e.DeathEvents = nil
 	e.KillEvents = nil
-	e.RespawnEvents = nil
 	e.Grid.Clear()
 	e.KillFeed.Clear()
 	e.AntiTeam.Clear()
@@ -793,15 +786,10 @@ func (e *GameEngine) sendEventMessages() {
 			SendKillMessage(killer, ev)
 		}
 	}
-	for _, ev := range e.RespawnEvents {
-		if bot, ok := e.Bots[ev.BotID]; ok {
-			SendRespawnMessage(bot, ev)
-		}
-	}
+	// No respawns - dead bots stay dead until next round.
 
 	e.DeathEvents = e.DeathEvents[:0]
 	e.KillEvents = e.KillEvents[:0]
-	e.RespawnEvents = e.RespawnEvents[:0]
 }
 
 // buildHints generates directional hints for a bot that has no nearby bots.
