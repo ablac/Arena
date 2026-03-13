@@ -96,6 +96,11 @@ export class ArenaEngine {
       this.effectRenderer.spawnDodgeEffect(x, z, color);
     };
 
+    // Wire up shove → shockwave blast effect
+    this.botRenderer.onShove = (ax, az, tx, tz, color) => {
+      this.effectRenderer.spawnShoveEffect(ax, az, tx, tz, color);
+    };
+
     this._addLights();
 
     // Subtle glow on emissive surfaces (low-res for performance)

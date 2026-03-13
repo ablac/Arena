@@ -157,6 +157,7 @@ def separate_bots(
     bots: dict[str, BotState], arena: ArenaMap, grid: SpatialGrid,
 ) -> None:
     """Push apart bots closer than BOT_SEPARATION_DIST (2 iterations)."""
+    import random as _rng
     for _ in range(2):
         for bot_id, bot in bots.items():
             if not bot.is_alive:
@@ -171,20 +172,45 @@ def separate_bots(
                 dx = bot.position[0] - other.position[0]
                 dy = bot.position[1] - other.position[1]
                 dist = math.sqrt(dx * dx + dy * dy)
-                if dist >= BOT_SEPARATION_DIST or dist == 0:
+                if dist >= BOT_SEPARATION_DIST:
                     continue
-                nx, ny = dx / dist, dy / dist
+                if dist == 0:
+                    # Exactly overlapping — pick a random direction
+                    angle = _rng.random() * 2 * math.pi
+                    nx, ny = math.cos(angle), math.sin(angle)
+                    dist = 0.01  # avoid division by zero
+                else:
+                    nx, ny = dx / dist, dy / dist
                 push = (BOT_SEPARATION_DIST - dist) * 0.6
                 bot_r = settings.game.bot_radius
+                bot_moved = False
                 bx = bot.position[0] + nx * push
                 by = bot.position[1] + ny * push
                 if collides_with_obstacle(bx, by, arena.obstacles, bot_r) is None:
                     bx, by = arena.clamp_position(bx, by)
                     bot.position = (bx, by)
                     grid.update(bot_id, bx, by)
+                    bot_moved = True
+                other_moved = False
                 ox = other.position[0] - nx * push
                 oy = other.position[1] - ny * push
                 if collides_with_obstacle(ox, oy, arena.obstacles, bot_r) is None:
                     ox, oy = arena.clamp_position(ox, oy)
                     other.position = (ox, oy)
                     grid.update(oid, ox, oy)
+                    other_moved = True
+                # If both pushes failed, try perpendicular nudge to unstick
+                if not bot_moved and not other_moved:
+                    perp_nx, perp_ny = -ny, nx
+                    bx2 = bot.position[0] + perp_nx * push
+                    by2 = bot.position[1] + perp_ny * push
+                    if collides_with_obstacle(bx2, by2, arena.obstacles, bot_r) is None:
+                        bx2, by2 = arena.clamp_position(bx2, by2)
+                        bot.position = (bx2, by2)
+                        grid.update(bot_id, bx2, by2)
+                    ox2 = other.position[0] - perp_nx * push
+                    oy2 = other.position[1] - perp_ny * push
+                    if collides_with_obstacle(ox2, oy2, arena.obstacles, bot_r) is None:
+                        ox2, oy2 = arena.clamp_position(ox2, oy2)
+                        other.position = (ox2, oy2)
+                        grid.update(oid, ox2, oy2)

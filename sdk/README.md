@@ -96,6 +96,7 @@ node my_bot.js YOUR_API_KEY
 | `move_toward(my_pos, target_pos)` | `{action, direction}` | Move toward a position. |
 | `move_away(my_pos, threat_pos)` | `{action, direction}` | Move away from a position. |
 | `attack(target_id)` | `{action, target}` | Attack a specific enemy by ID. |
+| `shove(target_id)` | `{action, target}` | Shove an enemy — 15-unit knockback + 2-tick stun, no damage. 1.5s cooldown. |
 | `dodge(direction)` | `{action, direction}` | Dodge roll in a direction (has cooldown). |
 | `use_item(item_id)` | `{action, item_id}` | Use a pickup item. |
 | `idle()` | `{action}` | Do nothing this tick. |
@@ -122,6 +123,7 @@ Same API with JS naming conventions:
 | `on_round_end(info)` | `onRoundEnd(info)` |
 | `move_toward(...)` | `moveToward(...)` |
 | `move_away(...)` | `moveAway(...)` |
+| `shove(id)` | `shove(id)` |
 | `closest_enemy(...)` | `closestEnemy(...)` |
 | `lowest_hp_enemy(...)` | `lowestHpEnemy(...)` |
 | `nearby_pickups(...)` | `nearbyPickups(...)` |
@@ -180,6 +182,7 @@ Each entity in `nearby_entities` has:
 - Pickups can swing fights -- grab health when low, damage boosts before engaging.
 - The safe zone shrinks every round -- do not get caught outside it.
 - Dodge has a cooldown -- save it for escaping lethal situations.
+- Shove is a free utility action (separate cooldown from your weapon) -- use it to push enemies into the zone edge or off pickups.
 - Ranged weapons (bow, staff) reward kiting: stay at max range and retreat when enemies close in.
 - Stats must total exactly 20. Min 1, max 10 per stat.
 

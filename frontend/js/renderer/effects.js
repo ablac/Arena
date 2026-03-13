@@ -107,6 +107,46 @@ export class EffectRenderer {
     ps.start();
   }
 
+  /**
+   * Spawn a shove shockwave effect at the impact point (target position).
+   * Creates a directional blast of particles from attacker toward target.
+   * @param {number} ax - attacker x
+   * @param {number} az - attacker z
+   * @param {number} tx - target x
+   * @param {number} tz - target z
+   * @param {string} hexColor - attacker avatar color
+   */
+  spawnShoveEffect(ax, az, tx, tz, hexColor) {
+    const B = window.BABYLON;
+    const c = parseColor(hexColor);
+    // Direction from attacker to target
+    const dx = tx - ax;
+    const dz = tz - az;
+    const len = Math.sqrt(dx * dx + dz * dz) || 1;
+    const nx = dx / len;
+    const nz = dz / len;
+
+    const ps = new B.ParticleSystem(`shove-${++_psCounter}`, 15, this.scene);
+    ps.emitter = new B.Vector3(tx, 10, tz);
+    // Blast outward in the push direction
+    ps.createPointEmitter(
+      new B.Vector3(nx * 0.5 - 0.3, 0.3, nz * 0.5 - 0.3),
+      new B.Vector3(nx * 2 + 0.3, 0.8, nz * 2 + 0.3)
+    );
+    ps.color1 = new B.Color4(1, 1, 1, 0.9);
+    ps.color2 = new B.Color4(c.r, c.g, c.b, 0.8);
+    ps.colorDead = new B.Color4(c.r * 0.3, c.g * 0.3, c.b * 0.3, 0);
+    ps.minSize = 2; ps.maxSize = 5;
+    ps.minLifeTime = 0.08; ps.maxLifeTime = 0.2;
+    ps.emitRate = 200;
+    ps.minEmitPower = 30; ps.maxEmitPower = 60;
+    ps.gravity = new B.Vector3(0, -20, 0);
+    ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
+    ps.targetStopDuration = 0.06;
+    ps.disposeOnStop = true;
+    ps.start();
+  }
+
   spawnDamageNumber(x, z, dmg) {
     if (this._dmgCount >= MAX_DMG_NUMBERS) return;
     this._dmgCount++;

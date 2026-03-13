@@ -118,11 +118,21 @@ def _aggressive(bot: BotState, nearby: list[BotState]) -> Action:
     )
 
 
+def _can_shove(bot: BotState, target: BotState) -> bool:
+    """Check if bot can shove target (in shove range and off shove cooldown)."""
+    if bot.shove_cooldown > 0:
+        return False
+    return _distance(bot.position, target.position) <= settings.combat.shove_range + settings.game.bot_radius * 2
+
+
 def _defensive(bot: BotState, nearby: list[BotState]) -> Action:
-    """Move away from nearest enemy, attack only if in weapon range."""
+    """Move away from nearest enemy, shove if too close, attack if in weapon range."""
     target = _find_nearest(bot, nearby)
     if target is None:
         return _roam_toward_center(bot)
+    # Shove enemies that are dangerously close
+    if _can_shove(bot, target) and _distance(bot.position, target.position) < settings.combat.shove_range + settings.game.bot_radius * 2:
+        return Action(action_type=ActionType.SHOVE, target_id=target.bot_id)
     if _can_attack(bot, target):
         return Action(action_type=ActionType.ATTACK, target_id=target.bot_id)
     return Action(

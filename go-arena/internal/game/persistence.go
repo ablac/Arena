@@ -44,13 +44,21 @@ func persistOne(ctx context.Context, bot *BotState) {
 		}
 	}
 
-	// Accumulate round totals onto lifetime stats.
-	existing.Kills += bot.RoundKills
-	existing.Deaths += bot.RoundDeaths
-	existing.DamageDealt += int64(bot.RoundDamageDealt)
-	existing.DamageTaken += int64(bot.RoundDamageTaken)
-	existing.DistanceTraveled += bot.RoundDistance
-	existing.PickupsCollected += bot.RoundPickups
+	// Accumulate only the delta since last persist to avoid double-counting.
+	existing.Kills += bot.RoundKills - bot.PersistedKills
+	existing.Deaths += bot.RoundDeaths - bot.PersistedDeaths
+	existing.DamageDealt += int64(bot.RoundDamageDealt) - int64(bot.PersistedDamageDealt)
+	existing.DamageTaken += int64(bot.RoundDamageTaken) - int64(bot.PersistedDamageTaken)
+	existing.DistanceTraveled += bot.RoundDistance - bot.PersistedDistance
+	existing.PickupsCollected += bot.RoundPickups - bot.PersistedPickups
+
+	// Update snapshot so next persist only adds new deltas.
+	bot.PersistedKills = bot.RoundKills
+	bot.PersistedDeaths = bot.RoundDeaths
+	bot.PersistedDamageDealt = bot.RoundDamageDealt
+	bot.PersistedDamageTaken = bot.RoundDamageTaken
+	bot.PersistedDistance = bot.RoundDistance
+	bot.PersistedPickups = bot.RoundPickups
 
 	// Streak tracking.
 	existing.CurrentStreak = bot.KillStreak
