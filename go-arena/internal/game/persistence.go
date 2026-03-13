@@ -10,12 +10,47 @@ import (
 	"github.com/google/uuid"
 )
 
-// PersistBotStats saves accumulated round stats for every bot to the
-// database. Errors are logged but do not stop the process so that a single
-// bot failure does not prevent persistence for the rest.
-func PersistBotStats(ctx context.Context, bots map[string]*BotState) {
-	for _, bot := range bots {
-		persistOne(ctx, bot)
+// PersistBotStatsFromSnapshot saves accumulated round stats using pre-copied
+// stat snapshots. This avoids data races because the snapshot values are
+// copied under the engine lock before the goroutine starts.
+func PersistBotStatsFromSnapshot(ctx context.Context, snaps []BotStatsSnapshot) {
+	for _, snap := range snaps {
+		persistOneSnapshot(ctx, snap)
+	}
+}
+
+// persistOneSnapshot performs the load-merge-upsert for one bot using a
+// value-copy snapshot instead of a live BotState pointer.
+func persistOneSnapshot(ctx context.Context, snap BotStatsSnapshot) {
+	existing, err := db.GetBotStats(ctx, snap.BotID)
+	if err != nil {
+		slog.Error("persist: failed to get bot stats", "bot_id", snap.BotID, "error", err)
+		return
+	}
+
+	now := time.Now()
+
+	if existing == nil {
+		existing = &db.BotStats{
+			BotID:     snap.BotID,
+			Elo:       snap.Elo,
+			UpdatedAt: now,
+		}
+	}
+
+	// Accumulate only the delta since last persist to avoid double-counting.
+	existing.Kills += snap.RoundKills - snap.PersistedKills
+	existing.Deaths += snap.RoundDeaths - snap.PersistedDeaths
+	existing.DamageDealt += int64(snap.RoundDamageDealt) - int64(snap.PersistedDamageDealt)
+	existing.DamageTaken += int64(snap.RoundDamageTaken) - int64(snap.PersistedDamageTaken)
+	existing.DistanceTraveled += snap.RoundDistance - snap.PersistedDistance
+	existing.PickupsCollected += snap.RoundPickups - snap.PersistedPickups
+
+	existing.Elo = snap.Elo
+	existing.UpdatedAt = now
+
+	if err := db.UpsertBotStats(ctx, existing); err != nil {
+		slog.Error("persist: failed to upsert bot stats", "bot_id", snap.BotID, "error", err)
 	}
 }
 

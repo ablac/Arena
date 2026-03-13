@@ -270,7 +270,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	persistInterval := int(c.PersistIntervalSecs * float64(c.TickRate))
 	if persistInterval > 0 && e.TickCount-e.lastPersistTick >= persistInterval {
 		e.lastPersistTick = e.TickCount
-		go PersistBotStats(context.Background(), e.snapshotBots())
+		go PersistBotStatsFromSnapshot(context.Background(), e.snapshotBotStats())
 	}
 
 	// Check round end.
@@ -360,7 +360,7 @@ func (e *GameEngine) endRound() {
 	e.Round.IntermissionTicks = int(config.C.IntermissionTime * float64(config.C.TickRate))
 
 	// Persist final stats for the round.
-	go PersistBotStats(context.Background(), e.snapshotBots())
+	go PersistBotStatsFromSnapshot(context.Background(), e.snapshotBotStats())
 
 	slog.Info("round ended",
 		"round", e.Round.RoundNumber,
@@ -374,15 +374,21 @@ func (e *GameEngine) endRound() {
 
 // AddBot adds a bot to the engine. If the game is in lobby phase the bot is
 // added directly; otherwise it goes into the waiting list for the next round.
-func (e *GameEngine) AddBot(bot *BotState) {
+// Returns false if the server is at capacity (MaxBots).
+func (e *GameEngine) AddBot(bot *BotState) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	if len(e.Bots)+len(e.WaitingBots) >= config.C.MaxBots {
+		return false
+	}
 
 	if e.Round.Phase == PhaseLobby {
 		e.Bots[bot.BotID] = bot
 	} else {
 		e.WaitingBots[bot.BotID] = bot
 	}
+	return true
 }
 
 // RemoveBot removes a bot from both active and waiting maps and persists its
@@ -490,11 +496,12 @@ func (e *GameEngine) GetArenaSnapshot() ArenaSnapshot {
 	return snap
 }
 
-// ConnectedBotCount returns the number of connected bots under the read lock.
+// ConnectedBotCount returns the number of connected bots (active + waiting)
+// under the read lock.
 func (e *GameEngine) ConnectedBotCount() int {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return len(e.Bots)
+	return len(e.Bots) + len(e.WaitingBots)
 }
 
 // --------------------------------------------------------------------------
@@ -631,15 +638,24 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 }
 
 // checkAFK kicks bots that haven't sent an action within the AFK timeout.
+// Removes them directly from e.Bots so they stop receiving tick messages
+// immediately rather than waiting for the reader goroutine to notice the
+// closed connection.
 func (e *GameEngine) checkAFK() {
 	c := &config.C
+	var toRemove []string
 	for _, bot := range e.Bots {
 		if bot.LastActionTick > 0 && e.TickCount-bot.LastActionTick > c.AFKTimeoutTicks {
 			SendKick(bot, "AFK timeout")
 			if bot.Conn != nil {
 				bot.Conn.Close()
 			}
+			toRemove = append(toRemove, bot.BotID)
 		}
+	}
+	for _, id := range toRemove {
+		delete(e.Bots, id)
+		e.Grid.Remove(id)
 	}
 }
 
@@ -773,8 +789,8 @@ func (e *GameEngine) sendSpectatorUpdate() {
 	BroadcastToSpectators(specs, data)
 }
 
-// sendEventMessages delivers buffered death, kill, and respawn events to the
-// relevant bots, then drains the event buffers.
+// sendEventMessages delivers buffered death and kill events to the relevant
+// bots, then drains the event buffers.
 func (e *GameEngine) sendEventMessages() {
 	for _, ev := range e.DeathEvents {
 		if victim, ok := e.Bots[ev.VictimID]; ok {
@@ -853,12 +869,48 @@ func buildHints(bot *BotState, allBots map[string]*BotState, pickups []Pickup) [
 	return hints
 }
 
-// snapshotBots returns a shallow copy of the Bots map for safe async
-// persistence.
-func (e *GameEngine) snapshotBots() map[string]*BotState {
-	snap := make(map[string]*BotState, len(e.Bots))
-	for id, bot := range e.Bots {
-		snap[id] = bot
+// BotStatsSnapshot holds a copy of the stats fields needed for persistence,
+// avoiding concurrent reads on the live BotState pointers.
+type BotStatsSnapshot struct {
+	BotID            string
+	APIKeyID         string
+	Elo              int
+	RoundKills       int
+	RoundDeaths      int
+	RoundDamageDealt float64
+	RoundDamageTaken float64
+	RoundDistance     float64
+	RoundPickups     int
+	PersistedKills       int
+	PersistedDeaths      int
+	PersistedDamageDealt float64
+	PersistedDamageTaken float64
+	PersistedDistance     float64
+	PersistedPickups     int
+}
+
+// snapshotBotStats returns value copies of the stats fields needed for
+// persistence, safe to read from a separate goroutine without locks.
+func (e *GameEngine) snapshotBotStats() []BotStatsSnapshot {
+	snaps := make([]BotStatsSnapshot, 0, len(e.Bots))
+	for _, bot := range e.Bots {
+		snaps = append(snaps, BotStatsSnapshot{
+			BotID:            bot.BotID,
+			APIKeyID:         bot.APIKeyID,
+			Elo:              bot.Elo,
+			RoundKills:       bot.RoundKills,
+			RoundDeaths:      bot.RoundDeaths,
+			RoundDamageDealt: bot.RoundDamageDealt,
+			RoundDamageTaken: bot.RoundDamageTaken,
+			RoundDistance:     bot.RoundDistance,
+			RoundPickups:     bot.RoundPickups,
+			PersistedKills:       bot.PersistedKills,
+			PersistedDeaths:      bot.PersistedDeaths,
+			PersistedDamageDealt: bot.PersistedDamageDealt,
+			PersistedDamageTaken: bot.PersistedDamageTaken,
+			PersistedDistance:     bot.PersistedDistance,
+			PersistedPickups:     bot.PersistedPickups,
+		})
 	}
-	return snap
+	return snaps
 }
