@@ -100,7 +100,7 @@ type rateLimitResponse struct {
 func RateLimitMiddleware(rpm int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := extractClientIP(r)
+			ip := ExtractClientIP(r)
 			key := "api:" + r.URL.Path + ":" + ip
 
 			allowed, remaining, resetAt, err := CheckRateLimit(r.Context(), key, rpm, 60)
@@ -128,10 +128,14 @@ func RateLimitMiddleware(rpm int) func(http.Handler) http.Handler {
 	}
 }
 
-// extractClientIP returns the client's IP address, preferring X-Forwarded-For
+// ExtractClientIP returns the client's IP address, preferring X-Forwarded-For
 // if set (takes the first entry). Falls back to the RemoteAddr from the
 // request.
-func extractClientIP(r *http.Request) string {
+//
+// NOTE: This trusts the first X-Forwarded-For entry because Caddy (our reverse
+// proxy) always overwrites this header with the real client IP. If the proxy
+// configuration changes, this function must be updated to validate the header.
+func ExtractClientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		// X-Forwarded-For may contain multiple comma-separated IPs;
 		// the first one is the original client.

@@ -2,9 +2,7 @@ package api
 
 import (
 	"log/slog"
-	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"arena-server/internal/config"
@@ -19,7 +17,7 @@ import (
 // bot record, and returns the plaintext key to the caller.
 func GenerateKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	ip := extractClientIP(r)
+	ip := security.ExtractClientIP(r)
 
 	// Rate-limit key registration per IP.
 	if db.Pool != nil {
@@ -112,18 +110,3 @@ func RevokeKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// extractClientIP returns the client's IP, preferring X-Forwarded-For.
-func extractClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.SplitN(xff, ",", 2)
-		ip := strings.TrimSpace(parts[0])
-		if ip != "" {
-			return ip
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}

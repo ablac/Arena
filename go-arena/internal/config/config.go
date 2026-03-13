@@ -37,7 +37,6 @@ type Config struct {
 	StatBudget        int     `envconfig:"ARENA_STAT_BUDGET" default:"20"`
 	StatMin           int     `envconfig:"ARENA_STAT_MIN" default:"1"`
 	StatMax           int     `envconfig:"ARENA_STAT_MAX" default:"10"`
-	RespawnTime       float64 `envconfig:"ARENA_RESPAWN_TIME" default:"5"`
 	RoundDuration     float64 `envconfig:"ARENA_ROUND_DURATION" default:"240"`
 	IntermissionTime  float64 `envconfig:"ARENA_INTERMISSION_TIME" default:"10"`
 	LobbyCountdown    float64 `envconfig:"ARENA_LOBBY_COUNTDOWN" default:"10"`
