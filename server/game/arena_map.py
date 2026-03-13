@@ -35,25 +35,25 @@ class ArenaMap:
         return (dx * dx + dy * dy) <= self.safe_zone_radius ** 2
 
     def update_zone(self, tick_count: int, tick_rate: int) -> None:
-        """Shrink the safe zone and drift center toward target.
+        """Shrink the safe zone and drift center toward target every tick.
 
-        Called every tick. Shrinks by shrink_percent every shrink_interval_secs.
-        Center moves toward the random target proportionally.
+        Waits shrink_delay_secs before starting, then smoothly interpolates
+        from initial_radius to min_radius over the remaining round time.
         """
-        ticks_per_interval = tick_rate * self.shrink_interval_secs
-        if ticks_per_interval <= 0:
+        from server.config import settings as _s
+        delay_ticks = tick_rate * _s.arena_zone.shrink_delay_secs
+        shrink_ticks = tick_rate * _s.combat.round_duration - delay_ticks
+        if shrink_ticks <= 0:
             return
-        intervals_now = tick_count // ticks_per_interval
-        intervals_last = self._last_shrink_tick // ticks_per_interval
-
-        if intervals_now > intervals_last:
-            self.safe_zone_radius *= 1.0 - self.shrink_percent
-            self.safe_zone_radius = max(self.min_radius, self.safe_zone_radius)
-            # Drift center toward random target (faster than radius shrinks)
-            drift = self.shrink_percent * 1.5
-            self.center_x += (self.target_center_x - self.center_x) * drift
-            self.center_y += (self.target_center_y - self.center_y) * drift
-            self._last_shrink_tick = tick_count
+        elapsed = tick_count - self._last_shrink_tick  # ticks since round start
+        shrink_elapsed = elapsed - delay_ticks
+        if shrink_elapsed <= 0:
+            return  # still in the delay period — zone stays full size
+        t = min(shrink_elapsed / shrink_ticks, 1.0)  # 0..1 progress through shrink phase
+        self.safe_zone_radius = self.initial_radius + (self.min_radius - self.initial_radius) * t
+        # Drift center toward random target at the same pace
+        self.center_x = float(self.width) / 2 + (self.target_center_x - float(self.width) / 2) * t
+        self.center_y = float(self.height) / 2 + (self.target_center_y - float(self.height) / 2) * t
 
     def get_random_spawn_point(self) -> tuple[float, float]:
         """Generate a random spawn position inside the current safe zone, avoiding obstacles."""

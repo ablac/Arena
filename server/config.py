@@ -55,7 +55,7 @@ class CombatSettings(BaseSettings):
     stat_min: int = Field(default=1, description="Minimum stat value")
     stat_max: int = Field(default=10, description="Maximum stat value")
     respawn_time: int = Field(default=5, description="Respawn delay in seconds")
-    round_duration: int = Field(default=180, description="Round duration in seconds")
+    round_duration: int = Field(default=240, description="Round duration in seconds")
     intermission_time: int = Field(default=10, description="Intermission between rounds")
     lobby_countdown: int = Field(default=10, description="Lobby countdown before round starts")
     min_bots_to_start: int = Field(default=2, description="Minimum bots needed to start a round")
@@ -115,6 +115,7 @@ class ArenaZoneSettings(BaseSettings):
     shrink_interval_secs: int = Field(default=20, description="Seconds between shrinks")
     damage_per_tick: int = Field(default=3, description="HP damage per tick outside zone")
     min_radius: float = Field(default=75.0, description="Minimum safe zone radius")
+    shrink_delay_secs: int = Field(default=60, description="Seconds before zone starts shrinking")
     obstacle_count_min: int = Field(default=20, description="Min obstacles per round")
     obstacle_count_max: int = Field(default=30, description="Max obstacles per round")
 

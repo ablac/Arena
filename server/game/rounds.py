@@ -23,9 +23,15 @@ def should_end_round(
     elapsed_secs = (tick_count - round_state.start_tick) / tick_rate
     if elapsed_secs >= settings.combat.round_duration:
         return True
-    # Only 1 or 0 bots alive (and at least 2 were playing)
+    # All bots disconnected — end immediately
+    if not bots:
+        return True
+    # Only 1 or 0 bots alive
     alive = sum(1 for b in bots.values() if b.is_alive)
     if alive <= 1 and len(bots) >= 2:
+        return True
+    # Only 1 bot connected (others disconnected mid-round)
+    if len(bots) <= 1:
         return True
     return False
 
