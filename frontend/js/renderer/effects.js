@@ -13,12 +13,12 @@ const MAX_DMG_NUMBERS = 12;
 
 /** Per-weapon hit effect configs — distinct particle colors, counts, and spread. */
 const HIT_EFFECTS = {
-  sword:   { count: 15, c1: [1, 0.8, 0.3],   dead: [0.3, 0.1, 0],     minSz: 1,   maxSz: 2,   minLife: 0.08, maxLife: 0.15, rate: 150, minPow: 15, maxPow: 35, d1: [-1, 1, -1],     d2: [1, 1, 1],       stop: 0.08 },
-  bow:     { count: 10, c1: [0.9, 0.95, 1],   dead: [0.4, 0.4, 0.5],   minSz: 0.5, maxSz: 1.5, minLife: 0.10, maxLife: 0.20, rate: 100, minPow: 10, maxPow: 25, d1: [-0.5, 1, -0.5], d2: [0.5, 1, 0.5],   stop: 0.06 },
-  daggers: { count: 20, c1: [1, 0.6, 0.15],   dead: [0.4, 0.15, 0],    minSz: 0.5, maxSz: 1,   minLife: 0.05, maxLife: 0.10, rate: 250, minPow: 20, maxPow: 40, d1: [-1.5, 0.5, -1.5], d2: [1.5, 1, 1.5], stop: 0.05 },
-  spear:   { count: 12, c1: [1, 0.4, 0.2],    dead: [0.4, 0.1, 0],     minSz: 1,   maxSz: 2,   minLife: 0.06, maxLife: 0.12, rate: 120, minPow: 12, maxPow: 30, d1: [-0.3, 1, -0.3], d2: [0.3, 1, 0.3],   stop: 0.06 },
-  staff:   { count: 25, c1: [0.6, 0.3, 1],    dead: [0.15, 0.05, 0.3], minSz: 2,   maxSz: 4,   minLife: 0.15, maxLife: 0.30, rate: 200, minPow: 20, maxPow: 45, d1: [-1.5, 1, -1.5], d2: [1.5, 1.5, 1.5], stop: 0.10 },
-  shield:  { count: 15, c1: [0.9, 0.9, 1],    dead: [0.3, 0.3, 0.4],   minSz: 1.5, maxSz: 3,   minLife: 0.12, maxLife: 0.25, rate: 150, minPow: 8,  maxPow: 20, d1: [-2, 0.3, -2],   d2: [2, 0.5, 2],     stop: 0.08 },
+  sword:   { count: 8,  c1: [1, 0.8, 0.3],   dead: [0.3, 0.1, 0],     minSz: 1,   maxSz: 2,   minLife: 0.06, maxLife: 0.12, rate: 120, minPow: 15, maxPow: 35, d1: [-1, 1, -1],     d2: [1, 1, 1],       stop: 0.06 },
+  bow:     { count: 6,  c1: [0.9, 0.95, 1],   dead: [0.4, 0.4, 0.5],   minSz: 0.5, maxSz: 1.5, minLife: 0.08, maxLife: 0.15, rate: 80,  minPow: 10, maxPow: 25, d1: [-0.5, 1, -0.5], d2: [0.5, 1, 0.5],   stop: 0.05 },
+  daggers: { count: 10, c1: [1, 0.6, 0.15],   dead: [0.4, 0.15, 0],    minSz: 0.5, maxSz: 1,   minLife: 0.04, maxLife: 0.08, rate: 150, minPow: 20, maxPow: 40, d1: [-1.5, 0.5, -1.5], d2: [1.5, 1, 1.5], stop: 0.04 },
+  spear:   { count: 8,  c1: [1, 0.4, 0.2],    dead: [0.4, 0.1, 0],     minSz: 1,   maxSz: 2,   minLife: 0.05, maxLife: 0.10, rate: 100, minPow: 12, maxPow: 30, d1: [-0.3, 1, -0.3], d2: [0.3, 1, 0.3],   stop: 0.05 },
+  staff:   { count: 12, c1: [0.6, 0.3, 1],    dead: [0.15, 0.05, 0.3], minSz: 2,   maxSz: 4,   minLife: 0.10, maxLife: 0.20, rate: 120, minPow: 20, maxPow: 45, d1: [-1.5, 1, -1.5], d2: [1.5, 1.5, 1.5], stop: 0.08 },
+  shield:  { count: 8,  c1: [0.9, 0.9, 1],    dead: [0.3, 0.3, 0.4],   minSz: 1.5, maxSz: 3,   minLife: 0.08, maxLife: 0.15, rate: 100, minPow: 8,  maxPow: 20, d1: [-2, 0.3, -2],   d2: [2, 0.5, 2],     stop: 0.06 },
 };
 
 let _psCounter = 0;
@@ -90,7 +90,7 @@ export class EffectRenderer {
   spawnDodgeEffect(x, z, hexColor) {
     const B = window.BABYLON;
     const c = parseColor(hexColor);
-    const ps = new B.ParticleSystem(`dodge-${++_psCounter}`, 20, this.scene);
+    const ps = new B.ParticleSystem(`dodge-${++_psCounter}`, 10, this.scene);
     ps.emitter = new B.Vector3(x, 10, z);
     ps.createPointEmitter(new B.Vector3(-1, 0.5, -1), new B.Vector3(1, 0.5, 1));
     ps.color1 = new B.Color4(c.r, c.g, c.b, 0.8);
@@ -103,6 +103,46 @@ export class EffectRenderer {
     ps.gravity = new B.Vector3(0, -10, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.05;
+    ps.disposeOnStop = true;
+    ps.start();
+  }
+
+  /**
+   * Spawn a shove shockwave effect at the impact point (target position).
+   * Creates a directional blast of particles from attacker toward target.
+   * @param {number} ax - attacker x
+   * @param {number} az - attacker z
+   * @param {number} tx - target x
+   * @param {number} tz - target z
+   * @param {string} hexColor - attacker avatar color
+   */
+  spawnShoveEffect(ax, az, tx, tz, hexColor) {
+    const B = window.BABYLON;
+    const c = parseColor(hexColor);
+    // Direction from attacker to target
+    const dx = tx - ax;
+    const dz = tz - az;
+    const len = Math.sqrt(dx * dx + dz * dz) || 1;
+    const nx = dx / len;
+    const nz = dz / len;
+
+    const ps = new B.ParticleSystem(`shove-${++_psCounter}`, 15, this.scene);
+    ps.emitter = new B.Vector3(tx, 10, tz);
+    // Blast outward in the push direction
+    ps.createPointEmitter(
+      new B.Vector3(nx * 0.5 - 0.3, 0.3, nz * 0.5 - 0.3),
+      new B.Vector3(nx * 2 + 0.3, 0.8, nz * 2 + 0.3)
+    );
+    ps.color1 = new B.Color4(1, 1, 1, 0.9);
+    ps.color2 = new B.Color4(c.r, c.g, c.b, 0.8);
+    ps.colorDead = new B.Color4(c.r * 0.3, c.g * 0.3, c.b * 0.3, 0);
+    ps.minSize = 2; ps.maxSize = 5;
+    ps.minLifeTime = 0.08; ps.maxLifeTime = 0.2;
+    ps.emitRate = 200;
+    ps.minEmitPower = 30; ps.maxEmitPower = 60;
+    ps.gravity = new B.Vector3(0, -20, 0);
+    ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
+    ps.targetStopDuration = 0.06;
     ps.disposeOnStop = true;
     ps.start();
   }
@@ -148,7 +188,7 @@ export class EffectRenderer {
   _deathBurst(x, z, hexColor, now) {
     const B = window.BABYLON;
     const c = parseColor(hexColor);
-    const ps = new B.ParticleSystem(`death-${++_psCounter}`, 40, this.scene);
+    const ps = new B.ParticleSystem(`death-${++_psCounter}`, 20, this.scene);
     ps.emitter = new B.Vector3(x, 10, z);
     ps.createPointEmitter(new B.Vector3(-1, 1, -1), new B.Vector3(1, 1, 1));
     ps.color1 = new B.Color4(c.r, c.g, c.b, 1);

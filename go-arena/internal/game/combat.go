@@ -314,3 +314,87 @@ func ProcessStaffImpacts(staffImpacts *[]StaffImpact, bots map[string]*BotState,
 
 	*staffImpacts = active
 }
+
+// ProcessShoves handles all SHOVE actions for the current tick.
+// Shoves deal no damage but knock the target back far and apply a short stun.
+func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle) {
+	c := &config.C
+	shoveRange := c.ShoveRange + c.BotRadius*2
+	shoveKB := c.ShoveKnockback
+
+	for _, bot := range bots {
+		if !bot.IsAlive || bot.PendingAction == nil {
+			continue
+		}
+		if bot.PendingAction.Type != ActionShove {
+			continue
+		}
+		if bot.StunTicks > 0 {
+			bot.LastActionResult = &ActionResult{
+				Action:  "shove",
+				Success: false,
+				Message: "stunned",
+			}
+			continue
+		}
+
+		targetID := bot.PendingAction.TargetID
+		target, ok := bots[targetID]
+		if !ok || !target.IsAlive {
+			bot.LastActionResult = &ActionResult{
+				Action:  "shove",
+				Success: false,
+				Message: "invalid target",
+			}
+			continue
+		}
+		if bot.ShoveCooldown > 0 {
+			bot.LastActionResult = &ActionResult{
+				Action:  "shove",
+				Success: false,
+				Message: "shove on cooldown",
+			}
+			continue
+		}
+
+		// Range check.
+		dist := bot.Position.DistanceTo(target.Position)
+		if dist > shoveRange {
+			bot.LastActionResult = &ActionResult{
+				Action:  "shove",
+				Success: false,
+				Target:  targetID,
+				Message: "out of range",
+			}
+			continue
+		}
+
+		// Can't shove invulnerable targets.
+		if target.InvulnTicks > 0 {
+			bot.LastActionResult = &ActionResult{
+				Action:  "shove",
+				Success: false,
+				Target:  targetID,
+				Message: "target dodging",
+			}
+			continue
+		}
+
+		// Apply knockback.
+		ApplyHitKnockback(target, bot.Position, shoveKB, obstacles)
+
+		// Apply stun.
+		if c.ShoveStunTicks > target.StunTicks {
+			target.StunTicks = c.ShoveStunTicks
+		}
+
+		bot.ShoveCooldown = c.ShoveCooldown
+
+		bot.LastActionResult = &ActionResult{
+			Action:  "shove",
+			Success: true,
+			Target:  targetID,
+			Message: "shoved",
+		}
+	}
+}

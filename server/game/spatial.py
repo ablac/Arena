@@ -46,7 +46,12 @@ class SpatialGrid:
         return (max(0, cx), max(0, cy))
 
     def insert(self, entity_id: str, x: float, y: float) -> None:
-        """Add an entity to the grid at the given position."""
+        """Add an entity to the grid at the given position.
+
+        If the entity already exists it is removed first to prevent ghost entries.
+        """
+        if entity_id in self._entity_cells:
+            self.remove(entity_id)
         cell = self._get_cell(x, y)
         self._cells[cell].add(entity_id)
         self._entity_cells[entity_id] = cell

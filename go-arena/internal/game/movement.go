@@ -243,6 +243,7 @@ func SeparateBots(bots map[string]*BotState, obstacles []Obstacle, grid *Spatial
 				push := config.C.BotSeparationFactor * (minDist - dist) * 0.5
 
 				// Push this bot.
+				botMoved := false
 				newX := bot.Position.X() + sep.X()*push
 				newY := bot.Position.Y() + sep.Y()*push
 
@@ -251,9 +252,11 @@ func SeparateBots(bots map[string]*BotState, obstacles []Obstacle, grid *Spatial
 					newY = clampToArena(newY, config.C.BotRadius, config.C.ArenaHeight)
 					bot.Position = NewVec2(newX, newY)
 					grid.Update(id, bot.Position)
+					botMoved = true
 				}
 
 				// Push the other bot in the opposite direction.
+				otherMoved := false
 				otherNewX := other.Position.X() - sep.X()*push
 				otherNewY := other.Position.Y() - sep.Y()*push
 
@@ -262,6 +265,28 @@ func SeparateBots(bots map[string]*BotState, obstacles []Obstacle, grid *Spatial
 					otherNewY = clampToArena(otherNewY, config.C.BotRadius, config.C.ArenaHeight)
 					other.Position = NewVec2(otherNewX, otherNewY)
 					grid.Update(otherID, other.Position)
+					otherMoved = true
+				}
+
+				// If both pushes failed, try perpendicular nudge to unstick.
+				if !botMoved && !otherMoved {
+					perp := NewVec2(-sep.Y(), sep.X())
+					px := bot.Position.X() + perp.X()*push
+					py := bot.Position.Y() + perp.Y()*push
+					if CollidesWithObstacle(px, py, obstacles, config.C.BotRadius) == nil {
+						px = clampToArena(px, config.C.BotRadius, config.C.ArenaWidth)
+						py = clampToArena(py, config.C.BotRadius, config.C.ArenaHeight)
+						bot.Position = NewVec2(px, py)
+						grid.Update(id, bot.Position)
+					}
+					opx := other.Position.X() - perp.X()*push
+					opy := other.Position.Y() - perp.Y()*push
+					if CollidesWithObstacle(opx, opy, obstacles, config.C.BotRadius) == nil {
+						opx = clampToArena(opx, config.C.BotRadius, config.C.ArenaWidth)
+						opy = clampToArena(opy, config.C.BotRadius, config.C.ArenaHeight)
+						other.Position = NewVec2(opx, opy)
+						grid.Update(otherID, other.Position)
+					}
 				}
 			}
 		}

@@ -16,6 +16,7 @@ _HIT_KNOCKBACK = 2.5
 def apply_damage(
     bots: dict[str, BotState], target_id: str, dmg: float,
     attacker_id: str, weapon: str, events: list[dict],
+    obstacles: list | None = None,
 ) -> None:
     """Apply damage to a target, respecting invulnerability and shield absorb."""
     target = bots.get(target_id)
@@ -34,12 +35,12 @@ def apply_damage(
     if attacker:
         attacker.round_damage_dealt += int_dmg
         attacker.round_shots_hit += 1
-        _apply_hit_knockback(attacker, target)
+        _apply_hit_knockback(attacker, target, obstacles or [])
     events.append({"type": "damage", "attacker": attacker_id,
                     "target": target_id, "weapon": weapon, "damage": int_dmg})
 
 
-def _apply_hit_knockback(attacker: BotState, target: BotState) -> None:
+def _apply_hit_knockback(attacker: BotState, target: BotState, obstacles: list) -> None:
     """Push target away from attacker on hit, respecting obstacles and arena bounds."""
     from server.config import settings
     from server.game.obstacles import slide_along_obstacle
@@ -52,6 +53,11 @@ def _apply_hit_knockback(attacker: BotState, target: BotState) -> None:
     nx, ny = dx / dist, dy / dist
     new_x = target.position[0] + nx * _HIT_KNOCKBACK
     new_y = target.position[1] + ny * _HIT_KNOCKBACK
+    # Slide along obstacles to prevent clipping through walls
+    new_x, new_y = slide_along_obstacle(
+        target.position[0], target.position[1], new_x, new_y,
+        obstacles, radius=settings.game.bot_radius,
+    )
     # Clamp to arena bounds
     w, h = float(settings.game.arena_width), float(settings.game.arena_height)
     new_x = max(0.0, min(w, new_x))
@@ -71,3 +77,5 @@ def tick_timers(bots: dict[str, BotState], tick_rate: int) -> None:
             bot.invuln_ticks -= 1
         if bot.dodge_cooldown > 0:
             bot.dodge_cooldown -= 1
+        if bot.shove_cooldown > 0:
+            bot.shove_cooldown = max(0.0, bot.shove_cooldown - dt)

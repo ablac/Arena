@@ -99,12 +99,16 @@ func applyPickupEffect(bot *BotState, pickup Pickup) {
 			bot.HP = bot.MaxHP
 		}
 	case PickupSpeedBoost:
+		// Replace existing speed boost instead of stacking
+		bot.ActiveEffects = removeEffectByName(bot.ActiveEffects, "speed_boost")
 		bot.ActiveEffects = append(bot.ActiveEffects, Effect{
 			Name:           "speed_boost",
 			RemainingTicks: c.PickupSpeedBoostTicks,
 			Value:          pickup.Value,
 		})
 	case PickupDamageBoost:
+		// Replace existing damage boost instead of stacking
+		bot.ActiveEffects = removeEffectByName(bot.ActiveEffects, "damage_boost")
 		bot.ActiveEffects = append(bot.ActiveEffects, Effect{
 			Name:           "damage_boost",
 			RemainingTicks: c.PickupDamageBoostTicks,
@@ -115,4 +119,15 @@ func applyPickupEffect(bot *BotState, pickup Pickup) {
 	}
 
 	bot.RoundPickups++
+}
+
+// removeEffectByName filters out all effects with the given name.
+func removeEffectByName(effects []Effect, name string) []Effect {
+	result := effects[:0]
+	for _, e := range effects {
+		if e.Name != name {
+			result = append(result, e)
+		}
+	}
+	return result
 }

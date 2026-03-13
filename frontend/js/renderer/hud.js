@@ -1,25 +1,32 @@
 'use strict';
 
 /**
- * HUD overlay rendering — kill feed, round info, connection status.
- * Uses DOM elements overlaid on the canvas (not Babylon GUI).
+ * HUD overlay rendering — kill feed, round info, player roster, connection status.
+ * Kill feed and player list render into tab panels above the arena.
+ * Round info stays as a minimal overlay on the canvas.
  * @module renderer/hud
  */
 
 export class HudRenderer {
   /**
-   * @param {HTMLElement} roundEl - Round info element
-   * @param {HTMLElement} killfeedEl - Kill feed element
+   * @param {HTMLElement} roundEl - Round info overlay element (on canvas)
+   * @param {HTMLElement} killfeedEl - Kill feed panel element (in tab)
+   * @param {HTMLElement} playersEl - Players panel element (in tab)
+   * @param {HTMLElement} lobbyEl - Lobby panel element (in tab)
    * @param {HTMLElement} statusEl - Connection status element
    */
-  constructor(roundEl, killfeedEl, statusEl) {
+  constructor(roundEl, killfeedEl, playersEl, lobbyEl, statusEl) {
     this.roundEl = roundEl;
     this.killfeedEl = killfeedEl;
+    this.playersEl = playersEl;
+    this.lobbyEl = lobbyEl;
     this.statusEl = statusEl;
-    this.kills = [];       // each: { killer, victim, weapon, tick, addedAt }
-    this.maxKills = 6;
-    this._killLifetimeMs = 8000; // entries fade out after 8 seconds
-    this.killfeedEl.style.display = 'none';
+    this.maxKills = 12;
+    this._killLifetimeMs = 10000;
+    this._seenKeys = new Set();
+    this._activeEntries = [];
+    this._lastPlayerHtml = '';
+    this._lastLobbyHtml = '';
   }
 
   /**
@@ -32,37 +39,43 @@ export class HudRenderer {
       this._updateLobbyInfo(state);
       return;
     }
-    this._inLobby = false;
     this._updateRoundInfo(state);
     this._updateKillFeed(state.kill_feed || []);
+    this._updatePlayers(state.bots || []);
+    this._clearLobby();
   }
 
   /** @private */
   _updateLobbyInfo(state) {
-    this._inLobby = true;
-    this.killfeedEl.style.display = 'none';
+    this.resetKillFeed();
     const players = state.players || [];
-    let countdownHtml = '';
+    const count = state.bots_connected || 0;
+
+    // Minimal overlay: lobby status + countdown
+    let statusText;
     if (state.countdown) {
-      countdownHtml = `<div style="color:var(--accent-gold);font-size:1.2em;margin-top:4px">
-        Round starts in: <span style="color:#fff">${state.countdown}s</span></div>`;
+      statusText = `LOBBY — Round in <span style="color:var(--accent-gold)">${state.countdown}s</span>`;
     } else {
-      const needed = (state.bots_needed || 2) - (state.bots_connected || 0);
-      countdownHtml = `<div style="color:var(--text-muted);margin-top:4px">
-        Waiting for ${needed} more bot${needed !== 1 ? 's' : ''}...</div>`;
+      const needed = (state.bots_needed || 2) - count;
+      statusText = `LOBBY — Waiting for <span style="color:var(--accent-gold)">${needed}</span> more`;
     }
-    const playerList = players.map(p =>
-      `<div style="padding:2px 0">
-        <span style="color:${this._esc(p.avatar_color || '#fff')}">\u25CF</span>
-        ${this._esc(p.name)} <span style="color:var(--text-muted)">[${this._esc(p.weapon)}]</span>
-      </div>`
-    ).join('');
     this.roundEl.innerHTML = `
-      <div style="font-size:1.1em;color:var(--accent-blue);margin-bottom:4px">LOBBY</div>
-      <div>Players: <span style="color:var(--accent-gold)">${state.bots_connected || 0}</span></div>
-      ${countdownHtml}
-      <div style="margin-top:6px;font-size:0.85em">${playerList}</div>
+      <div style="color:var(--accent-blue);margin-bottom:2px">${statusText}</div>
+      <div>Players: <span style="color:var(--accent-gold)">${count}</span></div>
     `;
+
+    // Lobby player list in the Lobby tab
+    const html = players.map(p =>
+      `<div class="player-entry">` +
+        `<span style="color:${this._esc(p.avatar_color || '#fff')}">\u25CF</span> ` +
+        `${this._esc(p.name)} ` +
+        `<span style="color:var(--text-muted)">[${this._esc(p.weapon)}]</span>` +
+      `</div>`
+    ).join('');
+    if (html !== this._lastLobbyHtml) {
+      this.lobbyEl.innerHTML = html;
+      this._lastLobbyHtml = html;
+    }
   }
 
   /** @private */
@@ -76,47 +89,94 @@ export class HudRenderer {
     `;
   }
 
-  /** @private */
-  _updateKillFeed(kills) {
-    const now = Date.now();
-
-    // Expire old entries
-    this.kills = this.kills.filter(k => now - k.addedAt < this._killLifetimeMs);
-
-    if (kills && kills.length > 0) {
-      // Merge new kills (avoid duplicates by tick key)
-      const existingKeys = new Set(this.kills.map(k => `${k.killer}-${k.victim}-${k.tick}`));
-      for (const kill of kills) {
-        const key = `${kill.killer}-${kill.victim}-${kill.tick}`;
-        if (!existingKeys.has(key)) {
-          this.kills.unshift({ ...kill, addedAt: now });
-        }
-      }
-      this.kills = this.kills.slice(0, this.maxKills);
+  /** @private - Update player roster during gameplay (alive first, then dead, API order within each) */
+  _updatePlayers(bots) {
+    const alive = bots.filter(b => b.is_alive);
+    const dead = bots.filter(b => !b.is_alive);
+    const sorted = [...alive, ...dead];
+    const html = sorted.map(b =>
+      `<div class="player-entry${b.is_alive ? '' : ' dead'}">` +
+        `<span style="color:${this._esc(b.avatar_color || '#fff')}">\u25CF</span> ` +
+        `${this._esc(b.name)} ` +
+        `<span style="color:var(--text-muted)">${b.is_alive ? Math.round(b.hp) + 'hp' : 'dead'}</span>` +
+      `</div>`
+    ).join('');
+    if (html !== this._lastPlayerHtml) {
+      this.playersEl.innerHTML = html;
+      this._lastPlayerHtml = html;
     }
-
-    if (this.kills.length === 0) {
-      this.killfeedEl.style.display = 'none';
-      return;
-    }
-    this.killfeedEl.style.display = '';
-    this._renderKillFeed(now);
   }
 
   /** @private */
-  _renderKillFeed(now) {
-    this.killfeedEl.innerHTML = this.kills.map(k => {
-      const age = now - k.addedAt;
-      // Fade out in the last 2 seconds of lifetime
-      const fadeStart = this._killLifetimeMs - 2000;
-      const opacity = age > fadeStart ? Math.max(0, 1 - (age - fadeStart) / 2000) : 1;
-      const isNew = age < 400;
-      return `<div class="killfeed-entry" style="opacity:${opacity.toFixed(2)};${isNew ? 'animation:killfeed-in .3s ease-out' : ''}">
-        <span class="killer">${this._esc(k.killer)}</span>
-        <span style="color:var(--text-muted)"> ${this._weaponIcon(k.weapon)} </span>
-        <span class="victim">${this._esc(k.victim)}</span>
-      </div>`;
-    }).join('');
+  _updateKillFeed(kills) {
+    if (!kills || kills.length === 0) return;
+
+    const newKills = [];
+    for (const kill of kills) {
+      const key = `${kill.killer}-${kill.victim}-${kill.tick}`;
+      if (!this._seenKeys.has(key)) {
+        this._seenKeys.add(key);
+        newKills.push(kill);
+      }
+    }
+
+    for (let i = newKills.length - 1; i >= 0; i--) {
+      const kill = newKills[i];
+      const el = this._createKillEntry(kill);
+      this.killfeedEl.prepend(el);
+      this._activeEntries.unshift({ key: `${kill.killer}-${kill.victim}-${kill.tick}`, el });
+      setTimeout(() => this._removeEntry(el), this._killLifetimeMs);
+    }
+
+    while (this._activeEntries.length > this.maxKills) {
+      const removed = this._activeEntries.pop();
+      removed.el.remove();
+    }
+  }
+
+  /** @private */
+  _createKillEntry(kill) {
+    const el = document.createElement('div');
+    el.className = 'killfeed-entry killfeed-new';
+
+    const killer = document.createElement('span');
+    killer.className = 'killer';
+    killer.textContent = kill.killer || '???';
+
+    const sep = document.createElement('span');
+    sep.style.color = 'var(--text-muted)';
+    sep.textContent = ` ${this._weaponIcon(kill.weapon)} `;
+
+    const victim = document.createElement('span');
+    victim.className = 'victim';
+    victim.textContent = kill.victim || '???';
+
+    el.append(killer, sep, victim);
+    return el;
+  }
+
+  /** @private */
+  _removeEntry(el) {
+    el.classList.add('killfeed-out');
+    el.addEventListener('animationend', () => {
+      el.remove();
+      this._activeEntries = this._activeEntries.filter(e => e.el !== el);
+    }, { once: true });
+  }
+
+  /** @private - Clear lobby list during active rounds */
+  _clearLobby() {
+    if (this._lastLobbyHtml !== '') {
+      this.lobbyEl.innerHTML = '';
+      this._lastLobbyHtml = '';
+    }
+  }
+
+  /** Reset kill feed state (e.g. on new round). */
+  resetKillFeed() {
+    this._seenKeys.clear();
+    this._activeEntries = [];
+    this.killfeedEl.innerHTML = '';
   }
 
   /**

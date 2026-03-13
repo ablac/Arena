@@ -2,6 +2,7 @@ package game
 
 import (
 	"math"
+	"sort"
 )
 
 // round1 rounds a float64 to 1 decimal place, matching Python's round(x, 1).
@@ -32,6 +33,28 @@ func BuildBotNearbyView(bot *BotState) map[string]interface{} {
 		"is_dodging":   bot.InvulnTicks > 0,
 		"is_stunned":   bot.StunTicks > 0,
 	}
+}
+
+// BuildObstacleNearbyView builds the protocol-compatible map for an obstacle.
+func BuildObstacleNearbyView(obs Obstacle) map[string]interface{} {
+	return map[string]interface{}{
+		"type":   "obstacle",
+		"x":      obs.X,
+		"y":      obs.Y,
+		"width":  obs.Width,
+		"height": obs.Height,
+	}
+}
+
+// obstacleInRange checks whether any part of an obstacle rectangle is within
+// radius of the given position (circle-AABB intersection).
+func obstacleInRange(obs Obstacle, pos Vec2, radius float64) bool {
+	// Find the closest point on the rectangle to the circle center.
+	cx := math.Max(obs.X, math.Min(pos.X(), obs.X+obs.Width))
+	cy := math.Max(obs.Y, math.Min(pos.Y(), obs.Y+obs.Height))
+	dx := pos.X() - cx
+	dy := pos.Y() - cy
+	return dx*dx+dy*dy <= radius*radius
 }
 
 // BuildPickupNearbyView builds the protocol-compatible map for a pickup.
@@ -134,6 +157,9 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 	for _, bot := range bots {
 		botViews = append(botViews, BuildBotNearbyView(bot))
 	}
+	sort.Slice(botViews, func(i, j int) bool {
+		return botViews[i]["name"].(string) < botViews[j]["name"].(string)
+	})
 
 	pickupViews := make([]map[string]interface{}, 0, len(pickups))
 	for _, p := range pickups {

@@ -108,14 +108,14 @@ func NewRouter(engine *game.GameEngine) *chi.Mux {
 		// Static files under /arena/
 		frontendDirArena := resolveFrontendDir()
 		fileServerArena := http.StripPrefix("/arena", http.FileServer(http.Dir(frontendDirArena)))
-		ar.Handle("/*", fileServerArena)
+		ar.Handle("/*", noCacheStaticHandler(fileServerArena))
 	})
 
 	// --- Static file serving ---
-	// Serve the frontend directory at the root path.
+	// Serve the frontend directory at the root path with no-cache for JS/CSS.
 	frontendDir := resolveFrontendDir()
 	fileServer := http.FileServer(http.Dir(frontendDir))
-	r.Handle("/*", fileServer)
+	r.Handle("/*", noCacheStaticHandler(fileServer))
 
 	return r
 }
@@ -161,6 +161,19 @@ func requestLogger(next http.Handler) http.Handler {
 			"duration", time.Since(start).String(),
 			"remote", r.RemoteAddr,
 		)
+	})
+}
+
+// noCacheStaticHandler wraps a file server to set no-cache headers on JS/CSS
+// files so browsers always fetch the latest version.
+func noCacheStaticHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".js") || strings.HasSuffix(r.URL.Path, ".css") {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

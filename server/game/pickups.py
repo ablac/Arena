@@ -97,10 +97,14 @@ def apply_pickup(bot: BotState, pickup: Pickup) -> None:
     if pickup.pickup_type == "health_pack":
         bot.hp = min(bot.max_hp, bot.hp + cfg.health_amount)
     elif pickup.pickup_type == "speed_boost":
+        # Replace existing speed boost instead of stacking
+        bot.active_effects = [e for e in bot.active_effects if e.name != "speed_boost"]
         bot.active_effects.append(
             Effect(name="speed_boost", remaining_ticks=cfg.speed_boost_ticks, value=cfg.speed_boost_mult)
         )
     elif pickup.pickup_type == "damage_boost":
+        # Replace existing damage boost instead of stacking
+        bot.active_effects = [e for e in bot.active_effects if e.name != "damage_boost"]
         bot.active_effects.append(
             Effect(name="damage_boost", remaining_ticks=cfg.damage_boost_ticks, value=cfg.damage_boost_mult)
         )

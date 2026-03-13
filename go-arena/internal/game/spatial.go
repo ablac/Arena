@@ -27,7 +27,11 @@ func (g *SpatialGrid) cellKey(x, y float64) [2]int {
 }
 
 // Insert adds an entity to the grid at the given position.
+// If the entity already exists it is removed first to prevent ghost entries.
 func (g *SpatialGrid) Insert(id string, pos Vec2) {
+	if _, exists := g.positions[id]; exists {
+		g.Remove(id)
+	}
 	key := g.cellKey(pos.X(), pos.Y())
 	if g.cells[key] == nil {
 		g.cells[key] = make(map[string]bool)

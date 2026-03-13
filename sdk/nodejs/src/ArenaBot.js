@@ -62,6 +62,8 @@ export default class ArenaBot {
   staffAttack(targetPosition) {
     return { action: 'attack', direction: [targetPosition[0], targetPosition[1]] };
   }
+  /** Shove a target — knocks them back far with a short stun, no damage. */
+  shove(targetId) { return { action: 'shove', target: targetId }; }
   /** Dodge in a direction. */
   dodge(direction) { return { action: 'dodge', direction }; }
   /** Use an item by ID. */
