@@ -14,7 +14,8 @@ import { EffectRenderer } from './effects.js';
 import { TrailRenderer } from './trails.js';
 import { ProjectileRenderer } from './projectiles.js';
 
-const TICK_INTERVAL = 100; // 10 Hz server ticks
+// Bot positions are smoothed via exponential lerp each frame,
+// so no tick-interval-based alpha is needed.
 
 export class ArenaEngine {
   /** @param {HTMLCanvasElement} canvas @param {Object} opts */
@@ -34,7 +35,6 @@ export class ArenaEngine {
     this.projectileRenderer = null;
     this.state = null;
     this.ready = false;
-    this._lastStateTime = 0;
   }
 
   /** Initialize Babylon engine. */
@@ -42,25 +42,31 @@ export class ArenaEngine {
     const B = window.BABYLON;
     let engine;
     try {
-      engine = new B.WebGPUEngine(this.canvas, { antialias: false });
+      engine = new B.WebGPUEngine(this.canvas, { antialias: false, powerPreference: 'high-performance' });
       await engine.initAsync();
       console.log('[Arena] WebGPU');
     } catch {
       engine = new B.Engine(this.canvas, false, {
         preserveDrawingBuffer: false,
         stencil: false,
+        powerPreference: 'high-performance',
       });
     }
+    // Cap at 1x device pixel ratio to prevent supersampling on HiDPI
+    engine.setHardwareScalingLevel(1.0 / Math.min(window.devicePixelRatio, 1));
     this.engine = engine;
     const scene = new B.Scene(engine);
     this.scene = scene;
     scene.clearColor = new B.Color4(0.03, 0.03, 0.05, 1);
     scene.fogMode = B.Scene.FOGMODE_EXP2;
-    scene.fogDensity = 0.00015;
-    scene.fogColor = new B.Color3(0.03, 0.03, 0.05);
+    scene.fogDensity = 0.00008;
+    scene.fogColor = new B.Color3(0.03, 0.03, 0.03);
     scene.skipPointerMovePicking = true;
     scene.autoClear = false;
     scene.autoClearDepthAndStencil = true;
+    scene.blockMaterialDirtyMechanism = true;
+    scene.useGeometryIdsMap = true;
+    scene.useMaterialMeshMap = true;
 
     this.camera = new CameraController(scene, this.canvas, this.arenaWidth, this.arenaHeight);
     this.envRenderer = new EnvironmentRenderer(scene, this.arenaWidth, this.arenaHeight);
@@ -68,6 +74,7 @@ export class ArenaEngine {
     this.botRenderer = new BotRenderer(scene);
     this.pickupRenderer = new PickupRenderer(scene);
     this.effectRenderer = new EffectRenderer(scene);
+    this.effectRenderer.camera = this.camera;
     this.trailRenderer = new TrailRenderer(scene);
     this.projectileRenderer = new ProjectileRenderer(scene);
 
@@ -91,15 +98,20 @@ export class ArenaEngine {
 
     this._addLights();
 
+    // Subtle glow on emissive surfaces (low-res for performance)
+    const gl = new B.GlowLayer('glow', this.scene, {
+      mainTextureFixedSize: 128,
+    });
+    gl.intensity = 0.2;
+
     const self = this;
     let _lastFrame = performance.now();
     engine.runRenderLoop(() => {
       const now = performance.now();
       const dt = Math.min((now - _lastFrame) / 1000, 0.1);
       _lastFrame = now;
-      if (self.botRenderer && self._lastStateTime > 0) {
-        const alpha = Math.min((now - self._lastStateTime) / TICK_INTERVAL, 1);
-        self.botRenderer.interpolate(alpha);
+      if (self.botRenderer) {
+        self.botRenderer.interpolate();
       }
       if (self.projectileRenderer) {
         self.projectileRenderer.update(dt);
@@ -114,9 +126,11 @@ export class ArenaEngine {
   _addLights() {
     const B = window.BABYLON;
     const dir = new B.DirectionalLight('sun', new B.Vector3(-0.4, -1, 0.3), this.scene);
+    dir.position = new B.Vector3(0, 80, -40);
     dir.intensity = 0.7;
     dir.diffuse = new B.Color3(1, 0.95, 0.85);
     dir.specular = new B.Color3(0.3, 0.3, 0.3);
+    this.sunLight = dir;
 
     const hemi = new B.HemisphericLight('hemi', new B.Vector3(0, 1, 0), this.scene);
     hemi.intensity = 0.4;
@@ -132,7 +146,6 @@ export class ArenaEngine {
   setState(state) {
     if (!this.ready || state.type !== 'arena_state') return;
     this.state = state;
-    this._lastStateTime = performance.now();
     this.obstacleRenderer.update(state.obstacles);
     this.envRenderer.update(state.safe_zone);
     this.botRenderer.update(state.bots);

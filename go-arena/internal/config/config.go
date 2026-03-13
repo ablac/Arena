@@ -67,7 +67,7 @@ type Config struct {
 	ZoneShrinkPercent   float64 `envconfig:"ARENA_ZONE_SHRINK_PERCENT" default:"0.15"`
 	ZoneShrinkInterval  float64 `envconfig:"ARENA_ZONE_SHRINK_INTERVAL_SECS" default:"20"`
 	ZoneDamagePerTick   float64 `envconfig:"ARENA_ZONE_DAMAGE_PER_TICK" default:"3"`
-	ZoneMinRadius       float64 `envconfig:"ARENA_ZONE_MIN_RADIUS" default:"75.0"`
+	ZoneMinRadius       float64 `envconfig:"ARENA_ZONE_MIN_RADIUS" default:"175.0"`
 	ZoneShrinkDelay     float64 `envconfig:"ARENA_ZONE_SHRINK_DELAY_SECS" default:"60"`
 
 	// Obstacles
@@ -94,7 +94,7 @@ type Config struct {
 	HeartbeatInterval            float64 `envconfig:"ARENA_HEARTBEAT_INTERVAL" default:"30"`
 	WSConnectRatePerMin          int     `envconfig:"ARENA_WS_CONNECT_RATE_PER_MIN" default:"3"`
 	LoadoutTimeoutSecs           float64 `envconfig:"ARENA_LOADOUT_TIMEOUT_SECS" default:"10"`
-	SpectatorBroadcastInterval   int     `envconfig:"ARENA_SPECTATOR_BROADCAST_INTERVAL" default:"2"`
+	SpectatorBroadcastInterval   int     `envconfig:"ARENA_SPECTATOR_BROADCAST_INTERVAL" default:"1"`
 	AFKTimeoutTicks              int     `envconfig:"ARENA_AFK_TIMEOUT_TICKS" default:"30"`
 
 	// Admin
@@ -119,13 +119,13 @@ type Config struct {
 	UIMinimapSize  int    `envconfig:"ARENA_UI_MINIMAP_SIZE" default:"200"`
 
 	// Rate limiting per endpoint
-	RateLimitBotConfigPerMin int `envconfig:"ARENA_RATE_LIMIT_BOT_CONFIG_PER_MIN" default:"30"`
+	RateLimitBotConfigPerMin int `envconfig:"ARENA_RATE_LIMIT_BOT_CONFIG_PER_MIN" default:"120"`
 
 	// Security
 	APIKeyPrefix           string `envconfig:"ARENA_API_KEY_PREFIX" default:"arena_"`
 	BcryptRounds           int    `envconfig:"ARENA_BCRYPT_ROUNDS" default:"12"`
 	RateLimitRPM           int    `envconfig:"ARENA_RATE_LIMIT_RPM" default:"1200"`
-	RateLimitRegisterPerHour int  `envconfig:"ARENA_RATE_LIMIT_REGISTER_PER_HOUR" default:"100"`
+	RateLimitRegisterPerHour int  `envconfig:"ARENA_RATE_LIMIT_REGISTER_PER_HOUR" default:"500"`
 
 	// ELO
 	EloKFactor    float64 `envconfig:"ARENA_ELO_K_FACTOR" default:"32"`
@@ -133,8 +133,13 @@ type Config struct {
 	EloMin        int     `envconfig:"ARENA_ELO_MIN" default:"100"`
 
 	// Bot separation
-	BotSeparationDist float64 `envconfig:"ARENA_BOT_SEPARATION_DIST" default:"10.0"`
-	BotSeparationFactor float64 `envconfig:"ARENA_BOT_SEPARATION_FACTOR" default:"0.6"`
+	BotSeparationDist float64 `envconfig:"ARENA_BOT_SEPARATION_DIST" default:"20.0"`
+	BotSeparationFactor float64 `envconfig:"ARENA_BOT_SEPARATION_FACTOR" default:"1.5"`
+
+	// Anti-teaming
+	AntiTeamRadius         float64 `envconfig:"ARENA_ANTI_TEAM_RADIUS" default:"30.0"`
+	AntiTeamThresholdTicks int     `envconfig:"ARENA_ANTI_TEAM_THRESHOLD_TICKS" default:"50"`
+	AntiTeamDamagePerTick  float64 `envconfig:"ARENA_ANTI_TEAM_DAMAGE_PER_TICK" default:"2.0"`
 }
 
 var C Config

@@ -18,10 +18,15 @@
 
 /* Arena Viewer */
 .arena-section { padding: 0 20px 60px; max-width: 1400px; margin: 0 auto; }
+.arena-layout {
+  display: flex; gap: 0;
+  border: 1px solid var(--border-color); border-radius: 12px;
+  overflow: hidden;
+}
 .arena-container {
-  position: relative; width: 100%;
-  min-height: 500px; border-radius: 12px; overflow: hidden;
-  border: 1px solid var(--border-color); background: #050810;
+  position: relative; flex: 1; min-width: 0;
+  min-height: 500px; overflow: hidden;
+  background: #050810;
 }
 .arena-container canvas#arena-canvas { width: 100% !important; height: 100% !important; display: block; }
 .arena-container.fullscreen {
@@ -29,28 +34,92 @@
   z-index: 1000; border-radius: 0;
 }
 
-/* Arena HUD overlays */
+/* Arena sidebar — kill feed & players to the right */
+.arena-sidebar {
+  width: 280px; flex-shrink: 0;
+  background: var(--bg-card);
+  border-left: 1px solid var(--border-color);
+  display: flex; flex-direction: column;
+  max-height: 500px;
+}
+.arena-tabs {
+  display: flex; gap: 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.arena-tab {
+  flex: 1; padding: 10px 12px; background: none; border: none;
+  color: var(--text-muted); cursor: pointer; font-size: 0.85rem;
+  font-family: var(--font-mono); text-align: center;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.arena-tab:hover { color: var(--text-primary); }
+.arena-tab.active {
+  color: var(--accent-blue); border-bottom-color: var(--accent-blue);
+}
+.arena-tab-content { flex: 1; position: relative; overflow: hidden; min-height: 0; }
+.arena-tab-panel {
+  display: none; padding: 8px 14px;
+  height: 100%; overflow-y: auto;
+}
+.arena-tab-panel.active { display: block; }
+
+/* Kill feed (inside tab panel) */
+.hud-killfeed {
+  font-family: var(--font-mono); font-size: 0.8rem;
+  min-height: 28px;
+}
+.hud-killfeed:empty::after {
+  content: 'No recent kills'; color: var(--text-muted); font-style: italic;
+}
+.killfeed-entry {
+  padding: 4px 0; border-bottom: 1px solid rgba(30,41,59,0.4);
+}
+.killfeed-entry.killfeed-new {
+  animation: killfeed-in 0.3s ease-out;
+}
+.killfeed-entry.killfeed-out {
+  animation: killfeed-fade 0.5s ease-out forwards;
+}
+.killfeed-entry .killer { color: var(--accent-blue); }
+.killfeed-entry .victim { color: var(--accent-red); }
+@keyframes killfeed-in {
+  from { transform: translateY(-8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes killfeed-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Players panel (inside tab panel) */
+.hud-players {
+  font-family: var(--font-mono); font-size: 0.8rem;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.hud-players:empty::after {
+  content: 'No players connected'; color: var(--text-muted); font-style: italic;
+}
+.player-entry {
+  padding: 2px 0; white-space: nowrap;
+}
+.player-entry.dead { opacity: 0.4; }
+
+/* Lobby panel (inside tab panel) */
+.hud-lobby {
+  font-family: var(--font-mono); font-size: 0.8rem;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.hud-lobby:empty::after {
+  content: 'No bots in lobby'; color: var(--text-muted); font-style: italic;
+}
+
+/* Arena HUD overlay (minimal — just round info) */
 .hud-round {
   position: absolute; top: 12px; left: 12px; padding: 8px 14px;
   background: rgba(10,14,23,0.85); border-radius: 8px;
   font-family: var(--font-mono); font-size: 0.85rem; z-index: 10;
   border: 1px solid var(--border-color);
-}
-.hud-killfeed {
-  position: absolute; top: 12px; right: 12px; width: 260px;
-  background: rgba(10,14,23,0.85); border-radius: 8px; padding: 8px 12px;
-  font-family: var(--font-mono); font-size: 0.75rem; z-index: 10;
-  border: 1px solid var(--border-color); max-height: 300px; overflow-y: auto;
-}
-.killfeed-entry {
-  padding: 3px 0; border-bottom: 1px solid rgba(30,41,59,0.5);
-  transition: opacity 0.5s ease-out;
-}
-.killfeed-entry .killer { color: var(--accent-blue); }
-.killfeed-entry .victim { color: var(--accent-red); }
-@keyframes killfeed-in {
-  from { transform: translateX(40px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
 }
 
 /* Arena controls */
@@ -88,9 +157,13 @@
 .leaderboard-tabs button.active {
   color: var(--accent-blue); border-bottom-color: var(--accent-blue);
 }
+.leaderboard-scroll {
+  max-height: 480px; overflow-y: auto;
+}
 .leaderboard-table {
   width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.85rem;
 }
+.leaderboard-table thead { position: sticky; top: 0; background: var(--bg-card); z-index: 1; }
 .leaderboard-table th {
   text-align: left; padding: 10px 12px; color: var(--text-muted);
   border-bottom: 1px solid var(--border-color); font-weight: 600;
@@ -131,6 +204,107 @@ pre.code-block {
   color: #a5f3fc; margin-top: 16px; white-space: pre;
 }
 
+/* Collapsible sections */
+.section-collapsible {
+  border: none; margin: 0;
+}
+.section:has(.section-collapsible:not([open])) {
+  padding: 12px 20px;
+}
+.section-collapsible > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px;
+  user-select: none;
+}
+.section-collapsible > summary::-webkit-details-marker { display: none; }
+.section-collapsible > summary::before {
+  content: '\25B6'; font-size: 0.7rem; color: var(--text-muted);
+  transition: transform 0.2s;
+}
+.section-collapsible[open] > summary::before {
+  transform: rotate(90deg);
+}
+.section-collapsible > summary .section-title {
+  margin: 0; cursor: pointer;
+}
+
+/* API Reference */
+.api-card { margin-bottom: 16px; }
+.api-card:last-child { margin-bottom: 0; }
+.api-group > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px;
+  user-select: none;
+}
+.api-group > summary::-webkit-details-marker { display: none; }
+.api-group > summary::before {
+  content: '\25B6'; font-size: 0.6rem; color: var(--text-muted);
+  transition: transform 0.2s;
+}
+.api-group[open] > summary::before { transform: rotate(90deg); }
+.api-group:not([open]) { padding-bottom: 0; }
+.api-section-title {
+  font-size: 1.1rem; font-weight: 700; margin: 0;
+  color: var(--accent-blue); font-family: var(--font-sans);
+  cursor: pointer;
+}
+.api-details {
+  border: 1px solid var(--border-color); border-radius: 8px;
+  margin-bottom: 8px; overflow: hidden;
+}
+.api-details summary {
+  padding: 10px 14px; cursor: pointer; display: flex; align-items: center;
+  gap: 10px; font-family: var(--font-mono); font-size: 0.85rem;
+  background: var(--bg-secondary); user-select: none;
+}
+.api-details summary:hover { background: rgba(0,212,255,0.05); }
+.api-details[open] summary { border-bottom: 1px solid var(--border-color); }
+.api-details summary code {
+  color: var(--accent-blue); font-size: 0.85rem;
+}
+.api-body { padding: 14px; font-size: 0.85rem; line-height: 1.6; }
+.api-body h4 {
+  font-size: 0.8rem; color: var(--text-muted); margin: 14px 0 6px;
+  font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 1px;
+}
+.api-body h4:first-child { margin-top: 0; }
+.api-body p { margin: 0 0 10px; color: var(--text-muted); }
+.api-body .code-block { margin: 8px 0; font-size: 0.75rem; }
+.api-label { color: var(--text-muted); font-family: var(--font-sans); font-size: 0.8rem; }
+.api-method {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 0.7rem; font-weight: 700; font-family: var(--font-mono);
+  min-width: 52px; text-align: center; flex-shrink: 0;
+}
+.api-method.get { background: #22c55e22; color: #22c55e; border: 1px solid #22c55e44; }
+.api-method.post { background: #3b82f622; color: #3b82f6; border: 1px solid #3b82f644; }
+.api-method.put { background: #f59e0b22; color: #f59e0b; border: 1px solid #f59e0b44; }
+.api-method.delete { background: #ef444422; color: #ef4444; border: 1px solid #ef444444; }
+.api-method.ws { background: #8b5cf622; color: #8b5cf6; border: 1px solid #8b5cf644; }
+.api-msg, .api-msg-send {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 0.75rem; font-weight: 700; font-family: var(--font-mono);
+}
+.api-msg { background: #22c55e18; color: #22c55e; border: 1px solid #22c55e33; }
+.api-msg-send { background: #3b82f618; color: #3b82f6; border: 1px solid #3b82f633; }
+.api-flow {
+  padding-left: 20px; margin: 8px 0; font-size: 0.8rem; color: var(--text-muted);
+}
+.api-flow li { padding: 3px 0; }
+.api-flow code { color: var(--accent-blue); }
+.api-table {
+  width: 100%; border-collapse: collapse; font-family: var(--font-mono);
+  font-size: 0.8rem; margin: 8px 0;
+}
+.api-table td, .api-table th {
+  padding: 8px 12px; text-align: left;
+  border-bottom: 1px solid rgba(30,41,59,0.3);
+}
+.api-table th {
+  color: var(--text-muted); font-weight: 600; font-size: 0.75rem;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.api-table code { color: var(--accent-blue); }
+.api-table-full { margin: 0; }
+
 /* Footer */
 .footer {
   border-top: 1px solid var(--border-color); padding: 40px 20px;
@@ -145,8 +319,11 @@ pre.code-block {
 @media (max-width: 768px) {
   .hero h1 { font-size: 2rem; letter-spacing: 2px; }
   .hero .subtitle { font-size: 1rem; }
+  .arena-layout { flex-direction: column; }
+  .arena-sidebar { width: 100%; border-left: none; border-top: 1px solid var(--border-color); }
+  .arena-tab-panel { max-height: 160px; height: auto; }
   .arena-container { min-height: 350px; }
-  .hud-killfeed { width: 200px; font-size: 0.7rem; }
+  .hud-killfeed { font-size: 0.7rem; }
   .arena-controls { padding: 12px 16px; }
   .leaderboard-tabs button { padding: 8px 12px; font-size: 0.8rem; }
 }

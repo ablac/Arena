@@ -28,10 +28,29 @@
   <!-- Arena Viewer -->
   <section class="arena-section" id="arena">
     <h2 class="section-title" style="max-width:1400px;margin:0 auto 16px">Live Arena</h2>
-    <div class="arena-container">
-      <canvas id="arena-canvas"></canvas>
-      <div class="hud-round" id="hud-round">Connecting...</div>
-      <div class="hud-killfeed" id="hud-killfeed"></div>
+    <div class="arena-layout">
+      <div class="arena-container">
+        <canvas id="arena-canvas"></canvas>
+        <div class="hud-round" id="hud-round">Connecting...</div>
+      </div>
+      <div class="arena-sidebar">
+        <div class="arena-tabs" id="arena-tabs">
+          <button class="arena-tab active" data-tab="killfeed">Kills</button>
+          <button class="arena-tab" data-tab="players">Players</button>
+          <button class="arena-tab" data-tab="lobby">Lobby</button>
+        </div>
+        <div class="arena-tab-content">
+          <div class="arena-tab-panel active" id="tab-killfeed">
+            <div class="hud-killfeed" id="hud-killfeed"></div>
+          </div>
+          <div class="arena-tab-panel" id="tab-players">
+            <div class="hud-players" id="hud-players"></div>
+          </div>
+          <div class="arena-tab-panel" id="tab-lobby">
+            <div class="hud-lobby" id="hud-lobby"></div>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="arena-controls" style="padding:16px 20px">
       <div class="control-group">
@@ -70,40 +89,558 @@
     <h2 class="section-title">Leaderboard</h2>
     <div class="card">
       <div class="leaderboard-tabs" id="leaderboard-tabs"></div>
-      <table class="leaderboard-table">
-        <thead>
-          <tr><th>Rank</th><th>Bot</th><th>Score</th><th>K/D</th><th>ELO</th></tr>
-        </thead>
-        <tbody id="leaderboard-body"></tbody>
-      </table>
+      <div class="leaderboard-scroll">
+        <table class="leaderboard-table">
+          <thead>
+            <tr><th>Rank</th><th>Bot</th><th>Score</th><th>K/D</th><th>ELO</th></tr>
+          </thead>
+          <tbody id="leaderboard-body"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
   <!-- Getting Started -->
   <section class="section" id="getting-started">
-    <h2 class="section-title">Getting Started</h2>
-    <div class="card">
-      <ol class="steps">
-        <li><a href="#keygen" style="color:var(--accent-blue)">Generate your API key</a> above</li>
-        <li>Configure your bot:
-          <pre class="code-block">curl -X PUT https://arena.angel-serv.com/api/v1/bot/config \
+    <details class="section-collapsible">
+      <summary><h2 class="section-title">Getting Started</h2></summary>
+      <div class="card">
+        <ol class="steps">
+          <li><a href="#keygen" style="color:var(--accent-blue)">Generate your API key</a> above</li>
+          <li>Configure your bot:
+            <pre class="code-block">curl -X PUT https://arena.angel-serv.com/api/v1/bot/config \
   -H "X-Arena-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"MyBot","avatar_color":"#00d4ff"}'</pre>
-        </li>
-        <li>Connect via WebSocket: <code style="color:var(--accent-blue)">wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY</code></li>
-        <li>Respond to tick events with actions</li>
-        <li>Climb the leaderboard!</li>
-      </ol>
-    </div>
+          </li>
+          <li>Connect via WebSocket: <code style="color:var(--accent-blue)">wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY</code></li>
+          <li>Respond to tick events with actions</li>
+          <li>Climb the leaderboard!</li>
+        </ol>
+      </div>
+    </details>
+  </section>
+
+  <!-- API Reference -->
+  <section class="section" id="api-reference">
+    <details class="section-collapsible">
+      <summary><h2 class="section-title">API Reference</h2></summary>
+
+    <!-- REST API -->
+    <details class="card api-card api-group" open>
+      <summary class="api-section-title">REST API</summary>
+
+      <details class="api-details">
+        <summary><span class="api-method post">POST</span> <code>/api/v1/keys/generate</code> <span class="api-label">Generate API Key</span></summary>
+        <div class="api-body">
+          <p>Create a new bot API key. No authentication required.</p>
+          <h4>Request</h4>
+          <pre class="code-block">curl -X POST https://arena.angel-serv.com/api/v1/keys/generate</pre>
+          <h4>Response <code>201</code></h4>
+          <pre class="code-block">{
+  "api_key": "arena_abc123...",
+  "bot_id": "uuid-here",
+  "created_at": "2025-01-01T00:00:00Z",
+  "message": "API key generated successfully. Store it safely -- it cannot be recovered."
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-method put">PUT</span> <code>/api/v1/bot/config</code> <span class="api-label">Configure Bot</span></summary>
+        <div class="api-body">
+          <p>Set your bot's name, color, and default loadout. Requires <code>X-Arena-Key</code> header.</p>
+          <h4>Request</h4>
+          <pre class="code-block">curl -X PUT https://arena.angel-serv.com/api/v1/bot/config \
+  -H "X-Arena-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "MyBot",
+    "avatar_color": "#00d4ff",
+    "default_loadout": {
+      "weapon": "sword",
+      "stats": {"hp": 6, "speed": 6, "attack": 5, "defense": 3},
+      "fallback_behavior": "aggressive"
+    }
+  }'</pre>
+          <h4>Response <code>200</code></h4>
+          <pre class="code-block">{
+  "bot_id": "uuid-here",
+  "name": "MyBot",
+  "avatar_color": "#00d4ff",
+  "default_weapon": "sword",
+  "default_stats": {"hp": 6, "speed": 6, "attack": 5, "defense": 3},
+  "default_fallback": "aggressive"
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-method get">GET</span> <code>/api/v1/bot/stats</code> <span class="api-label">Bot Stats</span></summary>
+        <div class="api-body">
+          <p>Get your bot's lifetime stats. Requires <code>X-Arena-Key</code> header.</p>
+          <h4>Response <code>200</code></h4>
+          <pre class="code-block">{
+  "bot_id": "uuid-here",
+  "name": "MyBot",
+  "kills": 42,
+  "deaths": 10,
+  "kd_ratio": 4.2,
+  "damage_dealt": 1250,
+  "damage_taken": 500,
+  "current_streak": 3,
+  "best_streak": 7,
+  "elo": 1150,
+  "rounds_played": 15,
+  "round_wins": 3
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-method get">GET</span> <code>/api/v1/leaderboard</code> <span class="api-label">Leaderboard</span></summary>
+        <div class="api-body">
+          <p>Public leaderboard. Optional query params: <code>sort</code> (elo|kills|streak|kd_ratio), <code>limit</code> (1-100), <code>offset</code>.</p>
+          <h4>Response <code>200</code></h4>
+          <pre class="code-block">{
+  "entries": [
+    {
+      "rank": 1, "bot_id": "uuid", "name": "TopBot",
+      "kills": 250, "deaths": 40, "elo": 1800,
+      "best_streak": 25, "rounds_played": 100, "round_wins": 45
+    }
+  ],
+  "total": 500, "limit": 50, "offset": 0
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-method get">GET</span> <code>/api/v1/arena/status</code> <span class="api-label">Arena Status</span></summary>
+        <div class="api-body">
+          <p>Current arena state. Public endpoint.</p>
+          <h4>Response <code>200</code></h4>
+          <pre class="code-block">{
+  "status": "active",
+  "bots_connected": 12,
+  "bots_alive": 8,
+  "round_number": 42,
+  "safe_zone_radius": 500.0,
+  "top_bot": "ChampBot"
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-method delete">DELETE</span> <code>/api/v1/keys/revoke</code> <span class="api-label">Revoke Key</span></summary>
+        <div class="api-body">
+          <p>Permanently revoke your API key. Requires <code>X-Arena-Key</code> header.</p>
+          <pre class="code-block">curl -X DELETE https://arena.angel-serv.com/api/v1/keys/revoke \
+  -H "X-Arena-Key: YOUR_KEY"</pre>
+        </div>
+      </details>
+    </details>
+
+    <!-- WebSocket Connection -->
+    <details class="card api-card api-group" open>
+      <summary class="api-section-title">WebSocket Connection</summary>
+
+      <details class="api-details">
+        <summary><span class="api-method ws">WS</span> <code>/ws/bot?key=YOUR_KEY</code> <span class="api-label">Bot Connection</span></summary>
+        <div class="api-body">
+          <p>Connect your bot via WebSocket. Pass API key as query param, <code>X-Arena-Key</code> header, or send an auth message after connecting.</p>
+          <pre class="code-block">wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY</pre>
+          <h4>Connection Flow</h4>
+          <ol class="api-flow">
+            <li>Connect &rarr; receive <code>connected</code> message</li>
+            <li>Send <code>select_loadout</code> within 10 seconds</li>
+            <li>Receive <code>loadout_confirmed</code></li>
+            <li>Wait for <code>lobby</code> or <code>round_start</code></li>
+            <li>Game loop: receive <code>tick</code>, send <code>action</code></li>
+          </ol>
+        </div>
+      </details>
+    </details>
+
+    <!-- Messages FROM Server -->
+    <details class="card api-card api-group" open>
+      <summary class="api-section-title">Server &rarr; Bot Messages</summary>
+
+      <details class="api-details">
+        <summary><span class="api-msg">connected</span> <span class="api-label">Initial handshake</span></summary>
+        <div class="api-body">
+          <pre class="code-block">{
+  "type": "connected",
+  "bot_id": "uuid",
+  "arena_size": [2000, 2000],
+  "available_weapons": ["sword", "bow", "daggers", "shield", "spear", "staff"],
+  "stat_budget": 20,
+  "stat_min": 1,
+  "stat_max": 10,
+  "timeout_seconds": 10,
+  "last_loadout": null
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-msg">loadout_confirmed</span> <span class="api-label">Loadout accepted</span></summary>
+        <div class="api-body">
+          <pre class="code-block">{
+  "type": "loadout_confirmed",
+  "weapon": "sword",
+  "stats": {"hp": 6, "speed": 6, "attack": 5, "defense": 3},
+  "computed": {
+    "max_hp": 160,
+    "move_speed": 6.0,
+    "attack_mult": 1.5,
+    "defense_red": 0.09,
+    "attack_range": 2.5,
+    "cooldown_seconds": 0.5,
+    "weapon_damage": 25
+  },
+  "position": [850, 1000]
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-msg">lobby</span> <span class="api-label">Waiting for players</span></summary>
+        <div class="api-body">
+          <pre class="code-block">{
+  "type": "lobby",
+  "bots_connected": 5,
+  "bots_needed": 2,
+  "countdown": 8,
+  "players": [
+    {"name": "BotA", "avatar_color": "#ff0000", "weapon": "sword"}
+  ]
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-msg">round_start</span> <span class="api-label">Round begins</span></summary>
+        <div class="api-body">
+          <p>Sent once at the start of each round. Obstacles are static for the entire round.</p>
+          <pre class="code-block">{
+  "type": "round_start",
+  "round_number": 12,
+  "position": [850, 1000],
+  "bots_in_round": 15,
+  "obstacles": [
+    {"x": 500, "y": 600, "width": 100, "height": 50}
+  ],
+  "all_positions": {"bot_id_1": [850, 1000], "bot_id_2": [1150, 1000]},
+  "arena_size": [2000, 2000],
+  "safe_zone": {
+    "center": [1000, 1000],
+    "radius": 1000,
+    "target_center": [900, 1100],
+    "target_radius": 175
+  }
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-msg">tick</span> <span class="api-label">Game state update (~10/sec)</span></summary>
+        <div class="api-body">
+          <p>Sent every game tick. Contains your state, visible entities, and zone info.</p>
+          <pre class="code-block">{
+  "type": "tick",
+  "tick": 342,
+  "your_state": {
+    "bot_id": "uuid",
+    "position": [1050, 1020],
+    "hp": 120, "max_hp": 160,
+    "speed": 6.0,
+    "weapon": "sword",
+    "cooldown_remaining": 0.2,
+    "weapon_ready": false,
+    "is_alive": true,
+    "kill_streak": 3,
+    "round_kills": 5,
+    "dodge_cooldown": 0,
+    "invuln_ticks": 0,
+    "stun_ticks": 0,
+    "shield_absorb": 0,
+    "effects": [{"name": "speed_boost", "ticks": 20}],
+    "last_action_result": {
+      "action": "attack", "success": true,
+      "target": "enemy_id", "damage": 35.5
+    },
+    "hits_received": [
+      {"attacker_id": "enemy_id", "damage": 15, "weapon": "bow"}
+    ],
+    "kill_feed": [
+      {"killer": "MyBot", "victim": "FooBot", "weapon": "sword", "tick": 340}
+    ],
+    "in_safe_zone": true,
+    "distance_to_zone_edge": 250.5,
+    "zone_radius": 800,
+    "zone_center": [1000, 1000],
+    "zone_target_center": [900, 1100],
+    "zone_target_radius": 175
+  },
+  "nearby_entities": [
+    {
+      "type": "bot", "bot_id": "enemy_id", "name": "EnemyBot",
+      "position": [1075, 1030], "hp": 85, "max_hp": 120,
+      "weapon": "bow", "is_alive": true, "avatar_color": "#0000ff",
+      "last_action": "attack", "is_dodging": false, "is_stunned": false
+    },
+    {
+      "type": "pickup", "pickup_id": "p_123",
+      "pickup_type": "health_pack", "position": [1100, 1050]
+    },
+    {
+      "type": "obstacle",
+      "x": 900, "y": 900, "width": 100, "height": 100
+    }
+  ],
+  "view_radius": 100,
+  "safe_zone": {
+    "center": [1000, 1000], "radius": 800,
+    "target_center": [900, 1100], "target_radius": 175
+  },
+  "arena_size": [2000, 2000]
+}</pre>
+          <h4>Hints (only when no bots in view range)</h4>
+          <p>When no enemy bots are within your <code>view_radius</code>, a <code>hints</code> array is included with directions to the nearest 3 bots and the nearest pickup of each type.</p>
+          <pre class="code-block">"hints": [
+  {"hint_type": "bot", "direction": [0.7, -0.7], "distance": 342.5},
+  {"hint_type": "bot", "direction": [-0.3, 0.9], "distance": 510.2},
+  {"hint_type": "bot", "direction": [0.1, -1.0], "distance": 720.0},
+  {"hint_type": "pickup", "pickup_type": "health_pack",
+   "direction": [0.5, 0.9], "distance": 180.3},
+  {"hint_type": "pickup", "pickup_type": "speed_boost",
+   "direction": [-0.8, 0.6], "distance": 290.1}
+]</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-msg">kill</span> <span class="api-label">You killed someone</span></summary>
+        <div class="api-body">
+          <pre class="code-block">{
+  "type": "kill",
+  "victim_name": "FooBot",
+  "victim_id": "uuid",
+  "weapon_used": "sword",
+  "your_kill_streak": 3,
+  "your_round_kills": 5
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-msg">death</span> <span class="api-label">You died</span></summary>
+        <div class="api-body">
+          <pre class="code-block">{
+  "type": "death",
+  "killed_by": "killer_uuid",
+  "killer_name": "EnemyBot",
+  "weapon_used": "bow",
+  "damage": 45.5,
+  "your_kills_this_life": 2,
+  "respawn_in_seconds": 5
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-msg">respawn</span> <span class="api-label">You respawned</span></summary>
+        <div class="api-body">
+          <pre class="code-block">{
+  "type": "respawn",
+  "position": [1500, 1200],
+  "hp": 160
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-msg">round_end</span> <span class="api-label">Round over</span></summary>
+        <div class="api-body">
+          <pre class="code-block">{
+  "type": "round_end",
+  "round_number": 12,
+  "your_stats": {"kills": 5, "deaths": 2, "damage": 750},
+  "round_winner": "ChampionBot",
+  "next_round_in": 10
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-msg">error</span> / <span class="api-msg">kick</span> <span class="api-label">Errors &amp; disconnects</span></summary>
+        <div class="api-body">
+          <pre class="code-block">{"type": "error", "message": "Invalid action"}
+{"type": "kick", "reason": "AFK timeout"}</pre>
+        </div>
+      </details>
+    </details>
+
+    <!-- Messages TO Server -->
+    <details class="card api-card api-group" open>
+      <summary class="api-section-title">Bot &rarr; Server Messages</summary>
+
+      <details class="api-details">
+        <summary><span class="api-msg-send">select_loadout</span> <span class="api-label">Choose weapon &amp; stats</span></summary>
+        <div class="api-body">
+          <p>Must be sent within 10 seconds of receiving <code>connected</code>. Stats must sum to <code>stat_budget</code> (20), each between 1-10.</p>
+          <pre class="code-block">{
+  "type": "select_loadout",
+  "weapon": "sword",
+  "stats": {"hp": 6, "speed": 6, "attack": 5, "defense": 3},
+  "fallback_behavior": "aggressive"
+}</pre>
+          <h4>Fallback Behaviors</h4>
+          <table class="api-table">
+            <tr><td><code>aggressive</code></td><td>Attack nearest enemy, chase if out of range</td></tr>
+            <tr><td><code>defensive</code></td><td>Attack if in range, retreat if enemies close, hold position</td></tr>
+            <tr><td><code>opportunistic</code></td><td>Hunt weak enemies (&lt;70% HP), flee from strong ones</td></tr>
+            <tr><td><code>territorial</code></td><td>Defend 2x weapon range territory, attack intruders</td></tr>
+            <tr><td><code>hunter</code></td><td>Chase enemy with highest kill streak</td></tr>
+          </table>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-msg-send">action</span> <span class="api-label">Game actions (send each tick)</span></summary>
+        <div class="api-body">
+          <h4>Move</h4>
+          <pre class="code-block">{"type": "action", "tick": 342, "action": "move", "direction": [0.7, -0.7]}</pre>
+          <h4>Move To Position</h4>
+          <pre class="code-block">{"type": "action", "tick": 342, "action": "move_to", "target_position": [1500, 1200]}</pre>
+          <h4>Attack</h4>
+          <pre class="code-block">{"type": "action", "tick": 342, "action": "attack", "target": "enemy_bot_id"}</pre>
+          <h4>Dodge</h4>
+          <pre class="code-block">{"type": "action", "tick": 342, "action": "dodge", "direction": [0, -1]}</pre>
+          <h4>Use Item (collect pickup)</h4>
+          <pre class="code-block">{"type": "action", "tick": 342, "action": "use_item", "item_id": "pickup_123"}</pre>
+          <h4>Idle</h4>
+          <pre class="code-block">{"type": "action", "tick": 342, "action": "idle"}</pre>
+        </div>
+      </details>
+    </details>
+
+    <!-- Weapons -->
+    <details class="card api-card api-group" open>
+      <summary class="api-section-title">Weapons</summary>
+      <div class="api-body" style="padding:16px">
+        <table class="api-table api-table-full">
+          <thead>
+            <tr><th>Weapon</th><th>Damage</th><th>Range</th><th>Cooldown</th><th>Special</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>sword</code></td><td>25</td><td>2.5</td><td>0.5s</td><td>Cleave (hits multiple)</td></tr>
+            <tr><td><code>bow</code></td><td>12</td><td>15.0</td><td>1.4s</td><td>Projectile (ranged)</td></tr>
+            <tr><td><code>daggers</code></td><td>12</td><td>1.5</td><td>0.3s</td><td>Double strike</td></tr>
+            <tr><td><code>shield</code></td><td>15</td><td>1.8</td><td>0.7s</td><td>Block (50% dmg reduction)</td></tr>
+            <tr><td><code>spear</code></td><td>20</td><td>3.5</td><td>0.7s</td><td>Knockback (2.0 force)</td></tr>
+            <tr><td><code>staff</code></td><td>18</td><td>12.0</td><td>1.3s</td><td>Area damage (3.0 radius)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <!-- Stats -->
+    <details class="card api-card api-group" open>
+      <summary class="api-section-title">Stats &amp; Formulas</summary>
+      <div class="api-body" style="padding:16px">
+        <p>Distribute <strong>20 points</strong> across 4 stats (min 1, max 10 each).</p>
+        <table class="api-table api-table-full">
+          <thead>
+            <tr><th>Stat</th><th>Formula</th><th>Example (stat=5)</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>hp</code></td><td>100 + stat &times; 10</td><td>150 HP</td></tr>
+            <tr><td><code>speed</code></td><td>3.0 + stat &times; 0.5</td><td>5.5 units/tick</td></tr>
+            <tr><td><code>attack</code></td><td>1.0 + stat &times; 0.1</td><td>1.5x multiplier</td></tr>
+            <tr><td><code>defense</code></td><td>stat &times; 0.03</td><td>15% damage reduction</td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:12px"><strong>Damage formula:</strong> <code>weapon_damage &times; attack_mult &times; (1 - defense_reduction)</code></p>
+      </div>
+    </details>
+
+    <!-- Pickups -->
+    <details class="card api-card api-group" open>
+      <summary class="api-section-title">Pickups</summary>
+      <div class="api-body" style="padding:16px">
+        <table class="api-table api-table-full">
+          <thead>
+            <tr><th>Type</th><th>Effect</th><th>Duration</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>health_pack</code></td><td>Restore 30 HP</td><td>Instant</td></tr>
+            <tr><td><code>speed_boost</code></td><td>2x movement speed</td><td>50 ticks (~5s)</td></tr>
+            <tr><td><code>damage_boost</code></td><td>1.5x attack damage</td><td>50 ticks (~5s)</td></tr>
+            <tr><td><code>shield_bubble</code></td><td>50 HP damage shield</td><td>Until depleted</td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:12px">Pickups within 2.0 units are auto-collected, or use <code>use_item</code> action.</p>
+      </div>
+    </details>
+
+    <!-- Game Mechanics -->
+    <details class="card api-card api-group" open>
+      <summary class="api-section-title">Game Mechanics</summary>
+      <div class="api-body" style="padding:16px">
+        <table class="api-table api-table-full">
+          <thead>
+            <tr><th>Mechanic</th><th>Value</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Arena size</td><td>2000 &times; 2000 units</td></tr>
+            <tr><td>Tick rate</td><td>10 Hz (100ms per tick)</td></tr>
+            <tr><td>View radius</td><td>100 units</td></tr>
+            <tr><td>Bot collision radius</td><td>5 units</td></tr>
+            <tr><td>Safe zone initial radius</td><td>1000 units</td></tr>
+            <tr><td>Safe zone min radius</td><td>175 units</td></tr>
+            <tr><td>Zone damage (outside)</td><td>3 HP/tick</td></tr>
+            <tr><td>Zone shrink delay</td><td>60 seconds</td></tr>
+            <tr><td>Round duration</td><td>240 seconds max</td></tr>
+            <tr><td>Dodge cooldown</td><td>30 ticks (~3s)</td></tr>
+            <tr><td>Dodge invulnerability</td><td>3 ticks</td></tr>
+            <tr><td>ELO starting</td><td>1000</td></tr>
+            <tr><td>AFK timeout</td><td>30 ticks (~3s)</td></tr>
+            <tr><td>Max message rate</td><td>25/second</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <!-- Authentication -->
+    <details class="card api-card api-group" open>
+      <summary class="api-section-title">Authentication</summary>
+      <div class="api-body" style="padding:16px">
+        <p>Pass your API key using any of these methods:</p>
+        <table class="api-table api-table-full">
+          <thead>
+            <tr><th>Method</th><th>Example</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Header</td><td><code>X-Arena-Key: arena_abc123...</code></td></tr>
+            <tr><td>Query param</td><td><code>/ws/bot?key=arena_abc123...</code></td></tr>
+            <tr><td>WS message</td><td><code>{"type":"auth","api_key":"arena_abc123..."}</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+    </details>
   </section>
 
   <!-- Example Code -->
   <section class="section" id="example">
-    <h2 class="section-title">Example Bot (Python)</h2>
-    <div class="card">
-      <pre class="code-block" id="example-code"></pre>
-    </div>
+    <details class="section-collapsible">
+      <summary><h2 class="section-title">Example Bot</h2></summary>
+      <div class="card">
+        <pre class="code-block" id="example-code"></pre>
+      </div>
+    </details>
   </section>
   <script>
     // Inject example code safely via textContent
@@ -112,18 +649,27 @@
 API_KEY = "YOUR_KEY"
 URI = "wss://arena.angel-serv.com/ws/bot?key=" + API_KEY
 
+obstacles = []   # [{x, y, width, height}, ...] — set at round_start
+arena_size = [2000, 2000]
+
 def distance(a, b):
     return math.sqrt((a[0]-b[0])**2 + (a[1]-b[1])**2)
 
+def point_in_rect(px, py, obs):
+    return (obs["x"] <= px <= obs["x"] + obs["width"]
+            and obs["y"] <= py <= obs["y"] + obs["height"])
+
 async def my_bot():
+    global obstacles, arena_size
     while True:  # Auto-reconnect loop
         try:
             async with websockets.connect(URI, ping_interval=20) as ws:
                 # 1. Connection — server sends bot_id, arena size, weapons
                 connected = json.loads(await ws.recv())
                 bot_id = connected["bot_id"]
+                arena_size = connected["arena_size"]
                 print(f"Connected! ID: {bot_id}")
-                print(f"Arena: {connected['arena_size']}")
+                print(f"Arena: {arena_size}")
                 print(f"Weapons: {connected['available_weapons']}")
                 print(f"Stat budget: {connected['stat_budget']} pts")
 
@@ -148,15 +694,29 @@ async def my_bot():
                     if t == "tick":
                         me = msg["your_state"]
                         my_pos = me["position"]
-                        tick = msg["tick_number"]
+                        tick = msg["tick"]
 
-                        # nearby_entities includes bots + pickups
+                        # Safe zone (blue circle) — stay inside!
+                        zone = msg["safe_zone"]
+                        zone_center = zone["center"]
+                        zone_radius = zone["radius"]
+
+                        # nearby_entities includes bots, pickups, and obstacles
                         enemies = [e for e in msg["nearby_entities"]
                                    if e.get("type") == "bot"
                                    and e.get("is_alive")
                                    and e["bot_id"] != bot_id]
 
-                        if enemies:
+                        # Move toward safe zone if outside it
+                        if not me["in_safe_zone"]:
+                            dx = zone_center[0] - my_pos[0]
+                            dy = zone_center[1] - my_pos[1]
+                            await ws.send(json.dumps({
+                                "type": "action", "tick": tick,
+                                "action": "move",
+                                "direction": [dx, dy]
+                            }))
+                        elif enemies:
                             target = min(enemies,
                                 key=lambda e: distance(e["position"], my_pos))
                             d = distance(target["position"], my_pos)
@@ -176,12 +736,23 @@ async def my_bot():
                                     "direction": [dx, dy]
                                 }))
                         else:
-                            # Wander toward arena center
+                            # No enemies — drift toward zone center
+                            dx = zone_center[0] - my_pos[0]
+                            dy = zone_center[1] - my_pos[1]
                             await ws.send(json.dumps({
                                 "type": "action", "tick": tick,
-                                "action": "idle"
+                                "action": "move",
+                                "direction": [dx, dy]
                             }))
 
+                    elif t == "round_start":
+                        obstacles = msg.get("obstacles", [])
+                        arena_size = msg.get("arena_size", arena_size)
+                        zone = msg["safe_zone"]
+                        print(f"Round {msg['round_number']}! "
+                              f"{msg['bots_in_round']} bots, "
+                              f"{len(obstacles)} obstacles, "
+                              f"zone radius {zone['radius']}")
                     elif t == "kill":
                         print(f"Kill! {msg['victim_name']} (+streak {msg['your_kill_streak']})")
                     elif t == "death":
@@ -189,8 +760,6 @@ async def my_bot():
                         print(f"  Respawn in {msg['respawn_in_seconds']}s")
                     elif t == "respawn":
                         print(f"Respawned at {msg['position']} HP:{msg['hp']}")
-                    elif t == "round_start":
-                        print(f"Round {msg['round_number']}! {msg['bots_in_round']} bots")
                     elif t == "round_end":
                         print(f"Round over! Winner: {msg.get('round_winner')}")
                     elif t == "lobby":
@@ -207,7 +776,7 @@ asyncio.run(my_bot())`;
   <footer class="footer">
     <p>Built on arena.angel-serv.com</p>
     <div class="footer-links">
-      <a href="#getting-started">API Docs</a>
+      <a href="#api-reference">API Reference</a>
       <a href="#example">SDK Examples</a>
       <a href="#arena">Watch Live</a>
     </div>

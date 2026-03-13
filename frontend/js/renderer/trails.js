@@ -8,10 +8,10 @@
 
 import { parseColor } from './utils.js';
 
-const MAX_TRAIL_POINTS = 6;
-const TRAIL_LIFETIME_MS = 400;
-const TRAIL_RADIUS = 14;
-const MIN_MOVE_DIST = 4;
+const MAX_TRAIL_POINTS = 3;
+const TRAIL_LIFETIME_MS = 250;
+const TRAIL_RADIUS = 12;
+const MIN_MOVE_DIST = 6;
 
 export class TrailRenderer {
   /** @param {BABYLON.Scene} scene */

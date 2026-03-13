@@ -120,9 +120,51 @@ func (m *ArenaMap) DistanceToZoneEdge(pos Vec2) float64 {
 	return m.ZoneRadius - pos.DistanceTo(m.ZoneCenter)
 }
 
-// GetSpawnPoint generates a random spawn position inside the current safe zone
-// that does not collide with any obstacle. After 100 failed attempts the zone
-// centre is used as a fallback. The result is always clamped to the arena.
+// GetSpawnPoints generates evenly-spaced spawn positions around the inside edge
+// of the safe zone circle. Bots are placed at ~85% of the zone radius so they
+// start near the perimeter but safely inside. If a position collides with an
+// obstacle, nearby angles are tried before falling back to the zone centre.
+func (m *ArenaMap) GetSpawnPoints(count int) []Vec2 {
+	botR := config.C.BotRadius
+	spawnRadius := m.ZoneRadius * 0.85
+	points := make([]Vec2, 0, count)
+
+	// Random rotation offset so spawns aren't always at the same angles.
+	offset := rand.Float64() * 2 * math.Pi
+
+	for i := 0; i < count; i++ {
+		baseAngle := offset + (2*math.Pi*float64(i))/float64(count)
+		placed := false
+
+		// Try the ideal angle, then nudge up to ±30° to avoid obstacles.
+		for nudge := 0; nudge < 10; nudge++ {
+			sign := float64(1)
+			if nudge%2 == 1 {
+				sign = -1
+			}
+			angle := baseAngle + sign*float64((nudge+1)/2)*0.1 // ~5.7° increments
+
+			x := m.ZoneCenter.X() + spawnRadius*math.Cos(angle)
+			y := m.ZoneCenter.Y() + spawnRadius*math.Sin(angle)
+			pos := m.ClampToArena(NewVec2(x, y))
+
+			if m.IsInZone(pos) && CollidesWithObstacle(pos.X(), pos.Y(), m.Obstacles, botR) == nil {
+				points = append(points, pos)
+				placed = true
+				break
+			}
+		}
+
+		if !placed {
+			points = append(points, m.ClampToArena(m.ZoneCenter))
+		}
+	}
+
+	return points
+}
+
+// GetSpawnPoint generates a single random spawn position inside the safe zone.
+// Used for mid-round respawns or single bot placement.
 func (m *ArenaMap) GetSpawnPoint() Vec2 {
 	botR := config.C.BotRadius
 
