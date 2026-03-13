@@ -164,7 +164,6 @@ func (m *ArenaMap) GetSpawnPoints(count int) []Vec2 {
 }
 
 // GetSpawnPoint generates a single random spawn position inside the safe zone.
-// Used for mid-round respawns or single bot placement.
 func (m *ArenaMap) GetSpawnPoint() Vec2 {
 	botR := config.C.BotRadius
 

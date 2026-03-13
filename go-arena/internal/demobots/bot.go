@@ -167,7 +167,10 @@ func (b *demoBot) session(ctx context.Context) error {
 
 	// 2. Send "select_loadout".
 	fallback := b.config.Strategy
-	if fallback != "aggressive" && fallback != "defensive" && fallback != "territorial" {
+	switch fallback {
+	case "aggressive", "defensive", "territorial", "opportunistic", "hunter":
+		// valid
+	default:
 		fallback = "aggressive"
 	}
 

@@ -31,6 +31,18 @@ var upgrader = websocket.Upgrader{
 // engine registration, and the read/write message loops.
 func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Per-IP WebSocket connection rate limiting.
+		if config.C.WSConnectRatePerMin > 0 {
+			ip := security.ExtractClientIP(r)
+			allowed, _, _, err := security.CheckRateLimit(r.Context(), "ws:bot:"+ip, config.C.WSConnectRatePerMin, 60)
+			if err != nil {
+				slog.Warn("ws rate limit check error, allowing", "error", err, "ip", ip)
+			} else if !allowed {
+				http.Error(w, "too many connections", http.StatusTooManyRequests)
+				return
+			}
+		}
+
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			slog.Error("websocket upgrade failed", "error", err, "remote", r.RemoteAddr)
@@ -117,7 +129,11 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// ----------------------------------------------------------------
 		// 6. Register with engine
 		// ----------------------------------------------------------------
-		engine.AddBot(bot)
+		if !engine.AddBot(bot) {
+			slog.Warn("bot rejected: server at capacity", "bot", bot.Name, "remote", r.RemoteAddr)
+			sendWSError(conn, "server at capacity")
+			return
+		}
 
 		// ----------------------------------------------------------------
 		// 7. Start read/write goroutines
