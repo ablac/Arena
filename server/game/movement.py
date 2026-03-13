@@ -149,6 +149,7 @@ def _process_dodge(
                 arena, grid, obstacles)
     bot.invuln_ticks = settings.combat.dodge_invuln_ticks
     bot.dodge_cooldown = settings.combat.dodge_cooldown_ticks
+    bot.last_action = "dodge"
 
 
 def separate_bots(

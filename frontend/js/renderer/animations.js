@@ -72,14 +72,15 @@ export class BotAnimState {
  * Update animation state and apply transforms.
  * Priority order: death > respawn > dodge > attack > idle/movement.
  * @param {BotAnimState} anim
- * @param {BABYLON.Mesh} body - root body mesh
+ * @param {BABYLON.TransformNode} body - root transform node
  * @param {BABYLON.Mesh|null} weapon - weapon mesh
  * @param {number} x - current x
  * @param {number} z - current z
  * @param {boolean} isAlive
  * @param {number} dt - frame delta in seconds
+ * @param {BABYLON.StandardMaterial|null} bodyMat - body mesh material for alpha/emissive
  */
-export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt) {
+export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat) {
   anim.time += dt;
 
   // Detect movement
@@ -100,7 +101,7 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt) {
     const t = anim.deathTimer / 0.6;
     body.rotation.z = t * (Math.PI / 2);
     body.scaling.y = Math.max(0.1, 1 - t * 0.8);
-    if (body.material) body.material.alpha = 1 - t;
+    if (bodyMat) bodyMat.alpha = 1 - t;
     return;
   }
 
@@ -113,16 +114,16 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt) {
     anim.attackType = null;
     body.rotation.z = 0;
     body.scaling.y = 1;
-    if (body.material) body.material.alpha = 1;
+    if (bodyMat) bodyMat.alpha = 1;
   }
   if (anim.respawnTimer >= 0) {
     anim.respawnTimer += dt;
     const rt = Math.min(anim.respawnTimer / 0.5, 1);
     const glow = (1 - rt) * 0.8;
-    if (body.material && body.material.emissiveColor) {
-      body.material.emissiveColor.r = Math.min(body.material.emissiveColor.r + glow, 1);
-      body.material.emissiveColor.g = Math.min(body.material.emissiveColor.g + glow, 1);
-      body.material.emissiveColor.b = Math.min(body.material.emissiveColor.b + glow, 1);
+    if (bodyMat && bodyMat.emissiveColor) {
+      bodyMat.emissiveColor.r = Math.min(bodyMat.emissiveColor.r + glow, 1);
+      bodyMat.emissiveColor.g = Math.min(bodyMat.emissiveColor.g + glow, 1);
+      bodyMat.emissiveColor.b = Math.min(bodyMat.emissiveColor.b + glow, 1);
     }
     if (anim.respawnTimer > 0.5) anim.respawnTimer = -1;
   }
@@ -142,13 +143,13 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt) {
     body.scaling.y = 1 - wave * 0.3;
     body.scaling.x = 1 + wave * 0.2;
     body.scaling.z = 1 + wave * 0.2;
-    if (body.material) {
-      body.material.alpha = 0.5 + Math.sin(t * Math.PI * 4) * 0.3;
+    if (bodyMat) {
+      bodyMat.alpha = 0.5 + Math.sin(t * Math.PI * 4) * 0.3;
     }
     if (anim.dodgeTimer > DODGE_DURATION) {
       anim.dodgeTimer = -1;
       body.scaling.set(1, 1, 1);
-      if (body.material) body.material.alpha = 1;
+      if (bodyMat) bodyMat.alpha = 1;
     }
     return;
   }
