@@ -16,8 +16,9 @@ export class HudRenderer {
     this.roundEl = roundEl;
     this.killfeedEl = killfeedEl;
     this.statusEl = statusEl;
-    this.kills = [];
-    this.maxKills = 10;
+    this.kills = [];       // each: { killer, victim, weapon, tick, addedAt }
+    this.maxKills = 6;
+    this._killLifetimeMs = 8000; // entries fade out after 8 seconds
     this.killfeedEl.style.display = 'none';
   }
 
@@ -77,32 +78,45 @@ export class HudRenderer {
 
   /** @private */
   _updateKillFeed(kills) {
-    if (!kills || kills.length === 0) {
-      this.killfeedEl.style.display = this.kills.length === 0 ? 'none' : '';
+    const now = Date.now();
+
+    // Expire old entries
+    this.kills = this.kills.filter(k => now - k.addedAt < this._killLifetimeMs);
+
+    if (kills && kills.length > 0) {
+      // Merge new kills (avoid duplicates by tick key)
+      const existingKeys = new Set(this.kills.map(k => `${k.killer}-${k.victim}-${k.tick}`));
+      for (const kill of kills) {
+        const key = `${kill.killer}-${kill.victim}-${kill.tick}`;
+        if (!existingKeys.has(key)) {
+          this.kills.unshift({ ...kill, addedAt: now });
+        }
+      }
+      this.kills = this.kills.slice(0, this.maxKills);
+    }
+
+    if (this.kills.length === 0) {
+      this.killfeedEl.style.display = 'none';
       return;
     }
     this.killfeedEl.style.display = '';
-    // Merge new kills (avoid duplicates by tick)
-    const existingTicks = new Set(this.kills.map(k => `${k.killer}-${k.victim}-${k.tick}`));
-    for (const kill of kills) {
-      const key = `${kill.killer}-${kill.victim}-${kill.tick}`;
-      if (!existingTicks.has(key)) {
-        this.kills.unshift(kill);
-      }
-    }
-    this.kills = this.kills.slice(0, this.maxKills);
-    this._renderKillFeed();
+    this._renderKillFeed(now);
   }
 
   /** @private */
-  _renderKillFeed() {
-    this.killfeedEl.innerHTML = this.kills.map(k =>
-      `<div class="killfeed-entry">
+  _renderKillFeed(now) {
+    this.killfeedEl.innerHTML = this.kills.map(k => {
+      const age = now - k.addedAt;
+      // Fade out in the last 2 seconds of lifetime
+      const fadeStart = this._killLifetimeMs - 2000;
+      const opacity = age > fadeStart ? Math.max(0, 1 - (age - fadeStart) / 2000) : 1;
+      const isNew = age < 400;
+      return `<div class="killfeed-entry" style="opacity:${opacity.toFixed(2)};${isNew ? 'animation:killfeed-in .3s ease-out' : ''}">
         <span class="killer">${this._esc(k.killer)}</span>
         <span style="color:var(--text-muted)"> ${this._weaponIcon(k.weapon)} </span>
         <span class="victim">${this._esc(k.victim)}</span>
-      </div>`
-    ).join('');
+      </div>`;
+    }).join('');
   }
 
   /**

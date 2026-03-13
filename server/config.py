@@ -140,7 +140,7 @@ class NetworkSettings(BaseSettings):
     persist_interval_secs: int = Field(default=30, description="Stat persist to DB interval")
     kill_feed_size: int = Field(default=20, description="Kill feed max entries")
     ws_message_max_bytes: int = Field(default=1024, description="Max WS message size")
-    ws_max_messages_per_sec: int = Field(default=12, description="Max WS msgs/sec")
+    ws_max_messages_per_sec: int = Field(default=25, description="Max WS msgs/sec")
     connection_timeout: int = Field(default=10, description="Connection timeout secs")
     heartbeat_interval: int = Field(default=30, description="Heartbeat interval secs")
     ws_connect_rate_per_min: int = Field(default=3, description="Max WS connects per key/min")
@@ -155,8 +155,8 @@ class SecuritySettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ARENA_SEC_")
     api_key_prefix: str = Field(default="arena_", description="API key prefix")
     bcrypt_rounds: int = Field(default=12, description="bcrypt cost factor")
-    rate_limit_rpm: int = Field(default=60, description="Requests per minute per IP")
-    rate_limit_register_per_hour: int = Field(default=5, description="Registrations/hour/IP")
+    rate_limit_rpm: int = Field(default=300, description="Requests per minute per IP")
+    rate_limit_register_per_hour: int = Field(default=100, description="Registrations/hour/IP")
 
 
 class FrontendSettings(BaseSettings):

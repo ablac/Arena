@@ -68,5 +68,6 @@ async def _update_bot_stats(session: AsyncSession, bot: BotState) -> None:
     if bot.kill_streak > stats.best_streak:
         stats.best_streak = bot.kill_streak
     stats.current_streak = bot.kill_streak
+    stats.elo = bot.elo
 
     session.add(stats)

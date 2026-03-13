@@ -39,6 +39,9 @@ def _direction_away(
     return (-toward[0], -toward[1])
 
 
+ARENA_CENTER = (1000.0, 1000.0)
+
+
 def _find_nearest(bot: BotState, nearby: list[BotState]) -> BotState | None:
     """Find the nearest alive bot from the nearby list."""
     best, best_dist = None, float("inf")
@@ -47,6 +50,14 @@ def _find_nearest(bot: BotState, nearby: list[BotState]) -> BotState | None:
         if d < best_dist:
             best, best_dist = other, d
     return best
+
+
+def _roam_toward_center(bot: BotState) -> Action:
+    """Move toward arena center when no enemies are visible."""
+    d = _direction_toward(bot.position, ARENA_CENTER)
+    if d == (0.0, 0.0):
+        return Action(action_type=ActionType.IDLE)
+    return Action(action_type=ActionType.MOVE, direction=d)
 
 
 def _find_lowest_hp(nearby: list[BotState]) -> BotState | None:
@@ -96,7 +107,7 @@ def _aggressive(bot: BotState, nearby: list[BotState]) -> Action:
     """Move toward nearest enemy, attack if in range."""
     target = _find_nearest(bot, nearby)
     if target is None:
-        return Action(action_type=ActionType.IDLE)
+        return _roam_toward_center(bot)
     if _can_attack(bot, target):
         return Action(action_type=ActionType.ATTACK, target_id=target.bot_id)
     return Action(
@@ -109,7 +120,7 @@ def _defensive(bot: BotState, nearby: list[BotState]) -> Action:
     """Move away from nearest enemy, attack only if in weapon range."""
     target = _find_nearest(bot, nearby)
     if target is None:
-        return Action(action_type=ActionType.IDLE)
+        return _roam_toward_center(bot)
     if _can_attack(bot, target):
         return Action(action_type=ActionType.ATTACK, target_id=target.bot_id)
     return Action(
@@ -137,7 +148,7 @@ def _opportunistic(bot: BotState, nearby: list[BotState]) -> Action:
             action_type=ActionType.MOVE,
             direction=_direction_away(bot.position, strong.position),
         )
-    return Action(action_type=ActionType.IDLE)
+    return _roam_toward_center(bot)
 
 
 def _territorial(bot: BotState, nearby: list[BotState]) -> Action:
@@ -162,7 +173,7 @@ def _hunter(bot: BotState, nearby: list[BotState]) -> Action:
     """Move toward highest-streak bot, attack when in range."""
     target = _find_highest_streak(nearby)
     if target is None:
-        return Action(action_type=ActionType.IDLE)
+        return _roam_toward_center(bot)
     if _can_attack(bot, target):
         return Action(action_type=ActionType.ATTACK, target_id=target.bot_id)
     return Action(

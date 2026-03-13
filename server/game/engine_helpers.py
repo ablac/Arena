@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from server.game.elo import apply_elo_change
 from server.game.fallback_ai import get_fallback_action
 from server.game.pickups import collect_by_action
 from server.game.state import ActionType
@@ -44,23 +45,44 @@ def apply_zone_damage(bots: dict[str, BotState], arena: ArenaMap) -> None:
 def handle_kill_credits(
     death_events: list[dict], bots: dict[str, BotState],
     kill_feed: KillFeed, tick_count: int,
-) -> None:
-    """Attribute kills to attackers, update kill streaks and kill feed."""
+) -> list[dict]:
+    """Attribute kills via last_damaged_by, update kill streaks, ELO, and kill feed.
+
+    Returns a list of kill events to send to killer bots.
+    """
+    kill_events: list[dict] = []
     for event in death_events:
         bid = event["bot_id"]
         dead = bots.get(bid)
-        if dead:
-            dead.round_deaths += 1
-        for other in bots.values():
-            if other.bot_id == bid or not other.is_alive:
-                continue
-            act = other.pending_action
-            if act and act.action_type == ActionType.ATTACK and act.target_id == bid:
-                other.kill_streak += 1
-                other.round_kills += 1
-                event.update(killed_by=other.bot_id, killer_name=other.name, weapon=other.weapon)
-                kill_feed.add_kill(other.name, dead.name if dead else "?", other.weapon, tick_count)
-                break
+        if not dead:
+            continue
+        dead.round_deaths += 1
+
+        # Use last_damaged_by for reliable kill attribution
+        killer_id = dead.last_damaged_by
+        killer = bots.get(killer_id) if killer_id else None
+        if killer and killer.is_alive and killer.bot_id != bid:
+            killer.kill_streak += 1
+            killer.round_kills += 1
+            event.update(killed_by=killer.bot_id, killer_name=killer.name, weapon=killer.weapon)
+            kill_feed.add_kill(killer.name, dead.name, killer.weapon, tick_count)
+
+            # Update ELO ratings
+            new_killer_elo, new_victim_elo = apply_elo_change(killer.elo, dead.elo)
+            killer.elo = new_killer_elo
+            dead.elo = new_victim_elo
+
+            kill_events.append({
+                "bot_id": killer.bot_id,
+                "victim_name": dead.name,
+                "victim_id": dead.bot_id,
+                "weapon": killer.weapon,
+                "kill_streak": killer.kill_streak,
+                "round_kills": killer.round_kills,
+            })
+
+        dead.last_damaged_by = None
+    return kill_events
 
 
 def update_life_tracking(bots: dict[str, BotState], tick_count: int) -> None:

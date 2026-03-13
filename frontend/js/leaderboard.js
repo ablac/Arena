@@ -44,7 +44,7 @@ export async function fetchLeaderboard(sort = 'elo', limit = 50) {
 export function renderLeaderboard(data, tbody, sort) {
   tbody.innerHTML = '';
   if (!data.entries || data.entries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px">No bots qualified yet (10+ kills required)</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px">No bots qualified yet — get your first kill!</td></tr>';
     return;
   }
   data.entries.forEach((entry, i) => {

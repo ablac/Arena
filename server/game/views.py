@@ -25,7 +25,6 @@ def bot_to_nearby_dict(bot: BotState) -> dict[str, Any]:
 def build_spectator_state(
     tick: int,
     bots: dict[str, BotState],
-    safe_zone: dict,
     pickups: list[Pickup],
     kill_feed: list[dict] | None = None,
     obstacles: list[dict] | None = None,
@@ -40,10 +39,12 @@ def build_spectator_state(
                 "hp": b.hp, "max_hp": b.max_hp, "weapon": b.weapon,
                 "is_alive": b.is_alive, "kill_streak": b.kill_streak,
                 "avatar_color": b.avatar_color,
+                "action": b.last_action,
+                "target_id": b.last_action_target,
             }
             for b in bots.values()
         ],
-        "safe_zone": safe_zone,
+        "safe_zone": None,
         "pickups": [
             {"pickup_id": p.pickup_id, "type": p.pickup_type, "position": p.position}
             for p in pickups
@@ -55,7 +56,7 @@ def build_spectator_state(
 
 def build_arena_status(
     running: bool, bots: dict[str, BotState], round_number: int,
-    tick: int, safe_zone_radius: float,
+    tick: int,
 ) -> dict[str, Any]:
     """Build arena status for the REST endpoint."""
     alive = sum(1 for b in bots.values() if b.is_alive)
@@ -65,5 +66,4 @@ def build_arena_status(
         "bots_alive": alive,
         "round_number": round_number,
         "tick": tick,
-        "safe_zone_radius": safe_zone_radius,
     }

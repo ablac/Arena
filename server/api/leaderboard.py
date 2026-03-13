@@ -37,7 +37,7 @@ async def get_leaderboard(
     count_query = (
         select(func.count())
         .select_from(BotStats)
-        .where(BotStats.kills >= 10)
+        .where(BotStats.kills >= 1)
     )
     total_bots = (await db.execute(count_query)).scalar_one()
 
@@ -47,7 +47,7 @@ async def get_leaderboard(
             select(Bot.name, BotStats.kills, BotStats.deaths,
                    BotStats.elo, BotStats.best_streak)
             .join(BotStats, Bot.id == BotStats.bot_id)
-            .where(BotStats.kills >= 10)
+            .where(BotStats.kills >= 1)
         )
         rows = (await db.execute(stmt)).all()
 
@@ -76,7 +76,7 @@ async def get_leaderboard(
             select(Bot.name, BotStats.kills, BotStats.deaths,
                    BotStats.elo, BotStats.best_streak)
             .join(BotStats, Bot.id == BotStats.bot_id)
-            .where(BotStats.kills >= 10)
+            .where(BotStats.kills >= 1)
             .order_by(order_clause)
             .offset(offset)
             .limit(limit)

@@ -2,7 +2,7 @@
 
 /**
  * Pickup rendering — floating, rotating collectibles with glow.
- * Health=green cross, speed=yellow bolt, damage=red diamond, shield=blue disc.
+ * Materials shared by pickup type for performance.
  * @module renderer/pickups
  */
 
@@ -15,6 +15,22 @@ const COLORS = {
   shield:  [0.25, 0.5, 1.0],
 };
 
+/** @type {Map<string, {shapeMat: BABYLON.StandardMaterial, glowMat: BABYLON.StandardMaterial}>} */
+const _typeMats = new Map();
+
+function _getMats(type, scene) {
+  let mats = _typeMats.get(type);
+  if (mats && !mats.shapeMat.isDisposed) return mats;
+  const B = window.BABYLON;
+  const c = COLORS[type] || COLORS.health;
+  const color = new B.Color3(c[0], c[1], c[2]);
+  const shapeMat = makeMat(`pumat-${type}`, scene, color, { emissiveFactor: 0.8, noLight: true });
+  const glowMat = makeMat(`pugm-${type}`, scene, color, { noLight: true, alpha: 0.2, emissiveFactor: 1 });
+  mats = { shapeMat, glowMat };
+  _typeMats.set(type, mats);
+  return mats;
+}
+
 export class PickupRenderer {
   /** @param {BABYLON.Scene} scene */
   constructor(scene) {
@@ -24,10 +40,6 @@ export class PickupRenderer {
     this._time = 0;
   }
 
-  /**
-   * Update pickups from state.
-   * @param {Array} pickups - [{ pickup_id, type, position }]
-   */
   update(pickups) {
     const seen = new Set();
     this._time += 0.04;
@@ -41,18 +53,10 @@ export class PickupRenderer {
       }
 
       const x = p.position[0], z = p.position[1];
-      const floatY = 8 + Math.sin(this._time * 2 + x * 0.01) * 3;
-      entry.root.position.set(x, floatY, z);
-      // Slow rotation
+      entry.root.position.set(x, 8 + Math.sin(this._time * 2 + x * 0.01) * 3, z);
       entry.root.rotation.y = this._time * 1.5 + x * 0.1;
-      // Pulse scale
-      const pulse = 0.9 + Math.sin(this._time * 3 + z * 0.01) * 0.15;
-      entry.root.scaling.setAll(pulse);
-      // Glow pulse
-      entry.glowMat.alpha = 0.15 + Math.sin(this._time * 4 + x) * 0.1;
     }
 
-    // Remove collected
     for (const [id, entry] of this.meshes) {
       if (!seen.has(id)) {
         this._dispose(entry);
@@ -61,59 +65,44 @@ export class PickupRenderer {
     }
   }
 
-  /** @private Create pickup meshes based on type. */
   _create(p) {
     const B = window.BABYLON;
     const id = p.pickup_id;
     const type = p.type || 'health';
-    const c = COLORS[type] || COLORS.health;
-    const color = new B.Color3(c[0], c[1], c[2]);
-
+    const mats = _getMats(type, this.scene);
     const root = new B.TransformNode(`pu-${id}`, this.scene);
 
-    // Main shape varies by type
     let mesh;
     if (type === 'health') {
-      // Green cross from two boxes
       const h = B.MeshBuilder.CreateBox(`puh-${id}`, { width: 3, height: 8, depth: 3 }, this.scene);
       const v = B.MeshBuilder.CreateBox(`puv-${id}`, { width: 8, height: 3, depth: 3 }, this.scene);
       h.parent = root; v.parent = root;
-      const mat = makeMat(`pumat-${id}`, this.scene, color, { emissiveFactor: 0.8, noLight: true });
-      h.material = mat; v.material = mat;
-      mesh = h; mesh._sibling = v; mesh._mat = mat;
+      h.material = mats.shapeMat; v.material = mats.shapeMat;
+      mesh = h; mesh._sibling = v;
     } else if (type === 'shield') {
-      mesh = B.MeshBuilder.CreateSphere(`pum-${id}`, { diameter: 8, segments: 8 }, this.scene);
+      mesh = B.MeshBuilder.CreateSphere(`pum-${id}`, { diameter: 8, segments: 6 }, this.scene);
       mesh.parent = root;
-      mesh._mat = makeMat(`pumat-${id}`, this.scene, color, { emissiveFactor: 0.7, noLight: true, alpha: 0.8 });
-      mesh.material = mesh._mat;
+      mesh.material = mats.shapeMat;
     } else {
-      // Diamond shape
       mesh = B.MeshBuilder.CreatePolyhedron(`pum-${id}`, { type: 1, size: 4 }, this.scene);
       mesh.parent = root;
-      mesh._mat = makeMat(`pumat-${id}`, this.scene, color, { emissiveFactor: 0.8, noLight: true });
-      mesh.material = mesh._mat;
+      mesh.material = mats.shapeMat;
     }
 
-    // Glow halo disc
-    const glow = B.MeshBuilder.CreateDisc(`pug-${id}`, { radius: 12, tessellation: 16 }, this.scene);
+    const glow = B.MeshBuilder.CreateDisc(`pug-${id}`, { radius: 12, tessellation: 8 }, this.scene);
     glow.rotation.x = Math.PI / 2;
     glow.position.y = -2;
     glow.parent = root;
-    const glowMat = makeMat(`pugm-${id}`, this.scene, color, {
-      noLight: true, alpha: 0.2, emissiveFactor: 1
-    });
-    glow.material = glowMat;
+    glow.material = mats.glowMat;
 
-    return { root, mesh, glow, glowMat };
+    return { root, mesh, glow };
   }
 
-  /** @private */
   _dispose(entry) {
     if (entry.mesh._sibling) entry.mesh._sibling.dispose();
-    if (entry.mesh._mat) entry.mesh._mat.dispose();
     entry.mesh.dispose();
     entry.glow.dispose();
-    entry.glowMat.dispose();
     entry.root.dispose();
+    // Don't dispose shared materials
   }
 }

@@ -1,137 +1,167 @@
 'use strict';
 
 /**
- * Orthographic top-down camera with pan, zoom, and follow.
+ * 3D perspective camera — ArcRotateCamera with WASD pan, zoom, orbit, and follow.
+ * RTS-style angled view looking down at the arena.
  * @module renderer/camera
  */
 
+const DEFAULT_ALPHA = -Math.PI / 2;
+const DEFAULT_BETA = 1.0;
+const BASE_RADIUS = 800;
+const MIN_BETA = 0.3;
+const MAX_BETA = 1.4;
+const PAN_SPEED = 8;
+
 export class CameraController {
-  /**
-   * @param {BABYLON.Scene} scene
-   * @param {HTMLCanvasElement} canvas
-   * @param {number} arenaWidth
-   * @param {number} arenaHeight
-   */
-  constructor(scene, canvas, arenaWidth, arenaHeight) {
-    const BABYLON = window.BABYLON;
+  constructor(scene, canvas, w, h) {
+    const B = window.BABYLON;
     this.scene = scene;
-    this.arenaWidth = arenaWidth;
-    this.arenaHeight = arenaHeight;
+    this.arenaWidth = w;
+    this.arenaHeight = h;
     this.zoom = 1.0;
     this.followId = null;
     this.autoPan = false;
-    this.targetX = arenaWidth / 2;
-    this.targetY = arenaHeight / 2;
+    this.targetX = w / 2;
+    this.targetZ = h / 2;
     this.bots = [];
+    this.onZoomChange = null;
 
-    // Orthographic camera looking straight down
-    this.camera = new BABYLON.FreeCamera('cam', new BABYLON.Vector3(
-      arenaWidth / 2, 500, arenaHeight / 2
-    ), scene);
-    this.camera.rotation.x = Math.PI / 2;
-    this.camera.rotation.y = 0;
-    this.camera.rotation.z = 0;
-    this.camera.mode = BABYLON.Camera.ORTHOGRAPHIC_CAMERA;
-    this._updateOrtho();
+    // Track held keys
+    this._keys = new Set();
 
-    // Disable default camera controls — we handle input ourselves
-    this.camera.inputs.clear();
+    this.camera = new B.ArcRotateCamera('cam',
+      DEFAULT_ALPHA, DEFAULT_BETA, BASE_RADIUS,
+      new B.Vector3(w / 2, 0, h / 2), scene
+    );
+    this.camera.lowerRadiusLimit = 80;
+    this.camera.upperRadiusLimit = 3000;
+    this.camera.lowerBetaLimit = MIN_BETA;
+    this.camera.upperBetaLimit = MAX_BETA;
+    this.camera.panningSensibility = 0;
+    this.camera.attachControl(canvas, true);
+
+    // Remove default keyboard input so WASD doesn't conflict
+    this.camera.inputs.removeByType('ArcRotateCameraKeyboardMoveInput');
+    this.camera.inputs.removeByType('ArcRotateCameraMouseWheelInput');
+
     this._setupInput(canvas);
     scene.registerBeforeRender(() => this._tick());
   }
 
-  /** @private Set up mouse/touch pan and zoom input. */
   _setupInput(canvas) {
     let dragging = false;
     let lastX = 0, lastY = 0;
 
     canvas.addEventListener('pointerdown', (e) => {
-      dragging = true; lastX = e.clientX; lastY = e.clientY;
-      this.followId = null;
+      if (e.button === 1 || e.button === 2) {
+        dragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+        this.followId = null;
+        e.preventDefault();
+      }
     });
     canvas.addEventListener('pointermove', (e) => {
       if (!dragging) return;
-      const dx = (e.clientX - lastX) / this.zoom;
-      const dy = (e.clientY - lastY) / this.zoom;
-      this.targetX -= dx;
-      this.targetY += dy;
-      lastX = e.clientX; lastY = e.clientY;
+      const scale = this.camera.radius / 500;
+      const dx = (e.clientX - lastX) * scale;
+      const dy = (e.clientY - lastY) * scale;
+      const cosA = Math.cos(this.camera.alpha);
+      const sinA = Math.sin(this.camera.alpha);
+      this.targetX += dx * cosA - dy * sinA;
+      this.targetZ += dx * sinA + dy * cosA;
+      lastX = e.clientX;
+      lastY = e.clientY;
     });
     canvas.addEventListener('pointerup', () => { dragging = false; });
     canvas.addEventListener('pointerleave', () => { dragging = false; });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      this.zoom = Math.max(0.5, Math.min(6.0, this.zoom + delta));
-      this._updateOrtho();
+      const delta = e.deltaY > 0 ? -0.15 : 0.15;
+      this.setZoom(this.zoom + delta);
     }, { passive: false });
+
+    // WASD / arrow key panning
+    window.addEventListener('keydown', (e) => {
+      const key = e.key.toLowerCase();
+      if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+        this._keys.add(key);
+        // Stop following/auto-pan when manually panning
+        if (this.followId || this.autoPan) {
+          this.followId = null;
+          this.autoPan = false;
+        }
+      }
+    });
+    window.addEventListener('keyup', (e) => {
+      this._keys.delete(e.key.toLowerCase());
+    });
   }
 
-  /** @private Update orthographic bounds based on zoom. */
-  _updateOrtho() {
-    const engine = this.scene.getEngine();
-    const aspect = engine.getRenderWidth() / engine.getRenderHeight();
-    const halfH = (this.arenaHeight / 2) / this.zoom;
-    const halfW = (this.arenaWidth / 2) / this.zoom;
-
-    // To ensure the whole area is visible regardless of aspect ratio,
-    // we need to adjust ortho bounds.
-    if (aspect > 1) {
-      // Landscape: fit height, expand width
-      this.camera.orthoLeft = -halfH * aspect;
-      this.camera.orthoRight = halfH * aspect;
-      this.camera.orthoTop = halfH;
-      this.camera.orthoBottom = -halfH;
-    } else {
-      // Portrait: fit width, expand height
-      this.camera.orthoLeft = -halfW;
-      this.camera.orthoRight = halfW;
-      this.camera.orthoTop = halfW / aspect;
-      this.camera.orthoBottom = -halfW / aspect;
-    }
-  }
-
-  /** @private Called each frame — smooth interpolation toward target. */
   _tick() {
+    // WASD / arrow key movement relative to camera facing
+    if (this._keys.size > 0) {
+      const speed = PAN_SPEED * (this.camera.radius / BASE_RADIUS);
+      // Get camera's actual forward direction projected onto XZ plane
+      const cam = this.camera;
+      const forward = cam.target.subtract(cam.position);
+      forward.y = 0;
+      forward.normalize();
+      // Right is perpendicular on XZ plane
+      const rightX = forward.z;
+      const rightZ = -forward.x;
+
+      let dx = 0, dz = 0;
+
+      if (this._keys.has('w') || this._keys.has('arrowup'))    { dx += forward.x; dz += forward.z; }
+      if (this._keys.has('s') || this._keys.has('arrowdown'))  { dx -= forward.x; dz -= forward.z; }
+      if (this._keys.has('a') || this._keys.has('arrowleft'))  { dx -= rightX; dz -= rightZ; }
+      if (this._keys.has('d') || this._keys.has('arrowright')) { dx += rightX; dz += rightZ; }
+
+      if (dx !== 0 || dz !== 0) {
+        const len = Math.sqrt(dx * dx + dz * dz);
+        this.targetX += (dx / len) * speed;
+        this.targetZ += (dz / len) * speed;
+      }
+    }
+
+    // Follow / auto-pan
     if (this.followId && this.bots.length > 0) {
       const bot = this.bots.find(b => b.bot_id === this.followId);
       if (bot && bot.position) {
         this.targetX = bot.position[0];
-        this.targetY = bot.position[1];
+        this.targetZ = bot.position[1];
       }
     } else if (this.autoPan && this.bots.length > 0) {
       this._autoPanToAction();
     }
+
     const lerp = 0.08;
-    const pos = this.camera.position;
-    pos.x += (this.targetX - pos.x) * lerp;
-    pos.z += (this.targetY - pos.z) * lerp;
-    this._updateOrtho();
+    const t = this.camera.target;
+    t.x += (this.targetX - t.x) * lerp;
+    t.z += (this.targetZ - t.z) * lerp;
+    t.y = 0;
   }
 
-  /** @private Pan toward area with most alive bots. */
   _autoPanToAction() {
     const alive = this.bots.filter(b => b.is_alive);
     if (alive.length === 0) return;
-    let avgX = 0, avgY = 0;
-    alive.forEach(b => { avgX += b.position[0]; avgY += b.position[1]; });
-    this.targetX = avgX / alive.length;
-    this.targetY = avgY / alive.length;
+    let ax = 0, az = 0;
+    alive.forEach(b => { ax += b.position[0]; az += b.position[1]; });
+    this.targetX = ax / alive.length;
+    this.targetZ = az / alive.length;
   }
 
-  /** @param {number} zoom */
   setZoom(zoom) {
-    this.zoom = Math.max(0.5, Math.min(3.0, zoom));
-    this._updateOrtho();
+    this.zoom = Math.max(0.3, Math.min(6.0, zoom));
+    this.camera.radius = BASE_RADIUS / this.zoom;
+    if (this.onZoomChange) this.onZoomChange(this.zoom);
   }
 
-  /** @param {string|null} botId */
   followBot(botId) { this.followId = botId; }
-
-  /** @param {boolean} enabled */
   setAutoPan(enabled) { this.autoPan = enabled; if (enabled) this.followId = null; }
-
-  /** @param {Array} bots - Bot array from arena state. */
   updateBotPositions(bots) { this.bots = bots || []; }
 }

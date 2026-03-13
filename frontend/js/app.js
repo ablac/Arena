@@ -85,11 +85,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 /** @private Setup arena controls. */
 function setupControls(engine) {
   const zoomSlider = document.getElementById('zoom-slider');
+  const zoomLabel = document.getElementById('zoom-value');
   if (zoomSlider) {
     zoomSlider.addEventListener('input', (e) => {
       engine.setZoom(parseFloat(e.target.value));
-      document.getElementById('zoom-value').textContent = `${e.target.value}x`;
     });
+    // Sync slider when mouse wheel changes zoom
+    if (engine.camera) {
+      engine.camera.onZoomChange = (z) => {
+        zoomSlider.value = z;
+        if (zoomLabel) zoomLabel.textContent = `${z.toFixed(1)}x`;
+      };
+    }
   }
 
   const followSelect = document.getElementById('follow-bot');

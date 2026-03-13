@@ -124,7 +124,7 @@ async def rate_limit_bot_config(request: Request) -> None:
     client_ip: str = request.client.host if request.client else "unknown"
     allowed, remaining, reset_at = await check_rate_limit(
         key=f"botcfg:{client_ip}",
-        limit=10,
+        limit=30,
         window_seconds=60,
     )
     if not allowed:
