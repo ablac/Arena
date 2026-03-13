@@ -84,6 +84,13 @@ class BotState:
     stun_ticks: int = 0
     # Shield bubble absorb
     shield_absorb: int = 0
+    # ELO rating (in-memory, synced to DB)
+    elo: int = 1000
+    # Last bot that dealt damage to us (for kill attribution)
+    last_damaged_by: str | None = None
+    # Persistent action fields — survive until consumed by spectator broadcast
+    last_action: str | None = None
+    last_action_target: str | None = None
     # Pathfinding (move_to)
     current_path: list[tuple[float, float]] = field(default_factory=list)
     path_target: tuple[float, float] | None = None

@@ -40,29 +40,40 @@ export class ArenaEngine {
     const B = window.BABYLON;
     let engine;
     try {
-      engine = new B.WebGPUEngine(this.canvas, { antialias: true });
+      engine = new B.WebGPUEngine(this.canvas, { antialias: false });
       await engine.initAsync();
       console.log('[Arena] WebGPU');
     } catch {
-      engine = new B.Engine(this.canvas, true, { preserveDrawingBuffer: true });
+      engine = new B.Engine(this.canvas, false, {
+        preserveDrawingBuffer: false,
+        stencil: false,
+      });
     }
     this.engine = engine;
-    this.scene = new B.Scene(engine);
-    this.scene.clearColor = new B.Color4(0.03, 0.03, 0.05, 1);
-    this.scene.fogMode = B.Scene.FOGMODE_EXP2;
-    this.scene.fogDensity = 0.00015;
-    this.scene.fogColor = new B.Color3(0.03, 0.03, 0.05);
+    const scene = new B.Scene(engine);
+    this.scene = scene;
+    scene.clearColor = new B.Color4(0.03, 0.03, 0.05, 1);
+    scene.fogMode = B.Scene.FOGMODE_EXP2;
+    scene.fogDensity = 0.00015;
+    scene.fogColor = new B.Color3(0.03, 0.03, 0.05);
+    scene.skipPointerMovePicking = true;
+    scene.autoClear = false;
+    scene.autoClearDepthAndStencil = true;
 
-    this.camera = new CameraController(this.scene, this.canvas, this.arenaWidth, this.arenaHeight);
-    this.envRenderer = new EnvironmentRenderer(this.scene, this.arenaWidth, this.arenaHeight);
-    this.obstacleRenderer = new ObstacleRenderer(this.scene);
-    this.botRenderer = new BotRenderer(this.scene);
-    this.pickupRenderer = new PickupRenderer(this.scene);
-    this.effectRenderer = new EffectRenderer(this.scene);
-    this.trailRenderer = new TrailRenderer(this.scene);
+    this.camera = new CameraController(scene, this.canvas, this.arenaWidth, this.arenaHeight);
+    this.envRenderer = new EnvironmentRenderer(scene, this.arenaWidth, this.arenaHeight);
+    this.obstacleRenderer = new ObstacleRenderer(scene);
+    this.botRenderer = new BotRenderer(scene);
+    this.pickupRenderer = new PickupRenderer(scene);
+    this.effectRenderer = new EffectRenderer(scene);
+    this.trailRenderer = new TrailRenderer(scene);
+
+    // Wire up attack → hit sparks
+    this.botRenderer.onAttack = (ax, az, tx, tz, color) => {
+      this.effectRenderer.spawnHitSparks(tx, tz, color);
+    };
 
     this._addLights();
-    this._addBloom();
 
     const self = this;
     engine.runRenderLoop(() => {
@@ -70,7 +81,7 @@ export class ArenaEngine {
         const alpha = Math.min((performance.now() - self._lastStateTime) / TICK_INTERVAL, 1);
         self.botRenderer.interpolate(alpha);
       }
-      self.scene.render();
+      scene.render();
     });
     window.addEventListener('resize', () => engine.resize());
     this.ready = true;
@@ -79,35 +90,16 @@ export class ArenaEngine {
   /** @private */
   _addLights() {
     const B = window.BABYLON;
-    // Warm directional (sun-like)
     const dir = new B.DirectionalLight('sun', new B.Vector3(-0.4, -1, 0.3), this.scene);
     dir.intensity = 0.7;
     dir.diffuse = new B.Color3(1, 0.95, 0.85);
     dir.specular = new B.Color3(0.3, 0.3, 0.3);
 
-    // Ambient hemisphere
     const hemi = new B.HemisphericLight('hemi', new B.Vector3(0, 1, 0), this.scene);
     hemi.intensity = 0.4;
     hemi.diffuse = new B.Color3(0.6, 0.65, 0.8);
     hemi.specular = B.Color3.Black();
     hemi.groundColor = new B.Color3(0.15, 0.12, 0.1);
-  }
-
-  /** @private */
-  _addBloom() {
-    const B = window.BABYLON;
-    if (!B.DefaultRenderingPipeline) return;
-    try {
-      const p = new B.DefaultRenderingPipeline('bloom', true, this.scene, [this.camera.camera]);
-      p.bloomEnabled = true;
-      p.bloomThreshold = 0.35;
-      p.bloomWeight = 0.4;
-      p.bloomKernel = 32;
-      p.bloomScale = 0.5;
-      p.imageProcessingEnabled = true;
-      p.imageProcessing.contrast = 1.15;
-      p.imageProcessing.exposure = 1.1;
-    } catch (e) { console.warn('[Arena] Bloom failed:', e.message); }
   }
 
   /**
@@ -118,7 +110,6 @@ export class ArenaEngine {
     if (!this.ready || state.type !== 'arena_state') return;
     this.state = state;
     this._lastStateTime = performance.now();
-    this.envRenderer.update(state.safe_zone);
     this.obstacleRenderer.update(state.obstacles);
     this.botRenderer.update(state.bots);
     this.trailRenderer.update(state.bots);

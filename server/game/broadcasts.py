@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from server.config import settings
-from server.ws.protocol import DeathMessage, RespawnMessage, RoundEndMessage, TickMessage
+from server.ws.protocol import DeathMessage, KillMessage, RespawnMessage, RoundEndMessage, TickMessage
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -21,7 +21,6 @@ async def send_tick_to_bot(
     bot: BotState,
     tick_number: int,
     nearby_entities: list[dict],
-    safe_zone: dict,
     kill_feed: list[dict] | None = None,
 ) -> None:
     """Send a tick update to a single bot's WebSocket."""
@@ -47,7 +46,6 @@ async def send_tick_to_bot(
             "kill_feed": kill_feed or [],
         },
         nearby_entities=nearby_entities,
-        safe_zone=safe_zone,
         view_radius=settings.game.view_radius,
     )
 
@@ -90,6 +88,25 @@ async def send_respawn_to_bot(bot: BotState, event: dict) -> None:
         await bot.websocket.send_json(msg.model_dump())
     except Exception:
         logger.debug("Failed to send respawn msg to bot %s", bot.bot_id)
+
+
+async def send_kill_to_bot(bot: BotState, event: dict) -> None:
+    """Send a kill notification to the killer bot."""
+    if bot.websocket is None:
+        return
+
+    msg = KillMessage(
+        victim_name=event.get("victim_name", "unknown"),
+        victim_id=event.get("victim_id", ""),
+        weapon_used=event.get("weapon", "unknown"),
+        your_kill_streak=event.get("kill_streak", 0),
+        your_round_kills=event.get("round_kills", 0),
+    )
+
+    try:
+        await bot.websocket.send_json(msg.model_dump())
+    except Exception:
+        logger.debug("Failed to send kill msg to bot %s", bot.bot_id)
 
 
 async def send_round_end(

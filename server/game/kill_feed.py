@@ -53,6 +53,19 @@ class KillFeed:
             for e in self._entries
         ]
 
+    def get_since(self, since_tick: int) -> list[dict[str, Any]]:
+        """Get only kills that occurred after ``since_tick``."""
+        return [
+            {
+                "killer": e.killer_name,
+                "victim": e.victim_name,
+                "weapon": e.weapon,
+                "tick": e.tick,
+            }
+            for e in self._entries
+            if e.tick > since_tick
+        ]
+
     def clear(self) -> None:
         """Clear the kill feed."""
         self._entries.clear()

@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from server.config import settings
-from server.db.connection import async_session_factory
-from server.db.models import Bot
 from server.game.state import Action, ActionType, BotState
 from server.game.weapons import get_available_weapons
-from server.security.auth import get_bot_by_key
-from server.security.input_validator import validate_stats
+from server.ws.bot_setup import authenticate, compute_stats, load_elo, wait_for_loadout
 from server.ws.protocol import (
     ConnectedMessage,
     ErrorMessage,
@@ -43,7 +40,7 @@ async def bot_websocket(ws: WebSocket, key: str = Query(...)) -> None:
         return
 
     # Authenticate via API key
-    bot_record = await _authenticate(key)
+    bot_record = await authenticate(key)
     if bot_record is None:
         await ws.accept()
         await ws.send_json(ErrorMessage(message="Invalid API key").model_dump())
@@ -82,15 +79,17 @@ async def bot_websocket(ws: WebSocket, key: str = Query(...)) -> None:
     await ws.send_json(connected_msg.model_dump())
 
     # Wait for loadout selection
-    loadout = await _wait_for_loadout(ws, bot_record)
+    loadout = await wait_for_loadout(ws, bot_record)
     weapon = loadout["weapon"]
     stats = loadout["stats"]
     fallback = loadout["fallback_behavior"]
 
     # Compute derived stats
-    computed = _compute_stats(stats)
+    computed = compute_stats(stats)
 
     # Create BotState and register with engine
+    bot_elo = await load_elo(bot_id)
+
     bot_state = BotState(
         bot_id=bot_id,
         api_key_id=str(bot_record.api_key_id),
@@ -105,6 +104,7 @@ async def bot_websocket(ws: WebSocket, key: str = Query(...)) -> None:
         websocket=ws,
         avatar_color=bot_record.avatar_color,
         stats=stats,
+        elo=bot_elo,
     )
 
     # Send loadout confirmation
@@ -127,53 +127,23 @@ async def bot_websocket(ws: WebSocket, key: str = Query(...)) -> None:
         _engine.remove_bot(bot_id)
 
 
-async def _authenticate(key: str) -> Bot | None:
-    """Validate API key and return the Bot record."""
-    async with async_session_factory() as session:
-        return await get_bot_by_key(session, key)
-
-
-async def _wait_for_loadout(ws: WebSocket, bot: Bot) -> dict:
-    """Wait for loadout selection with timeout. Falls back to defaults."""
-    timeout = settings.network.loadout_timeout_secs
-    defaults = {
-        "weapon": bot.default_weapon,
-        "stats": bot.default_stats,
-        "fallback_behavior": bot.default_fallback,
-    }
-    try:
-        raw = await asyncio.wait_for(ws.receive_json(), timeout=timeout)
-        msg = parse_bot_message(raw)
-        if not isinstance(msg, LoadoutSelectMessage):
-            await ws.send_json(ErrorMessage(message="Expected select_loadout").model_dump())
-            return defaults
-        if msg.weapon not in get_available_weapons():
-            await ws.send_json(ErrorMessage(message=f"Unknown weapon: {msg.weapon}").model_dump())
-            return defaults
-        if not validate_stats(msg.stats):
-            await ws.send_json(ErrorMessage(message="Invalid stats").model_dump())
-            return defaults
-        return {"weapon": msg.weapon, "stats": msg.stats, "fallback_behavior": msg.fallback_behavior}
-    except asyncio.TimeoutError:
-        return defaults
-    except Exception:
-        return defaults
-
-
-def _compute_stats(stats: dict[str, int]) -> dict[str, float]:
-    """Compute derived stats from raw stat allocation."""
-    return {
-        "max_hp": 100 + stats.get("hp", 5) * 10,
-        "move_speed": 3 + stats.get("speed", 5) * 0.5,
-        "attack_mult": 1.0 + stats.get("attack", 5) * 0.1,
-        "defense_red": stats.get("defense", 5) * 0.03,
-    }
-
-
 async def _message_loop(ws: WebSocket, bot: BotState) -> None:
     """Receive and process action messages from a bot."""
+    max_msgs_per_sec = settings.network.ws_max_messages_per_sec
+    msg_timestamps: list[float] = []
+
     while True:
         raw = await ws.receive_json()
+
+        # Rate limiting
+        now = time.monotonic()
+        msg_timestamps = [t for t in msg_timestamps if now - t < 1.0]
+        if len(msg_timestamps) >= max_msgs_per_sec:
+            logger.warning("Rate limited bot %s (%d msgs/sec)", bot.name, len(msg_timestamps))
+            await ws.send_json(ErrorMessage(message="Rate limited").model_dump())
+            continue
+        msg_timestamps.append(now)
+
         msg = parse_bot_message(raw)
         if msg is None:
             await ws.send_json(ErrorMessage(message="Invalid message").model_dump())

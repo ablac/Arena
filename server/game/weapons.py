@@ -12,21 +12,29 @@ if TYPE_CHECKING:
     from server.game.state import BotState
 
 
+_weapon_config_cache: dict[str, dict] = {}
+
+
 def get_weapon_config(weapon_name: str) -> dict:
-    """Get weapon configuration dict from settings.
+    """Get weapon configuration dict from settings (cached).
 
     Falls back to sword if weapon not found.
     """
+    cached = _weapon_config_cache.get(weapon_name)
+    if cached is not None:
+        return cached
     weapon_cfg = getattr(settings.weapons, weapon_name, None)
     if weapon_cfg is None:
         weapon_cfg = settings.weapons.sword
-    return {
+    result = {
         "damage": weapon_cfg.damage,
         "range": weapon_cfg.range,
         "cooldown": weapon_cfg.cooldown,
         "special": weapon_cfg.special,
         "special_param": weapon_cfg.special_param,
     }
+    _weapon_config_cache[weapon_name] = result
+    return result
 
 
 def get_available_weapons() -> list[str]:

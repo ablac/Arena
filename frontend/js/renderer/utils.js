@@ -63,7 +63,7 @@ export function createTextPlane(id, text, color, scene, width, height) {
   const plane = BABYLON.MeshBuilder.CreatePlane(`txt-${id}`, {
     width, height
   }, scene);
-  plane.rotation.x = Math.PI / 2;
+  plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
   plane.position.y = 2;
 
   const tex = new BABYLON.DynamicTexture(`dtex-${id}`, { width: 256, height: 64 }, scene, false);

@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from server.config import settings
+from server.game.damage import apply_damage, tick_timers
 from server.game.obstacles import line_intersects_obstacle
 from server.game.projectiles import create_projectile
 from server.game.state import ActionType, StaffImpact
@@ -33,6 +34,8 @@ def process_combat(
     """
     damage_queue: list[tuple[str, float, str, str]] = []
     events: list[dict] = []
+    view_radius_sq = settings.game.view_radius ** 2
+
     for bot_id, bot in bots.items():
         if not bot.is_alive or bot.pending_action is None:
             continue
@@ -53,10 +56,17 @@ def process_combat(
                 pos = bots[target_id].position
             if pos is None or not isinstance(pos, tuple):
                 continue
+            # Anti-cheat: staff target position must be within view radius
+            dx = bot.position[0] - pos[0]
+            dy = bot.position[1] - pos[1]
+            if dx * dx + dy * dy > view_radius_sq:
+                continue
             _queue_staff_impact(bot, pos, staff_impacts, obstacles)
             cfg = get_weapon_config("staff")
             bot.cooldown_remaining = cfg["cooldown"]
             bot.round_shots_fired += 1
+            bot.last_action = "attack"
+            bot.last_action_target = target_id
             continue
 
         if target_id is None or target_id not in bots:
@@ -65,6 +75,12 @@ def process_combat(
         if not target.is_alive:
             continue
         if bot.cooldown_remaining > 0:
+            continue
+
+        # Anti-cheat: target must be within view radius
+        dx = bot.position[0] - target.position[0]
+        dy = bot.position[1] - target.position[1]
+        if dx * dx + dy * dy > view_radius_sq:
             continue
 
         # Bow creates projectile instead of instant hit
@@ -79,6 +95,8 @@ def process_combat(
             cfg = get_weapon_config("bow")
             bot.cooldown_remaining = cfg["cooldown"]
             bot.round_shots_fired += 1
+            bot.last_action = "attack"
+            bot.last_action_target = target_id
             continue
 
         # Melee weapons — no LOS check needed
@@ -88,6 +106,8 @@ def process_combat(
         dmg = calculate_damage(bot.weapon, bot, target)
         damage_queue.append((target_id, dmg, bot_id, bot.weapon))
         bot.round_shots_fired += 1
+        bot.last_action = "attack"
+        bot.last_action_target = target_id
 
         # Weapon specials
         if bot.weapon == "sword":
@@ -107,8 +127,8 @@ def process_combat(
         bot.cooldown_remaining = cfg["cooldown"]
 
     for target_id, dmg, attacker_id, weapon in damage_queue:
-        _apply_damage(bots, target_id, dmg, attacker_id, weapon, events)
-    _tick_timers(bots, tick_rate)
+        apply_damage(bots, target_id, dmg, attacker_id, weapon, events)
+    tick_timers(bots, tick_rate)
     return events
 
 
@@ -130,11 +150,10 @@ def process_staff_impacts(
             dx = bot.position[0] - impact.position[0]
             dy = bot.position[1] - impact.position[1]
             if dx * dx + dy * dy <= radius_sq:
-                # Apply target's defense reduction and shield passive now
                 dmg = impact.damage * (1.0 - bot.defense_reduction)
                 if bot.weapon == "shield":
                     dmg *= 0.5
-                _apply_damage(bots, bid, dmg, impact.owner_id, "staff", events)
+                apply_damage(bots, bid, dmg, impact.owner_id, "staff", events)
                 attacker = bots.get(impact.owner_id)
                 if attacker:
                     attacker.round_shots_hit += 1
@@ -154,7 +173,6 @@ def _queue_staff_impact(
     cfg = get_weapon_config("staff")
     from server.game.pickups import get_effective_damage_mult
     eff_mult = get_effective_damage_mult(attacker)
-    # Store damage before target defense
     base_dmg = cfg["damage"] * eff_mult
     staff_impacts.append(StaffImpact(
         owner_id=attacker.bot_id,
@@ -163,40 +181,3 @@ def _queue_staff_impact(
         radius=cfg["special_param"],
         ticks_remaining=settings.combat.staff_delay_ticks,
     ))
-
-
-def _apply_damage(
-    bots: dict[str, BotState], target_id: str, dmg: float,
-    attacker_id: str, weapon: str, events: list[dict],
-) -> None:
-    """Apply damage to a target, respecting invulnerability and shield absorb."""
-    target = bots.get(target_id)
-    if target is None or not target.is_alive or target.invuln_ticks > 0:
-        return
-    int_dmg = int(round(dmg))
-    if target.shield_absorb > 0:
-        absorbed = min(target.shield_absorb, int_dmg)
-        target.shield_absorb -= absorbed
-        int_dmg -= absorbed
-    target.hp -= int_dmg
-    target.round_damage_taken += int_dmg
-    attacker = bots.get(attacker_id)
-    if attacker:
-        attacker.round_damage_dealt += int_dmg
-        attacker.round_shots_hit += 1
-    events.append({"type": "damage", "attacker": attacker_id,
-                    "target": target_id, "weapon": weapon, "damage": int_dmg})
-
-
-def _tick_timers(bots: dict[str, BotState], tick_rate: int) -> None:
-    """Reduce cooldowns, stun, invulnerability, and dodge cooldown timers."""
-    dt = 1.0 / tick_rate
-    for bot in bots.values():
-        if bot.cooldown_remaining > 0:
-            bot.cooldown_remaining = max(0.0, bot.cooldown_remaining - dt)
-        if bot.stun_ticks > 0:
-            bot.stun_ticks -= 1
-        if bot.invuln_ticks > 0:
-            bot.invuln_ticks -= 1
-        if bot.dodge_cooldown > 0:
-            bot.dodge_cooldown -= 1

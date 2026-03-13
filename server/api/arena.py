@@ -44,8 +44,8 @@ async def get_arena_status(
             bots_connected=status["bots_connected"],
             bots_alive=status["bots_alive"],
             round_number=status["round_number"],
-            round_time_remaining=settings.combat.round_duration,
-            safe_zone_radius=status["safe_zone_radius"],
+            round_time_remaining=status.get("round_time_remaining", settings.combat.round_duration),
+            safe_zone_radius=status.get("safe_zone_radius", settings.arena_zone.initial_radius),
             top_bot=top_bot_name,
         )
 

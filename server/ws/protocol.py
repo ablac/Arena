@@ -45,7 +45,6 @@ class TickMessage(BaseModel):
     tick_number: int
     your_state: dict
     nearby_entities: list[dict]
-    safe_zone: dict
     view_radius: int
 
 
@@ -95,6 +94,17 @@ class RoundStartMessage(BaseModel):
     round_number: int
     position: tuple[float, float]
     bots_in_round: int
+
+
+class KillMessage(BaseModel):
+    """Sent to a bot when it kills another bot."""
+
+    type: Literal["kill"] = "kill"
+    victim_name: str
+    victim_id: str
+    weapon_used: str
+    your_kill_streak: int
+    your_round_kills: int
 
 
 class ErrorMessage(BaseModel):
@@ -151,6 +161,7 @@ ServerMessage = (
     | DeathMessage
     | RespawnMessage
     | RoundEndMessage
+    | KillMessage
     | ErrorMessage
     | KickMessage
 )

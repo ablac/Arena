@@ -16,13 +16,14 @@ if TYPE_CHECKING:
     from server.game.spatial import SpatialGrid
     from server.game.state import BotState, Obstacle
 
-# Module-level navigation grid, rebuilt each round
 _nav_grid: NavGrid | None = None
-_nav_grid_obstacle_id: int | None = None  # id() of the obstacles list used to build it
+_nav_grid_obstacle_id: int | None = None
+
+BOT_SEPARATION_DIST = 1.0
+_SEP_QUERY_R = 3.0
 
 
 def _get_nav_grid(obstacles: list[Obstacle]) -> NavGrid:
-    """Get or rebuild the navigation grid for the current obstacle set."""
     global _nav_grid, _nav_grid_obstacle_id
     obs_id = id(obstacles)
     if _nav_grid is None or _nav_grid_obstacle_id != obs_id:
@@ -33,163 +34,150 @@ def _get_nav_grid(obstacles: list[Obstacle]) -> NavGrid:
 
 
 def reset_nav_grid() -> None:
-    """Force the navigation grid to rebuild on next access.
-
-    Call this when obstacles change (e.g. new round).
-    """
+    """Force the navigation grid to rebuild on next access."""
     global _nav_grid, _nav_grid_obstacle_id
     _nav_grid = None
     _nav_grid_obstacle_id = None
 
 
-def process_movement(
-    bots: dict[str, BotState],
-    arena: ArenaMap,
-    grid: SpatialGrid,
-    obstacles: list[Obstacle],
+def _apply_move(
+    bot_id: str, bot: BotState, new_x: float, new_y: float,
+    arena: ArenaMap, grid: SpatialGrid, obstacles: list[Obstacle],
 ) -> None:
-    """Process move, move_to, and dodge actions, updating positions and spatial grid."""
+    """Slide against obstacles, clamp, track distance, commit position."""
+    new_x, new_y = slide_along_obstacle(
+        bot.position[0], bot.position[1], new_x, new_y, obstacles
+    )
+    new_x, new_y = arena.clamp_position(new_x, new_y)
+    old_x, old_y = bot.position
+    bot.round_distance += math.sqrt((new_x - old_x) ** 2 + (new_y - old_y) ** 2)
+    bot.position = (new_x, new_y)
+    grid.update(bot_id, new_x, new_y)
+
+
+def _normalize(dx: float, dy: float) -> tuple[float, float] | None:
+    length = math.sqrt(dx * dx + dy * dy)
+    if length == 0:
+        return None
+    return dx / length, dy / length
+
+
+def process_movement(
+    bots: dict[str, BotState], arena: ArenaMap,
+    grid: SpatialGrid, obstacles: list[Obstacle],
+) -> None:
+    """Process move/move_to/dodge actions, then separate overlapping bots."""
     for bot_id, bot in bots.items():
-        if not bot.is_alive or bot.pending_action is None:
+        if not bot.is_alive or bot.pending_action is None or bot.stun_ticks > 0:
             continue
-        if bot.stun_ticks > 0:
-            continue
-
         action = bot.pending_action.action_type
-
         if action == ActionType.DODGE:
             _process_dodge(bot_id, bot, arena, grid, obstacles)
         elif action == ActionType.MOVE:
             _process_move(bot_id, bot, arena, grid, obstacles)
         elif action == ActionType.MOVE_TO:
             _process_move_to(bot_id, bot, arena, grid, obstacles)
+    separate_bots(bots, arena, grid)
 
 
 def _process_move(
     bot_id: str, bot: BotState, arena: ArenaMap,
     grid: SpatialGrid, obstacles: list[Obstacle],
 ) -> None:
-    """Process a normal move action."""
-    direction = bot.pending_action.direction
-    if direction is None:
+    d = bot.pending_action.direction
+    if d is None:
         return
-
-    dx, dy = direction
-    length = math.sqrt(dx * dx + dy * dy)
-    if length == 0:
+    n = _normalize(d[0], d[1])
+    if n is None:
         return
-    dx /= length
-    dy /= length
-
     speed = get_effective_speed(bot)
-    new_x = bot.position[0] + dx * speed
-    new_y = bot.position[1] + dy * speed
-
-    # Obstacle collision (slide along edges)
-    new_x, new_y = slide_along_obstacle(
-        bot.position[0], bot.position[1], new_x, new_y, obstacles
-    )
-    new_x, new_y = arena.clamp_position(new_x, new_y)
-
-    # Track distance
-    old_x, old_y = bot.position
-    dist = math.sqrt((new_x - old_x) ** 2 + (new_y - old_y) ** 2)
-    bot.round_distance += dist
-
-    bot.position = (new_x, new_y)
-    grid.update(bot_id, new_x, new_y)
+    _apply_move(bot_id, bot,
+                bot.position[0] + n[0] * speed,
+                bot.position[1] + n[1] * speed,
+                arena, grid, obstacles)
 
 
 def _process_move_to(
     bot_id: str, bot: BotState, arena: ArenaMap,
     grid: SpatialGrid, obstacles: list[Obstacle],
 ) -> None:
-    """Process a move_to action — navigate toward target using A* pathfinding."""
     target = bot.pending_action.target_position
     if target is None:
         return
-
-    # If target changed or no path exists, compute a new path
     if bot.path_target != target or not bot.current_path:
-        nav = _get_nav_grid(obstacles)
-        bot.current_path = find_path(bot.position, target, nav)
+        bot.current_path = find_path(bot.position, target, _get_nav_grid(obstacles))
         bot.path_target = target
         if not bot.current_path:
-            # No path found — clear and idle
             bot.path_target = None
             return
 
-    # Move toward the next waypoint
     speed = get_effective_speed(bot)
     wx, wy = bot.current_path[0]
-    dx = wx - bot.position[0]
-    dy = wy - bot.position[1]
-    dist_to_wp = math.sqrt(dx * dx + dy * dy)
+    dx, dy = wx - bot.position[0], wy - bot.position[1]
+    dist_wp = math.sqrt(dx * dx + dy * dy)
 
-    if dist_to_wp <= speed:
-        # Close enough to waypoint — snap to it and advance
+    if dist_wp <= speed:
         new_x, new_y = wx, wy
         bot.current_path.pop(0)
         if not bot.current_path:
-            # Arrived at destination
             bot.path_target = None
     else:
-        # Move toward waypoint
-        dx /= dist_to_wp
-        dy /= dist_to_wp
+        dx /= dist_wp
+        dy /= dist_wp
         new_x = bot.position[0] + dx * speed
         new_y = bot.position[1] + dy * speed
 
-    # Obstacle collision (slide along edges)
-    new_x, new_y = slide_along_obstacle(
-        bot.position[0], bot.position[1], new_x, new_y, obstacles
-    )
-    new_x, new_y = arena.clamp_position(new_x, new_y)
-
-    # Track distance
-    old_x, old_y = bot.position
-    dist = math.sqrt((new_x - old_x) ** 2 + (new_y - old_y) ** 2)
-    bot.round_distance += dist
-
-    bot.position = (new_x, new_y)
-    grid.update(bot_id, new_x, new_y)
+    _apply_move(bot_id, bot, new_x, new_y, arena, grid, obstacles)
 
 
 def _process_dodge(
     bot_id: str, bot: BotState, arena: ArenaMap,
     grid: SpatialGrid, obstacles: list[Obstacle],
 ) -> None:
-    """Process a dodge action — 2x speed dash with invulnerability."""
     if bot.dodge_cooldown > 0:
-        return  # Still on cooldown
-
-    direction = bot.pending_action.direction
-    if direction is None:
         return
-
-    dx, dy = direction
-    length = math.sqrt(dx * dx + dy * dy)
-    if length == 0:
+    d = bot.pending_action.direction
+    if d is None:
         return
-    dx /= length
-    dy /= length
-
-    dodge_speed = bot.speed * settings.combat.dodge_speed_mult
-    new_x = bot.position[0] + dx * dodge_speed
-    new_y = bot.position[1] + dy * dodge_speed
-
-    new_x, new_y = slide_along_obstacle(
-        bot.position[0], bot.position[1], new_x, new_y, obstacles
-    )
-    new_x, new_y = arena.clamp_position(new_x, new_y)
-
-    old_x, old_y = bot.position
-    dist = math.sqrt((new_x - old_x) ** 2 + (new_y - old_y) ** 2)
-    bot.round_distance += dist
-
-    bot.position = (new_x, new_y)
-    grid.update(bot_id, new_x, new_y)
-
-    # Apply invulnerability and cooldown
+    n = _normalize(d[0], d[1])
+    if n is None:
+        return
+    speed = bot.speed * settings.combat.dodge_speed_mult
+    _apply_move(bot_id, bot,
+                bot.position[0] + n[0] * speed,
+                bot.position[1] + n[1] * speed,
+                arena, grid, obstacles)
     bot.invuln_ticks = settings.combat.dodge_invuln_ticks
     bot.dodge_cooldown = settings.combat.dodge_cooldown_ticks
+
+
+def separate_bots(
+    bots: dict[str, BotState], arena: ArenaMap, grid: SpatialGrid,
+) -> None:
+    """Push apart bots closer than BOT_SEPARATION_DIST (2 iterations)."""
+    for _ in range(2):
+        for bot_id, bot in bots.items():
+            if not bot.is_alive:
+                continue
+            nearby = grid.query_radius(bot.position[0], bot.position[1], _SEP_QUERY_R)
+            for oid in nearby:
+                if oid == bot_id or oid not in bots:
+                    continue
+                other = bots[oid]
+                if not other.is_alive:
+                    continue
+                dx = bot.position[0] - other.position[0]
+                dy = bot.position[1] - other.position[1]
+                dist = math.sqrt(dx * dx + dy * dy)
+                if dist >= BOT_SEPARATION_DIST or dist == 0:
+                    continue
+                nx, ny = dx / dist, dy / dist
+                push = (BOT_SEPARATION_DIST - dist) * 0.6
+                bx, by = arena.clamp_position(
+                    bot.position[0] + nx * push, bot.position[1] + ny * push)
+                bot.position = (bx, by)
+                grid.update(bot_id, bx, by)
+                ox, oy = arena.clamp_position(
+                    other.position[0] - nx * push, other.position[1] - ny * push)
+                other.position = (ox, oy)
+                grid.update(oid, ox, oy)

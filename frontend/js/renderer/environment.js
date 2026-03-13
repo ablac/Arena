@@ -1,8 +1,7 @@
 'use strict';
 
 /**
- * Arena environment — stone floor, boundary walls, safe zone ring,
- * danger tint, dark void outside arena.
+ * Arena environment — stone floor, boundary walls, dark void outside arena.
  * @module renderer/environment
  */
 
@@ -16,19 +15,10 @@ export class EnvironmentRenderer {
     this.scene = scene;
     this.w = w;
     this.h = h;
-    this._time = 0;
-    this.safeZoneFill = null;
-    this.safeZoneRing = null;
-    this.safeZoneRingMat = null;
-    this.dangerPlane = null;
-    this.dangerMat = null;
-    this._ringBaseScale = 1;
 
     this._createFloor();
     this._createWalls();
     this._createVoid();
-    this._createSafeZone();
-    scene.registerBeforeRender(() => this._animate());
   }
 
   /** @private Procedural stone floor with subtle grid. */
@@ -109,79 +99,6 @@ export class EnvironmentRenderer {
     v.material = mat;
   }
 
-  /** @private Safe zone disc + ring + danger tint. */
-  _createSafeZone() {
-    const B = window.BABYLON;
-    const fill = B.MeshBuilder.CreateDisc('szFill', { radius: 1, tessellation: 64 }, this.scene);
-    fill.rotation.x = Math.PI / 2;
-    fill.position.y = 0.15;
-    fill.material = makeMat('szFillMat', this.scene, new B.Color3(0, 0.4, 0.8), {
-      noLight: true, alpha: 0.06, emissiveFactor: 1
-    });
-    fill.setEnabled(false);
-    this.safeZoneFill = fill;
-
-    const ring = B.MeshBuilder.CreateTorus('szRing', {
-      diameter: 2, thickness: 1.5, tessellation: 64
-    }, this.scene);
-    ring.rotation.x = Math.PI / 2;
-    ring.position.y = 0.5;
-    this.safeZoneRingMat = makeMat('szRingMat', this.scene, new B.Color3(0.1, 0.8, 1), {
-      noLight: true, alpha: 0.6, emissiveFactor: 1
-    });
-    ring.material = this.safeZoneRingMat;
-    ring.setEnabled(false);
-    this.safeZoneRing = ring;
-
-    const danger = B.MeshBuilder.CreateGround('danger', {
-      width: this.w, height: this.h
-    }, this.scene);
-    danger.position.set(this.w / 2, 0.1, this.h / 2);
-    this.dangerMat = makeMat('dangerMat', this.scene, new B.Color3(0.8, 0.1, 0.05), {
-      noLight: true, alpha: 0.08, emissiveFactor: 0.8
-    });
-    danger.material = this.dangerMat;
-    danger.setEnabled(false);
-    this.dangerPlane = danger;
-  }
-
-  /** @private Pulse ring. */
-  _animate() {
-    this._time += 0.02;
-    if (this.safeZoneRingMat) {
-      this.safeZoneRingMat.alpha = 0.5 + Math.sin(this._time * 2) * 0.15;
-    }
-    if (this.safeZoneRing && this.safeZoneRing.isEnabled()) {
-      const p = 1 + Math.sin(this._time * 2) * 0.015;
-      this.safeZoneRing.scaling.x = this._ringBaseScale * p;
-      this.safeZoneRing.scaling.z = this._ringBaseScale * p;
-    }
-  }
-
-  /**
-   * Update safe zone.
-   * @param {Object|null} safeZone - { center: [x,y], radius }
-   */
-  update(safeZone) {
-    if (!safeZone) {
-      this.safeZoneFill.setEnabled(false);
-      this.safeZoneRing.setEnabled(false);
-      this.dangerPlane.setEnabled(false);
-      return;
-    }
-    this.safeZoneFill.setEnabled(true);
-    this.safeZoneRing.setEnabled(true);
-    this.dangerPlane.setEnabled(true);
-
-    const cx = safeZone.center[0], cz = safeZone.center[1], r = safeZone.radius;
-    this.safeZoneFill.position.x = cx;
-    this.safeZoneFill.position.z = cz;
-    this.safeZoneFill.scaling.x = r;
-    this.safeZoneFill.scaling.y = r;
-
-    this.safeZoneRing.position.x = cx;
-    this.safeZoneRing.position.z = cz;
-    this._ringBaseScale = r;
-    this.safeZoneRing.scaling.set(r, 1, r);
-  }
+  /** No-op — safe zones removed. */
+  update() {}
 }

@@ -11,22 +11,22 @@ from fastapi import WebSocket
 from server.config import settings
 from server.game.arena_map import ArenaMap
 from server.game.broadcasts import (
-    broadcast_to_spectators, send_death_to_bot, send_respawn_to_bot,
+    broadcast_to_spectators, send_death_to_bot, send_kill_to_bot,
     send_round_end, send_tick_to_bot,
 )
 from server.game.combat import process_combat, process_staff_impacts
 from server.game.engine_helpers import (
-    apply_fallbacks, apply_zone_damage, handle_kill_credits,
+    apply_fallbacks, handle_kill_credits,
     process_use_items, update_life_tracking,
 )
 from server.game.kill_feed import KillFeed
-from server.game.movement import process_movement, reset_nav_grid
+from server.game.movement import process_movement, reset_nav_grid, separate_bots
 from server.game.persistence import persist_bot_stats
 from server.game.pickups import check_auto_collect, maybe_spawn_pickup, tick_effects
 from server.game.projectiles import update_projectiles
 from server.game.rounds import get_round_winner, reset_round_stats, should_end_round
 from server.game.spatial import SpatialGrid
-from server.game.spawner import check_deaths, process_respawns, spawn_bot
+from server.game.spawner import check_deaths, spawn_bot
 from server.game.state import BotState, Pickup, Projectile, RoundState, StaffImpact
 from server.game.views import bot_to_nearby_dict, build_arena_status, build_spectator_state
 from server.ws.protocol import KickMessage, LobbyMessage, RoundStartMessage
@@ -55,6 +55,8 @@ class GameEngine:
         self._spec_interval: int = settings.network.spectator_broadcast_interval
         self._persist_interval: int = settings.network.persist_interval_secs * self._tick_rate
         self._last_persist_tick: int = 0
+        self._last_killfeed_tick: int = 0
+        self._waiting_bots: dict[str, BotState] = {}  # bots queued for next round
 
     async def run(self) -> None:
         """Main tick loop — runs as an asyncio background task."""
@@ -76,7 +78,7 @@ class GameEngine:
             await self._tick_lobby()
             return
         if self.round.in_intermission:
-            self._tick_intermission()
+            await self._tick_intermission()
             return
         apply_fallbacks(self.bots, self.get_nearby_bots)
         process_use_items(self.bots, self.pickups)
@@ -84,11 +86,13 @@ class GameEngine:
         process_combat(self.bots, self._tick_rate, self.arena.obstacles, self.projectiles, self.staff_impacts)
         update_projectiles(self.projectiles, self.bots, self.arena.obstacles, self._tick_rate)
         process_staff_impacts(self.staff_impacts, self.bots)
+        # Resync grid after knockback moved bots without grid updates
+        for bid, b in self.bots.items():
+            if b.is_alive:
+                self.grid.update(bid, b.position[0], b.position[1])
+        separate_bots(self.bots, self.arena, self.grid)
         death_events = check_deaths(self.bots, self.grid, self.tick_count)
-        handle_kill_credits(death_events, self.bots, self.kill_feed, self.tick_count)
-        respawn_events = process_respawns(self.bots, self.arena, self.grid, self._tick_rate)
-        self.arena.update_zone(self.tick_count, self._tick_rate)
-        apply_zone_damage(self.bots, self.arena)
+        kill_events = handle_kill_credits(death_events, self.bots, self.kill_feed, self.tick_count)
         maybe_spawn_pickup(self.pickups, self.arena, self.tick_count)
         check_auto_collect(self.bots, self.pickups)
         tick_effects(self.bots)
@@ -97,8 +101,15 @@ class GameEngine:
         await self._send_bot_updates()
         if self.tick_count % self._spec_interval == 0:
             await self._send_spectator_update()
+            # Clear last_action after spectator broadcast has consumed them
+            for bot in self.bots.values():
+                bot.last_action = None
+                bot.last_action_target = None
+            # Send lobby updates to bots waiting for next round
+            if self._waiting_bots:
+                await self._send_waiting_updates()
         await self._send_event_messages(death_events, send_death_to_bot)
-        await self._send_event_messages(respawn_events, send_respawn_to_bot)
+        await self._send_event_messages(kill_events, send_kill_to_bot)
         if self.tick_count - self._last_persist_tick >= self._persist_interval:
             self._last_persist_tick = self.tick_count
             asyncio.create_task(persist_bot_stats(self.bots))
@@ -120,7 +131,7 @@ class GameEngine:
         for bot in self.bots.values():
             spawn_bot(bot, self.arena, self.grid)
             bot.round_life_start_tick = self.tick_count
-        logger.info("Round %d started", self.round.round_number)
+        logger.info("Round %d started with %d bots", self.round.round_number, len(self.bots))
 
     async def _end_round(self) -> None:
         self.round.is_active = False
@@ -133,6 +144,13 @@ class GameEngine:
 
     async def _tick_lobby(self) -> None:
         """Handle lobby state — wait for enough bots, then countdown and start."""
+        # Merge any bots that were waiting during the previous round
+        if self._waiting_bots:
+            for bot_id, bot in self._waiting_bots.items():
+                self.bots[bot_id] = bot
+                logger.info("Bot %s moved from waiting queue to lobby", bot.name)
+            self._waiting_bots.clear()
+
         alive_bots = len(self.bots)
         min_needed = settings.combat.min_bots_to_start
 
@@ -155,8 +173,11 @@ class GameEngine:
         if self.tick_count % self._spec_interval == 0:
             await self._send_lobby_updates()
 
-    def _tick_intermission(self) -> None:
+    async def _tick_intermission(self) -> None:
         self.round.intermission_ticks -= 1
+        # Send lobby updates to bots waiting for next round
+        if self._waiting_bots and self.tick_count % self._spec_interval == 0:
+            await self._send_waiting_updates()
         if self.round.intermission_ticks <= 0:
             # Go back to lobby instead of directly starting a new round
             self.round.in_intermission = False
@@ -184,18 +205,19 @@ class GameEngine:
         return [self.bots[b] for b in ids if b != bot.bot_id and b in self.bots and self.bots[b].is_alive]
 
     async def _send_bot_updates(self) -> None:
-        zone = self.arena.get_zone_state()
         kills = self.kill_feed.get_recent(5)
         for bot in self.bots.values():
             if not bot.is_alive or bot.websocket is None:
                 continue
             nearby = [bot_to_nearby_dict(b) for b in self.get_nearby_bots(bot)]
-            await send_tick_to_bot(bot, self.tick_count, nearby, zone, kills)
+            await send_tick_to_bot(bot, self.tick_count, nearby, kills)
 
     async def _send_spectator_update(self) -> None:
+        new_kills = self.kill_feed.get_since(self._last_killfeed_tick)
+        self._last_killfeed_tick = self.tick_count
         state = build_spectator_state(
-            self.tick_count, self.bots, self.arena.get_zone_state(), self.pickups,
-            self.kill_feed.get_all(), self.arena.get_obstacles_dicts(),
+            self.tick_count, self.bots, self.pickups,
+            new_kills, self.arena.get_obstacles_dicts(),
         )
         await broadcast_to_spectators(self.spectators, state)
 
@@ -274,11 +296,11 @@ class GameEngine:
     def get_arena_status(self) -> dict[str, Any]:
         return build_arena_status(
             self.running, self.bots, self.round.round_number,
-            self.tick_count, self.arena.safe_zone_radius,
+            self.tick_count,
         )
 
     def get_spectator_state(self) -> dict[str, Any]:
         return build_spectator_state(
-            self.tick_count, self.bots, self.arena.get_zone_state(), self.pickups,
+            self.tick_count, self.bots, self.pickups,
             self.kill_feed.get_all(), self.arena.get_obstacles_dicts(),
         )
