@@ -132,7 +132,7 @@ export class BotRenderer {
       updateBotAnim(
         entry.anim, entry.root, entry.weapon,
         entry.root.position.x, entry.root.position.z,
-        entry.isAlive, dt
+        entry.isAlive, dt, entry.bodyMat
       );
     }
   }
