@@ -84,14 +84,20 @@ def pick_action(strategy: str, state: dict, nearby: list, safe_zone: dict, weapo
         if closest is None:
             return {"action": "move", "direction": _toward(pos, zone_center)}
         if closest_dist <= wrange:
-            return {"action": "attack", "target": closest["id"]}
+            action = {"action": "attack", "target": closest["id"]}
+            if weapon == "staff":
+                action["direction"] = list(closest.get("position", pos))
+            return action
         return {"action": "move", "direction": _toward(pos, closest["position"])}
 
     if strategy == "defensive":
         if closest is None:
             return {"action": "idle"}
         if closest_dist <= wrange:
-            return {"action": "attack", "target": closest["id"]}
+            action = {"action": "attack", "target": closest["id"]}
+            if weapon == "staff":
+                action["direction"] = list(closest.get("position", pos))
+            return action
         if closest_dist < wrange * 2:
             return {"action": "move", "direction": _away(pos, closest["position"])}
         return {"action": "idle"}
@@ -101,7 +107,10 @@ def pick_action(strategy: str, state: dict, nearby: list, safe_zone: dict, weapo
             angle = random.uniform(0, 2 * math.pi)
             return {"action": "move", "direction": [math.cos(angle), math.sin(angle)]}
         if wrange * 0.3 < closest_dist <= wrange:
-            return {"action": "attack", "target": closest["id"]}
+            action = {"action": "attack", "target": closest["id"]}
+            if weapon == "staff":
+                action["direction"] = list(closest.get("position", pos))
+            return action
         if closest_dist < wrange * 0.4:
             if random.random() < 0.3:
                 return {"action": "dodge", "direction": _away(pos, closest["position"])}
@@ -112,7 +121,10 @@ def pick_action(strategy: str, state: dict, nearby: list, safe_zone: dict, weapo
         if closest is None:
             return {"action": "idle"}
         if closest_dist <= wrange:
-            return {"action": "attack", "target": closest["id"]}
+            action = {"action": "attack", "target": closest["id"]}
+            if weapon == "staff":
+                action["direction"] = list(closest.get("position", pos))
+            return action
         if closest_dist <= wrange * 3:
             return {"action": "move", "direction": _toward(pos, closest["position"])}
         return {"action": "idle"}

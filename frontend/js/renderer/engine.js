@@ -134,6 +134,7 @@ export class ArenaEngine {
     this.state = state;
     this._lastStateTime = performance.now();
     this.obstacleRenderer.update(state.obstacles);
+    this.envRenderer.update(state.safe_zone);
     this.botRenderer.update(state.bots);
     this.trailRenderer.update(state.bots);
     this.pickupRenderer.update(state.pickups || []);

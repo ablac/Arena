@@ -17,7 +17,7 @@ from server.game.broadcasts import (
 )
 from server.game.combat import process_combat, process_staff_impacts
 from server.game.engine_helpers import (
-    apply_fallbacks, handle_kill_credits,
+    apply_fallbacks, apply_zone_damage, handle_kill_credits,
     process_use_items, update_life_tracking,
 )
 from server.game.kill_feed import KillFeed
@@ -30,7 +30,7 @@ from server.game.spatial import SpatialGrid
 from server.game.spawner import check_deaths, spawn_bot
 from server.security.input_validator import validate_derived_stats
 from server.game.state import BotState, Pickup, Projectile, RoundState, StaffImpact
-from server.game.views import bot_to_nearby_dict, build_arena_status, build_spectator_state
+from server.game.views import bot_to_nearby_dict, build_arena_status, build_spectator_state, pickup_to_nearby_dict
 from server.ws.protocol import KickMessage, LobbyMessage, RoundStartMessage
 
 logger = logging.getLogger(__name__)
@@ -88,6 +88,8 @@ class GameEngine:
         process_combat(self.bots, self._tick_rate, self.arena.obstacles, self.projectiles, self.staff_impacts)
         update_projectiles(self.projectiles, self.bots, self.arena.obstacles, self._tick_rate)
         process_staff_impacts(self.staff_impacts, self.bots)
+        self.arena.update_zone(self.tick_count, self._tick_rate)
+        apply_zone_damage(self.bots, self.arena)
         # Resync grid after knockback moved bots without grid updates
         for bid, b in self.bots.items():
             if b.is_alive:
@@ -127,6 +129,7 @@ class GameEngine:
         self.round.start_tick = self.tick_count
         self.round.is_active, self.round.in_intermission = True, False
         self.arena.reset()
+        self.arena._last_shrink_tick = self.tick_count
         reset_nav_grid()
         for collection in (self.pickups, self.projectiles, self.staff_impacts):
             collection.clear()
@@ -254,6 +257,13 @@ class GameEngine:
                 "zone_center": (cx, cy),
             }
             nearby = [bot_to_nearby_dict(b) for b in self.get_nearby_bots(bot)]
+            # Include nearby pickups
+            bx, by = bot.position
+            for p in self.pickups:
+                px, py = p.position
+                ddx, ddy = px - bx, py - by
+                if ddx * ddx + ddy * ddy <= self._view_radius * self._view_radius:
+                    nearby.append(pickup_to_nearby_dict(p))
             await send_tick_to_bot(bot, self.tick_count, nearby, kills, zone_info=zone_info)
 
     async def _send_spectator_update(self) -> None:
@@ -262,6 +272,7 @@ class GameEngine:
         state = build_spectator_state(
             self.tick_count, self.bots, self.pickups,
             new_kills, self.arena.get_obstacles_dicts(),
+            safe_zone=self.arena.get_zone_state(),
         )
         await broadcast_to_spectators(self.spectators, state)
 
@@ -384,4 +395,5 @@ class GameEngine:
         return build_spectator_state(
             self.tick_count, self.bots, self.pickups,
             self.kill_feed.get_all(), self.arena.get_obstacles_dicts(),
+            safe_zone=self.arena.get_zone_state(),
         )

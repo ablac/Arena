@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 def bot_to_nearby_dict(bot: BotState) -> dict[str, Any]:
     """Serialize a bot for the nearby_entities list in tick messages."""
     return {
+        "type": "bot",
+        "id": bot.bot_id,
         "bot_id": bot.bot_id,
         "name": bot.name,
         "position": bot.position,
@@ -25,12 +27,24 @@ def bot_to_nearby_dict(bot: BotState) -> dict[str, Any]:
     }
 
 
+def pickup_to_nearby_dict(pickup: Pickup) -> dict[str, Any]:
+    """Serialize a pickup for the nearby_entities list in tick messages."""
+    return {
+        "type": "pickup",
+        "id": pickup.pickup_id,
+        "pickup_id": pickup.pickup_id,
+        "pickup_type": pickup.pickup_type,
+        "position": pickup.position,
+    }
+
+
 def build_spectator_state(
     tick: int,
     bots: dict[str, BotState],
     pickups: list[Pickup],
     kill_feed: list[dict] | None = None,
     obstacles: list[dict] | None = None,
+    safe_zone: dict | None = None,
 ) -> dict[str, Any]:
     """Build the full arena state dict for spectator broadcasts."""
     return {
@@ -48,7 +62,7 @@ def build_spectator_state(
             }
             for b in bots.values()
         ],
-        "safe_zone": None,
+        "safe_zone": safe_zone,
         "pickups": [
             {"pickup_id": p.pickup_id, "type": p.pickup_type, "position": p.position}
             for p in pickups
