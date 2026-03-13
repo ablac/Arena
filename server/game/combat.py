@@ -73,7 +73,9 @@ def process_combat(
             if dx * dx + dy * dy > view_radius_sq:
                 _atk_result(bot, "miss", "out_of_range")
                 continue
-            _queue_staff_impact(bot, pos, staff_impacts, obstacles)
+            if not _queue_staff_impact(bot, pos, staff_impacts, obstacles):
+                _atk_result(bot, "miss", "los_blocked")
+                continue
             cfg = get_weapon_config("staff")
             bot.cooldown_remaining = cfg["cooldown"]
             bot.round_shots_fired += 1
@@ -152,13 +154,104 @@ def process_combat(
         bot.cooldown_remaining = cfg["cooldown"]
 
     for target_id, dmg, attacker_id, weapon in damage_queue:
-        apply_damage(bots, target_id, dmg, attacker_id, weapon, events)
+        apply_damage(bots, target_id, dmg, attacker_id, weapon, events, obstacles)
     tick_timers(bots, tick_rate)
     return events
 
 
+def process_shoves(
+    bots: dict[str, BotState],
+    obstacles: list[Obstacle],
+) -> list[dict]:
+    """Process all shove actions for the current tick.
+
+    Shoves deal no damage but knock the target back significantly and apply a short stun.
+    Uses its own cooldown separate from the weapon cooldown.
+    """
+    from server.game.obstacles import slide_along_obstacle
+
+    events: list[dict] = []
+    shove_range = settings.combat.shove_range
+    shove_kb = settings.combat.shove_knockback
+    shove_stun = settings.combat.shove_stun_ticks
+    shove_cd = settings.combat.shove_cooldown
+
+    for bot_id, bot in bots.items():
+        if not bot.is_alive or bot.pending_action is None:
+            continue
+        if bot.stun_ticks > 0:
+            continue
+        if bot.pending_action.action_type != ActionType.SHOVE:
+            continue
+
+        target_id = bot.pending_action.target_id
+        if target_id is None or target_id not in bots:
+            bot.last_action_result = {"action": "shove", "result": "miss", "reason": "invalid_target"}
+            continue
+        target = bots[target_id]
+        if not target.is_alive:
+            bot.last_action_result = {"action": "shove", "result": "miss", "reason": "target_dead"}
+            continue
+        if bot.shove_cooldown > 0:
+            bot.last_action_result = {"action": "shove", "result": "miss", "reason": "on_cooldown",
+                                      "cooldown": round(bot.shove_cooldown, 2)}
+            continue
+
+        # Range check
+        dx = bot.position[0] - target.position[0]
+        dy = bot.position[1] - target.position[1]
+        dist = (dx * dx + dy * dy) ** 0.5
+        if dist > shove_range + settings.game.bot_radius * 2:
+            bot.last_action_result = {"action": "shove", "result": "miss", "reason": "out_of_range"}
+            continue
+
+        # Invulnerable targets can't be shoved
+        if target.invuln_ticks > 0:
+            bot.last_action_result = {"action": "shove", "result": "miss", "reason": "target_dodging"}
+            continue
+
+        # Compute knockback direction (away from shover)
+        if dist == 0:
+            nx, ny = 1.0, 0.0
+        else:
+            nx = (target.position[0] - bot.position[0]) / dist
+            ny = (target.position[1] - bot.position[1]) / dist
+
+        new_x = target.position[0] + nx * shove_kb
+        new_y = target.position[1] + ny * shove_kb
+
+        # Slide along obstacles
+        new_x, new_y = slide_along_obstacle(
+            target.position[0], target.position[1], new_x, new_y,
+            obstacles, radius=settings.game.bot_radius,
+        )
+
+        # Clamp to arena bounds
+        w, h = float(settings.game.arena_width), float(settings.game.arena_height)
+        new_x = max(0.0, min(w, new_x))
+        new_y = max(0.0, min(h, new_y))
+
+        target.position = (new_x, new_y)
+        target.stun_ticks = max(target.stun_ticks, shove_stun)
+
+        bot.shove_cooldown = shove_cd
+        bot.last_action = "shove"
+        bot.last_action_target = target_id
+        bot.last_action_result = {"action": "shove", "result": "hit", "target": target_id}
+
+        events.append({
+            "type": "shove",
+            "attacker": bot_id,
+            "target": target_id,
+            "knockback": shove_kb,
+        })
+
+    return events
+
+
 def process_staff_impacts(
-    staff_impacts: list[StaffImpact], bots: dict[str, BotState]
+    staff_impacts: list[StaffImpact], bots: dict[str, BotState],
+    obstacles: list[Obstacle] | None = None,
 ) -> list[dict]:
     """Process delayed staff area attacks."""
     events: list[dict] = []
@@ -178,7 +271,7 @@ def process_staff_impacts(
                 dmg = impact.damage * (1.0 - bot.defense_reduction)
                 if bot.weapon == "shield":
                     dmg *= 0.5
-                apply_damage(bots, bid, dmg, impact.owner_id, "staff", events)
+                apply_damage(bots, bid, dmg, impact.owner_id, "staff", events, obstacles or [])
                 attacker = bots.get(impact.owner_id)
                 if attacker:
                     attacker.round_shots_hit += 1
@@ -191,10 +284,10 @@ def process_staff_impacts(
 def _queue_staff_impact(
     attacker: BotState, pos: tuple[float, float],
     staff_impacts: list[StaffImpact], obstacles: list,
-) -> None:
-    """Queue a delayed staff area attack."""
+) -> bool:
+    """Queue a delayed staff area attack. Returns True if queued, False if LOS blocked."""
     if line_intersects_obstacle(*attacker.position, *pos, obstacles):
-        return
+        return False
     cfg = get_weapon_config("staff")
     from server.game.pickups import get_effective_damage_mult
     eff_mult = get_effective_damage_mult(attacker)
@@ -206,3 +299,4 @@ def _queue_staff_impact(
         radius=cfg["special_param"],
         ticks_remaining=settings.combat.staff_delay_ticks,
     ))
+    return True

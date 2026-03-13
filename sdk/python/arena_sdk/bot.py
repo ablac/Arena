@@ -17,10 +17,12 @@ logger = logging.getLogger("arena_sdk")
 class ArenaBot:
     """Base class for arena bots. Subclass and override on_tick()."""
 
-    def __init__(self, api_key: str, server_url: str = "wss://angel-serv.com/ws/bot"):
+    def __init__(self, api_key: str, server_url: str = "wss://angel-serv.com/ws/bot",
+                 stat_budget: int = 20):
         """Initialize bot with API key."""
         self.api_key = api_key
         self.server_url = server_url
+        self._stat_budget = stat_budget
         self._weapon = "sword"
         self._stats: dict[str, int] = {"hp": 5, "speed": 5, "attack": 5, "defense": 5}
         self._fallback = "aggressive"
@@ -31,11 +33,13 @@ class ArenaBot:
         self._last_pos: dict | tuple = {"x": 0, "y": 0}
         self._last_action_result: dict | None = None
 
-    def set_loadout(self, weapon: str, stats: dict[str, int], fallback: str = "aggressive") -> None:
-        """Set loadout to use on connect. Stats must total 20."""
+    def set_loadout(self, weapon: str, stats: dict[str, int], fallback: str = "aggressive",
+                    stat_budget: int | None = None) -> None:
+        """Set loadout to use on connect. Stats must total stat_budget (default 20)."""
+        budget = stat_budget if stat_budget is not None else self._stat_budget
         total = sum(stats.values())
-        if total != 20:
-            raise ValueError(f"Stats must total 20, got {total}")
+        if total != budget:
+            raise ValueError(f"Stats must total {budget}, got {total}")
         self._weapon = weapon
         self._stats = stats
         self._fallback = fallback
@@ -108,6 +112,10 @@ class ArenaBot:
         if isinstance(direction, dict):
             return {"action": "dodge", "direction": [direction["x"], direction["y"]]}
         return {"action": "dodge", "direction": [direction[0], direction[1]]}
+
+    def shove(self, target_id: str) -> dict:
+        """Returns a shove action that knocks target back with a short stun."""
+        return {"action": "shove", "target": target_id}
 
     def use_item(self, item_id: str) -> dict:
         """Returns a use_item action."""

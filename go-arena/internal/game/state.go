@@ -70,6 +70,7 @@ const (
 	ActionMoveTo  ActionType = "move_to"
 	ActionAttack  ActionType = "attack"
 	ActionDodge   ActionType = "dodge"
+	ActionShove   ActionType = "shove"
 	ActionUseItem ActionType = "use_item"
 	ActionIdle    ActionType = "idle"
 )
@@ -192,6 +193,9 @@ type BotState struct {
 	InvulnTicks   int
 	StunTicks     int
 
+	// Shove cooldown (separate from weapon cooldown)
+	ShoveCooldown float64
+
 	// Shield
 	ShieldAbsorb float64
 
@@ -210,6 +214,14 @@ type BotState struct {
 	RoundLongestLife  int
 	RoundPickups     int
 	RoundLifeStartTick int
+
+	// Persistence snapshot — tracks what was already synced to DB
+	PersistedKills       int
+	PersistedDeaths      int
+	PersistedDamageDealt float64
+	PersistedDamageTaken float64
+	PersistedDistance    float64
+	PersistedPickups     int
 
 	// Kill attribution
 	LastDamagedBy    string
@@ -334,6 +346,13 @@ func (b *BotState) ResetRoundStats() {
 	b.RoundLongestLife = 0
 	b.RoundPickups = 0
 	b.RoundLifeStartTick = 0
+	// Reset persistence snapshots so deltas start fresh
+	b.PersistedKills = 0
+	b.PersistedDeaths = 0
+	b.PersistedDamageDealt = 0
+	b.PersistedDamageTaken = 0
+	b.PersistedDistance = 0
+	b.PersistedPickups = 0
 }
 
 // ClearTickFeedback resets per-tick transient data.

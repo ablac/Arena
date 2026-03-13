@@ -45,6 +45,10 @@ func aiDefensive(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 	if target == nil {
 		return idleOrMoveToZone(bot, arena)
 	}
+	// Shove enemies that are dangerously close
+	if canShove(bot, target) {
+		return &Action{Type: ActionShove, TargetID: target.BotID}
+	}
 	if canAttack(bot, target) {
 		return &Action{Type: ActionAttack, TargetID: target.BotID}
 	}
@@ -195,6 +199,18 @@ func directionToward(from, to Vec2) Vec2 {
 func directionAway(from, to Vec2) Vec2 {
 	d := directionToward(from, to)
 	return d.Scale(-1)
+}
+
+// canShove returns true if the bot's shove is off cooldown and the target is
+// within shove range.
+func canShove(bot *BotState, target *BotState) bool {
+	if !target.IsAlive {
+		return false
+	}
+	if bot.ShoveCooldown > 0 {
+		return false
+	}
+	return bot.Position.DistanceTo(target.Position) <= config.C.ShoveRange+config.C.BotRadius*2
 }
 
 // canAttack returns true if the bot's weapon is ready and the target is alive

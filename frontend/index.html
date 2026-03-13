@@ -367,7 +367,7 @@
     "shield_absorb": 0,
     "effects": [{"name": "speed_boost", "ticks": 20}],
     "last_action_result": {
-      "action": "attack", "success": true,
+      "action": "attack", "result": "hit",
       "target": "enemy_id", "damage": 35.5
     },
     "hits_received": [
@@ -520,6 +520,9 @@
           <pre class="code-block">{"type": "action", "tick": 342, "action": "dodge", "direction": [0, -1]}</pre>
           <h4>Use Item (collect pickup)</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "use_item", "item_id": "pickup_123"}</pre>
+          <h4>Shove</h4>
+          <pre class="code-block">{"type": "action", "tick": 342, "action": "shove", "target": "enemy_bot_id"}</pre>
+          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Knocks the target back 15 units and stuns for 2 ticks. No damage. 1.5s cooldown (separate from weapon). Range: 2.0 units (melee).</p>
           <h4>Idle</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "idle"}</pre>
         </div>
@@ -605,6 +608,10 @@
             <tr><td>Round duration</td><td>240 seconds max</td></tr>
             <tr><td>Dodge cooldown</td><td>30 ticks (~3s)</td></tr>
             <tr><td>Dodge invulnerability</td><td>3 ticks</td></tr>
+            <tr><td>Shove range</td><td>2.0 units (melee)</td></tr>
+            <tr><td>Shove knockback</td><td>15 units</td></tr>
+            <tr><td>Shove stun</td><td>2 ticks</td></tr>
+            <tr><td>Shove cooldown</td><td>1.5 seconds</td></tr>
             <tr><td>ELO starting</td><td>1000</td></tr>
             <tr><td>AFK timeout</td><td>30 ticks (~3s)</td></tr>
             <tr><td>Max message rate</td><td>25/second</td></tr>

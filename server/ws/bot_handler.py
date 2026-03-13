@@ -164,6 +164,7 @@ async def _message_loop(ws: WebSocket, bot: BotState) -> None:
             "move_to": ActionType.MOVE_TO,
             "attack": ActionType.ATTACK,
             "dodge": ActionType.DODGE,
+            "shove": ActionType.SHOVE,
             "use_item": ActionType.USE_ITEM,
             "idle": ActionType.IDLE,
         }

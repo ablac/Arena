@@ -60,6 +60,12 @@ type Config struct {
 	StaffDelayTicks    int `envconfig:"ARENA_STAFF_DELAY_TICKS" default:"2"`
 	StunDurationTicks  int `envconfig:"ARENA_STUN_DURATION_TICKS" default:"1"`
 
+	// Shove
+	ShoveRange        float64 `envconfig:"ARENA_SHOVE_RANGE" default:"2.0"`
+	ShoveKnockback    float64 `envconfig:"ARENA_SHOVE_KNOCKBACK" default:"15.0"`
+	ShoveStunTicks    int     `envconfig:"ARENA_SHOVE_STUN_TICKS" default:"2"`
+	ShoveCooldown     float64 `envconfig:"ARENA_SHOVE_COOLDOWN" default:"1.5"`
+
 	// Zone
 	ZoneInitialRadius   float64 `envconfig:"ARENA_ZONE_INITIAL_RADIUS" default:"1000.0"`
 	ZoneCenterX         float64 `envconfig:"ARENA_ZONE_CENTER_X" default:"1000.0"`

@@ -115,6 +115,12 @@ func TickTimers(bot *BotState, dt float64) {
 	if bot.DodgeCooldown > 0 {
 		bot.DodgeCooldown--
 	}
+
+	// Shove cooldown.
+	bot.ShoveCooldown -= dt
+	if bot.ShoveCooldown < 0 {
+		bot.ShoveCooldown = 0
+	}
 }
 
 // TickEffects decrements effect timers and removes expired effects.

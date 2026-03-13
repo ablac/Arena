@@ -7,7 +7,7 @@
  */
 
 import { createBotEntry, disposeBotEntry, setHpColor } from './bot-body.js';
-import { updateBotAnim, triggerAttack, triggerDodge } from './animations.js';
+import { updateBotAnim, triggerAttack, triggerDodge, triggerShove } from './animations.js';
 
 const HP_BAR_W = 40;
 
@@ -22,6 +22,8 @@ export class BotRenderer {
     this.onAttack = null;
     /** @type {Function|null} callback(x, z, color) */
     this.onDodge = null;
+    /** @type {Function|null} callback(attackerX, attackerZ, targetX, targetZ, color) */
+    this.onShove = null;
   }
 
   update(bots) {
@@ -98,6 +100,24 @@ export class BotRenderer {
           if (this.onAttack) {
             this.onAttack(bot.position[0], bot.position[1],
                           targetPos[0], targetPos[1], bot.avatar_color, weaponType);
+          }
+        }
+      }
+
+      // Shove detection
+      if (bot.action === 'shove' && bot.is_alive && entry._wasAlive) {
+        triggerShove(entry.anim);
+
+        const targetPos = bot.target_id ? getPosMap().get(bot.target_id) : null;
+        if (targetPos) {
+          const adx = targetPos[0] - bot.position[0];
+          const adz = targetPos[1] - bot.position[1];
+          if (adx !== 0 || adz !== 0) {
+            entry.anim.targetRotY = Math.atan2(adx, adz);
+          }
+          if (this.onShove) {
+            this.onShove(bot.position[0], bot.position[1],
+                         targetPos[0], targetPos[1], bot.avatar_color);
           }
         }
       }

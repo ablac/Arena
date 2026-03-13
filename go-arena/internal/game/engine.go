@@ -192,6 +192,9 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Movement.
 	ProcessMovement(e.Bots, e.Arena.Obstacles, e.Grid, e.NavGrid, dt)
 
+	// Shoves (before combat so shoved bots can't attack this tick).
+	ProcessShoves(e.Bots, e.Arena.Obstacles)
+
 	// Combat.
 	ProcessCombat(e.Bots, e.Arena.Obstacles, &e.Projectiles, &e.StaffImpacts, e.Grid, e.TickCount, dt)
 

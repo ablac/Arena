@@ -68,6 +68,10 @@ class CombatSettings(BaseSettings):
     projectile_max_age_secs: float = Field(default=1.0, description="Max projectile lifetime")
     staff_delay_ticks: int = Field(default=2, description="Staff area attack delay ticks")
     stun_duration_ticks: int = Field(default=1, description="Shield bash stun duration")
+    shove_range: float = Field(default=2.0, description="Shove reach in arena units")
+    shove_knockback: float = Field(default=15.0, description="Shove knockback distance")
+    shove_stun_ticks: int = Field(default=2, description="Shove stun duration in ticks")
+    shove_cooldown: float = Field(default=1.5, description="Shove cooldown in seconds")
 
 
 class EloSettings(BaseSettings):
@@ -180,7 +184,7 @@ class AppSettings(BaseSettings):
     """Top-level application settings."""
 
     model_config = SettingsConfigDict(env_prefix="ARENA_")
-    cors_origins: str = Field(default="*,https://angel-serv.com", description="CORS origins")
+    cors_origins: str = Field(default="https://angel-serv.com", description="CORS origins")
     admin_key: str = Field(default="changeme_admin_key", description="Admin API key")
     secret_key: str = Field(default="changeme_secret_key", description="App secret key")
 

@@ -16,6 +16,7 @@ class ActionType(str, Enum):
     ATTACK = "attack"
     DODGE = "dodge"
     USE_ITEM = "use_item"
+    SHOVE = "shove"
     IDLE = "idle"
 
 
@@ -84,6 +85,8 @@ class BotState:
     stun_ticks: int = 0
     # Shield bubble absorb
     shield_absorb: int = 0
+    # Shove cooldown (separate from weapon cooldown)
+    shove_cooldown: float = 0.0
     # ELO rating (in-memory, synced to DB)
     elo: int = 1000
     # Last bot that dealt damage to us (for kill attribution)
@@ -108,6 +111,13 @@ class BotState:
     round_longest_life: int = 0
     round_life_start_tick: int = 0
     round_pickups: int = 0
+    # Persistence snapshot — tracks what was already synced to DB to avoid double-counting
+    _persisted_kills: int = 0
+    _persisted_deaths: int = 0
+    _persisted_damage_dealt: float = 0.0
+    _persisted_damage_taken: float = 0.0
+    _persisted_distance: float = 0.0
+    _persisted_pickups: int = 0
 
 
 @dataclass

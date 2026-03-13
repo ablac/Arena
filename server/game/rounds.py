@@ -110,3 +110,10 @@ def reset_round_stats(bots: dict[str, BotState]) -> None:
         bot.round_longest_life = 0
         bot.round_life_start_tick = 0
         bot.round_pickups = 0
+        # Reset persistence snapshots so deltas start fresh next round
+        bot._persisted_kills = 0
+        bot._persisted_deaths = 0
+        bot._persisted_damage_dealt = 0.0
+        bot._persisted_damage_taken = 0.0
+        bot._persisted_distance = 0.0
+        bot._persisted_pickups = 0
