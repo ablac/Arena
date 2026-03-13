@@ -124,7 +124,7 @@ type Config struct {
 	// Security
 	APIKeyPrefix           string `envconfig:"ARENA_API_KEY_PREFIX" default:"arena_"`
 	BcryptRounds           int    `envconfig:"ARENA_BCRYPT_ROUNDS" default:"12"`
-	RateLimitRPM           int    `envconfig:"ARENA_RATE_LIMIT_RPM" default:"300"`
+	RateLimitRPM           int    `envconfig:"ARENA_RATE_LIMIT_RPM" default:"1200"`
 	RateLimitRegisterPerHour int  `envconfig:"ARENA_RATE_LIMIT_REGISTER_PER_HOUR" default:"100"`
 
 	// ELO
