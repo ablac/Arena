@@ -86,7 +86,7 @@
         <li><a href="#keygen" style="color:var(--accent-blue)">Generate your API key</a> above</li>
         <li>Configure your bot:
           <pre class="code-block">curl -X PUT https://arena.angel-serv.com/api/v1/bot/config \
-  -H "X-API-Key: YOUR_KEY" \
+  -H "X-Arena-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"MyBot","avatar_color":"#00d4ff"}'</pre>
         </li>
@@ -106,73 +106,98 @@
   </section>
   <script>
     // Inject example code safely via textContent
-    document.getElementById('example-code').textContent = `import asyncio, websockets, json
+    document.getElementById('example-code').textContent = `import asyncio, websockets, json, math
 
 API_KEY = "YOUR_KEY"
 URI = "wss://arena.angel-serv.com/ws/bot?key=" + API_KEY
 
+def distance(a, b):
+    return math.sqrt((a[0]-b[0])**2 + (a[1]-b[1])**2)
+
 async def my_bot():
-    async with websockets.connect(URI) as ws:
-        # 1. Wait for connection confirmation
-        connected = json.loads(await ws.recv())
-        print(f"Connected! Bot ID: {connected['bot_id']}")
-        print(f"Weapons: {connected['available_weapons']}")
+    while True:  # Auto-reconnect loop
+        try:
+            async with websockets.connect(URI, ping_interval=20) as ws:
+                # 1. Connection — server sends bot_id, arena size, weapons
+                connected = json.loads(await ws.recv())
+                bot_id = connected["bot_id"]
+                print(f"Connected! ID: {bot_id}")
+                print(f"Arena: {connected['arena_size']}")
+                print(f"Weapons: {connected['available_weapons']}")
+                print(f"Stat budget: {connected['stat_budget']} pts")
 
-        # 2. Select loadout (REQUIRED before game starts)
-        await ws.send(json.dumps({
-            "type": "select_loadout",
-            "weapon": "sword",  # sword|bow|spear|dagger|staff|shield
-            "stats": {"hp": 5, "speed": 5, "attack": 5, "defense": 5},
-            "fallback_behavior": "aggressive"
-        }))
-        confirm = json.loads(await ws.recv())
-        print(f"Loadout: {confirm['weapon']} | HP: {confirm['computed']['max_hp']}")
+                # 2. Select loadout (REQUIRED — 20 pts across hp/speed/attack/defense)
+                # Weapons: sword|bow|daggers|shield|spear|staff
+                await ws.send(json.dumps({
+                    "type": "select_loadout",
+                    "weapon": "sword",
+                    "stats": {"hp": 6, "speed": 6, "attack": 5, "defense": 3},
+                    "fallback_behavior": "aggressive"
+                }))
+                confirm = json.loads(await ws.recv())
+                print(f"Loadout: {confirm['weapon']} | "
+                      f"HP: {confirm['computed']['max_hp']} | "
+                      f"Speed: {confirm['computed']['move_speed']}")
 
-        # 3. Game loop — respond to ticks with actions
-        while True:
-            msg = json.loads(await ws.recv())
+                # 3. Game loop
+                while True:
+                    msg = json.loads(await ws.recv())
+                    t = msg["type"]
 
-            if msg["type"] == "tick":
-                me = msg["your_state"]
-                enemies = [e for e in msg["nearby_entities"]
-                           if e.get("is_alive") and e["bot_id"] != connected["bot_id"]]
+                    if t == "tick":
+                        me = msg["your_state"]
+                        my_pos = me["position"]
+                        tick = msg["tick_number"]
 
-                if enemies:
-                    target = min(enemies, key=lambda e: sum(
-                        (a - b) ** 2 for a, b in zip(e["position"], me["position"])
-                    ))
-                    dist = sum((a - b) ** 2 for a, b in
-                               zip(target["position"], me["position"])) ** 0.5
+                        # nearby_entities includes bots + pickups
+                        enemies = [e for e in msg["nearby_entities"]
+                                   if e.get("type") == "bot"
+                                   and e.get("is_alive")
+                                   and e["bot_id"] != bot_id]
 
-                    if dist <= 2.0:
-                        await ws.send(json.dumps({
-                            "type": "action", "tick": msg["tick_number"],
-                            "action": "attack", "target": target["bot_id"]
-                        }))
-                    else:
-                        dx = target["position"][0] - me["position"][0]
-                        dy = target["position"][1] - me["position"][1]
-                        await ws.send(json.dumps({
-                            "type": "action", "tick": msg["tick_number"],
-                            "action": "move", "direction": [dx, dy]
-                        }))
-                else:
-                    # No enemies — idle move toward safe zone center
-                    sz = msg.get("safe_zone", {}).get("center", [1000, 1000])
-                    dx = sz[0] - me["position"][0]
-                    dy = sz[1] - me["position"][1]
-                    await ws.send(json.dumps({
-                        "type": "action", "tick": msg["tick_number"],
-                        "action": "move", "direction": [dx, dy]
-                    }))
+                        if enemies:
+                            target = min(enemies,
+                                key=lambda e: distance(e["position"], my_pos))
+                            d = distance(target["position"], my_pos)
 
-            elif msg["type"] == "kill":
-                print(f"Kill! Victim: {msg.get('victim')}")
-            elif msg["type"] == "death":
-                print(f"Died! Killed by: {msg.get('killed_by')}")
-            elif msg["type"] == "match_end":
-                print(f"Match over! Placement: {msg.get('placement')}")
-                break
+                            if d <= 2.0:  # sword range
+                                await ws.send(json.dumps({
+                                    "type": "action", "tick": tick,
+                                    "action": "attack",
+                                    "target": target["bot_id"]
+                                }))
+                            else:
+                                dx = target["position"][0] - my_pos[0]
+                                dy = target["position"][1] - my_pos[1]
+                                await ws.send(json.dumps({
+                                    "type": "action", "tick": tick,
+                                    "action": "move",
+                                    "direction": [dx, dy]
+                                }))
+                        else:
+                            # Wander toward arena center
+                            await ws.send(json.dumps({
+                                "type": "action", "tick": tick,
+                                "action": "idle"
+                            }))
+
+                    elif t == "kill":
+                        print(f"Kill! {msg['victim_name']} (+streak {msg['your_kill_streak']})")
+                    elif t == "death":
+                        print(f"Died! By: {msg['killed_by']} ({msg['weapon_used']})")
+                        print(f"  Respawn in {msg['respawn_in_seconds']}s")
+                    elif t == "respawn":
+                        print(f"Respawned at {msg['position']} HP:{msg['hp']}")
+                    elif t == "round_start":
+                        print(f"Round {msg['round_number']}! {msg['bots_in_round']} bots")
+                    elif t == "round_end":
+                        print(f"Round over! Winner: {msg.get('round_winner')}")
+                    elif t == "lobby":
+                        pass  # Waiting for players
+
+        except (websockets.ConnectionClosed, OSError) as e:
+            print(f"Disconnected: {e}. Reconnecting in 5s...")
+            await asyncio.sleep(5)
 
 asyncio.run(my_bot())`;
   </script>

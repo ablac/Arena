@@ -13,7 +13,7 @@ from server.config import settings
 from server.game.arena_map import ArenaMap
 from server.game.broadcasts import (
     broadcast_to_spectators, send_death_to_bot, send_kill_to_bot,
-    send_round_end, send_tick_to_bot,
+    send_respawn_to_bot, send_round_end, send_tick_to_bot,
 )
 from server.game.combat import process_combat, process_staff_impacts
 from server.game.engine_helpers import (
@@ -27,7 +27,7 @@ from server.game.pickups import check_auto_collect, maybe_spawn_pickup, tick_eff
 from server.game.projectiles import update_projectiles
 from server.game.rounds import get_round_winner, reset_round_stats, should_end_round
 from server.game.spatial import SpatialGrid
-from server.game.spawner import check_deaths, spawn_bot
+from server.game.spawner import check_deaths, process_respawns, spawn_bot
 from server.security.input_validator import validate_derived_stats
 from server.game.state import BotState, Pickup, Projectile, RoundState, StaffImpact
 from server.game.views import bot_to_nearby_dict, build_arena_status, build_spectator_state, pickup_to_nearby_dict
@@ -97,6 +97,11 @@ class GameEngine:
         separate_bots(self.bots, self.arena, self.grid)
         death_events = check_deaths(self.bots, self.grid, self.tick_count)
         kill_events = handle_kill_credits(death_events, self.bots, self.kill_feed, self.tick_count)
+        respawn_events = process_respawns(self.bots, self.arena, self.grid, self._tick_rate)
+        for event in respawn_events:
+            bot = self.bots.get(event["bot_id"])
+            if bot:
+                await send_respawn_to_bot(bot, event)
         maybe_spawn_pickup(self.pickups, self.arena, self.tick_count)
         check_auto_collect(self.bots, self.pickups)
         tick_effects(self.bots)
@@ -114,7 +119,7 @@ class GameEngine:
                 await self._send_waiting_updates()
         await self._send_event_messages(death_events, send_death_to_bot)
         await self._send_event_messages(kill_events, send_kill_to_bot)
-        if self.tick_count - self._last_persist_tick >= self._persist_interval:
+        if self.round.is_active and self.tick_count - self._last_persist_tick >= self._persist_interval:
             self._last_persist_tick = self.tick_count
             asyncio.create_task(persist_bot_stats(self.bots))
         if should_end_round(self.round, self.bots, self.tick_count, self._tick_rate):
@@ -131,13 +136,18 @@ class GameEngine:
         self.arena.reset()
         self.arena._last_shrink_tick = self.tick_count
         reset_nav_grid()
-        for collection in (self.pickups, self.projectiles, self.staff_impacts):
-            collection.clear()
+        # Full cleanup of all transient game state
+        self.pickups.clear()
+        self.projectiles.clear()
+        self.staff_impacts.clear()
         self.kill_feed.clear()
+        self.grid.clear()
         # Audit bot stats before the round — kick any with tampered values
         self._audit_bot_stats()
         reset_round_stats(self.bots)
         for bot in self.bots.values():
+            bot.kill_streak = 0
+            bot.last_action_tick = self.tick_count  # prevent immediate AFK kick
             spawn_bot(bot, self.arena, self.grid)
             bot.round_life_start_tick = self.tick_count
         logger.info("Round %d started with %d bots", self.round.round_number, len(self.bots))
@@ -147,6 +157,30 @@ class GameEngine:
         winner = get_round_winner(self.bots)
         await send_round_end(self.bots, self.round.round_number, winner, settings.combat.intermission_time)
         await persist_bot_stats(self.bots)
+        # Reset round stats immediately to prevent double-counting by periodic persist
+        reset_round_stats(self.bots)
+        # Clear all transient game objects
+        self.pickups.clear()
+        self.projectiles.clear()
+        self.staff_impacts.clear()
+        self.kill_feed.clear()
+        self.grid.clear()
+        # Reset bot combat state so nothing leaks into the next round
+        for bot in self.bots.values():
+            bot.pending_action = None
+            bot.hits_received.clear()
+            bot.last_action_result = None
+            bot.last_action = None
+            bot.last_action_target = None
+            bot.last_damaged_by = None
+            bot.cooldown_remaining = 0.0
+            bot.active_effects.clear()
+            bot.dodge_cooldown = 0
+            bot.invuln_ticks = 0
+            bot.stun_ticks = 0
+            bot.shield_absorb = 0
+            bot.current_path.clear()
+            bot.path_target = None
         self.round.in_intermission = True
         self.round.intermission_ticks = settings.combat.intermission_time * self._tick_rate
         logger.info("Round %d ended. Winner: %s", self.round.round_number, winner)
@@ -184,9 +218,12 @@ class GameEngine:
 
     async def _tick_intermission(self) -> None:
         self.round.intermission_ticks -= 1
-        # Send lobby updates to bots waiting for next round
-        if self._waiting_bots and self.tick_count % self._spec_interval == 0:
-            await self._send_waiting_updates()
+        # Send updates to bots waiting for next round and connected bots
+        if self.tick_count % self._spec_interval == 0:
+            if self._waiting_bots:
+                await self._send_waiting_updates()
+            # Prune dead spectator connections
+            await self._cleanup_spectators()
         if self.round.intermission_ticks <= 0:
             # Go back to lobby instead of directly starting a new round
             self.round.in_intermission = False
@@ -239,6 +276,18 @@ class GameEngine:
     def get_nearby_bots(self, bot: BotState) -> list[BotState]:
         ids = self.grid.query_radius(bot.position[0], bot.position[1], self._view_radius)
         return [self.bots[b] for b in ids if b != bot.bot_id and b in self.bots and self.bots[b].is_alive]
+
+    async def _cleanup_spectators(self) -> None:
+        """Remove dead spectator connections."""
+        dead: list[int] = []
+        for i, ws in enumerate(self.spectators):
+            try:
+                # Ping with a lightweight message to detect dead connections
+                await ws.send_json({"type": "ping"})
+            except Exception:
+                dead.append(i)
+        for i in reversed(dead):
+            self.spectators.pop(i)
 
     async def _send_bot_updates(self) -> None:
         kills = self.kill_feed.get_recent(5)
