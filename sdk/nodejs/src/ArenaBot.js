@@ -52,8 +52,16 @@ export default class ArenaBot {
   moveAway(myPos, threatPos) {
     return { action: 'move', direction: directionAway(myPos, threatPos) };
   }
-  /** Attack a target by ID. */
-  attack(targetId) { return { action: 'attack', target: targetId }; }
+  /** Attack a target by ID. For staff, pass targetPosition [x,y] for area attack. */
+  attack(targetId, targetPosition) {
+    const a = { action: 'attack', target: targetId };
+    if (targetPosition) a.direction = [targetPosition[0], targetPosition[1]];
+    return a;
+  }
+  /** Staff area attack at a position [x, y]. */
+  staffAttack(targetPosition) {
+    return { action: 'attack', direction: [targetPosition[0], targetPosition[1]] };
+  }
   /** Dodge in a direction. */
   dodge(direction) { return { action: 'dodge', direction }; }
   /** Use an item by ID. */
@@ -65,7 +73,7 @@ export default class ArenaBot {
 
   /** Find the closest enemy bot in the nearby list. */
   closestEnemy(nearby) {
-    const bots = (nearby || []).filter((e) => e.type === 'bot');
+    const bots = (nearby || []).filter((e) => e.type === 'bot' && (e.id || e.bot_id) !== this.botId);
     if (!bots.length) return null;
     const myPos = this._lastPos;
     return bots.reduce((best, b) =>
@@ -74,7 +82,7 @@ export default class ArenaBot {
 
   /** Find the enemy bot with the lowest HP. */
   lowestHpEnemy(nearby) {
-    const bots = (nearby || []).filter((e) => e.type === 'bot');
+    const bots = (nearby || []).filter((e) => e.type === 'bot' && (e.id || e.bot_id) !== this.botId);
     if (!bots.length) return null;
     return bots.reduce((best, b) =>
       (b.hp ?? Infinity) < (best.hp ?? Infinity) ? b : best);
@@ -132,9 +140,16 @@ export default class ArenaBot {
         if (onReady) onReady();
         break;
       case 'tick': {
-        if (msg.your_state?.position) this._lastPos = msg.your_state.position;
-        const action = await this.onTick(
-          msg.your_state, msg.nearby_entities, msg.safe_zone);
+        const st = msg.your_state || {};
+        if (st.position) this._lastPos = st.position;
+        this.lastActionResult = st.last_action_result || null;
+        const safeZone = {
+          center: st.zone_center || [0, 0],
+          radius: st.zone_radius ?? 100,
+          in_safe_zone: st.in_safe_zone ?? true,
+          distance_to_edge: st.distance_to_zone_edge || 0,
+        };
+        const action = await this.onTick(st, msg.nearby_entities, safeZone);
         if (action) {
           this._send({ type: 'action', tick: msg.tick_number, ...action });
         }

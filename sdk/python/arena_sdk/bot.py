@@ -88,9 +88,19 @@ class ArenaBot:
         d = helpers.direction_away(my_pos, threat_pos)
         return {"action": "move", "direction": [d["x"], d["y"]]}
 
-    def attack(self, target_id: str) -> dict:
-        """Returns an attack action targeting target_id."""
-        return {"action": "attack", "target": target_id}
+    def attack(self, target_id: str, target_position: tuple | list | None = None) -> dict:
+        """Returns an attack action targeting target_id.
+
+        For staff weapons, pass target_position=[x, y] for the area attack location.
+        """
+        action: dict = {"action": "attack", "target": target_id}
+        if target_position is not None:
+            action["direction"] = [target_position[0], target_position[1]]
+        return action
+
+    def staff_attack(self, target_position: tuple | list) -> dict:
+        """Returns a staff area attack at the given position [x, y]."""
+        return {"action": "attack", "direction": [target_position[0], target_position[1]]}
 
     def dodge(self, direction: dict | tuple) -> dict:
         """Returns a dodge action in the given direction."""
@@ -109,15 +119,21 @@ class ArenaBot:
     # -- Entity helpers --
 
     def closest_enemy(self, nearby: list) -> dict | None:
-        """Returns nearest bot entity from nearby list."""
-        bots = helpers.filter_by_type(nearby, "bot")
+        """Returns nearest bot entity from nearby list (excludes self)."""
+        bots = [
+            e for e in helpers.filter_by_type(nearby, "bot")
+            if e.get("id", e.get("bot_id")) != self._bot_id
+        ]
         if not bots or not self._bot_id:
             return None
         return helpers.closest_entity(self._last_pos, bots)
 
     def lowest_hp_enemy(self, nearby: list) -> dict | None:
-        """Returns lowest HP bot entity."""
-        bots = helpers.filter_by_type(nearby, "bot")
+        """Returns lowest HP bot entity (excludes self)."""
+        bots = [
+            e for e in helpers.filter_by_type(nearby, "bot")
+            if e.get("id", e.get("bot_id")) != self._bot_id
+        ]
         return helpers.lowest_hp_entity(bots)
 
     def nearby_pickups(self, nearby: list) -> list:
@@ -147,8 +163,14 @@ class ArenaBot:
                 self._tick_number = msg.get("tick_number", 0)
                 state = msg.get("your_state", {})
                 self._last_pos = state.get("position", {"x": 0, "y": 0})
+                self._last_action_result = state.get("last_action_result")
                 nearby = msg.get("nearby_entities", [])
-                safe_zone = msg.get("safe_zone", {})
+                safe_zone = {
+                    "center": state.get("zone_center", [0, 0]),
+                    "radius": state.get("zone_radius", 100),
+                    "in_safe_zone": state.get("in_safe_zone", True),
+                    "distance_to_edge": state.get("distance_to_zone_edge", 0),
+                }
                 try:
                     action = await self.on_tick(state, nearby, safe_zone)
                 except Exception:

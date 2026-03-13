@@ -15,8 +15,8 @@ class ArenaMap:
         """Initialize arena map from config."""
         self.width: int = settings.game.arena_width
         self.height: int = settings.game.arena_height
-        self.center_x: float = settings.arena_zone.center_x
-        self.center_y: float = settings.arena_zone.center_y
+        self.center_x: float = float(self.width) / 2
+        self.center_y: float = float(self.height) / 2
         self.initial_radius: float = settings.arena_zone.initial_radius
         self.safe_zone_radius: float = self.initial_radius
         self.shrink_percent: float = settings.arena_zone.shrink_percent
@@ -24,6 +24,8 @@ class ArenaMap:
         self.damage_per_tick: int = settings.arena_zone.damage_per_tick
         self.min_radius: float = settings.arena_zone.min_radius
         self._last_shrink_tick: int = 0
+        self.target_center_x: float = self.center_x
+        self.target_center_y: float = self.center_y
         self.obstacles: list[Obstacle] = []
 
     def is_in_safe_zone(self, x: float, y: float) -> bool:
@@ -33,9 +35,10 @@ class ArenaMap:
         return (dx * dx + dy * dy) <= self.safe_zone_radius ** 2
 
     def update_zone(self, tick_count: int, tick_rate: int) -> None:
-        """Shrink the safe zone based on elapsed time.
+        """Shrink the safe zone and drift center toward target.
 
         Called every tick. Shrinks by shrink_percent every shrink_interval_secs.
+        Center moves toward the random target proportionally.
         """
         ticks_per_interval = tick_rate * self.shrink_interval_secs
         if ticks_per_interval <= 0:
@@ -46,6 +49,10 @@ class ArenaMap:
         if intervals_now > intervals_last:
             self.safe_zone_radius *= 1.0 - self.shrink_percent
             self.safe_zone_radius = max(self.min_radius, self.safe_zone_radius)
+            # Drift center toward random target (faster than radius shrinks)
+            drift = self.shrink_percent * 1.5
+            self.center_x += (self.target_center_x - self.center_x) * drift
+            self.center_y += (self.target_center_y - self.center_y) * drift
             self._last_shrink_tick = tick_count
 
     def get_random_spawn_point(self) -> tuple[float, float]:
@@ -72,14 +79,23 @@ class ArenaMap:
     def get_zone_state(self) -> dict:
         """Return zone state for client updates."""
         return {
-            "center": (self.center_x, self.center_y),
-            "radius": self.safe_zone_radius,
+            "center": (round(self.center_x, 1), round(self.center_y, 1)),
+            "radius": round(self.safe_zone_radius, 1),
+            "target_center": (round(self.target_center_x, 1), round(self.target_center_y, 1)),
+            "target_radius": self.min_radius,
         }
 
     def reset(self) -> None:
         """Reset zone and obstacles for a new round."""
         self.safe_zone_radius = self.initial_radius
         self._last_shrink_tick = 0
+        # Reset center to arena middle
+        self.center_x = float(self.width) / 2
+        self.center_y = float(self.height) / 2
+        # Pick a random final target — must fit min_radius within arena bounds
+        margin = self.min_radius
+        self.target_center_x = random.uniform(margin, self.width - margin)
+        self.target_center_y = random.uniform(margin, self.height - margin)
         self.obstacles = generate_obstacles()
 
     def get_obstacles_dicts(self) -> list[dict]:

@@ -50,6 +50,23 @@ export class Minimap {
 
     // Safe zone
     if (state.safe_zone) {
+      // Target zone (where the zone is shrinking to)
+      if (state.safe_zone.target_center) {
+        ctx.beginPath();
+        ctx.arc(
+          state.safe_zone.target_center[0] * s,
+          state.safe_zone.target_center[1] * s,
+          (state.safe_zone.target_radius || 75) * s,
+          0, Math.PI * 2
+        );
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Current zone boundary
       ctx.beginPath();
       ctx.arc(
         state.safe_zone.center[0] * s,
@@ -59,9 +76,23 @@ export class Minimap {
       );
       ctx.fillStyle = 'rgba(0, 100, 200, 0.15)';
       ctx.fill();
-      ctx.strokeStyle = 'rgba(0, 180, 255, 0.4)';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(0, 180, 255, 0.5)';
+      ctx.lineWidth = 1.5;
       ctx.stroke();
+
+      // Danger tint outside zone
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+      ctx.arc(
+        state.safe_zone.center[0] * s,
+        state.safe_zone.center[1] * s,
+        state.safe_zone.radius * s,
+        0, Math.PI * 2, true
+      );
+      ctx.fillStyle = 'rgba(200, 30, 10, 0.15)';
+      ctx.fill();
+      ctx.restore();
     }
 
     // Obstacles
