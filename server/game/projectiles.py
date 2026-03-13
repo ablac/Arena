@@ -55,8 +55,13 @@ def update_projectiles(
     bots: dict[str, BotState],
     obstacles: list[Obstacle],
     tick_rate: int,
+    grid=None,
 ) -> list[dict]:
-    """Move projectiles, check hits, return hit events. Removes expired/hit projectiles."""
+    """Move projectiles, check hits, return hit events. Removes expired/hit projectiles.
+
+    If a SpatialGrid is provided, uses it for efficient proximity queries
+    instead of iterating all bots (O(N*M) -> O(N*k)).
+    """
     hit_radius = settings.combat.projectile_hit_radius + settings.game.bot_radius
     hit_radius_sq = hit_radius * hit_radius
     dt = 1.0 / tick_rate
@@ -84,9 +89,15 @@ def update_projectiles(
             to_remove.append(i)
             continue
 
-        # Check hit against bots
+        # Check hit against bots — use spatial grid if available
         hit = False
-        for bot_id, bot in bots.items():
+        if grid is not None:
+            candidates = grid.query_radius(new_x, new_y, hit_radius)
+            candidate_bots = [(bid, bots[bid]) for bid in candidates if bid in bots]
+        else:
+            candidate_bots = list(bots.items())
+
+        for bot_id, bot in candidate_bots:
             if bot_id == proj.owner_id or not bot.is_alive:
                 continue
             dx = bot.position[0] - new_x
@@ -98,7 +109,7 @@ def update_projectiles(
                     hit = True
                     break
                 # Use apply_damage for proper stat tracking and kill attribution
-                apply_damage(bots, bot_id, proj.damage, proj.owner_id, proj.weapon, events)
+                apply_damage(bots, bot_id, proj.damage, proj.owner_id, proj.weapon, events, obstacles)
                 to_remove.append(i)
                 hit = True
                 break

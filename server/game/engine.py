@@ -15,7 +15,7 @@ from server.game.broadcasts import (
     broadcast_to_spectators, send_death_to_bot, send_kill_to_bot,
     send_respawn_to_bot, send_round_end, send_tick_to_bot,
 )
-from server.game.combat import process_combat, process_staff_impacts
+from server.game.combat import process_combat, process_shoves, process_staff_impacts
 from server.game.engine_helpers import (
     apply_fallbacks, apply_zone_damage, handle_kill_credits,
     process_use_items, update_life_tracking,
@@ -85,9 +85,12 @@ class GameEngine:
         apply_fallbacks(self.bots, self.get_nearby_bots)
         process_use_items(self.bots, self.pickups)
         process_movement(self.bots, self.arena, self.grid, self.arena.obstacles)
-        process_combat(self.bots, self._tick_rate, self.arena.obstacles, self.projectiles, self.staff_impacts)
-        update_projectiles(self.projectiles, self.bots, self.arena.obstacles, self._tick_rate)
-        process_staff_impacts(self.staff_impacts, self.bots)
+        shove_events = process_shoves(self.bots, self.arena.obstacles)
+        combat_events = process_combat(self.bots, self._tick_rate, self.arena.obstacles, self.projectiles, self.staff_impacts)
+        projectile_events = update_projectiles(self.projectiles, self.bots, self.arena.obstacles, self._tick_rate, self.grid)
+        staff_events = process_staff_impacts(self.staff_impacts, self.bots, self.arena.obstacles)
+        # Collect combat events for spectator broadcast
+        self._combat_events = shove_events + combat_events + projectile_events + staff_events
         self.arena.update_zone(self.tick_count, self._tick_rate)
         apply_zone_damage(self.bots, self.arena)
         # Resync grid after knockback moved bots without grid updates
@@ -121,10 +124,10 @@ class GameEngine:
         await self._send_event_messages(kill_events, send_kill_to_bot)
         if self.round.is_active and self.tick_count - self._last_persist_tick >= self._persist_interval:
             self._last_persist_tick = self.tick_count
-            asyncio.create_task(persist_bot_stats(self.bots))
+            asyncio.create_task(persist_bot_stats(dict(self.bots)))
         if should_end_round(self.round, self.bots, self.tick_count, self._tick_rate):
             await self._end_round()
-        for bot in self.bots.values():
+        for bot in list(self.bots.values()):
             bot.pending_action = None
             bot.hits_received.clear()
             bot.last_action_result = None
@@ -179,6 +182,7 @@ class GameEngine:
             bot.invuln_ticks = 0
             bot.stun_ticks = 0
             bot.shield_absorb = 0
+            bot.shove_cooldown = 0.0
             bot.current_path.clear()
             bot.path_target = None
         self.round.in_intermission = True
@@ -322,6 +326,10 @@ class GameEngine:
             new_kills, self.arena.get_obstacles_dicts(),
             safe_zone=self.arena.get_zone_state(),
         )
+        # Include combat events (hits, projectile impacts, staff detonations)
+        if hasattr(self, '_combat_events') and self._combat_events:
+            state["combat_events"] = self._combat_events
+            self._combat_events = []
         await broadcast_to_spectators(self.spectators, state)
 
     async def _send_event_messages(self, events: list[dict], send_fn) -> None:

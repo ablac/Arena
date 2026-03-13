@@ -43,6 +43,7 @@ var actionStringToType = map[string]game.ActionType{
 	"move_to":  game.ActionMoveTo,
 	"attack":   game.ActionAttack,
 	"dodge":    game.ActionDodge,
+	"shove":    game.ActionShove,
 	"use_item": game.ActionUseItem,
 	"idle":     game.ActionIdle,
 }

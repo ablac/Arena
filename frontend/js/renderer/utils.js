@@ -89,7 +89,10 @@ export function createTextPlane(id, text, color, scene, width, height) {
   mat.useAlphaFromDiffuseTexture = true;
   mat.hasAlpha = true;
   mat.alpha = 0.95;
+  mat.freeze();
   plane.material = mat;
+  plane.isPickable = false;
+  plane.alwaysSelectAsActiveMesh = true;
 
   return { plane, mat, tex };
 }

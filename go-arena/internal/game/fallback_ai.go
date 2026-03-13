@@ -5,30 +5,31 @@ import "arena-server/internal/config"
 // GetFallbackAction generates an AI action for a bot that did not submit one
 // in time. The behavior string selects among five strategies: aggressive,
 // defensive, opportunistic, territorial, and hunter. Unknown behaviors default
-// to aggressive.
-func GetFallbackAction(bot *BotState, nearbyBots []*BotState, behavior string) *Action {
+// to aggressive. The arena parameter provides the current zone center for
+// movement decisions.
+func GetFallbackAction(bot *BotState, nearbyBots []*BotState, behavior string, arena *ArenaMap) *Action {
 	switch behavior {
 	case "aggressive":
-		return aiAggressive(bot, nearbyBots)
+		return aiAggressive(bot, nearbyBots, arena)
 	case "defensive":
-		return aiDefensive(bot, nearbyBots)
+		return aiDefensive(bot, nearbyBots, arena)
 	case "opportunistic":
-		return aiOpportunistic(bot, nearbyBots)
+		return aiOpportunistic(bot, nearbyBots, arena)
 	case "territorial":
-		return aiTerritorial(bot, nearbyBots)
+		return aiTerritorial(bot, nearbyBots, arena)
 	case "hunter":
-		return aiHunter(bot, nearbyBots)
+		return aiHunter(bot, nearbyBots, arena)
 	default:
-		return aiAggressive(bot, nearbyBots)
+		return aiAggressive(bot, nearbyBots, arena)
 	}
 }
 
 // aiAggressive attacks the nearest enemy if in range, otherwise moves toward
-// them. Roams toward the arena center when no enemies are visible.
-func aiAggressive(bot *BotState, nearby []*BotState) *Action {
+// them. Only moves toward zone center if outside the safe zone.
+func aiAggressive(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 	target := findNearest(bot, nearby)
 	if target == nil {
-		return moveTowardCenter(bot)
+		return idleOrMoveToZone(bot, arena)
 	}
 	if canAttack(bot, target) {
 		return &Action{Type: ActionAttack, TargetID: target.BotID}
@@ -38,11 +39,15 @@ func aiAggressive(bot *BotState, nearby []*BotState) *Action {
 }
 
 // aiDefensive attacks if in range, retreats if enemies are close, otherwise
-// roams toward center.
-func aiDefensive(bot *BotState, nearby []*BotState) *Action {
+// holds position (moves toward zone only if outside it).
+func aiDefensive(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 	target := findNearest(bot, nearby)
 	if target == nil {
-		return moveTowardCenter(bot)
+		return idleOrMoveToZone(bot, arena)
+	}
+	// Shove enemies that are dangerously close
+	if canShove(bot, target) {
+		return &Action{Type: ActionShove, TargetID: target.BotID}
 	}
 	if canAttack(bot, target) {
 		return &Action{Type: ActionAttack, TargetID: target.BotID}
@@ -51,11 +56,11 @@ func aiDefensive(bot *BotState, nearby []*BotState) *Action {
 		dir := directionAway(bot.Position, target.Position)
 		return &Action{Type: ActionMove, Direction: dir}
 	}
-	return moveTowardCenter(bot)
+	return idleOrMoveToZone(bot, arena)
 }
 
 // aiOpportunistic targets weak enemies (<= 70% HP), flees from strong ones.
-func aiOpportunistic(bot *BotState, nearby []*BotState) *Action {
+func aiOpportunistic(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 	// Collect weak enemies.
 	var weak []*BotState
 	for _, b := range nearby {
@@ -88,13 +93,12 @@ func aiOpportunistic(bot *BotState, nearby []*BotState) *Action {
 		return &Action{Type: ActionMove, Direction: dir}
 	}
 
-	return moveTowardCenter(bot)
+	return idleOrMoveToZone(bot, arena)
 }
 
 // aiTerritorial defends a territory of 2x weapon range around the bot's
-// position. Attacks intruders, returns to center if drifted too far, otherwise
-// idles.
-func aiTerritorial(bot *BotState, nearby []*BotState) *Action {
+// position. Attacks intruders, moves toward zone if outside it, otherwise idles.
+func aiTerritorial(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 	wc := GetWeaponConfig(bot.Weapon)
 	territory := wc.Range * 2
 
@@ -117,21 +121,14 @@ func aiTerritorial(bot *BotState, nearby []*BotState) *Action {
 		return &Action{Type: ActionMove, Direction: dir}
 	}
 
-	// Drifted too far from center — return.
-	center := arenaCenter()
-	if bot.Position.DistanceTo(center) > territory {
-		dir := directionToward(bot.Position, center)
-		return &Action{Type: ActionMove, Direction: dir}
-	}
-
-	return &Action{Type: ActionIdle}
+	return idleOrMoveToZone(bot, arena)
 }
 
 // aiHunter chases the enemy with the highest kill streak.
-func aiHunter(bot *BotState, nearby []*BotState) *Action {
+func aiHunter(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 	target := findHighestStreak(bot, nearby)
 	if target == nil {
-		return moveTowardCenter(bot)
+		return idleOrMoveToZone(bot, arena)
 	}
 	if canAttack(bot, target) {
 		return &Action{Type: ActionAttack, TargetID: target.BotID}
@@ -204,6 +201,18 @@ func directionAway(from, to Vec2) Vec2 {
 	return d.Scale(-1)
 }
 
+// canShove returns true if the bot's shove is off cooldown and the target is
+// within shove range.
+func canShove(bot *BotState, target *BotState) bool {
+	if !target.IsAlive {
+		return false
+	}
+	if bot.ShoveCooldown > 0 {
+		return false
+	}
+	return bot.Position.DistanceTo(target.Position) <= config.C.ShoveRange+config.C.BotRadius*2
+}
+
 // canAttack returns true if the bot's weapon is ready and the target is alive
 // and within weapon range.
 func canAttack(bot *BotState, target *BotState) bool {
@@ -217,18 +226,16 @@ func canAttack(bot *BotState, target *BotState) bool {
 	return IsInRange(bot.Position, target.Position, wc.Range)
 }
 
-// moveTowardCenter produces a move action toward the arena center, or an idle
-// action if the bot is already there.
-func moveTowardCenter(bot *BotState) *Action {
-	center := arenaCenter()
-	dir := directionToward(bot.Position, center)
+// idleOrMoveToZone idles if the bot is inside the safe zone, otherwise moves
+// toward the zone center. This prevents bots from clustering at map center
+// when no enemies are visible.
+func idleOrMoveToZone(bot *BotState, arena *ArenaMap) *Action {
+	if arena.IsInZone(bot.Position) {
+		return &Action{Type: ActionIdle}
+	}
+	dir := directionToward(bot.Position, arena.ZoneCenter)
 	if dir.Length() < 1e-10 {
 		return &Action{Type: ActionIdle}
 	}
 	return &Action{Type: ActionMove, Direction: dir}
-}
-
-// arenaCenter returns the center of the arena.
-func arenaCenter() Vec2 {
-	return NewVec2(config.C.ArenaWidth/2, config.C.ArenaHeight/2)
 }

@@ -106,7 +106,7 @@ export class Minimap {
     // Pickups
     if (state.pickups) {
       for (const p of state.pickups) {
-        ctx.fillStyle = this._pickupColor(p.type);
+        ctx.fillStyle = this._pickupColor(p.pickup_type);
         ctx.fillRect(p.position[0] * s - 1, p.position[1] * s - 1, 2, 2);
       }
     }
@@ -131,7 +131,7 @@ export class Minimap {
   /** @private */
   _pickupColor(type) {
     const colors = {
-      health: '#00ff4c', speed: '#ffff00', damage: '#ff3333', shield: '#3388ff',
+      health_pack: '#00ff4c', speed_boost: '#ffff00', damage_boost: '#ff3333', shield_bubble: '#3388ff',
     };
     return colors[type] || '#ffffff';
   }

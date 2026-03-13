@@ -61,53 +61,73 @@ export function createBotEntry(bot, scene) {
 
   const root = new B.TransformNode(`botRoot-${id}`, scene);
 
-  // Body cylinder with collision ellipsoid
+  // Body cylinder
   const body = B.MeshBuilder.CreateCylinder(`body-${id}`, {
-    height: BODY_H, diameter: BODY_R * 2, tessellation: 8
+    height: BODY_H, diameter: BODY_R * 2, tessellation: 6
   }, scene);
   body.position.y = BODY_H / 2;
   body.parent = root;
-  body.ellipsoid = new B.Vector3(BODY_R, BODY_H / 2, BODY_R);
-  body.checkCollisions = true;
+  body.isPickable = false;
+  body.alwaysSelectAsActiveMesh = true;
   const bodyMat = makeMat(`bmat-${id}`, scene, color, { emissiveFactor: 0.35 });
+  bodyMat.emissiveFresnelParameters = new B.FresnelParameters({
+    bias: 0.6,
+    power: 2,
+    leftColor: new B.Color3(color.r * 0.8, color.g * 0.8, color.b * 0.8),
+    rightColor: B.Color3.Black()
+  });
   body.material = bodyMat;
 
   // Head sphere
   const head = B.MeshBuilder.CreateSphere(`head-${id}`, {
-    diameter: HEAD_R * 2, segments: 6
+    diameter: HEAD_R * 2, segments: 4
   }, scene);
+  head.isPickable = false;
+  head.alwaysSelectAsActiveMesh = true;
   head.position.y = BODY_H + HEAD_R * 0.7;
   head.parent = root;
   const headColor = new B.Color3(
     Math.min(color.r * 1.2, 1), Math.min(color.g * 1.2, 1), Math.min(color.b * 1.2, 1)
   );
   const headMat = makeMat(`hmat-${id}`, scene, headColor, { emissiveFactor: 0.4 });
+  headMat.emissiveFresnelParameters = new B.FresnelParameters({
+    bias: 0.5,
+    power: 2,
+    leftColor: new B.Color3(color.r * 0.8, color.g * 0.8, color.b * 0.8),
+    rightColor: B.Color3.Black()
+  });
   head.material = headMat;
 
   // Arms — share one material
   const armMat = makeMat(`amat-${id}`, scene, color.scale(0.8), { emissiveFactor: 0.3 });
   const lArm = B.MeshBuilder.CreateCylinder(`larm-${id}`, {
-    height: ARM_H, diameter: ARM_R * 2, tessellation: 6
+    height: ARM_H, diameter: ARM_R * 2, tessellation: 4
   }, scene);
   lArm.position.set(-BODY_R - ARM_R, BODY_H * 0.6, 0);
   lArm.parent = root;
   lArm.material = armMat;
+  lArm.isPickable = false;
+  lArm.alwaysSelectAsActiveMesh = true;
 
   const rArm = B.MeshBuilder.CreateCylinder(`rarm-${id}`, {
-    height: ARM_H, diameter: ARM_R * 2, tessellation: 6
+    height: ARM_H, diameter: ARM_R * 2, tessellation: 4
   }, scene);
   rArm.position.set(BODY_R + ARM_R, BODY_H * 0.6, 0);
   rArm.parent = root;
   rArm.material = armMat;
+  rArm.isPickable = false;
+  rArm.alwaysSelectAsActiveMesh = true;
 
   // Shadow disc (shared material)
   const shadow = B.MeshBuilder.CreateDisc(`shd-${id}`, {
-    radius: BODY_R * 1.3, tessellation: 8
+    radius: BODY_R * 1.3, tessellation: 6
   }, scene);
   shadow.rotation.x = Math.PI / 2;
   shadow.position.y = 0.1;
   shadow.parent = root;
   shadow.material = _getShadowMat(scene);
+  shadow.isPickable = false;
+  shadow.alwaysSelectAsActiveMesh = true;
 
   // Weapon
   const weapon = createWeaponMesh(bot.weapon || 'sword', id, scene, root);
@@ -125,6 +145,8 @@ export function createBotEntry(bot, scene) {
   hpBg.position.y = BODY_H + HEAD_R * 2 + 2;
   hpBg.parent = root;
   hpBg.material = _getHpBgMat(scene);
+  hpBg.isPickable = false;
+  hpBg.alwaysSelectAsActiveMesh = true;
 
   // Health bar fill (needs unique mat for per-bot color changes)
   const hpBar = B.MeshBuilder.CreatePlane(`hp-${id}`, {
@@ -133,6 +155,8 @@ export function createBotEntry(bot, scene) {
   hpBar.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
   hpBar.position.y = BODY_H + HEAD_R * 2 + 2.2;
   hpBar.parent = root;
+  hpBar.isPickable = false;
+  hpBar.alwaysSelectAsActiveMesh = true;
   const hpMat = makeMat(`hpm-${id}`, scene, new B.Color3(0, 1, 0), {
     noLight: true, emissiveFactor: 1
   });
@@ -142,8 +166,7 @@ export function createBotEntry(bot, scene) {
     root, body, bodyMat, head, headMat, lArm, rArm, armMat,
     shadow, weapon, hpBar, hpMat, hpBg,
     label, anim: new BotAnimState(),
-    prevPos: null, currPos: null, isAlive: true, _wasAlive: true,
-    _lastHp: -1,
+    isAlive: true, _wasAlive: true, _lastHp: -1,
   };
 }
 

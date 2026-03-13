@@ -27,7 +27,11 @@ const WEAPON_ANIMS = {
   spear:   { duration: 0.60, windupPct: 0.25, activePct: 0.40, restZ: -0.3, windupZ: -0.8, swingZ: 0.5,  lunge: 0.35, bob: 3 },
   staff:   { duration: 1.00, windupPct: 0.40, activePct: 0.30, restZ: 0,    windupZ: 0.5,  swingZ: -0.3, lunge: 0.15, bob: 4 },
   shield:  { duration: 0.70, windupPct: 0.25, activePct: 0.35, restZ: 0,    windupZ: 0.4,  swingZ: -0.8, lunge: 0.3,  bob: 2 },
+  shove:   SHOVE_ANIM,
 };
+
+/** Shove animation — a quick shoulder-check push motion. */
+const SHOVE_ANIM = { duration: 0.35, windupPct: 0.15, activePct: 0.50, restZ: 0, windupZ: -0.2, swingZ: 0.3, lunge: 0.4, bob: 3 };
 
 const DODGE_DURATION = 0.3;
 
@@ -255,6 +259,23 @@ export function triggerAttack(anim, weapon) {
  * @param {BotAnimState} anim
  * @param {number} [angle=0] - dodge direction angle
  */
+/**
+ * Trigger a shove animation (shoulder-check push).
+ * Uses the attack animation system with shove-specific config.
+ * @param {BotAnimState} anim
+ */
+export function triggerShove(anim) {
+  if (anim.dodgeTimer >= 0) return;
+  if (anim.attackTimer >= 0) {
+    const curCfg = WEAPON_ANIMS[anim.attackType] || WEAPON_ANIMS.sword;
+    const progress = anim.attackTimer / curCfg.duration;
+    if (progress < curCfg.windupPct + curCfg.activePct) return;
+  }
+  anim.attackTimer = 0;
+  anim.attackType = 'shove';
+  anim.attackDuration = SHOVE_ANIM.duration;
+}
+
 export function triggerDodge(anim, angle) {
   if (anim.deathTimer >= 0) return;
   if (anim.dodgeTimer >= 0) return; // already dodging

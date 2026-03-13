@@ -3,6 +3,7 @@ package game
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -27,6 +28,9 @@ type GameEngine struct {
 	Grid         *SpatialGrid
 	NavGrid      *NavGrid
 	KillFeed     *KillFeed
+
+	// Anti-teaming
+	AntiTeam *AntiTeamTracker
 
 	// Respawns
 	RespawnTimers []RespawnTimer
@@ -63,6 +67,7 @@ func NewGameEngine() *GameEngine {
 		Arena:       NewArenaMap(),
 		Grid:        NewSpatialGrid(config.C.SpatialCellSize),
 		KillFeed:    NewKillFeed(config.C.KillFeedSize),
+		AntiTeam:    NewAntiTeamTracker(),
 		Round: RoundState{
 			Phase: PhaseLobby,
 		},
@@ -187,8 +192,18 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Movement.
 	ProcessMovement(e.Bots, e.Arena.Obstacles, e.Grid, e.NavGrid, dt)
 
+	// Shoves (before combat so shoved bots can't attack this tick).
+	ProcessShoves(e.Bots, e.Arena.Obstacles)
+
 	// Combat.
 	ProcessCombat(e.Bots, e.Arena.Obstacles, &e.Projectiles, &e.StaffImpacts, e.Grid, e.TickCount, dt)
+
+	// Record attacks for anti-teaming (reset proximity for fighting pairs).
+	for _, bot := range e.Bots {
+		if bot.PendingAction != nil && bot.PendingAction.Type == ActionAttack && bot.PendingAction.TargetID != "" {
+			e.AntiTeam.RecordAttack(bot.BotID, bot.PendingAction.TargetID)
+		}
+	}
 
 	// Projectiles.
 	UpdateProjectiles(&e.Projectiles, e.Bots, e.Arena.Obstacles, e.TickCount, dt)
@@ -201,6 +216,14 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 
 	// Zone damage.
 	e.applyZoneDamage()
+
+	// Anti-teaming: penalise bots that stay near each other without fighting.
+	penalised := e.AntiTeam.Update(e.Bots, e.Grid)
+	for _, botID := range penalised {
+		if bot, ok := e.Bots[botID]; ok && bot.IsAlive {
+			bot.HP -= config.C.AntiTeamDamagePerTick
+		}
+	}
 
 	// Bot separation.
 	SeparateBots(e.Bots, e.Arena.Obstacles, e.Grid)
@@ -291,15 +314,21 @@ func (e *GameEngine) startRound() {
 	e.RespawnEvents = nil
 	e.Grid.Clear()
 	e.KillFeed.Clear()
+	e.AntiTeam.Clear()
 
 	// Set round state.
 	e.Round.Phase = PhaseActive
 	e.Round.StartTick = e.TickCount
 	e.Round.RoundID = uuid.New().String()
 
-	// Spawn and reset all bots.
+	// Spawn bots evenly around the zone perimeter.
+	botList := make([]*BotState, 0, len(e.Bots))
 	for _, bot := range e.Bots {
-		SpawnBot(bot, e.Arena, e.Grid, e.TickCount)
+		botList = append(botList, bot)
+	}
+	spawnPoints := e.Arena.GetSpawnPoints(len(botList))
+	for i, bot := range botList {
+		SpawnBotAt(bot, spawnPoints[i], e.Grid, e.TickCount)
 		bot.ResetRoundStats()
 		bot.KillStreak = 0
 		bot.LastActionTick = 0 // Reset AFK timer so bots aren't kicked at round start
@@ -498,7 +527,7 @@ func (e *GameEngine) applyFallbacks() {
 			}
 		}
 
-		fb := GetFallbackAction(bot, nearbyBots, bot.FallbackBehavior)
+		fb := GetFallbackAction(bot, nearbyBots, bot.FallbackBehavior, e.Arena)
 		if fb != nil {
 			bot.PendingAction = fb
 		}
@@ -650,21 +679,52 @@ func (e *GameEngine) sendBotTickUpdates() {
 			}
 		}
 
-		SendTickUpdate(bot, yourState, nearby, e.TickCount)
+		// Include nearby obstacles.
+		for _, obs := range e.Arena.Obstacles {
+			if obstacleInRange(obs, bot.Position, config.C.ViewRadius) {
+				nearby = append(nearby, BuildObstacleNearbyView(obs))
+			}
+		}
+
+		// Build directional hints when no bots are within view radius.
+		var hints []map[string]interface{}
+		nearbyBotCount := 0
+		for _, id := range nearbyIDs {
+			if id != bot.BotID {
+				nearbyBotCount++
+			}
+		}
+		if nearbyBotCount == 0 {
+			hints = buildHints(bot, e.Bots, e.Pickups)
+		}
+
+		SendTickUpdate(bot, yourState, nearby, e.TickCount, e.Arena, hints)
 	}
 }
 
 // sendLobbyStateUpdate broadcasts lobby/intermission state to spectators.
+// During active rounds, waiting bots are included so the lobby tab stays populated.
 func (e *GameEngine) sendLobbyStateUpdate() {
 	c := &config.C
-	players := make([]map[string]interface{}, 0, len(e.Bots))
-	for _, bot := range e.Bots {
+
+	// During lobby phase, all bots are in e.Bots. During active/intermission,
+	// mid-round joiners sit in e.WaitingBots.
+	lobbyBots := e.Bots
+	if e.Round.Phase != PhaseLobby {
+		lobbyBots = e.WaitingBots
+	}
+
+	players := make([]map[string]interface{}, 0, len(lobbyBots))
+	for _, bot := range lobbyBots {
 		players = append(players, map[string]interface{}{
 			"name":         bot.Name,
 			"avatar_color": bot.AvatarColor,
 			"weapon":       bot.Weapon,
 		})
 	}
+	sort.Slice(players, func(i, j int) bool {
+		return players[i]["name"].(string) < players[j]["name"].(string)
+	})
 
 	var countdown interface{}
 	if e.Round.LobbyCountdownTicks > 0 {
@@ -678,7 +738,7 @@ func (e *GameEngine) sendLobbyStateUpdate() {
 	state := map[string]interface{}{
 		"type":           "lobby_state",
 		"tick":           e.TickCount,
-		"bots_connected": len(e.Bots),
+		"bots_connected": len(lobbyBots),
 		"bots_needed":    c.MinBotsToStart,
 		"countdown":      countdown,
 		"players":        players,
@@ -696,6 +756,11 @@ func (e *GameEngine) sendLobbyStateUpdate() {
 	e.spectatorsMu.RUnlock()
 
 	BroadcastToSpectators(specs, data)
+
+	// Also send lobby updates to waiting bots so they know they're queued.
+	for _, bot := range e.WaitingBots {
+		SendLobbyUpdate(bot, len(lobbyBots), c.MinBotsToStart, nil, lobbyBots)
+	}
 }
 
 // sendSpectatorUpdate broadcasts the full arena state to all spectators.
@@ -737,6 +802,67 @@ func (e *GameEngine) sendEventMessages() {
 	e.DeathEvents = e.DeathEvents[:0]
 	e.KillEvents = e.KillEvents[:0]
 	e.RespawnEvents = e.RespawnEvents[:0]
+}
+
+// buildHints generates directional hints for a bot that has no nearby bots.
+// Returns directions to the nearest 3 bots and the nearest pickup of each type.
+func buildHints(bot *BotState, allBots map[string]*BotState, pickups []Pickup) []map[string]interface{} {
+	type botDist struct {
+		dir  Vec2
+		dist float64
+	}
+
+	// Find nearest 3 alive bots.
+	var candidates []botDist
+	for _, other := range allBots {
+		if other.BotID == bot.BotID || !other.IsAlive {
+			continue
+		}
+		d := bot.Position.DistanceTo(other.Position)
+		dir := other.Position.Sub(bot.Position).Normalized()
+		candidates = append(candidates, botDist{dir: dir, dist: d})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].dist < candidates[j].dist
+	})
+
+	var hints []map[string]interface{}
+	limit := 3
+	if len(candidates) < limit {
+		limit = len(candidates)
+	}
+	for i := 0; i < limit; i++ {
+		hints = append(hints, map[string]interface{}{
+			"hint_type": "bot",
+			"direction": [2]float64{round1(candidates[i].dir.X()), round1(candidates[i].dir.Y())},
+			"distance":  round1(candidates[i].dist),
+		})
+	}
+
+	// Find nearest pickup of each type.
+	type pickupDist struct {
+		pType PickupType
+		dir   Vec2
+		dist  float64
+	}
+	bestPickup := make(map[PickupType]*pickupDist)
+	for _, p := range pickups {
+		d := bot.Position.DistanceTo(p.Position)
+		dir := p.Position.Sub(bot.Position).Normalized()
+		if existing, ok := bestPickup[p.Type]; !ok || d < existing.dist {
+			bestPickup[p.Type] = &pickupDist{pType: p.Type, dir: dir, dist: d}
+		}
+	}
+	for _, pd := range bestPickup {
+		hints = append(hints, map[string]interface{}{
+			"hint_type":   "pickup",
+			"pickup_type": string(pd.pType),
+			"direction":   [2]float64{round1(pd.dir.X()), round1(pd.dir.Y())},
+			"distance":    round1(pd.dist),
+		})
+	}
+
+	return hints
 }
 
 // snapshotBots returns a shallow copy of the Bots map for safe async

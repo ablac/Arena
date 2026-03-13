@@ -27,8 +27,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   const hud = new HudRenderer(
     document.getElementById('hud-round'),
     document.getElementById('hud-killfeed'),
+    document.getElementById('hud-players'),
+    document.getElementById('hud-lobby'),
     document.getElementById('ws-status'),
   );
+
+  // Arena info tabs
+  setupArenaTabs();
 
   // Minimap
   const minimapContainer = document.querySelector('.arena-container');
@@ -156,6 +161,21 @@ function updateFollowDropdown(state) {
     select.appendChild(opt);
   });
   select.value = current;
+}
+
+/** @private Wire up the arena info tab bar. */
+function setupArenaTabs() {
+  const tabs = document.querySelectorAll('.arena-tab');
+  const panels = document.querySelectorAll('.arena-tab-panel');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      panels.forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      const panel = document.getElementById(`tab-${tab.dataset.tab}`);
+      if (panel) panel.classList.add('active');
+    });
+  });
 }
 
 /** @private Fetch arena status for footer stats. */
