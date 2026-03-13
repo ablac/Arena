@@ -212,9 +212,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Handle kill credits.
 	e.handleKillCredits(deaths)
 
-	// Process respawns.
-	respawns := ProcessRespawns(&e.RespawnTimers, e.Bots, e.Arena, e.Grid, dt, e.TickCount)
-	e.RespawnEvents = append(e.RespawnEvents, respawns...)
+	// No respawns — dead bots stay dead until next round.
 
 	// Pickups.
 	MaybeSpawnPickup(&e.Pickups, e.Arena, e.TickCount)
@@ -304,6 +302,7 @@ func (e *GameEngine) startRound() {
 		SpawnBot(bot, e.Arena, e.Grid, e.TickCount)
 		bot.ResetRoundStats()
 		bot.KillStreak = 0
+		bot.LastActionTick = 0 // Reset AFK timer so bots aren't kicked at round start
 	}
 
 	// Send round_start message to every bot.
@@ -577,8 +576,6 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 		if victimOk {
 			damage = victim.RoundDamageTaken
 			death.Damage = damage
-			// Add respawn timer.
-			AddRespawnTimer(&e.RespawnTimers, death.VictimID)
 		}
 
 		victimName := ""
