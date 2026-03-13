@@ -1,0 +1,28 @@
+{
+  "matches": 2,
+  "total_kills": 0,
+  "total_deaths": 2,
+  "enemy_profiles": {
+    "8961aff0-0227-41a6-85d2-082c7e21c140": {
+      "weapon": "",
+      "kills_on_me": 1,
+      "my_kills": 0,
+      "threat_score": 1
+    },
+    "24022b1d-aa18-4351-89e8-8a14ec80f824": {
+      "weapon": "",
+      "kills_on_me": 1,
+      "my_kills": 0,
+      "threat_score": 1
+    }
+  },
+  "weapon_matchups": {
+    "": {
+      "wins": 0,
+      "losses": 2
+    }
+  },
+  "best_loadout": null,
+  "dodge_success_rate": 0,
+  "avg_survival_ticks": 0
+}
