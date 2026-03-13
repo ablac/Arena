@@ -61,7 +61,7 @@ func SendDeathMessage(bot *BotState, event DeathEvent) {
 		"weapon_used":         event.Weapon,
 		"damage":              event.Damage,
 		"your_kills_this_life": event.VictimKills,
-		"respawn_in_seconds":  config.C.RespawnTime,
+		"respawn":             false,
 	}
 	SendToBot(bot, msg)
 }
@@ -75,16 +75,6 @@ func SendKillMessage(bot *BotState, event KillEvent) {
 		"weapon_used":      event.Weapon,
 		"your_kill_streak": event.KillStreak,
 		"your_round_kills": event.RoundKills,
-	}
-	SendToBot(bot, msg)
-}
-
-// SendRespawnMessage notifies a bot that it has respawned.
-func SendRespawnMessage(bot *BotState, event RespawnEvent) {
-	msg := map[string]interface{}{
-		"type":     "respawn",
-		"position": event.Position,
-		"hp":       event.HP,
 	}
 	SendToBot(bot, msg)
 }
