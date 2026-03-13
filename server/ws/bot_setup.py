@@ -14,9 +14,9 @@ from sqlalchemy import select
 from server.config import settings
 from server.db.connection import async_session_factory
 from server.db.models import Bot, BotStats
-from server.game.weapons import get_available_weapons
+from server.game.weapons import get_available_weapons, get_weapon_config
 from server.security.auth import get_bot_by_key
-from server.security.input_validator import validate_stats
+from server.security.input_validator import validate_fallback_behavior, validate_stats
 from server.ws.protocol import ErrorMessage, LoadoutSelectMessage, parse_bot_message
 
 logger = logging.getLogger(__name__)
@@ -43,8 +43,15 @@ async def load_elo(bot_id: str) -> int:
         return 1000
 
 
+class LoadoutRejected(Exception):
+    """Raised when a bot sends an invalid loadout that should result in a kick."""
+
+
 async def wait_for_loadout(ws: WebSocket, bot: Bot) -> dict:
-    """Wait for loadout selection with timeout. Falls back to defaults."""
+    """Wait for loadout selection with timeout. Falls back to defaults.
+
+    Raises LoadoutRejected if stats are invalid (cheating attempt).
+    """
     timeout = settings.network.loadout_timeout_secs
     defaults = {
         "weapon": bot.default_weapon,
@@ -58,23 +65,33 @@ async def wait_for_loadout(ws: WebSocket, bot: Bot) -> dict:
             await ws.send_json(ErrorMessage(message="Expected select_loadout").model_dump())
             return defaults
         if msg.weapon not in get_available_weapons():
-            await ws.send_json(ErrorMessage(message=f"Unknown weapon: {msg.weapon}").model_dump())
-            return defaults
+            raise LoadoutRejected(f"Unknown weapon: {msg.weapon}")
         if not validate_stats(msg.stats):
-            await ws.send_json(ErrorMessage(message="Invalid stats").model_dump())
-            return defaults
-        return {"weapon": msg.weapon, "stats": msg.stats, "fallback_behavior": msg.fallback_behavior}
+            raise LoadoutRejected(
+                f"Invalid stats (budget={settings.combat.stat_budget}, "
+                f"min={settings.combat.stat_min}, max={settings.combat.stat_max}): {msg.stats}"
+            )
+        fb = msg.fallback_behavior
+        if not validate_fallback_behavior(fb):
+            fb = "aggressive"
+        return {"weapon": msg.weapon, "stats": msg.stats, "fallback_behavior": fb}
     except asyncio.TimeoutError:
         return defaults
+    except LoadoutRejected:
+        raise
     except Exception:
         return defaults
 
 
-def compute_stats(stats: dict[str, int]) -> dict[str, float]:
+def compute_stats(stats: dict[str, int], weapon: str = "sword") -> dict[str, float]:
     """Compute derived stats from raw stat allocation."""
+    cfg = get_weapon_config(weapon)
     return {
         "max_hp": 100 + stats.get("hp", 5) * 10,
         "move_speed": 3 + stats.get("speed", 5) * 0.5,
         "attack_mult": 1.0 + stats.get("attack", 5) * 0.1,
         "defense_red": stats.get("defense", 5) * 0.03,
+        "attack_range": cfg["range"],
+        "cooldown_seconds": cfg["cooldown"],
+        "weapon_damage": cfg["damage"],
     }

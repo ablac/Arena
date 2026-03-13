@@ -68,11 +68,16 @@ def calculate_damage(weapon_name: str, attacker: BotState, target: BotState) -> 
 
 
 def is_in_range(attacker: BotState, target: BotState, weapon_name: str) -> bool:
-    """Check if target is within weapon range of attacker."""
+    """Check if target is within weapon range of attacker.
+
+    Range is measured surface-to-surface (subtracting both bot radii).
+    """
     cfg = get_weapon_config(weapon_name)
     dx = attacker.position[0] - target.position[0]
     dy = attacker.position[1] - target.position[1]
-    return dx * dx + dy * dy <= cfg["range"] ** 2
+    # Effective reach = weapon range + both bot radii (center-to-surface)
+    reach = cfg["range"] + 2 * settings.game.bot_radius
+    return dx * dx + dy * dy <= reach ** 2
 
 
 def apply_cleave(

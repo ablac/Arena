@@ -29,6 +29,7 @@ def apply_damage(
     target.hp -= int_dmg
     target.round_damage_taken += int_dmg
     target.last_damaged_by = attacker_id
+    target.hits_received.append({"from": attacker_id, "damage": int_dmg, "weapon": weapon})
     attacker = bots.get(attacker_id)
     if attacker:
         attacker.round_damage_dealt += int_dmg

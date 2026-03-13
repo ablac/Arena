@@ -61,12 +61,14 @@ export function createBotEntry(bot, scene) {
 
   const root = new B.TransformNode(`botRoot-${id}`, scene);
 
-  // Body cylinder
+  // Body cylinder with collision ellipsoid
   const body = B.MeshBuilder.CreateCylinder(`body-${id}`, {
     height: BODY_H, diameter: BODY_R * 2, tessellation: 8
   }, scene);
   body.position.y = BODY_H / 2;
   body.parent = root;
+  body.ellipsoid = new B.Vector3(BODY_R, BODY_H / 2, BODY_R);
+  body.checkCollisions = true;
   const bodyMat = makeMat(`bmat-${id}`, scene, color, { emissiveFactor: 0.35 });
   body.material = bodyMat;
 

@@ -43,6 +43,7 @@ class GameSettings(BaseSettings):
     view_radius: int = Field(default=100, description="Bot view radius in arena units")
     arena_width: int = Field(default=2000, description="Arena width")
     arena_height: int = Field(default=2000, description="Arena height")
+    bot_radius: float = Field(default=5.0, description="Bot collision/hitbox radius")
     spatial_cell_size: int = Field(default=100, description="Spatial grid cell size")
     pathfinding_cell_size: int = Field(default=20, description="A* pathfinding grid cell size")
 

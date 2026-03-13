@@ -19,8 +19,8 @@ if TYPE_CHECKING:
 _nav_grid: NavGrid | None = None
 _nav_grid_obstacle_id: int | None = None
 
-BOT_SEPARATION_DIST = 1.0
-_SEP_QUERY_R = 3.0
+BOT_SEPARATION_DIST = settings.game.bot_radius * 2  # surface-to-surface = 0
+_SEP_QUERY_R = BOT_SEPARATION_DIST + 5.0
 
 
 def _get_nav_grid(obstacles: list[Obstacle]) -> NavGrid:

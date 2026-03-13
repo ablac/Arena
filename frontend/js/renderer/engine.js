@@ -12,6 +12,7 @@ import { ObstacleRenderer } from './obstacles.js';
 import { PickupRenderer } from './pickups.js';
 import { EffectRenderer } from './effects.js';
 import { TrailRenderer } from './trails.js';
+import { ProjectileRenderer } from './projectiles.js';
 
 const TICK_INTERVAL = 100; // 10 Hz server ticks
 
@@ -30,6 +31,7 @@ export class ArenaEngine {
     this.pickupRenderer = null;
     this.effectRenderer = null;
     this.trailRenderer = null;
+    this.projectileRenderer = null;
     this.state = null;
     this.ready = false;
     this._lastStateTime = 0;
@@ -67,19 +69,40 @@ export class ArenaEngine {
     this.pickupRenderer = new PickupRenderer(scene);
     this.effectRenderer = new EffectRenderer(scene);
     this.trailRenderer = new TrailRenderer(scene);
+    this.projectileRenderer = new ProjectileRenderer(scene);
 
-    // Wire up attack → hit sparks
-    this.botRenderer.onAttack = (ax, az, tx, tz, color) => {
-      this.effectRenderer.spawnHitSparks(tx, tz, color);
+    // Wire up attack → per-weapon hit effects + projectiles for ranged
+    this.botRenderer.onAttack = (ax, az, tx, tz, color, weapon) => {
+      if (weapon === 'bow' || weapon === 'staff') {
+        // Ranged: projectile travels to target, hit sparks on impact
+        this.projectileRenderer.spawn(ax, az, tx, tz, weapon, color, () => {
+          this.effectRenderer.spawnHitSparks(tx, tz, color, weapon);
+        });
+      } else {
+        // Melee: immediate hit sparks at target
+        this.effectRenderer.spawnHitSparks(tx, tz, color, weapon);
+      }
+    };
+
+    // Wire up dodge → afterimage shimmer
+    this.botRenderer.onDodge = (x, z, color) => {
+      this.effectRenderer.spawnDodgeEffect(x, z, color);
     };
 
     this._addLights();
 
     const self = this;
+    let _lastFrame = performance.now();
     engine.runRenderLoop(() => {
+      const now = performance.now();
+      const dt = Math.min((now - _lastFrame) / 1000, 0.1);
+      _lastFrame = now;
       if (self.botRenderer && self._lastStateTime > 0) {
-        const alpha = Math.min((performance.now() - self._lastStateTime) / TICK_INTERVAL, 1);
+        const alpha = Math.min((now - self._lastStateTime) / TICK_INTERVAL, 1);
         self.botRenderer.interpolate(alpha);
+      }
+      if (self.projectileRenderer) {
+        self.projectileRenderer.update(dt);
       }
       scene.render();
     });
@@ -124,6 +147,7 @@ export class ArenaEngine {
   getState() { return this.state; }
 
   dispose() {
+    if (this.projectileRenderer) this.projectileRenderer.dispose();
     if (this.trailRenderer) this.trailRenderer.dispose();
     if (this.engine) {
       this.engine.stopRenderLoop();
