@@ -21,6 +21,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _atk_result(bot, result, reason=None, **kw):
+    r = {"action": "attack", "result": result, "weapon": bot.weapon, **kw}
+    if reason:
+        r["reason"] = reason
+    bot.last_action_result = r
+
+
 def process_combat(
     bots: dict[str, BotState],
     tick_rate: int,
@@ -40,6 +47,8 @@ def process_combat(
         if not bot.is_alive or bot.pending_action is None:
             continue
         if bot.stun_ticks > 0:
+            if bot.pending_action.action_type == ActionType.ATTACK:
+                _atk_result(bot, "miss", "stunned")
             continue
         if bot.pending_action.action_type != ActionType.ATTACK:
             continue
@@ -50,16 +59,19 @@ def process_combat(
         # Staff targets a position, not a bot
         if bot.weapon == "staff":
             if bot.cooldown_remaining > 0:
+                _atk_result(bot, "miss", "on_cooldown", cooldown=round(bot.cooldown_remaining, 2))
                 continue
             pos = target_pos
             if pos is None and target_id and target_id in bots:
                 pos = bots[target_id].position
             if pos is None or not isinstance(pos, tuple):
+                _atk_result(bot, "miss", "no_target")
                 continue
             # Anti-cheat: staff target position must be within view radius
             dx = bot.position[0] - pos[0]
             dy = bot.position[1] - pos[1]
             if dx * dx + dy * dy > view_radius_sq:
+                _atk_result(bot, "miss", "out_of_range")
                 continue
             _queue_staff_impact(bot, pos, staff_impacts, obstacles)
             cfg = get_weapon_config("staff")
@@ -67,27 +79,34 @@ def process_combat(
             bot.round_shots_fired += 1
             bot.last_action = "attack"
             bot.last_action_target = target_id
+            _atk_result(bot, "fired")
             continue
 
         if target_id is None or target_id not in bots:
+            _atk_result(bot, "miss", "invalid_target")
             continue
         target = bots[target_id]
         if not target.is_alive:
+            _atk_result(bot, "miss", "target_dead")
             continue
         if bot.cooldown_remaining > 0:
+            _atk_result(bot, "miss", "on_cooldown", cooldown=round(bot.cooldown_remaining, 2))
             continue
 
         # Anti-cheat: target must be within view radius
         dx = bot.position[0] - target.position[0]
         dy = bot.position[1] - target.position[1]
         if dx * dx + dy * dy > view_radius_sq:
+            _atk_result(bot, "miss", "out_of_range")
             continue
 
         # Bow creates projectile instead of instant hit
         if bot.weapon == "bow":
             if not is_in_range(bot, target, "bow"):
+                _atk_result(bot, "miss", "out_of_range")
                 continue
             if line_intersects_obstacle(*bot.position, *target.position, obstacles):
+                _atk_result(bot, "miss", "los_blocked")
                 continue
             dmg = calculate_damage("bow", bot, target)
             proj = create_projectile(bot, target.position, dmg)
@@ -97,10 +116,15 @@ def process_combat(
             bot.round_shots_fired += 1
             bot.last_action = "attack"
             bot.last_action_target = target_id
+            _atk_result(bot, "fired", target=target_id)
             continue
 
         # Melee weapons — no LOS check needed
         if not is_in_range(bot, target, bot.weapon):
+            _atk_result(bot, "miss", "out_of_range")
+            continue
+        if target.invuln_ticks > 0:
+            _atk_result(bot, "miss", "target_dodging")
             continue
 
         dmg = calculate_damage(bot.weapon, bot, target)
@@ -108,6 +132,7 @@ def process_combat(
         bot.round_shots_fired += 1
         bot.last_action = "attack"
         bot.last_action_target = target_id
+        _atk_result(bot, "hit", target=target_id, damage=round(dmg, 1))
 
         # Weapon specials
         if bot.weapon == "sword":

@@ -11,6 +11,16 @@ import { parseColor } from './utils.js';
 /** Max concurrent damage numbers to prevent buildup. */
 const MAX_DMG_NUMBERS = 12;
 
+/** Per-weapon hit effect configs — distinct particle colors, counts, and spread. */
+const HIT_EFFECTS = {
+  sword:   { count: 15, c1: [1, 0.8, 0.3],   dead: [0.3, 0.1, 0],     minSz: 1,   maxSz: 2,   minLife: 0.08, maxLife: 0.15, rate: 150, minPow: 15, maxPow: 35, d1: [-1, 1, -1],     d2: [1, 1, 1],       stop: 0.08 },
+  bow:     { count: 10, c1: [0.9, 0.95, 1],   dead: [0.4, 0.4, 0.5],   minSz: 0.5, maxSz: 1.5, minLife: 0.10, maxLife: 0.20, rate: 100, minPow: 10, maxPow: 25, d1: [-0.5, 1, -0.5], d2: [0.5, 1, 0.5],   stop: 0.06 },
+  daggers: { count: 20, c1: [1, 0.6, 0.15],   dead: [0.4, 0.15, 0],    minSz: 0.5, maxSz: 1,   minLife: 0.05, maxLife: 0.10, rate: 250, minPow: 20, maxPow: 40, d1: [-1.5, 0.5, -1.5], d2: [1.5, 1, 1.5], stop: 0.05 },
+  spear:   { count: 12, c1: [1, 0.4, 0.2],    dead: [0.4, 0.1, 0],     minSz: 1,   maxSz: 2,   minLife: 0.06, maxLife: 0.12, rate: 120, minPow: 12, maxPow: 30, d1: [-0.3, 1, -0.3], d2: [0.3, 1, 0.3],   stop: 0.06 },
+  staff:   { count: 25, c1: [0.6, 0.3, 1],    dead: [0.15, 0.05, 0.3], minSz: 2,   maxSz: 4,   minLife: 0.15, maxLife: 0.30, rate: 200, minPow: 20, maxPow: 45, d1: [-1.5, 1, -1.5], d2: [1.5, 1.5, 1.5], stop: 0.10 },
+  shield:  { count: 15, c1: [0.9, 0.9, 1],    dead: [0.3, 0.3, 0.4],   minSz: 1.5, maxSz: 3,   minLife: 0.12, maxLife: 0.25, rate: 150, minPow: 8,  maxPow: 20, d1: [-2, 0.3, -2],   d2: [2, 0.5, 2],     stop: 0.08 },
+};
+
 let _psCounter = 0;
 
 export class EffectRenderer {
@@ -40,22 +50,59 @@ export class EffectRenderer {
     this._cleanup(now);
   }
 
-  spawnHitSparks(x, z, hexColor) {
+  /**
+   * Spawn weapon-specific hit sparks at impact point.
+   * @param {number} x
+   * @param {number} z
+   * @param {string} hexColor - attacker avatar color
+   * @param {string} [weapon='sword'] - weapon type for effect selection
+   */
+  spawnHitSparks(x, z, hexColor, weapon) {
+    const cfg = HIT_EFFECTS[weapon] || HIT_EFFECTS.sword;
     const B = window.BABYLON;
-    const ps = new B.ParticleSystem(`sparks-${++_psCounter}`, 15, this.scene);
+    const ps = new B.ParticleSystem(`sparks-${++_psCounter}`, cfg.count, this.scene);
     ps.emitter = new B.Vector3(x, 12, z);
-    ps.createPointEmitter(new B.Vector3(-1, 1, -1), new B.Vector3(1, 1, 1));
-    ps.color1 = new B.Color4(1, 0.8, 0.3, 1);
+    ps.createPointEmitter(
+      new B.Vector3(cfg.d1[0], cfg.d1[1], cfg.d1[2]),
+      new B.Vector3(cfg.d2[0], cfg.d2[1], cfg.d2[2])
+    );
+    ps.color1 = new B.Color4(cfg.c1[0], cfg.c1[1], cfg.c1[2], 1);
     const c = parseColor(hexColor);
     ps.color2 = new B.Color4(c.r, c.g, c.b, 1);
-    ps.colorDead = new B.Color4(0.3, 0.1, 0, 0);
-    ps.minSize = 1; ps.maxSize = 2;
-    ps.minLifeTime = 0.08; ps.maxLifeTime = 0.25;
-    ps.emitRate = 150;
-    ps.minEmitPower = 15; ps.maxEmitPower = 35;
+    ps.colorDead = new B.Color4(cfg.dead[0], cfg.dead[1], cfg.dead[2], 0);
+    ps.minSize = cfg.minSz; ps.maxSize = cfg.maxSz;
+    ps.minLifeTime = cfg.minLife; ps.maxLifeTime = cfg.maxLife;
+    ps.emitRate = cfg.rate;
+    ps.minEmitPower = cfg.minPow; ps.maxEmitPower = cfg.maxPow;
     ps.gravity = new B.Vector3(0, -50, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
-    ps.targetStopDuration = 0.08;
+    ps.targetStopDuration = cfg.stop;
+    ps.disposeOnStop = true;
+    ps.start();
+  }
+
+  /**
+   * Spawn dodge afterimage shimmer effect.
+   * @param {number} x
+   * @param {number} z
+   * @param {string} hexColor
+   */
+  spawnDodgeEffect(x, z, hexColor) {
+    const B = window.BABYLON;
+    const c = parseColor(hexColor);
+    const ps = new B.ParticleSystem(`dodge-${++_psCounter}`, 20, this.scene);
+    ps.emitter = new B.Vector3(x, 10, z);
+    ps.createPointEmitter(new B.Vector3(-1, 0.5, -1), new B.Vector3(1, 0.5, 1));
+    ps.color1 = new B.Color4(c.r, c.g, c.b, 0.8);
+    ps.color2 = new B.Color4(1, 1, 1, 0.6);
+    ps.colorDead = new B.Color4(c.r, c.g, c.b, 0);
+    ps.minSize = 2; ps.maxSize = 5;
+    ps.minLifeTime = 0.1; ps.maxLifeTime = 0.3;
+    ps.emitRate = 200;
+    ps.minEmitPower = 10; ps.maxEmitPower = 25;
+    ps.gravity = new B.Vector3(0, -10, 0);
+    ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
+    ps.targetStopDuration = 0.05;
     ps.disposeOnStop = true;
     ps.start();
   }

@@ -56,7 +56,7 @@ def update_projectiles(
     tick_rate: int,
 ) -> list[dict]:
     """Move projectiles, check hits, return hit events. Removes expired/hit projectiles."""
-    hit_radius = settings.combat.projectile_hit_radius
+    hit_radius = settings.combat.projectile_hit_radius + settings.game.bot_radius
     hit_radius_sq = hit_radius * hit_radius
     dt = 1.0 / tick_rate
     events: list[dict] = []

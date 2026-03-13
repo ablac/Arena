@@ -22,29 +22,39 @@ async def send_tick_to_bot(
     tick_number: int,
     nearby_entities: list[dict],
     kill_feed: list[dict] | None = None,
+    zone_info: dict | None = None,
 ) -> None:
     """Send a tick update to a single bot's WebSocket."""
     if bot.websocket is None or not bot.is_alive:
         return
 
+    your_state: dict[str, Any] = {
+        "bot_id": bot.bot_id,
+        "position": bot.position,
+        "hp": bot.hp,
+        "max_hp": bot.max_hp,
+        "speed": bot.speed,
+        "weapon": bot.weapon,
+        "cooldown_remaining": round(bot.cooldown_remaining, 2),
+        "weapon_ready": bot.cooldown_remaining <= 0,
+        "is_alive": bot.is_alive,
+        "kill_streak": bot.kill_streak,
+        "round_kills": bot.round_kills,
+        "dodge_cooldown": bot.dodge_cooldown,
+        "invuln_ticks": bot.invuln_ticks,
+        "stun_ticks": bot.stun_ticks,
+        "shield_absorb": bot.shield_absorb,
+        "effects": [{"name": e.name, "ticks": e.remaining_ticks} for e in bot.active_effects],
+        "last_action_result": bot.last_action_result,
+        "hits_received": bot.hits_received,
+        "kill_feed": kill_feed or [],
+    }
+    if zone_info:
+        your_state.update(zone_info)
+
     msg = TickMessage(
         tick_number=tick_number,
-        your_state={
-            "bot_id": bot.bot_id,
-            "position": bot.position,
-            "hp": bot.hp,
-            "max_hp": bot.max_hp,
-            "speed": bot.speed,
-            "weapon": bot.weapon,
-            "cooldown_remaining": round(bot.cooldown_remaining, 2),
-            "is_alive": bot.is_alive,
-            "kill_streak": bot.kill_streak,
-            "dodge_cooldown": bot.dodge_cooldown,
-            "invuln_ticks": bot.invuln_ticks,
-            "shield_absorb": bot.shield_absorb,
-            "effects": [{"name": e.name, "ticks": e.remaining_ticks} for e in bot.active_effects],
-            "kill_feed": kill_feed or [],
-        },
+        your_state=your_state,
         nearby_entities=nearby_entities,
         view_radius=settings.game.view_radius,
     )

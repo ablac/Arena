@@ -91,6 +91,9 @@ class BotState:
     # Persistent action fields — survive until consumed by spectator broadcast
     last_action: str | None = None
     last_action_target: str | None = None
+    # Per-tick feedback for bot developers
+    hits_received: list[dict] = field(default_factory=list)
+    last_action_result: dict | None = None
     # Pathfinding (move_to)
     current_path: list[tuple[float, float]] = field(default_factory=list)
     path_target: tuple[float, float] | None = None

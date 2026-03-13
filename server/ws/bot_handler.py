@@ -10,7 +10,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from server.config import settings
 from server.game.state import Action, ActionType, BotState
 from server.game.weapons import get_available_weapons
-from server.ws.bot_setup import authenticate, compute_stats, load_elo, wait_for_loadout
+from server.ws.bot_setup import LoadoutRejected, authenticate, compute_stats, load_elo, wait_for_loadout
 from server.ws.protocol import (
     ConnectedMessage,
     ErrorMessage,
@@ -78,14 +78,20 @@ async def bot_websocket(ws: WebSocket, key: str = Query(...)) -> None:
     )
     await ws.send_json(connected_msg.model_dump())
 
-    # Wait for loadout selection
-    loadout = await wait_for_loadout(ws, bot_record)
+    # Wait for loadout selection — kick on invalid stats
+    try:
+        loadout = await wait_for_loadout(ws, bot_record)
+    except LoadoutRejected as exc:
+        logger.warning("Bot %s kicked: invalid loadout — %s", bot_record.name, exc)
+        await ws.send_json(ErrorMessage(message=f"Kicked: {exc}").model_dump())
+        await ws.close(code=1008)
+        return
     weapon = loadout["weapon"]
     stats = loadout["stats"]
     fallback = loadout["fallback_behavior"]
 
     # Compute derived stats
-    computed = compute_stats(stats)
+    computed = compute_stats(stats, weapon)
 
     # Create BotState and register with engine
     bot_elo = await load_elo(bot_id)
@@ -148,29 +154,39 @@ async def _message_loop(ws: WebSocket, bot: BotState) -> None:
         if msg is None:
             await ws.send_json(ErrorMessage(message="Invalid message").model_dump())
             continue
-        if not isinstance(msg, (LoadoutSelectMessage,)):
-            # It's an ActionMessage
-            action_map = {
-                "move": ActionType.MOVE,
-                "move_to": ActionType.MOVE_TO,
-                "attack": ActionType.ATTACK,
-                "dodge": ActionType.DODGE,
-                "use_item": ActionType.USE_ITEM,
-                "idle": ActionType.IDLE,
-            }
-            action_type = action_map.get(msg.action, ActionType.IDLE)
-            target_pos = None
-            if action_type == ActionType.MOVE_TO and msg.target_position is not None:
-                target_pos = tuple(msg.target_position)
-            bot.pending_action = Action(
-                action_type=action_type,
-                target_id=msg.target,
-                direction=msg.direction,
-                item_id=msg.item_id,
-                target_position=target_pos,
+        # Reject loadout changes during gameplay
+        if isinstance(msg, LoadoutSelectMessage):
+            await ws.send_json(ErrorMessage(message="Cannot change loadout mid-game").model_dump())
+            continue
+        # It's an ActionMessage
+        action_map = {
+            "move": ActionType.MOVE,
+            "move_to": ActionType.MOVE_TO,
+            "attack": ActionType.ATTACK,
+            "dodge": ActionType.DODGE,
+            "use_item": ActionType.USE_ITEM,
+            "idle": ActionType.IDLE,
+        }
+        action_type = action_map.get(msg.action, ActionType.IDLE)
+        target_pos = None
+        if action_type == ActionType.MOVE_TO and msg.target_position is not None:
+            tp = msg.target_position
+            # Clamp target position to arena bounds
+            arena_w = settings.game.arena_width
+            arena_h = settings.game.arena_height
+            target_pos = (
+                max(0.0, min(float(arena_w), float(tp[0]))),
+                max(0.0, min(float(arena_h), float(tp[1]))),
             )
-            # Staff uses target_position for area attacks
-            if bot.weapon == "staff" and action_type == ActionType.ATTACK:
-                bot.pending_action.target_position = msg.direction
+        bot.pending_action = Action(
+            action_type=action_type,
+            target_id=msg.target,
+            direction=msg.direction,
+            item_id=msg.item_id,
+            target_position=target_pos,
+        )
+        # Staff uses target_position for area attacks
+        if bot.weapon == "staff" and action_type == ActionType.ATTACK:
+            bot.pending_action.target_position = msg.direction
 
-            bot.last_action_tick = _engine.tick_count
+        bot.last_action_tick = _engine.tick_count

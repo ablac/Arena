@@ -7,7 +7,7 @@
  */
 
 import { createBotEntry, disposeBotEntry, setHpColor } from './bot-body.js';
-import { updateBotAnim, triggerAttack } from './animations.js';
+import { updateBotAnim, triggerAttack, triggerDodge } from './animations.js';
 
 const HP_BAR_W = 40;
 
@@ -18,15 +18,14 @@ export class BotRenderer {
     /** @type {Map<string, Object>} */
     this.entries = new Map();
     this._lastFrame = performance.now();
-    /** @type {Function|null} callback(attackerX, attackerZ, targetX, targetZ, color) */
+    /** @type {Function|null} callback(attackerX, attackerZ, targetX, targetZ, color, weapon) */
     this.onAttack = null;
+    /** @type {Function|null} callback(x, z, color) */
+    this.onDodge = null;
   }
 
   update(bots) {
     const seen = new Set();
-    const now = performance.now();
-    const dt = Math.min((now - this._lastFrame) / 1000, 0.1);
-    this._lastFrame = now;
 
     // Build position lookup lazily — only when an attack needs it
     let posMap = null;
@@ -68,12 +67,10 @@ export class BotRenderer {
         setHpColor(entry.hpMat, hpRatio);
       }
 
-      // Animation
-      updateBotAnim(entry.anim, entry.root, entry.weapon, bot.position[0], bot.position[1], bot.is_alive, dt);
-
-      // Attack detection from server state
+      // Attack detection BEFORE animation so triggerAttack takes effect this frame
+      const weaponType = bot.weapon || 'sword';
       if (bot.action === 'attack' && bot.is_alive && entry._wasAlive) {
-        triggerAttack(entry.anim);
+        triggerAttack(entry.anim, weaponType);
 
         // Face toward target (smoothed via anim.targetRotY)
         const targetPos = bot.target_id ? getPosMap().get(bot.target_id) : null;
@@ -83,11 +80,19 @@ export class BotRenderer {
           if (adx !== 0 || adz !== 0) {
             entry.anim.targetRotY = Math.atan2(adx, adz);
           }
-          // Notify effects system
+          // Notify effects system with weapon type
           if (this.onAttack) {
             this.onAttack(bot.position[0], bot.position[1],
-                          targetPos[0], targetPos[1], bot.avatar_color);
+                          targetPos[0], targetPos[1], bot.avatar_color, weaponType);
           }
+        }
+      }
+
+      // Dodge detection
+      if (bot.action === 'dodge' && bot.is_alive && entry._wasAlive) {
+        triggerDodge(entry.anim, entry.anim.moveAngle);
+        if (this.onDodge) {
+          this.onDodge(bot.position[0], bot.position[1], bot.avatar_color);
         }
       }
 
@@ -107,11 +112,28 @@ export class BotRenderer {
     }
   }
 
+  /**
+   * Called every render frame — interpolates positions and ticks animations.
+   * @param {number} alpha - interpolation factor 0..1 between last two server states
+   */
   interpolate(alpha) {
+    const now = performance.now();
+    const dt = Math.min((now - this._lastFrame) / 1000, 0.1);
+    this._lastFrame = now;
+
     for (const [, entry] of this.entries) {
-      if (!entry.isAlive || !entry.prevPos || !entry.currPos) continue;
-      entry.root.position.x = entry.prevPos[0] + (entry.currPos[0] - entry.prevPos[0]) * alpha;
-      entry.root.position.z = entry.prevPos[1] + (entry.currPos[1] - entry.prevPos[1]) * alpha;
+      if (!entry.prevPos || !entry.currPos) continue;
+      // Position interpolation
+      if (entry.isAlive) {
+        entry.root.position.x = entry.prevPos[0] + (entry.currPos[0] - entry.prevPos[0]) * alpha;
+        entry.root.position.z = entry.prevPos[1] + (entry.currPos[1] - entry.prevPos[1]) * alpha;
+      }
+      // Tick animations every frame for smooth playback
+      updateBotAnim(
+        entry.anim, entry.root, entry.weapon,
+        entry.root.position.x, entry.root.position.z,
+        entry.isAlive, dt
+      );
     }
   }
 

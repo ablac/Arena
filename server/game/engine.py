@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from typing import Any
 
@@ -27,6 +28,7 @@ from server.game.projectiles import update_projectiles
 from server.game.rounds import get_round_winner, reset_round_stats, should_end_round
 from server.game.spatial import SpatialGrid
 from server.game.spawner import check_deaths, spawn_bot
+from server.security.input_validator import validate_derived_stats
 from server.game.state import BotState, Pickup, Projectile, RoundState, StaffImpact
 from server.game.views import bot_to_nearby_dict, build_arena_status, build_spectator_state
 from server.ws.protocol import KickMessage, LobbyMessage, RoundStartMessage
@@ -117,6 +119,8 @@ class GameEngine:
             await self._end_round()
         for bot in self.bots.values():
             bot.pending_action = None
+            bot.hits_received.clear()
+            bot.last_action_result = None
 
     def _start_round(self) -> None:
         self.round.round_number += 1
@@ -127,6 +131,8 @@ class GameEngine:
         for collection in (self.pickups, self.projectiles, self.staff_impacts):
             collection.clear()
         self.kill_feed.clear()
+        # Audit bot stats before the round — kick any with tampered values
+        self._audit_bot_stats()
         reset_round_stats(self.bots)
         for bot in self.bots.values():
             spawn_bot(bot, self.arena, self.grid)
@@ -185,6 +191,33 @@ class GameEngine:
             self.round.lobby_countdown_ticks = 0
             logger.info("Intermission ended, returning to lobby")
 
+    def _audit_bot_stats(self) -> None:
+        """Verify all bots' derived stats match their raw allocations.
+
+        Kicks any bot whose hp/speed/attack/defense values have drifted
+        from what ``compute_stats(bot.stats)`` would produce.
+        """
+        to_kick: list[tuple[str, str]] = []
+        for bot_id, bot in self.bots.items():
+            err = validate_derived_stats(bot)
+            if err:
+                to_kick.append((bot_id, err))
+        for bot_id, reason in to_kick:
+            bot = self.bots.get(bot_id)
+            if bot:
+                logger.warning("Kicking bot %s — stat integrity violation: %s", bot.name, reason)
+                if bot.websocket:
+                    try:
+                        import asyncio as _aio
+                        _aio.get_event_loop().create_task(
+                            bot.websocket.send_json(
+                                KickMessage(reason=f"Stat violation: {reason}").model_dump()
+                            )
+                        )
+                    except Exception:
+                        pass
+            self.remove_bot(bot_id)
+
     async def _check_afk(self) -> None:
         for bot_id, bot in list(self.bots.items()):
             if bot.is_alive and bot.last_action_tick > 0 and self.tick_count - bot.last_action_tick >= self._afk_ticks:
@@ -206,11 +239,22 @@ class GameEngine:
 
     async def _send_bot_updates(self) -> None:
         kills = self.kill_feed.get_recent(5)
+        cx, cy = self.arena.center_x, self.arena.center_y
+        zone_r = self.arena.safe_zone_radius
         for bot in self.bots.values():
             if not bot.is_alive or bot.websocket is None:
                 continue
+            dx = bot.position[0] - cx
+            dy = bot.position[1] - cy
+            dist = math.sqrt(dx * dx + dy * dy)
+            zone_info = {
+                "in_safe_zone": dist <= zone_r,
+                "distance_to_zone_edge": round(zone_r - dist, 1),
+                "zone_radius": round(zone_r, 1),
+                "zone_center": (cx, cy),
+            }
             nearby = [bot_to_nearby_dict(b) for b in self.get_nearby_bots(bot)]
-            await send_tick_to_bot(bot, self.tick_count, nearby, kills)
+            await send_tick_to_bot(bot, self.tick_count, nearby, kills, zone_info=zone_info)
 
     async def _send_spectator_update(self) -> None:
         new_kills = self.kill_feed.get_since(self._last_killfeed_tick)
@@ -229,7 +273,7 @@ class GameEngine:
 
     async def _send_lobby_updates(self) -> None:
         """Send lobby status to all bots and spectators."""
-        alive_bots = len(self.bots)
+        total_bots = len(self.bots)
         min_needed = settings.combat.min_bots_to_start
         countdown = None
         if self.round.lobby_countdown_ticks > 0:
@@ -239,7 +283,7 @@ class GameEngine:
             for b in self.bots.values()
         ]
         lobby_msg = LobbyMessage(
-            bots_connected=alive_bots,
+            bots_connected=total_bots,
             bots_needed=min_needed,
             countdown=countdown,
             players=players,
@@ -257,21 +301,52 @@ class GameEngine:
         spectator_state = {
             "type": "lobby_state",
             "tick": self.tick_count,
-            "bots_connected": alive_bots,
+            "bots_connected": total_bots,
             "bots_needed": min_needed,
             "countdown": countdown,
             "players": players,
         }
         await broadcast_to_spectators(self.spectators, spectator_state)
 
+    async def _send_waiting_updates(self) -> None:
+        """Send lobby-style updates to bots waiting for the next round."""
+        waiting_count = len(self._waiting_bots)
+        active_count = len(self.bots)
+        players = [
+            {"name": b.name, "avatar_color": b.avatar_color, "weapon": b.weapon}
+            for b in self._waiting_bots.values()
+        ]
+        msg = LobbyMessage(
+            bots_connected=waiting_count,
+            bots_needed=0,
+            countdown=None,
+            players=players,
+        ).model_dump()
+        # Override type to indicate waiting state
+        msg["waiting_for_round"] = True
+        msg["active_bots"] = active_count
+
+        for bot in self._waiting_bots.values():
+            if bot.websocket:
+                try:
+                    await bot.websocket.send_json(msg)
+                except Exception:
+                    pass
+
     async def _send_round_start(self) -> None:
         """Send round_start message to all bots."""
+        obstacles = self.arena.get_obstacles_dicts()
+        all_positions = {bid: b.position for bid, b in self.bots.items()}
+        safe_zone = self.arena.get_zone_state()
         for bot in self.bots.values():
             if bot.websocket:
                 msg = RoundStartMessage(
                     round_number=self.round.round_number,
                     position=bot.position,
                     bots_in_round=len(self.bots),
+                    obstacles=obstacles,
+                    all_positions=all_positions,
+                    safe_zone=safe_zone,
                 ).model_dump()
                 try:
                     await bot.websocket.send_json(msg)
@@ -279,13 +354,19 @@ class GameEngine:
                     pass
 
     def add_bot(self, bot: BotState) -> None:
-        self.bots[bot.bot_id] = bot
-        if not self.round.in_lobby:
-            spawn_bot(bot, self.arena, self.grid)
+        if self.round.in_lobby:
+            self.bots[bot.bot_id] = bot
+        else:
+            # Round is active or in intermission — queue for next round
+            self._waiting_bots[bot.bot_id] = bot
+            bot.is_alive = False
+            logger.info("Bot %s queued for next round (round in progress)", bot.name)
         bot.round_life_start_tick = self.tick_count
 
     def remove_bot(self, bot_id: str) -> None:
         bot = self.bots.pop(bot_id, None)
+        if bot is None:
+            bot = self._waiting_bots.pop(bot_id, None)
         if bot:
             self.grid.remove(bot_id)
             try:

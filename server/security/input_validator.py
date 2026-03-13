@@ -80,6 +80,49 @@ def validate_color(color: str) -> bool:
     return bool(_COLOR_RE.match(color))
 
 
+_VALID_FALLBACKS: set[str] = {"aggressive", "defensive", "opportunistic", "territorial", "hunter"}
+
+
+def validate_fallback_behavior(behavior: str) -> bool:
+    """Validate a fallback behavior string.
+
+    Args:
+        behavior: The fallback behavior to validate.
+
+    Returns:
+        True if it's a recognised behavior, False otherwise.
+    """
+    return behavior in _VALID_FALLBACKS
+
+
+def validate_derived_stats(bot) -> str | None:
+    """Verify a bot's derived stats match what its raw stats should produce.
+
+    Checks max_hp, speed, attack_multiplier, and defense_reduction against
+    the canonical formulas.  Returns an error description if any field is
+    out of tolerance, or ``None`` if everything is clean.
+    """
+    stats = bot.stats
+    if not validate_stats(stats):
+        return f"invalid raw stats: {stats}"
+
+    expected_max_hp = 100 + stats.get("hp", 5) * 10
+    expected_speed = 3 + stats.get("speed", 5) * 0.5
+    expected_attack = 1.0 + stats.get("attack", 5) * 0.1
+    expected_defense = stats.get("defense", 5) * 0.03
+
+    tol = 0.01  # floating point tolerance
+    if bot.max_hp != int(expected_max_hp):
+        return f"max_hp {bot.max_hp} != expected {int(expected_max_hp)}"
+    if abs(bot.speed - expected_speed) > tol:
+        return f"speed {bot.speed} != expected {expected_speed}"
+    if abs(bot.attack_multiplier - expected_attack) > tol:
+        return f"attack_mult {bot.attack_multiplier} != expected {expected_attack}"
+    if abs(bot.defense_reduction - expected_defense) > tol:
+        return f"defense_red {bot.defense_reduction} != expected {expected_defense}"
+    return None
+
+
 def validate_action(action: dict) -> dict | None:
     """Validate a game action payload.
 

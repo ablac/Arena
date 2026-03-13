@@ -19,6 +19,9 @@ def bot_to_nearby_dict(bot: BotState) -> dict[str, Any]:
         "weapon": bot.weapon,
         "is_alive": bot.is_alive,
         "avatar_color": bot.avatar_color,
+        "last_action": bot.last_action,
+        "is_dodging": bot.invuln_ticks > 0,
+        "is_stunned": bot.stun_ticks > 0,
     }
 
 
@@ -41,6 +44,7 @@ def build_spectator_state(
                 "avatar_color": b.avatar_color,
                 "action": b.last_action,
                 "target_id": b.last_action_target,
+                "is_dodging": b.invuln_ticks > 0,
             }
             for b in bots.values()
         ],

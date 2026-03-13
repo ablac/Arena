@@ -94,6 +94,9 @@ class RoundStartMessage(BaseModel):
     round_number: int
     position: tuple[float, float]
     bots_in_round: int
+    obstacles: list[dict] = []
+    all_positions: dict[str, tuple[float, float]] = {}
+    safe_zone: dict = {}
 
 
 class KillMessage(BaseModel):
