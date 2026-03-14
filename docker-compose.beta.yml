@@ -1,0 +1,19 @@
+services:
+  arena-server-beta:
+    build:
+      context: .
+      dockerfile: go-arena/Dockerfile
+    container_name: arena-server-beta
+    ports:
+      - "127.0.0.1:8701:8000"
+    depends_on:
+      arena-db:
+        condition: service_healthy
+      arena-redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - ARENA_DEMO_BOTS=false
+    networks:
+      arena_net:
