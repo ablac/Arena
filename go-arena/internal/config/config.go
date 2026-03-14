@@ -37,7 +37,6 @@ type Config struct {
 	StatBudget        int     `envconfig:"ARENA_STAT_BUDGET" default:"20"`
 	StatMin           int     `envconfig:"ARENA_STAT_MIN" default:"1"`
 	StatMax           int     `envconfig:"ARENA_STAT_MAX" default:"10"`
-	RespawnTime       float64 `envconfig:"ARENA_RESPAWN_TIME" default:"5"`
 	RoundDuration     float64 `envconfig:"ARENA_ROUND_DURATION" default:"240"`
 	IntermissionTime  float64 `envconfig:"ARENA_INTERMISSION_TIME" default:"10"`
 	LobbyCountdown    float64 `envconfig:"ARENA_LOBBY_COUNTDOWN" default:"10"`
@@ -104,7 +103,10 @@ type Config struct {
 	AFKTimeoutTicks              int     `envconfig:"ARENA_AFK_TIMEOUT_TICKS" default:"30"`
 
 	// Admin
-	AdminKey string `envconfig:"ARENA_ADMIN_KEY" default:"changeme_admin_key"`
+	AdminKey            string `envconfig:"ARENA_ADMIN_KEY" default:"changeme_admin_key"`
+	AdminToken          string `envconfig:"ARENA_ADMIN_TOKEN" default:""`
+	AdminLocalhostBypass bool   `envconfig:"ARENA_ADMIN_LOCALHOST_BYPASS" default:"true"`
+	AdminRateLimitRPM   int    `envconfig:"ARENA_ADMIN_RATE_LIMIT_RPM" default:"120"`
 
 	// CORS
 	CORSOrigins string `envconfig:"ARENA_CORS_ORIGINS" default:"*"`

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"arena-server/internal/config"
+	"arena-server/internal/demobots"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
 	"arena-server/internal/ws"
@@ -21,7 +22,11 @@ import (
 
 // NewRouter builds the HTTP router with all API routes, WebSocket endpoints,
 // middleware, and static file serving.
-func NewRouter(engine *game.GameEngine) *chi.Mux {
+func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
+	var ro routerOptions
+	for _, opt := range opts {
+		opt(&ro)
+	}
 	r := chi.NewRouter()
 
 	// --- Middleware ---
@@ -37,7 +42,7 @@ func NewRouter(engine *game.GameEngine) *chi.Mux {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   corsOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Arena-Key"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Arena-Key", "X-Admin-Token"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: false,
 		MaxAge:           300,
@@ -50,6 +55,14 @@ func NewRouter(engine *game.GameEngine) *chi.Mux {
 	r.Use(middleware.Recoverer)
 
 	// --- API v1 routes ---
+
+	// Create admin handler if demo manager provided.
+	var adminHandler *AdminHandler
+	if ro.demoManager != nil {
+		adminHandler = NewAdminHandler(engine, ro.demoManager)
+	} else {
+		adminHandler = NewAdminHandler(engine, nil)
+	}
 
 	r.Route("/api/v1", func(api chi.Router) {
 		// Health check (public).
@@ -76,6 +89,13 @@ func NewRouter(engine *game.GameEngine) *chi.Mux {
 
 		// Arena status (public).
 		api.Get("/arena/status", GetArenaStatus(engine))
+
+		// Admin routes (token-authenticated, rate-limited).
+		api.Route("/admin", func(admin chi.Router) {
+			admin.Use(AdminAuthMiddleware)
+			admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
+			adminHandler.Routes(admin)
+		})
 	})
 
 	// --- WebSocket endpoints ---
@@ -103,6 +123,13 @@ func NewRouter(engine *game.GameEngine) *chi.Mux {
 			})
 			api.Get("/leaderboard", GetLeaderboard)
 			api.Get("/arena/status", GetArenaStatus(engine))
+
+			// Admin routes (mirrored under /arena prefix).
+			api.Route("/admin", func(admin chi.Router) {
+				admin.Use(AdminAuthMiddleware)
+				admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
+				adminHandler.Routes(admin)
+			})
 		})
 
 		// Static files under /arena/
@@ -175,6 +202,21 @@ func noCacheStaticHandler(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// routerOptions holds optional configuration for the router.
+type routerOptions struct {
+	demoManager *demobots.Manager
+}
+
+// RouterOption is a functional option for NewRouter.
+type RouterOption func(*routerOptions)
+
+// WithDemoManager provides the demo bot manager to the router for admin endpoints.
+func WithDemoManager(m *demobots.Manager) RouterOption {
+	return func(o *routerOptions) {
+		o.demoManager = m
+	}
 }
 
 // resolveFrontendDir determines the path to the frontend directory.
