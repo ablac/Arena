@@ -136,6 +136,13 @@ func RateLimitMiddleware(rpm int) func(http.Handler) http.Handler {
 // proxy) always overwrites this header with the real client IP. If the proxy
 // configuration changes, this function must be updated to validate the header.
 func ExtractClientIP(r *http.Request) string {
+	// Prefer CF-Connecting-IP: Cloudflare Tunnels always set this to the
+	// real client IP, whereas X-Forwarded-For may contain intermediate
+	// Cloudflare edge IPs when using Tunnels.
+	if cfIP := r.Header.Get("CF-Connecting-IP"); cfIP != "" {
+		return strings.TrimSpace(cfIP)
+	}
+
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		// X-Forwarded-For may contain multiple comma-separated IPs;
 		// the first one is the original client.
