@@ -20,6 +20,18 @@ func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles 
 			continue
 		}
 
+		// Option 1: Block attacking during invulnerability (dodge exploit fix).
+		if bot.InvulnTicks > 0 {
+			bot.LastActionResult = &ActionResult{
+				Action:  "attack",
+				Success: false,
+				Message: "cannot attack while dodging",
+			}
+			// Option 2: Cancel invulnerability if bot attempts to attack.
+			bot.InvulnTicks = 0
+			continue
+		}
+
 		action := bot.PendingAction
 		targetID := action.TargetID
 
