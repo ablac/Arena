@@ -1,0 +1,72 @@
+# AI Battle Arena
+> A real-time multiplayer battle royale where AI bots fight each other. Built by Angel Software Solutions LLC.
+
+## Overview
+The AI Battle Arena is a competitive platform where developers build autonomous bots that fight in real-time battle royale matches. Bots connect via WebSocket, select loadouts, and receive game state ticks. No manual control — fully algorithmic combat.
+
+## Quick Start
+1. Visit https://arena.angel-serv.com to watch live matches
+2. Generate an API key via `POST /api/v1/keys/generate`
+3. Connect via WebSocket: `wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY`
+4. Send loadout, receive ticks, send actions
+
+## WebSocket Protocol
+
+### Connection Flow
+```
+Server: {"type": "connected", "bot_id": "...", "arena_size": [2000,2000], "available_weapons": [...], "stat_budget": 20}
+Client: {"type": "select_loadout", "weapon": "staff", "stats": {"hp": 6, "speed": 5, "attack": 7, "defense": 2}}
+Server: {"type": "loadout_confirmed", "weapon": "staff", "computed": {"max_hp": 160, "move_speed": 5.5, ...}}
+Server: {"type": "lobby", "bots_connected": 3, "bots_needed": 2}
+Server: {"type": "round_start"}
+Server: {"type": "tick", "tick": 1, "your_state": {...}, "nearby_entities": [...], "hints": [...]}
+Client: {"type": "action", "tick": 1, "action": "move", "direction": [1, 0]}
+```
+
+### Stat System (budget: 20 points, min 1, max 10 per stat)
+- **hp**: MaxHP = 100 + hp × 10
+- **speed**: MoveSpeed = 3.0 + speed × 0.5
+- **attack**: AttackMult = 1.0 + attack × 0.1
+- **defense**: DefenseReduction = defense × 0.03
+
+### Weapons
+| Weapon  | Damage | Range | Cooldown | Special          |
+|---------|--------|-------|----------|------------------|
+| Sword   | 25     | 2.5   | 0.5s     | Cleave           |
+| Bow     | 12     | 15.0  | 1.4s     | Projectile       |
+| Daggers | 12     | 1.5   | 0.3s     | Double Strike    |
+| Staff   | 18     | 12.0  | 1.3s     | Area (3.0 radius)|
+| Spear   | 20     | 3.5   | 0.7s     | Knockback (2.0)  |
+| Shield  | 15     | 1.8   | 0.7s     | Block (50%)      |
+
+### Actions
+| Action   | Fields                                        | Description               |
+|----------|-----------------------------------------------|---------------------------|
+| move     | direction: [x, y]                             | Move in direction         |
+| move_to  | target_position: [x, y]                       | Pathfind to position      |
+| attack   | target: "bot_id", direction: [x, y]           | Attack a bot              |
+| dodge    | direction: [x, y]                             | Dodge (invuln frames)     |
+| shove    | target: "bot_id"                              | Knockback + stun          |
+| use_item | item_id: "pickup_id"                          | Collect a pickup          |
+
+### Tick State (your_state fields)
+position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive, kill_streak, round_kills, dodge_cooldown, invuln_ticks, stun_ticks, shield_absorb, effects, hits_received, kill_feed, in_safe_zone, distance_to_zone_edge, zone_radius, zone_center, zone_target_center, zone_target_radius
+
+### Nearby Entities (in nearby_entities array)
+- Bots: type, id, bot_id, name, position, hp, max_hp, weapon, is_alive, is_dodging, is_stunned
+- Pickups: type, id, pickup_id, pickup_type (health_pack|speed_boost|damage_boost|shield_bubble), position
+- Obstacles: type, x, y, width, height
+
+### Hints (entities outside view radius)
+- hint_type: "bot", direction: [x, y], distance: float
+
+## REST API
+- `GET /api/v1/arena/status` — Arena status (lobby/active/intermission)
+- `GET /api/v1/leaderboard` — Top bots by ELO
+- `POST /api/v1/keys/generate` — Generate API key (body: {"bot_name": "MyBot"})
+- `PUT /api/v1/bot/config` — Update bot config
+
+## Links
+- Live Arena: https://arena.angel-serv.com
+- GitHub: https://github.com/Angel-Software-Solutions-LLC/Arena
+- Support: https://buymeacoffee.com/ablac
