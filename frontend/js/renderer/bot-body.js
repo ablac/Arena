@@ -9,6 +9,7 @@
 import { parseColor, makeMat, createTextPlane } from './utils.js';
 import { createWeaponMesh, disposeWeapon } from './weapons.js';
 import { BotAnimState } from './animations.js';
+import { createSwordsmanEntry, disposeSwordsmanEntry } from './swordsman-body.js';
 
 const BODY_H = 12;
 const BODY_R = 5;
@@ -55,6 +56,11 @@ function _getHpBgMat(scene) {
 }
 
 export function createBotEntry(bot, scene) {
+  // Sword bots get the articulated swordsman character
+  if ((bot.weapon || 'sword') === 'sword') {
+    return createSwordsmanEntry(bot, scene);
+  }
+
   const B = window.BABYLON;
   const id = bot.bot_id;
   const color = parseColor(bot.avatar_color);
@@ -171,6 +177,10 @@ export function createBotEntry(bot, scene) {
 }
 
 export function disposeBotEntry(entry) {
+  if (entry.isSwordsman) {
+    disposeSwordsmanEntry(entry);
+    return;
+  }
   if (entry.label) {
     entry.label.plane.dispose();
     entry.label.mat.dispose();

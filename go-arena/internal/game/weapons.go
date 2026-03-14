@@ -1,5 +1,7 @@
 package game
 
+import "arena-server/internal/config"
+
 // WeaponConfig defines the properties of a weapon type.
 type WeaponConfig struct {
 	Name     string
@@ -87,10 +89,15 @@ func CalculateDamage(weaponDmg, attackMult, defenseRed float64) float64 {
 	return weaponDmg * attackMult * (1.0 - defenseRed)
 }
 
-// IsInRange returns true if the Euclidean distance between attacker and target
-// is at most weaponRange.
+// IsInRange returns true if the edge-to-edge distance between attacker and
+// target is at most weaponRange. BotRadius is subtracted from each side so
+// that melee weapons can connect despite bot-separation enforcement.
 func IsInRange(attacker, target Vec2, weaponRange float64) bool {
-	return attacker.DistanceTo(target) <= weaponRange
+	dist := attacker.DistanceTo(target) - 2*config.C.BotRadius
+	if dist < 0 {
+		dist = 0
+	}
+	return dist <= weaponRange
 }
 
 // IsWeaponReady returns true if the weapon cooldown has expired.
