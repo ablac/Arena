@@ -1,0 +1,17 @@
+name: Deploy Production
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy-production:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger production deploy
+        run: |
+          curl -sf -X POST \
+            -H "X-Deploy-Token: ${{ secrets.DEPLOY_WEBHOOK_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"branch": "main", "target": "production"}' \
+            "${{ secrets.DEPLOY_WEBHOOK_URL }}"
