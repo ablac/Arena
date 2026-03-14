@@ -1,0 +1,17 @@
+name: Deploy Beta
+
+on:
+  push:
+    branches: [develop]
+
+jobs:
+  deploy-beta:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger beta deploy
+        run: |
+          curl -sf -X POST \
+            -H "X-Deploy-Token: ${{ secrets.DEPLOY_WEBHOOK_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"branch": "develop", "target": "beta"}' \
+            "${{ secrets.DEPLOY_WEBHOOK_URL }}"
