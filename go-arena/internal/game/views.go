@@ -10,6 +10,14 @@ func round1(v float64) float64 {
 	return math.Round(v*10) / 10
 }
 
+// botTargetID returns the target_id from the bot's pending action, or empty string.
+func botTargetID(bot *BotState) string {
+	if bot.PendingAction != nil {
+		return bot.PendingAction.TargetID
+	}
+	return ""
+}
+
 // BuildBotNearbyView builds the protocol-compatible map for a bot as seen by
 // a nearby observer.
 func BuildBotNearbyView(bot *BotState) map[string]interface{} {
@@ -31,7 +39,7 @@ func BuildBotNearbyView(bot *BotState) map[string]interface{} {
 		"avatar_color": bot.AvatarColor,
 		"last_action":  lastAction,
 		"action":       lastAction,
-		"target_id":    bot.TargetID,
+		"target_id":    botTargetID(bot),
 		"is_dodging":   bot.InvulnTicks > 0,
 		"is_stunned":   bot.StunTicks > 0,
 	}
