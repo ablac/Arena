@@ -8,6 +8,7 @@
 
 import { createBotEntry, disposeBotEntry, setHpColor } from './bot-body.js';
 import { updateBotAnim, triggerAttack, triggerDodge, triggerShove } from './animations.js';
+import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance } from './swordsman-anims.js';
 
 const HP_BAR_W = 40;
 
@@ -85,8 +86,13 @@ export class BotRenderer {
 
       // Attack detection BEFORE animation so triggerAttack takes effect this frame
       const weaponType = bot.weapon || 'sword';
-      if (bot.action === 'attack' && bot.is_alive && entry._wasAlive) {
-        triggerAttack(entry.anim, weaponType);
+      const botAction = bot.action || bot.last_action; // server sends last_action
+      if (botAction === 'attack' && bot.is_alive && entry._wasAlive) {
+        if (entry.isSwordsman) {
+          triggerSwordsmanAttack(entry.anim);
+        } else {
+          triggerAttack(entry.anim, weaponType);
+        }
 
         // Face toward target (smoothed via anim.targetRotY)
         const targetPos = bot.target_id ? getPosMap().get(bot.target_id) : null;
@@ -105,7 +111,7 @@ export class BotRenderer {
       }
 
       // Shove detection
-      if (bot.action === 'shove' && bot.is_alive && entry._wasAlive) {
+      if (botAction === 'shove' && bot.is_alive && entry._wasAlive) {
         triggerShove(entry.anim);
 
         const targetPos = bot.target_id ? getPosMap().get(bot.target_id) : null;
@@ -123,11 +129,20 @@ export class BotRenderer {
       }
 
       // Dodge detection
-      if (bot.action === 'dodge' && bot.is_alive && entry._wasAlive) {
-        triggerDodge(entry.anim, entry.anim.moveAngle);
+      if (botAction === 'dodge' && bot.is_alive && entry._wasAlive) {
+        if (entry.isSwordsman) {
+          triggerSwordsmanDodge(entry.anim, entry.anim.moveAngle);
+        } else {
+          triggerDodge(entry.anim, entry.anim.moveAngle);
+        }
         if (this.onDodge) {
           this.onDodge(bot.position[0], bot.position[1], bot.avatar_color);
         }
+      }
+
+      // Swordsman stance update based on HP
+      if (entry.isSwordsman && bot.hp != null && bot.max_hp > 0) {
+        updateSwordsmanStance(entry.anim, bot.hp / bot.max_hp);
       }
 
       // Death flash
@@ -165,11 +180,15 @@ export class BotRenderer {
         entry.root.position.z = entry.prevPos[1] + (entry.currPos[1] - entry.prevPos[1]) * t;
       }
       // Tick animations every frame for smooth playback
-      updateBotAnim(
-        entry.anim, entry.root, entry.weapon,
-        entry.root.position.x, entry.root.position.z,
-        entry.isAlive, dt, entry.bodyMat
-      );
+      if (entry.isSwordsman) {
+        updateSwordsmanAnim(entry, dt);
+      } else {
+        updateBotAnim(
+          entry.anim, entry.root, entry.weapon,
+          entry.root.position.x, entry.root.position.z,
+          entry.isAlive, dt, entry.bodyMat
+        );
+      }
     }
   }
 

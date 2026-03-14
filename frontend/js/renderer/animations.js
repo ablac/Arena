@@ -270,7 +270,7 @@ export function triggerShove(anim) {
   }
   anim.attackTimer = 0;
   anim.attackType = 'shove';
-  anim.attackDuration = SHOVE_ANIM.duration;
+  anim.attackDuration = WEAPON_ANIMS.shove.duration;
 }
 
 export function triggerDodge(anim, angle) {
