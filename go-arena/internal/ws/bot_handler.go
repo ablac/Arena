@@ -76,6 +76,19 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			return
 		}
 
+		// Per-API-key reconnect cooldown (5 second minimum between connections).
+		if config.C.WSConnectRatePerMin > 0 {
+			keyRateKey := "ws:bot:key:" + botRecord.APIKeyID
+			allowed, _, _, err := security.CheckRateLimit(r.Context(), keyRateKey, 1, 5)
+			if err != nil {
+				slog.Warn("key rate limit check error, allowing", "error", err)
+			} else if !allowed {
+				slog.Warn("bot reconnecting too fast", "bot", botRecord.Name, "key_id", botRecord.APIKeyID)
+				sendWSError(conn, "reconnecting too fast, wait a few seconds")
+				return
+			}
+		}
+
 		// ----------------------------------------------------------------
 		// 2. Load bot config and stats from DB
 		// ----------------------------------------------------------------
