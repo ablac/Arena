@@ -103,7 +103,10 @@ type Config struct {
 	AFKTimeoutTicks              int     `envconfig:"ARENA_AFK_TIMEOUT_TICKS" default:"30"`
 
 	// Admin
-	AdminKey string `envconfig:"ARENA_ADMIN_KEY" default:"changeme_admin_key"`
+	AdminKey            string `envconfig:"ARENA_ADMIN_KEY" default:"changeme_admin_key"`
+	AdminToken          string `envconfig:"ARENA_ADMIN_TOKEN" default:""`
+	AdminLocalhostBypass bool   `envconfig:"ARENA_ADMIN_LOCALHOST_BYPASS" default:"true"`
+	AdminRateLimitRPM   int    `envconfig:"ARENA_ADMIN_RATE_LIMIT_RPM" default:"120"`
 
 	// CORS
 	CORSOrigins string `envconfig:"ARENA_CORS_ORIGINS" default:"*"`
