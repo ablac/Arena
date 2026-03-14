@@ -1,0 +1,15 @@
+[Unit]
+Description=Arena Deploy Webhook
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ai-battle-arena
+EnvironmentFile=/opt/ai-battle-arena/.env
+ExecStart=/usr/bin/python3 /opt/ai-battle-arena/deploy-webhook.py
+Restart=always
+RestartSec=5
+User=keith
+
+[Install]
+WantedBy=multi-user.target

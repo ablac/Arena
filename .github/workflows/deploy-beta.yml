@@ -1,0 +1,21 @@
+name: Deploy Beta
+
+on:
+  push:
+    branches: [develop]
+
+jobs:
+  deploy-beta:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger beta deploy
+        run: |
+          echo "Calling webhook..."
+          HTTP_CODE=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
+            -H "X-Deploy-Token: ${{ secrets.DEPLOY_WEBHOOK_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"branch": "develop", "target": "beta"}' \
+            "${{ secrets.DEPLOY_WEBHOOK_URL }}")
+          echo "HTTP Status: $HTTP_CODE"
+          cat /tmp/resp.txt
+          [ "$HTTP_CODE" = "200" ] || exit 1

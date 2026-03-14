@@ -30,6 +30,8 @@ func BuildBotNearbyView(bot *BotState) map[string]interface{} {
 		"is_alive":     bot.IsAlive,
 		"avatar_color": bot.AvatarColor,
 		"last_action":  lastAction,
+		"action":       lastAction,
+		"target_id":    bot.TargetID,
 		"is_dodging":   bot.InvulnTicks > 0,
 		"is_stunned":   bot.StunTicks > 0,
 	}
