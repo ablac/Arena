@@ -69,6 +69,13 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			return
 		}
 
+		// Check if the bot's API key is banned.
+		if engine.IsKeyBanned(botRecord.APIKeyID) {
+			slog.Warn("banned bot attempted reconnection", "bot", botRecord.Name, "remote", r.RemoteAddr)
+			sendWSError(conn, "your API key has been banned")
+			return
+		}
+
 		// ----------------------------------------------------------------
 		// 2. Load bot config and stats from DB
 		// ----------------------------------------------------------------
