@@ -1,0 +1,325 @@
+#!/usr/bin/env bash
+# arena — Manage the AI Battle Arena
+# Usage: arena <command>
+set -euo pipefail
+
+ARENA_DIR="/opt/ai-battle-arena"
+COMPOSE="docker compose -f $ARENA_DIR/docker-compose.yml"
+COMPOSE_BETA="docker compose -f $ARENA_DIR/docker-compose.yml -f $ARENA_DIR/docker-compose.beta.yml"
+
+green()  { echo -e "\033[32m$*\033[0m"; }
+red()    { echo -e "\033[31m$*\033[0m"; }
+yellow() { echo -e "\033[33m$*\033[0m"; }
+
+health_check() {
+    local port="${1:-8700}"
+    local label="${2:-Arena server}"
+    for i in $(seq 1 15); do
+        if curl -sf "http://127.0.0.1:${port}/api/v1/health" &>/dev/null; then
+            green "✅ ${label} healthy!"
+            curl -sf "http://127.0.0.1:${port}/api/v1/health" | python3 -m json.tool 2>/dev/null
+            return 0
+        fi
+        sleep 2
+    done
+    yellow "⚠️  Health check didn't pass yet — check logs"
+    return 1
+}
+
+case "${1:-help}" in
+
+  # ── Docker commands ──────────────────────────────────────
+  docker-restart)
+    yellow "🔄 Rebuilding & restarting arena-server container..."
+    cd "$ARENA_DIR"
+    $COMPOSE build arena-server
+    $COMPOSE up -d arena-server
+    health_check 8700 "Arena server"
+    ;;
+
+  docker-start)
+    yellow "▶️  Starting all arena containers..."
+    cd "$ARENA_DIR"
+    $COMPOSE up -d
+    health_check 8700 "Arena server"
+    ;;
+
+  docker-stop)
+    yellow "⏹️  Stopping all arena containers..."
+    $COMPOSE down
+    red "Arena containers stopped."
+    ;;
+
+  docker-status)
+    $COMPOSE ps
+    ;;
+
+  # ── Beta commands ──────────────────────────────────────────
+  beta-start)
+    yellow "🧪 Starting beta arena server..."
+    cd "$ARENA_DIR"
+    $COMPOSE_BETA build arena-server-beta
+    $COMPOSE_BETA up -d arena-server-beta
+    health_check 8701 "Beta arena server"
+    ;;
+
+  beta-restart)
+    yellow "🧪 Rebuilding & restarting beta arena server..."
+    cd "$ARENA_DIR"
+    $COMPOSE_BETA build arena-server-beta
+    $COMPOSE_BETA up -d arena-server-beta
+    health_check 8701 "Beta arena server"
+    ;;
+
+  beta-stop)
+    yellow "🧪 Stopping beta arena server..."
+    $COMPOSE_BETA stop arena-server-beta
+    $COMPOSE_BETA rm -f arena-server-beta
+    red "Beta arena server stopped."
+    ;;
+
+  beta-logs)
+    docker logs arena-server-beta --tail "${2:-50}" -f
+    ;;
+
+  beta-status)
+    echo "🧪 Beta Arena Status"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "📦 Container:"
+    docker ps --filter name=arena-server-beta --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || red "Not running"
+    echo ""
+    echo "💚 Health:"
+    curl -sf http://127.0.0.1:8701/api/v1/health 2>/dev/null | python3 -m json.tool 2>/dev/null || red "  Server unreachable"
+    ;;
+
+  beta-admin)
+    ENDPOINT="${2:-}"
+    if [ -z "$ENDPOINT" ]; then
+      echo "Usage: arena beta-admin <endpoint> [curl-args...]"
+      echo "Same as 'arena admin' but targets beta server on port 8701."
+      exit 1
+    fi
+    TOKEN=$(grep "^ARENA_ADMIN_TOKEN=" "$ARENA_DIR/.env" 2>/dev/null | cut -d= -f2)
+    shift
+    shift
+    curl -sf -H "X-Admin-Token: $TOKEN" -H "Content-Type: application/json" \
+      "http://127.0.0.1:8701/api/v1/admin/$ENDPOINT" "$@" | python3 -m json.tool 2>/dev/null || red "Request failed"
+    ;;
+
+  # ── Bot commands ─────────────────────────────────────────
+  bots)
+    echo "🤖 Running arena bots:"
+    ps aux | grep -E "bots/.*\.py" | grep -v grep || yellow "No bots running."
+    ;;
+
+  bot-start)
+    BOT="${2:-}"
+    if [ -z "$BOT" ]; then
+      echo "Usage: arena bot-start <name>"
+      echo "Available bots:"
+      ls -1 "$ARENA_DIR/bots/" 2>/dev/null | sed 's/^/  /'
+      exit 1
+    fi
+    SCRIPT="$ARENA_DIR/bots/${BOT}/${BOT}.py"
+    if [ ! -f "$SCRIPT" ]; then
+      red "Bot not found: $SCRIPT"
+      exit 1
+    fi
+    if pgrep -f "$SCRIPT" &>/dev/null; then
+      yellow "⚠️  $BOT is already running."
+    else
+      nohup python3 -u "$SCRIPT" >> "$ARENA_DIR/bots/${BOT}/${BOT}.log" 2>&1 &
+      green "▶️  Started $BOT (PID $!)"
+    fi
+    ;;
+
+  bot-stop)
+    BOT="${2:-}"
+    if [ -z "$BOT" ]; then
+      echo "Usage: arena bot-stop <name>"
+      exit 1
+    fi
+    SCRIPT="$ARENA_DIR/bots/${BOT}/${BOT}.py"
+    if pkill -f "$SCRIPT" 2>/dev/null; then
+      green "⏹️  Stopped $BOT"
+    else
+      yellow "⚠️  $BOT wasn't running."
+    fi
+    ;;
+
+  bot-restart)
+    BOT="${2:-}"
+    if [ -z "$BOT" ]; then
+      echo "Usage: arena bot-restart <name>"
+      exit 1
+    fi
+    "$0" bot-stop "$BOT"
+    sleep 1
+    "$0" bot-start "$BOT"
+    ;;
+
+  # ── Quick commands ───────────────────────────────────────
+  restart)
+    yellow "🔄 Full restart (server rebuild + bots)..."
+    "$0" docker-restart
+    # Restart any running bots
+    for pid_line in $(ps aux | grep -E "bots/.*\.py" | grep -v grep | awk '{print $NF}'); do
+      BOT=$(basename "$(dirname "$pid_line")")
+      "$0" bot-restart "$BOT" 2>/dev/null || true
+    done
+    green "🏟️  Arena fully restarted!"
+    ;;
+
+  start)
+    "$0" docker-start
+    ;;
+
+  stop)
+    yellow "⏹️  Stopping everything..."
+    # Kill bots first
+    pkill -f "bots/.*\.py" 2>/dev/null || true
+    # Stop beta if running
+    docker stop arena-server-beta 2>/dev/null || true
+    docker rm arena-server-beta 2>/dev/null || true
+    $COMPOSE down
+    red "Arena fully stopped."
+    ;;
+
+  status)
+    echo "🏟️  Arena Status"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "📦 Containers:"
+    $COMPOSE ps 2>/dev/null || red "Containers not running"
+    # Show beta if running
+    if docker ps --filter name=arena-server-beta --format "{{.Names}}" 2>/dev/null | grep -q beta; then
+      echo ""
+      echo "🧪 Beta:"
+      docker ps --filter name=arena-server-beta --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+    fi
+    echo ""
+    echo "🤖 Bots:"
+    ps aux | grep -E "bots/.*\.py" | grep -v grep | awk '{print "  " $NF " (PID " $2 ")"}' || yellow "  None running"
+    echo ""
+    echo "💚 Health:"
+    curl -sf http://127.0.0.1:8700/api/v1/health 2>/dev/null | python3 -m json.tool 2>/dev/null || red "  Server unreachable"
+    ;;
+
+  logs)
+    docker logs arena-server --tail "${2:-50}" -f
+    ;;
+
+  # ── Admin Token commands ─────────────────────────────────
+  token-generate)
+    NEW_TOKEN="arena_admin_$(openssl rand -hex 32)"
+    sed -i "s|^ARENA_ADMIN_TOKEN=.*|ARENA_ADMIN_TOKEN=$NEW_TOKEN|" "$ARENA_DIR/.env"
+    green "🔐 New admin token generated!"
+    echo ""
+    echo "  $NEW_TOKEN"
+    echo ""
+    yellow "⚠️  Run 'arena docker-restart' to apply the new token."
+    ;;
+
+  token-show)
+    TOKEN=$(grep "^ARENA_ADMIN_TOKEN=" "$ARENA_DIR/.env" 2>/dev/null | cut -d= -f2)
+    if [ -z "$TOKEN" ]; then
+      red "No admin token set. Run: arena token-generate"
+    else
+      echo "🔐 Current admin token:"
+      echo ""
+      echo "  $TOKEN"
+      echo ""
+      echo "Usage:"
+      echo "  curl -H \"X-Admin-Token: $TOKEN\" http://localhost:8700/api/v1/admin/..."
+    fi
+    ;;
+
+  token-rotate)
+    NEW_TOKEN="arena_admin_$(openssl rand -hex 32)"
+    sed -i "s|^ARENA_ADMIN_TOKEN=.*|ARENA_ADMIN_TOKEN=$NEW_TOKEN|" "$ARENA_DIR/.env"
+    green "🔐 Token rotated! Rebuilding server..."
+    echo ""
+    echo "  $NEW_TOKEN"
+    echo ""
+    cd "$ARENA_DIR"
+    $COMPOSE build arena-server
+    $COMPOSE up -d arena-server
+    health_check 8700 "Arena server" && green "🔄 New token is live!"
+    ;;
+
+  # ── Admin API shortcuts ──────────────────────────────────
+  admin)
+    ENDPOINT="${2:-}"
+    if [ -z "$ENDPOINT" ]; then
+      echo "Usage: arena admin <endpoint> [curl-args...]"
+      echo ""
+      echo "Examples:"
+      echo "  arena admin demobots              List demo bots"
+      echo "  arena admin debug/connections      WebSocket connections"
+      echo "  arena admin debug/game-state       Current game state"
+      echo "  arena admin debug/metrics          Server metrics"
+      echo "  arena admin debug/rounds           Round history"
+      echo "  arena admin bots                   All registered bots"
+      echo "  arena admin game/config            Game configuration"
+      echo "  arena admin health/deep            Deep health check"
+      echo "  arena admin config                 Running config"
+      echo "  arena admin logs?lines=50          Server logs"
+      echo ""
+      echo "POST examples:"
+      echo "  arena admin demobots/stop -X POST"
+      echo "  arena admin demobots/start -X POST -d '{\"count\":5}'"
+      echo "  arena admin game/pause -X POST"
+      echo "  arena admin game/resume -X POST"
+      echo "  arena admin game/restart-round -X POST"
+      echo "  arena admin bots/ID/kick -X POST"
+      echo "  arena admin bots/ID/kill -X POST"
+      echo "  arena admin db/reset-leaderboard -X POST"
+      exit 1
+    fi
+    TOKEN=$(grep "^ARENA_ADMIN_TOKEN=" "$ARENA_DIR/.env" 2>/dev/null | cut -d= -f2)
+    shift
+    shift
+    curl -sf -H "X-Admin-Token: $TOKEN" -H "Content-Type: application/json" \
+      "http://127.0.0.1:8700/api/v1/admin/$ENDPOINT" "$@" | python3 -m json.tool 2>/dev/null || red "Request failed"
+    ;;
+
+  help|*)
+    cat <<EOF
+🏟️  Arena CLI
+
+  arena start              Start all containers
+  arena stop               Stop everything (containers + bots)
+  arena restart             Full rebuild + restart server & bots
+  arena status              Show containers, bots, health
+
+  arena docker-start        Start containers
+  arena docker-stop         Stop containers
+  arena docker-restart      Rebuild & restart server container
+  arena docker-status       Show container status
+
+  arena beta-start          Build & start beta server (port 8701)
+  arena beta-restart        Rebuild & restart beta server
+  arena beta-stop           Stop beta server
+  arena beta-status         Beta server status & health
+  arena beta-logs [n]       Tail beta server logs
+  arena beta-admin <ep>     Admin API call to beta server
+
+  arena bots                List running bots
+  arena bot-start <name>    Start a bot      (e.g. keith_bot)
+  arena bot-stop <name>     Stop a bot
+  arena bot-restart <name>  Restart a bot
+
+  arena token-generate      Generate a new admin API token
+  arena token-show          Show current admin token + usage
+  arena token-rotate        Generate + rebuild + restart (one step)
+
+  arena admin <endpoint>    Quick admin API call (localhost)
+                            e.g. arena admin demobots
+                                 arena admin debug/metrics
+                                 arena admin health/deep
+
+  arena logs [n]            Tail server logs (default 50)
+EOF
+    ;;
+esac
