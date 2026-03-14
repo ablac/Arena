@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html><head><title>Arena Debug v2</title></head>
+<body>
+<h2>Arena Debug v2 — Full Module Test</h2>
+<div id="log" style="font-family:monospace;white-space:pre-wrap;background:#111;color:#0f0;padding:10px;"></div>
+<canvas id="arena-canvas" width="320" height="240" style="border:1px solid red;"></canvas>
+<script>
+const log = (msg) => document.getElementById('log').textContent += msg + '\n';
+window.onerror = (msg, src, line, col, err) => {
+  log('💥 GLOBAL ERROR: ' + msg + ' at ' + src + ':' + line + ':' + col);
+  return false;
+};
+window.addEventListener('unhandledrejection', (e) => {
+  log('💥 UNHANDLED PROMISE: ' + e.reason);
+});
+</script>
+<script src="https://cdn.babylonjs.com/babylon.js" onerror="document.getElementById('log').textContent += '❌ BabylonJS FAILED to load\n'"></script>
+<script>
+if (window.BABYLON) log('✅ BabylonJS loaded: ' + BABYLON.Engine.Version);
+else log('❌ BabylonJS not available');
+</script>
+<script type="module">
+const log = (msg) => document.getElementById('log').textContent += msg + '\n';
+log('--- Module loading ---');
+try {
+  const { ArenaEngine } = await import('./js/renderer/engine.js');
+  log('✅ ArenaEngine imported');
+  const canvas = document.getElementById('arena-canvas');
+  const engine = new ArenaEngine(canvas, { arenaWidth: 2000, arenaHeight: 2000 });
+  log('✅ ArenaEngine constructed');
+  try {
+    await engine.init();
+    log('✅ ArenaEngine.init() OK — renderer ready');
+  } catch(e) {
+    log('❌ ArenaEngine.init() FAILED: ' + e.message + '\n' + e.stack);
+  }
+} catch(e) {
+  log('❌ Import failed: ' + e.message + '\n' + e.stack);
+}
+try {
+  const { HudRenderer } = await import('./js/renderer/hud.js');
+  log('✅ HudRenderer imported');
+} catch(e) { log('❌ HudRenderer import failed: ' + e.message); }
+try {
+  const { SpectatorSocket } = await import('./js/spectator-ws.js');
+  log('✅ SpectatorSocket imported');
+  const ws = new SpectatorSocket('wss://' + location.host + '/ws/spectator',
+    (s) => log('📨 State: ' + s.type),
+    (s) => log('🔌 Status: ' + s));
+  ws.connect();
+} catch(e) { log('❌ SpectatorSocket import failed: ' + e.message); }
+try {
+  const { initLeaderboard } = await import('./js/leaderboard.js');
+  log('✅ leaderboard.js imported');
+} catch(e) { log('❌ leaderboard.js import failed: ' + e.message); }
+try {
+  const { initKeyGenerator } = await import('./js/key-generator.js');
+  log('✅ key-generator.js imported');
+} catch(e) { log('❌ key-generator.js import failed: ' + e.message); }
+log('--- All imports done ---');
+</script>
+</body></html>

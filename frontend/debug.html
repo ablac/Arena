@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head><title>Arena Debug</title></head>
+<body>
+<h2>Arena WebSocket Debug</h2>
+<div id="log" style="font-family:monospace;white-space:pre-wrap;"></div>
+<script>
+const log = (msg) => {
+  document.getElementById('log').textContent += new Date().toISOString().substr(11,8) + ' ' + msg + '\n';
+};
+log('Page loaded');
+log('Protocol: ' + window.location.protocol);
+log('Host: ' + window.location.host);
+
+const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const wsUrl = wsProto + '//' + window.location.host + '/ws/spectator';
+log('Connecting to: ' + wsUrl);
+
+try {
+  const ws = new WebSocket(wsUrl);
+  ws.onopen = () => log('✅ CONNECTED');
+  ws.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    log('📨 Got: ' + d.type + ' (bots: ' + (d.bots_connected || d.bots?.length || '?') + ')');
+    ws.close();
+    log('Test complete - WebSocket works!');
+  };
+  ws.onerror = (e) => log('❌ ERROR: ' + JSON.stringify(e));
+  ws.onclose = (e) => log('🔌 CLOSED: code=' + e.code + ' reason=' + e.reason + ' clean=' + e.wasClean);
+  setTimeout(() => { if (ws.readyState === 0) log('⏰ Still connecting after 5s...'); }, 5000);
+} catch(e) {
+  log('💥 EXCEPTION: ' + e.message);
+}
+
+// Also test fetch API
+fetch('/api/v1/arena/status').then(r => r.json()).then(d => log('API: ' + JSON.stringify(d))).catch(e => log('API err: ' + e));
+</script>
+</body>
+</html>
