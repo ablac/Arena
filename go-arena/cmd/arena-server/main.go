@@ -39,8 +39,21 @@ func main() {
 	engine := game.NewGameEngine()
 	go engine.Run(ctx)
 
-	// Build the HTTP router.
-	router := api.NewRouter(engine)
+	// Demo bots: create manager before router so admin endpoints can reference it.
+	var demoManager *demobots.Manager
+	if demoBotEnabled() {
+		count := demoBotCount()
+		localURL := fmt.Sprintf("http://localhost:%d", config.C.ServerPort)
+		demoManager = demobots.NewManager(localURL, count)
+		slog.Info("demo bots enabled", "count", count)
+	}
+
+	// Build the HTTP router with optional demo manager.
+	var routerOpts []api.RouterOption
+	if demoManager != nil {
+		routerOpts = append(routerOpts, api.WithDemoManager(demoManager))
+	}
+	router := api.NewRouter(engine, routerOpts...)
 
 	// Start the HTTP server.
 	addr := fmt.Sprintf("%s:%d", config.C.ServerHost, config.C.ServerPort)
@@ -51,14 +64,8 @@ func main() {
 		Handler: router,
 	}
 
-	// Demo bots: start after the HTTP server is listening.
-	var demoManager *demobots.Manager
-	if demoBotEnabled() {
-		count := demoBotCount()
-		localURL := fmt.Sprintf("http://localhost:%d", config.C.ServerPort)
-		demoManager = demobots.NewManager(localURL, count)
-		slog.Info("demo bots enabled", "count", count)
-
+	// Start demo bots after server setup.
+	if demoManager != nil {
 		go demoManager.Start(ctx)
 	}
 
