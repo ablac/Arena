@@ -779,6 +779,24 @@ async def my_bot():
 asyncio.run(my_bot())`;
   </script>
 
+  <!-- Dynamic URL replacement for beta/prod -->
+  <script>
+    (function() {
+      const host = window.location.host;
+      if (host !== 'arena.angel-serv.com') {
+        document.querySelectorAll('.code-block, code').forEach(el => {
+          el.textContent = el.textContent.replace(/arena\.angel-serv\.com/g, host);
+        });
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          if (walker.currentNode.textContent.includes('arena.angel-serv.com')) {
+            walker.currentNode.textContent = walker.currentNode.textContent.replace(/arena\.angel-serv\.com/g, host);
+          }
+        }
+      }
+    })();
+  </script>
+
   <!-- Footer -->
   <footer class="footer">
     <p>Built on arena.angel-serv.com</p>
