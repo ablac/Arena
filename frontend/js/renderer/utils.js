@@ -72,10 +72,7 @@ export function createTextPlane(id, text, color, scene, width, height) {
   ctx.font = 'bold 28px monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const r = Math.round(color.r * 255);
-  const g = Math.round(color.g * 255);
-  const b = Math.round(color.b * 255);
-  ctx.fillStyle = `rgb(${r},${g},${b})`;
+  ctx.fillStyle = '#ffffff';
   const display = text.length > 12 ? text.slice(0, 11) + '\u2026' : text;
   ctx.fillText(display, 128, 32);
   tex.update();

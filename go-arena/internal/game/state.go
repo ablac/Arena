@@ -277,13 +277,6 @@ type KillEvent struct {
 	RoundKills  int
 }
 
-// RespawnEvent is emitted when a bot respawns.
-type RespawnEvent struct {
-	BotID    string
-	Position Vec2
-	HP       float64
-}
-
 // RoundEndInfo holds data for the round_end message.
 type RoundEndInfo struct {
 	RoundNumber int

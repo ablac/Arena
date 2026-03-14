@@ -10,13 +10,14 @@ type BotConfig struct {
 }
 
 // WeaponRanges maps weapon names to their effective range for AI decisions.
+// Must match WeaponConfigs in game/weapons.go.
 var WeaponRanges = map[string]float64{
-	"sword":   2.0,
-	"bow":     20.0,
+	"sword":   2.5,
+	"bow":     15.0,
 	"daggers": 1.5,
-	"shield":  1.5,
-	"spear":   3.0,
-	"staff":   15.0,
+	"shield":  1.8,
+	"spear":   3.5,
+	"staff":   12.0,
 }
 
 // DemoConfigs holds the 15 demo bot configurations, matching the Python

@@ -32,9 +32,6 @@ type GameEngine struct {
 	// Anti-teaming
 	AntiTeam *AntiTeamTracker
 
-	// Respawns
-	RespawnTimers []RespawnTimer
-
 	// Spectators
 	Spectators   []*SpectatorConn
 	spectatorsMu sync.RWMutex
@@ -42,12 +39,18 @@ type GameEngine struct {
 	// Tick tracking
 	TickCount int
 	Running   bool
+	Paused    bool
+
+	// Server start time for uptime tracking.
+	StartTime time.Time
+
+	// Ban list: API key IDs that are banned from reconnecting.
+	bannedKeys   map[string]bool
+	bannedKeysMu sync.RWMutex
 
 	// Events (buffered, drained after each tick)
 	DeathEvents   []DeathEvent
 	KillEvents    []KillEvent
-	RespawnEvents []RespawnEvent
-
 	// Persistence tracking
 	lastPersistTick int
 }
@@ -68,6 +71,8 @@ func NewGameEngine() *GameEngine {
 		Grid:        NewSpatialGrid(config.C.SpatialCellSize),
 		KillFeed:    NewKillFeed(config.C.KillFeedSize),
 		AntiTeam:    NewAntiTeamTracker(),
+		StartTime:   time.Now(),
+		bannedKeys:  make(map[string]bool),
 		Round: RoundState{
 			Phase: PhaseLobby,
 		},
@@ -102,6 +107,10 @@ func (e *GameEngine) Run(ctx context.Context) {
 func (e *GameEngine) tick() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	if e.Paused {
+		return
+	}
 
 	e.TickCount++
 	c := &config.C
@@ -275,7 +284,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	persistInterval := int(c.PersistIntervalSecs * float64(c.TickRate))
 	if persistInterval > 0 && e.TickCount-e.lastPersistTick >= persistInterval {
 		e.lastPersistTick = e.TickCount
-		go PersistBotStats(context.Background(), e.snapshotBots())
+		go PersistBotStatsFromSnapshot(context.Background(), e.snapshotBotStats())
 	}
 
 	// Check round end.
@@ -308,10 +317,8 @@ func (e *GameEngine) startRound() {
 	e.Pickups = nil
 	e.Projectiles = nil
 	e.StaffImpacts = nil
-	e.RespawnTimers = nil
 	e.DeathEvents = nil
 	e.KillEvents = nil
-	e.RespawnEvents = nil
 	e.Grid.Clear()
 	e.KillFeed.Clear()
 	e.AntiTeam.Clear()
@@ -367,7 +374,7 @@ func (e *GameEngine) endRound() {
 	e.Round.IntermissionTicks = int(config.C.IntermissionTime * float64(config.C.TickRate))
 
 	// Persist final stats for the round.
-	go PersistBotStats(context.Background(), e.snapshotBots())
+	go PersistBotStatsFromSnapshot(context.Background(), e.snapshotBotStats())
 
 	slog.Info("round ended",
 		"round", e.Round.RoundNumber,
@@ -381,15 +388,21 @@ func (e *GameEngine) endRound() {
 
 // AddBot adds a bot to the engine. If the game is in lobby phase the bot is
 // added directly; otherwise it goes into the waiting list for the next round.
-func (e *GameEngine) AddBot(bot *BotState) {
+// Returns false if the server is at capacity (MaxBots).
+func (e *GameEngine) AddBot(bot *BotState) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	if len(e.Bots)+len(e.WaitingBots) >= config.C.MaxBots {
+		return false
+	}
 
 	if e.Round.Phase == PhaseLobby {
 		e.Bots[bot.BotID] = bot
 	} else {
 		e.WaitingBots[bot.BotID] = bot
 	}
+	return true
 }
 
 // RemoveBot removes a bot from both active and waiting maps and persists its
@@ -497,11 +510,12 @@ func (e *GameEngine) GetArenaSnapshot() ArenaSnapshot {
 	return snap
 }
 
-// ConnectedBotCount returns the number of connected bots under the read lock.
+// ConnectedBotCount returns the number of connected bots (active + waiting)
+// under the read lock.
 func (e *GameEngine) ConnectedBotCount() int {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return len(e.Bots)
+	return len(e.Bots) + len(e.WaitingBots)
 }
 
 // --------------------------------------------------------------------------
@@ -638,15 +652,24 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 }
 
 // checkAFK kicks bots that haven't sent an action within the AFK timeout.
+// Removes them directly from e.Bots so they stop receiving tick messages
+// immediately rather than waiting for the reader goroutine to notice the
+// closed connection.
 func (e *GameEngine) checkAFK() {
 	c := &config.C
+	var toRemove []string
 	for _, bot := range e.Bots {
 		if bot.LastActionTick > 0 && e.TickCount-bot.LastActionTick > c.AFKTimeoutTicks {
 			SendKick(bot, "AFK timeout")
 			if bot.Conn != nil {
 				bot.Conn.Close()
 			}
+			toRemove = append(toRemove, bot.BotID)
 		}
+	}
+	for _, id := range toRemove {
+		delete(e.Bots, id)
+		e.Grid.Remove(id)
 	}
 }
 
@@ -780,8 +803,8 @@ func (e *GameEngine) sendSpectatorUpdate() {
 	BroadcastToSpectators(specs, data)
 }
 
-// sendEventMessages delivers buffered death, kill, and respawn events to the
-// relevant bots, then drains the event buffers.
+// sendEventMessages delivers buffered death and kill events to the relevant
+// bots, then drains the event buffers.
 func (e *GameEngine) sendEventMessages() {
 	for _, ev := range e.DeathEvents {
 		if victim, ok := e.Bots[ev.VictimID]; ok {
@@ -793,15 +816,10 @@ func (e *GameEngine) sendEventMessages() {
 			SendKillMessage(killer, ev)
 		}
 	}
-	for _, ev := range e.RespawnEvents {
-		if bot, ok := e.Bots[ev.BotID]; ok {
-			SendRespawnMessage(bot, ev)
-		}
-	}
+	// No respawns - dead bots stay dead until next round.
 
 	e.DeathEvents = e.DeathEvents[:0]
 	e.KillEvents = e.KillEvents[:0]
-	e.RespawnEvents = e.RespawnEvents[:0]
 }
 
 // buildHints generates directional hints for a bot that has no nearby bots.
@@ -865,12 +883,394 @@ func buildHints(bot *BotState, allBots map[string]*BotState, pickups []Pickup) [
 	return hints
 }
 
-// snapshotBots returns a shallow copy of the Bots map for safe async
-// persistence.
-func (e *GameEngine) snapshotBots() map[string]*BotState {
-	snap := make(map[string]*BotState, len(e.Bots))
-	for id, bot := range e.Bots {
-		snap[id] = bot
+// --------------------------------------------------------------------------
+// Admin methods
+// --------------------------------------------------------------------------
+
+// Pause pauses the game loop. Tick processing is skipped while paused.
+func (e *GameEngine) Pause() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.Paused = true
+	slog.Info("game paused")
+}
+
+// Resume resumes the game loop.
+func (e *GameEngine) Resume() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.Paused = false
+	slog.Info("game resumed")
+}
+
+// IsPaused returns whether the engine is paused.
+func (e *GameEngine) IsPaused() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.Paused
+}
+
+// KickBot disconnects a bot by ID. Returns true if found.
+func (e *GameEngine) KickBot(botID, reason string) bool {
+	e.mu.Lock()
+	bot, ok := e.Bots[botID]
+	if !ok {
+		bot, ok = e.WaitingBots[botID]
 	}
-	return snap
+	if !ok {
+		e.mu.Unlock()
+		return false
+	}
+	delete(e.Bots, botID)
+	delete(e.WaitingBots, botID)
+	e.Grid.Remove(botID)
+	e.mu.Unlock()
+
+	SendKick(bot, reason)
+	if bot.Conn != nil {
+		bot.Conn.Close()
+	}
+	go PersistSingleBot(context.Background(), bot)
+	slog.Info("admin kicked bot", "bot_id", botID, "name", bot.Name, "reason", reason)
+	return true
+}
+
+// BanKey adds an API key ID to the ban list.
+func (e *GameEngine) BanKey(apiKeyID string) {
+	e.bannedKeysMu.Lock()
+	defer e.bannedKeysMu.Unlock()
+	e.bannedKeys[apiKeyID] = true
+	slog.Info("admin banned key", "api_key_id", apiKeyID)
+}
+
+// IsKeyBanned checks if an API key ID is banned.
+func (e *GameEngine) IsKeyBanned(apiKeyID string) bool {
+	e.bannedKeysMu.RLock()
+	defer e.bannedKeysMu.RUnlock()
+	return e.bannedKeys[apiKeyID]
+}
+
+// KillBot sets a bot's HP to 0 (admin kill). Returns true if found and alive.
+func (e *GameEngine) KillBot(botID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	bot, ok := e.Bots[botID]
+	if !ok || !bot.IsAlive {
+		return false
+	}
+	bot.HP = 0
+	slog.Info("admin killed bot", "bot_id", botID, "name", bot.Name)
+	return true
+}
+
+// TeleportBot moves a bot to the specified coordinates. Returns true if found.
+func (e *GameEngine) TeleportBot(botID string, x, y float64) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	bot, ok := e.Bots[botID]
+	if !ok {
+		return false
+	}
+
+	e.Grid.Remove(botID)
+	bot.Position = NewVec2(x, y)
+	e.Grid.Insert(botID, bot.Position)
+	slog.Info("admin teleported bot", "bot_id", botID, "name", bot.Name, "x", x, "y", y)
+	return true
+}
+
+// HealBot restores HP to a bot. Returns true if found.
+func (e *GameEngine) HealBot(botID string, hp float64) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	bot, ok := e.Bots[botID]
+	if !ok {
+		return false
+	}
+
+	bot.HP += hp
+	if bot.HP > bot.MaxHP {
+		bot.HP = bot.MaxHP
+	}
+	if !bot.IsAlive && bot.HP > 0 {
+		bot.IsAlive = true
+	}
+	slog.Info("admin healed bot", "bot_id", botID, "name", bot.Name, "hp", hp)
+	return true
+}
+
+// ForceRestartRound ends the current round and starts a new one.
+func (e *GameEngine) ForceRestartRound() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.Round.Phase == PhaseActive {
+		e.endRound()
+	}
+	// Skip intermission, go straight to lobby.
+	e.Round.Phase = PhaseLobby
+	e.Round.IntermissionTicks = 0
+	e.Round.LobbyCountdownTicks = 0
+	slog.Info("admin forced round restart")
+}
+
+// GetFullGameState returns a detailed snapshot of the entire game state for admin inspection.
+func (e *GameEngine) GetFullGameState() map[string]interface{} {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	bots := make([]map[string]interface{}, 0, len(e.Bots))
+	for _, bot := range e.Bots {
+		bots = append(bots, map[string]interface{}{
+			"bot_id":      bot.BotID,
+			"name":        bot.Name,
+			"hp":          round1(bot.HP),
+			"max_hp":      round1(bot.MaxHP),
+			"position":    bot.Position,
+			"weapon":      bot.Weapon,
+			"is_alive":    bot.IsAlive,
+			"kills":       bot.RoundKills,
+			"deaths":      bot.RoundDeaths,
+			"elo":         bot.Elo,
+			"kill_streak": bot.KillStreak,
+			"effects":     bot.ActiveEffects,
+			"stats":       bot.Stats,
+			"speed":       round1(bot.Speed),
+		})
+	}
+
+	phase := "lobby"
+	switch e.Round.Phase {
+	case PhaseActive:
+		phase = "active"
+	case PhaseIntermission:
+		phase = "intermission"
+	}
+
+	ticksElapsed := 0
+	if e.Round.Phase == PhaseActive {
+		ticksElapsed = e.TickCount - e.Round.StartTick
+	}
+
+	return map[string]interface{}{
+		"tick":          e.TickCount,
+		"paused":        e.Paused,
+		"round_number":  e.Round.RoundNumber,
+		"round_phase":   phase,
+		"round_id":      e.Round.RoundID,
+		"ticks_elapsed": ticksElapsed,
+		"bots_active":   len(e.Bots),
+		"bots_waiting":  len(e.WaitingBots),
+		"bots":          bots,
+		"pickups":       len(e.Pickups),
+		"projectiles":   len(e.Projectiles),
+		"zone": map[string]interface{}{
+			"center":        e.Arena.ZoneCenter,
+			"radius":        round1(e.Arena.ZoneRadius),
+			"target_center": e.Arena.ZoneTargetCenter,
+			"target_radius": round1(e.Arena.ZoneTargetRadius),
+		},
+	}
+}
+
+// GetBotDetail returns detailed info about a single bot for admin inspection.
+func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	bot, ok := e.Bots[botID]
+	if !ok {
+		bot, ok = e.WaitingBots[botID]
+	}
+	if !ok {
+		return nil, false
+	}
+
+	connInfo := map[string]interface{}{
+		"has_conn":      bot.Conn != nil,
+		"has_send_chan":  bot.SendChan != nil,
+	}
+	if bot.Conn != nil {
+		connInfo["remote_addr"] = bot.Conn.RemoteAddr().String()
+	}
+
+	var lastAction interface{}
+	if bot.LastActionResult != nil {
+		lastAction = bot.LastActionResult
+	}
+
+	return map[string]interface{}{
+		"bot_id":            bot.BotID,
+		"api_key_id":        bot.APIKeyID,
+		"name":              bot.Name,
+		"avatar_color":      bot.AvatarColor,
+		"position":          bot.Position,
+		"hp":                round1(bot.HP),
+		"max_hp":            round1(bot.MaxHP),
+		"speed":             round1(bot.Speed),
+		"weapon":            bot.Weapon,
+		"is_alive":          bot.IsAlive,
+		"elo":               bot.Elo,
+		"stats":             bot.Stats,
+		"fallback_behavior": bot.FallbackBehavior,
+		"kill_streak":       bot.KillStreak,
+		"attack_multiplier": round1(bot.AttackMultiplier),
+		"defense_reduction": round1(bot.DefenseReduction),
+		"dodge_cooldown":    bot.DodgeCooldown,
+		"invuln_ticks":      bot.InvulnTicks,
+		"stun_ticks":        bot.StunTicks,
+		"shield_absorb":     round1(bot.ShieldAbsorb),
+		"active_effects":    bot.ActiveEffects,
+		"round_kills":       bot.RoundKills,
+		"round_deaths":      bot.RoundDeaths,
+		"round_damage_dealt": round1(bot.RoundDamageDealt),
+		"round_damage_taken": round1(bot.RoundDamageTaken),
+		"round_distance":     round1(bot.RoundDistance),
+		"round_shots_fired":  bot.RoundShotsFired,
+		"round_shots_hit":    bot.RoundShotsHit,
+		"round_pickups":      bot.RoundPickups,
+		"last_action_tick":   bot.LastActionTick,
+		"last_action_result": lastAction,
+		"connection":         connInfo,
+	}, true
+}
+
+// ListAllBots returns summary info for all connected bots.
+func (e *GameEngine) ListAllBots() []map[string]interface{} {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	result := make([]map[string]interface{}, 0, len(e.Bots)+len(e.WaitingBots))
+	for _, bot := range e.Bots {
+		entry := map[string]interface{}{
+			"bot_id":      bot.BotID,
+			"api_key_id":  bot.APIKeyID,
+			"name":        bot.Name,
+			"hp":          round1(bot.HP),
+			"is_alive":    bot.IsAlive,
+			"weapon":      bot.Weapon,
+			"elo":         bot.Elo,
+			"kills":       bot.RoundKills,
+			"deaths":      bot.RoundDeaths,
+			"status":      "active",
+			"connected":   bot.Conn != nil,
+		}
+		result = append(result, entry)
+	}
+	for _, bot := range e.WaitingBots {
+		entry := map[string]interface{}{
+			"bot_id":      bot.BotID,
+			"api_key_id":  bot.APIKeyID,
+			"name":        bot.Name,
+			"hp":          round1(bot.HP),
+			"is_alive":    bot.IsAlive,
+			"weapon":      bot.Weapon,
+			"elo":         bot.Elo,
+			"kills":       bot.RoundKills,
+			"deaths":      bot.RoundDeaths,
+			"status":      "waiting",
+			"connected":   bot.Conn != nil,
+		}
+		result = append(result, entry)
+	}
+	return result
+}
+
+// ListConnections returns info about all WebSocket connections (bots + spectators).
+func (e *GameEngine) ListConnections() map[string]interface{} {
+	e.mu.RLock()
+	botConns := make([]map[string]interface{}, 0)
+	for _, bot := range e.Bots {
+		entry := map[string]interface{}{
+			"bot_id": bot.BotID,
+			"name":   bot.Name,
+			"type":   "bot",
+		}
+		if bot.Conn != nil {
+			entry["remote_addr"] = bot.Conn.RemoteAddr().String()
+		}
+		botConns = append(botConns, entry)
+	}
+	for _, bot := range e.WaitingBots {
+		entry := map[string]interface{}{
+			"bot_id": bot.BotID,
+			"name":   bot.Name,
+			"type":   "bot_waiting",
+		}
+		if bot.Conn != nil {
+			entry["remote_addr"] = bot.Conn.RemoteAddr().String()
+		}
+		botConns = append(botConns, entry)
+	}
+	e.mu.RUnlock()
+
+	e.spectatorsMu.RLock()
+	specConns := make([]map[string]interface{}, 0, len(e.Spectators))
+	for i, s := range e.Spectators {
+		entry := map[string]interface{}{
+			"index": i,
+			"type":  "spectator",
+		}
+		if s.Conn != nil {
+			entry["remote_addr"] = s.Conn.RemoteAddr().String()
+		}
+		specConns = append(specConns, entry)
+	}
+	e.spectatorsMu.RUnlock()
+
+	return map[string]interface{}{
+		"bot_connections":       botConns,
+		"spectator_connections": specConns,
+		"total_bots":           len(botConns),
+		"total_spectators":     len(specConns),
+	}
+}
+
+// BotStatsSnapshot holds a copy of the stats fields needed for persistence,
+// avoiding concurrent reads on the live BotState pointers.
+type BotStatsSnapshot struct {
+	BotID            string
+	APIKeyID         string
+	Elo              int
+	RoundKills       int
+	RoundDeaths      int
+	RoundDamageDealt float64
+	RoundDamageTaken float64
+	RoundDistance     float64
+	RoundPickups     int
+	PersistedKills       int
+	PersistedDeaths      int
+	PersistedDamageDealt float64
+	PersistedDamageTaken float64
+	PersistedDistance     float64
+	PersistedPickups     int
+}
+
+// snapshotBotStats returns value copies of the stats fields needed for
+// persistence, safe to read from a separate goroutine without locks.
+func (e *GameEngine) snapshotBotStats() []BotStatsSnapshot {
+	snaps := make([]BotStatsSnapshot, 0, len(e.Bots))
+	for _, bot := range e.Bots {
+		snaps = append(snaps, BotStatsSnapshot{
+			BotID:            bot.BotID,
+			APIKeyID:         bot.APIKeyID,
+			Elo:              bot.Elo,
+			RoundKills:       bot.RoundKills,
+			RoundDeaths:      bot.RoundDeaths,
+			RoundDamageDealt: bot.RoundDamageDealt,
+			RoundDamageTaken: bot.RoundDamageTaken,
+			RoundDistance:     bot.RoundDistance,
+			RoundPickups:     bot.RoundPickups,
+			PersistedKills:       bot.PersistedKills,
+			PersistedDeaths:      bot.PersistedDeaths,
+			PersistedDamageDealt: bot.PersistedDamageDealt,
+			PersistedDamageTaken: bot.PersistedDamageTaken,
+			PersistedDistance:     bot.PersistedDistance,
+			PersistedPickups:     bot.PersistedPickups,
+		})
+	}
+	return snaps
 }

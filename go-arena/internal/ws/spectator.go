@@ -4,11 +4,19 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"arena-server/internal/config"
 	"arena-server/internal/game"
 
 	"github.com/gorilla/websocket"
+)
+
+const (
+	// How often to send WebSocket ping frames to spectators.
+	spectatorPingInterval = 30 * time.Second
+	// How long to wait for a pong before considering the connection dead.
+	spectatorPongTimeout = 60 * time.Second
 )
 
 // spectatorUpgrader is the shared WebSocket upgrader for spectator connections.
@@ -57,7 +65,7 @@ func SpectatorHandler(engine *game.GameEngine) http.HandlerFunc {
 		engine.AddSpectator(spec)
 		slog.Info("spectator connected", "remote", r.RemoteAddr)
 
-		// Start writer goroutine.
+		// Start writer goroutine (includes periodic ping).
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -84,8 +92,13 @@ func spectatorReader(conn *websocket.Conn) {
 	// Set a generous read limit -- spectators should not send large messages.
 	conn.SetReadLimit(512)
 
-	// Handle pong messages to keep the connection alive.
+	// Set initial read deadline; reset on each pong.
+	conn.SetReadDeadline(time.Now().Add(spectatorPongTimeout))
+
+	// Handle pong messages: reset the read deadline so the connection stays
+	// alive as long as the client responds to our pings.
 	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(spectatorPongTimeout))
 		return nil
 	})
 
@@ -97,14 +110,18 @@ func spectatorReader(conn *websocket.Conn) {
 			}
 			return
 		}
-		// Discard all received messages.
+		// Any message from the client also resets the read deadline.
+		conn.SetReadDeadline(time.Now().Add(spectatorPongTimeout))
 	}
 }
 
 // spectatorWriter drains the spectator's SendChan and writes each message to
-// the WebSocket connection. It returns when the context is cancelled or the
-// send channel is closed.
+// the WebSocket connection. It also sends periodic WebSocket ping frames to
+// keep the connection alive through reverse proxies.
 func spectatorWriter(ctx context.Context, spec *game.SpectatorConn) {
+	ticker := time.NewTicker(spectatorPingInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -113,6 +130,13 @@ func spectatorWriter(ctx context.Context, spec *game.SpectatorConn) {
 				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 			)
 			return
+
+		case <-ticker.C:
+			// Send a WebSocket ping frame to keep the connection alive.
+			if err := spec.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				slog.Warn("spectator ping error", "error", err)
+				return
+			}
 
 		case msg, ok := <-spec.SendChan:
 			if !ok {
