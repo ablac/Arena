@@ -24,18 +24,30 @@ func GenerateKey(w http.ResponseWriter, r *http.Request) {
 		allowed, _, err := db.CheckRateLimit(ctx, ip, config.C.RateLimitRegisterPerHour)
 		if err != nil {
 			slog.Error("rate limit check failed", "error", err)
-			// Allow the request on error so the service degrades gracefully.
 		} else if !allowed {
-			writeError(w, http.StatusTooManyRequests, "rate limit exceeded for key generation")
+			writeStructuredError(w, GlobalEventBus, http.StatusTooManyRequests,
+				"rate limit exceeded for key generation", "RATE_LIMITED",
+				map[string]interface{}{
+					"limit":       config.C.RateLimitRegisterPerHour,
+					"window":      "1h",
+					"retry_after": 3600,
+				})
 			return
 		}
 	} else {
-		// Fall back to Redis-based rate limiting when DB is unavailable.
-		allowed, _, _, err := security.CheckRateLimit(ctx, "register:"+ip, config.C.RateLimitRegisterPerHour, 3600)
+		allowed, remaining, resetAt, err := security.CheckRateLimit(ctx, "register:"+ip, config.C.RateLimitRegisterPerHour, 3600)
 		if err != nil {
 			slog.Warn("redis rate limit check failed", "error", err)
 		} else if !allowed {
-			writeError(w, http.StatusTooManyRequests, "rate limit exceeded for key generation")
+			retryAfter := int(time.Until(resetAt).Seconds()) + 1
+			writeStructuredError(w, GlobalEventBus, http.StatusTooManyRequests,
+				"rate limit exceeded for key generation", "RATE_LIMITED",
+				map[string]interface{}{
+					"limit":       config.C.RateLimitRegisterPerHour,
+					"remaining":   remaining,
+					"retry_after": retryAfter,
+					"window":      "1h",
+				})
 			return
 		}
 	}
@@ -44,7 +56,8 @@ func GenerateKey(w http.ResponseWriter, r *http.Request) {
 	fullKey, keyHash, keyPrefix, err := security.GenerateAPIKey()
 	if err != nil {
 		slog.Error("failed to generate API key", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to generate API key")
+		writeStructuredError(w, GlobalEventBus, http.StatusInternalServerError,
+			"failed to generate API key", "KEY_GEN_ERROR", nil)
 		return
 	}
 

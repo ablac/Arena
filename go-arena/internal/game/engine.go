@@ -48,6 +48,10 @@ type GameEngine struct {
 	bannedKeys   map[string]bool
 	bannedKeysMu sync.RWMutex
 
+	// IP ban list.
+	bannedIPs   map[string]bool
+	bannedIPsMu sync.RWMutex
+
 	// Events (buffered, drained after each tick)
 	DeathEvents   []DeathEvent
 	KillEvents    []KillEvent
@@ -55,11 +59,17 @@ type GameEngine struct {
 	lastPersistTick int
 }
 
+// GameEventHook is a callback for emitting game events to the dashboard.
+// Set by main to avoid circular imports.
+var GameEventHook func(eventName string, data map[string]interface{})
+
 // SpectatorConn wraps a WebSocket connection for a spectator client.
 type SpectatorConn struct {
-	Conn     *websocket.Conn
-	SendChan chan []byte
-	Done     chan struct{}
+	Conn        *websocket.Conn
+	SendChan    chan []byte
+	Done        chan struct{}
+	IP          string
+	ConnectedAt time.Time
 }
 
 // NewGameEngine initialises all fields and returns a ready-to-run engine.
@@ -73,6 +83,7 @@ func NewGameEngine() *GameEngine {
 		AntiTeam:    NewAntiTeamTracker(),
 		StartTime:   time.Now(),
 		bannedKeys:  make(map[string]bool),
+		bannedIPs:   make(map[string]bool),
 		Round: RoundState{
 			Phase: PhaseLobby,
 		},
@@ -237,6 +248,13 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Bot separation.
 	SeparateBots(e.Bots, e.Arena.Obstacles, e.Grid)
 
+	// Enforce obstacle bounds — safety net to prevent any bot from being inside an obstacle.
+	for _, bot := range e.Bots {
+		if bot.IsAlive {
+			EnforceObstacleBounds(bot, e.Arena.Obstacles, config.C.BotRadius)
+		}
+	}
+
 	// Check deaths.
 	deaths := CheckDeaths(e.Bots, e.Grid)
 	e.DeathEvents = append(e.DeathEvents, deaths...)
@@ -351,6 +369,14 @@ func (e *GameEngine) startRound() {
 		"bots", len(e.Bots),
 		"obstacles", len(obstacles),
 	)
+
+	if GameEventHook != nil {
+		GameEventHook("round_start", map[string]interface{}{
+			"round_number": e.Round.RoundNumber,
+			"bots":         len(e.Bots),
+			"obstacles":    len(obstacles),
+		})
+	}
 }
 
 func (e *GameEngine) endRound() {
@@ -380,6 +406,14 @@ func (e *GameEngine) endRound() {
 		"round", e.Round.RoundNumber,
 		"winner", winnerName,
 	)
+
+	if GameEventHook != nil {
+		GameEventHook("round_end", map[string]interface{}{
+			"round_number": e.Round.RoundNumber,
+			"winner_id":    winnerID,
+			"winner_name":  winnerName,
+		})
+	}
 }
 
 // --------------------------------------------------------------------------
@@ -461,6 +495,42 @@ func (e *GameEngine) RemoveSpectator(conn *SpectatorConn) {
 			return
 		}
 	}
+}
+
+// ListSpectators returns info about all connected spectators.
+func (e *GameEngine) ListSpectators() []map[string]interface{} {
+	e.spectatorsMu.RLock()
+	defer e.spectatorsMu.RUnlock()
+	result := make([]map[string]interface{}, 0, len(e.Spectators))
+	for i, s := range e.Spectators {
+		addr := ""
+		if s.Conn != nil {
+			addr = s.Conn.RemoteAddr().String()
+		}
+		result = append(result, map[string]interface{}{
+			"index":        i,
+			"ip":           s.IP,
+			"remote_addr":  addr,
+			"connected_at": s.ConnectedAt,
+		})
+	}
+	return result
+}
+
+// KickSpectator disconnects the spectator at the given index.
+func (e *GameEngine) KickSpectator(index int) bool {
+	e.spectatorsMu.Lock()
+	defer e.spectatorsMu.Unlock()
+	if index < 0 || index >= len(e.Spectators) {
+		return false
+	}
+	s := e.Spectators[index]
+	if s.Conn != nil {
+		s.Conn.Close()
+	}
+	close(s.Done)
+	e.Spectators = append(e.Spectators[:index], e.Spectators[index+1:]...)
+	return true
 }
 
 // GetState returns a read-locked snapshot of the game state for spectators.
@@ -648,6 +718,19 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 		if killer != nil && victimOk {
 			go InsertKillLog(context.Background(), e.Round.RoundID, killer, victim, weapon, damage, e.TickCount)
 		}
+
+		// Emit game event for dashboard.
+		if GameEventHook != nil {
+			GameEventHook("kill", map[string]interface{}{
+				"killer_id":   death.KillerID,
+				"killer_name": killerName,
+				"victim_id":   death.VictimID,
+				"victim_name": victimName,
+				"weapon":      weapon,
+				"damage":      damage,
+				"tick":        e.TickCount,
+			})
+		}
 	}
 }
 
@@ -659,12 +742,33 @@ func (e *GameEngine) checkAFK() {
 	c := &config.C
 	var toRemove []string
 	for _, bot := range e.Bots {
-		if bot.LastActionTick > 0 && e.TickCount-bot.LastActionTick > c.AFKTimeoutTicks {
+		isAFK := false
+
+		// Bot with no websocket connection is a ghost — remove immediately.
+		if bot.Conn == nil {
+			isAFK = true
+		} else if bot.LastActionTick > 0 && e.TickCount-bot.LastActionTick > c.AFKTimeoutTicks {
+			// Standard AFK: had actions before but stopped.
+			isAFK = true
+		} else if bot.LastActionTick == 0 && e.Round.Phase == PhaseActive &&
+			e.TickCount-e.Round.StartTick > c.AFKTimeoutTicks*3 {
+			// Never acted since round started — give 3x timeout grace period.
+			isAFK = true
+		}
+
+		if isAFK {
 			SendKick(bot, "AFK timeout")
 			if bot.Conn != nil {
 				bot.Conn.Close()
 			}
 			toRemove = append(toRemove, bot.BotID)
+			if GameEventHook != nil {
+				GameEventHook("afk_kick", map[string]interface{}{
+					"bot_id":   bot.BotID,
+					"bot_name": bot.Name,
+					"reason":   "AFK timeout",
+				})
+			}
 		}
 	}
 	for _, id := range toRemove {
@@ -950,6 +1054,186 @@ func (e *GameEngine) IsKeyBanned(apiKeyID string) bool {
 	return e.bannedKeys[apiKeyID]
 }
 
+// GetBotProfile returns detailed behavioral data for profiling a bot.
+func (e *GameEngine) GetBotProfile(botID string) (map[string]interface{}, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	bot, ok := e.Bots[botID]
+	if !ok {
+		bot, ok = e.WaitingBots[botID]
+	}
+	if !ok {
+		return nil, false
+	}
+
+	// Compute distances to all other bots for positioning analysis
+	var avgEnemyDist float64
+	var closestEnemyDist float64 = 99999
+	var closestEnemyName string
+	enemyCount := 0
+	for _, other := range e.Bots {
+		if other.BotID == botID || !other.IsAlive {
+			continue
+		}
+		d := bot.Position.DistanceTo(other.Position)
+		avgEnemyDist += d
+		enemyCount++
+		if d < closestEnemyDist {
+			closestEnemyDist = d
+			closestEnemyName = other.Name
+		}
+	}
+	if enemyCount > 0 {
+		avgEnemyDist /= float64(enemyCount)
+	}
+
+	// Zone positioning
+	var distToZoneCenter float64
+	var inZone bool
+	if e.Arena != nil {
+		distToZoneCenter = bot.Position.DistanceTo(e.Arena.ZoneCenter)
+		inZone = distToZoneCenter <= e.Arena.ZoneRadius
+	}
+
+	// Compute accuracy
+	var accuracy float64
+	if bot.RoundShotsFired > 0 {
+		accuracy = float64(bot.RoundShotsHit) / float64(bot.RoundShotsFired) * 100
+	}
+
+	// Damage per kill
+	var dmgPerKill float64
+	if bot.RoundKills > 0 {
+		dmgPerKill = bot.RoundDamageDealt / float64(bot.RoundKills)
+	}
+
+	// Current action
+	var currentAction string
+	var actionTarget string
+	if bot.PendingAction != nil {
+		currentAction = string(bot.PendingAction.Type)
+		actionTarget = bot.PendingAction.TargetID
+	}
+
+	// Ticks alive this life
+	ticksAlive := 0
+	if bot.IsAlive && bot.RoundLifeStartTick > 0 {
+		ticksAlive = e.TickCount - bot.RoundLifeStartTick
+	}
+
+	return map[string]interface{}{
+		"bot_id":               bot.BotID,
+		"name":                 bot.Name,
+		"weapon":               bot.Weapon,
+		"avatar_color":         bot.AvatarColor,
+		"stats":                bot.Stats,
+		"elo":                  bot.Elo,
+		"fallback_behavior":    bot.FallbackBehavior,
+		"is_alive":             bot.IsAlive,
+		"hp":                   round1(bot.HP),
+		"max_hp":               round1(bot.MaxHP),
+		"position":             bot.Position,
+		"speed":                round1(bot.Speed),
+		"frozen":               bot.Frozen,
+		"current_action":       currentAction,
+		"action_target":        actionTarget,
+		"cooldown_remaining":   round1(bot.CooldownRemaining),
+		"dodge_cooldown":       bot.DodgeCooldown,
+		"invuln_ticks":         bot.InvulnTicks,
+		"stun_ticks":           bot.StunTicks,
+		"shield_absorb":        round1(bot.ShieldAbsorb),
+		"active_effects":       bot.ActiveEffects,
+		"kill_streak":          bot.KillStreak,
+		"round_kills":          bot.RoundKills,
+		"round_deaths":         bot.RoundDeaths,
+		"round_damage_dealt":   round1(bot.RoundDamageDealt),
+		"round_damage_taken":   round1(bot.RoundDamageTaken),
+		"round_shots_fired":    bot.RoundShotsFired,
+		"round_shots_hit":      bot.RoundShotsHit,
+		"round_distance":       round1(bot.RoundDistance),
+		"round_pickups":        bot.RoundPickups,
+		"accuracy":             round1(accuracy),
+		"damage_per_kill":      round1(dmgPerKill),
+		"avg_enemy_distance":   round1(avgEnemyDist),
+		"closest_enemy_dist":   round1(closestEnemyDist),
+		"closest_enemy_name":   closestEnemyName,
+		"dist_to_zone_center":  round1(distToZoneCenter),
+		"in_zone":              inZone,
+		"ticks_alive":          ticksAlive,
+		"attack_multiplier":    round1(bot.AttackMultiplier),
+		"defense_reduction":    round1(bot.DefenseReduction),
+		"last_action_tick":     bot.LastActionTick,
+		"last_damaged_by":      bot.LastDamagedBy,
+	}, true
+}
+
+// BanIP adds an IP to the ban list.
+func (e *GameEngine) BanIP(ip string) {
+	e.bannedIPsMu.Lock()
+	defer e.bannedIPsMu.Unlock()
+	e.bannedIPs[ip] = true
+	slog.Info("admin banned IP", "ip", ip)
+}
+
+// UnbanIP removes an IP from the ban list.
+func (e *GameEngine) UnbanIP(ip string) {
+	e.bannedIPsMu.Lock()
+	defer e.bannedIPsMu.Unlock()
+	delete(e.bannedIPs, ip)
+	slog.Info("admin unbanned IP", "ip", ip)
+}
+
+// IsIPBanned checks if an IP is banned.
+func (e *GameEngine) IsIPBanned(ip string) bool {
+	e.bannedIPsMu.RLock()
+	defer e.bannedIPsMu.RUnlock()
+	return e.bannedIPs[ip]
+}
+
+// GetBannedIPs returns the list of banned IPs.
+func (e *GameEngine) GetBannedIPs() []string {
+	e.bannedIPsMu.RLock()
+	defer e.bannedIPsMu.RUnlock()
+	ips := make([]string, 0, len(e.bannedIPs))
+	for ip := range e.bannedIPs {
+		ips = append(ips, ip)
+	}
+	return ips
+}
+
+// FreezeBot sets a bot to frozen state. Returns true if found.
+func (e *GameEngine) FreezeBot(botID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if bot, ok := e.Bots[botID]; ok {
+		bot.Frozen = true
+		slog.Info("admin froze bot", "bot_id", botID, "name", bot.Name)
+		return true
+	}
+	if bot, ok := e.WaitingBots[botID]; ok {
+		bot.Frozen = true
+		return true
+	}
+	return false
+}
+
+// UnfreezeBot unfreezes a bot. Returns true if found.
+func (e *GameEngine) UnfreezeBot(botID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if bot, ok := e.Bots[botID]; ok {
+		bot.Frozen = false
+		slog.Info("admin unfroze bot", "bot_id", botID, "name", bot.Name)
+		return true
+	}
+	if bot, ok := e.WaitingBots[botID]; ok {
+		bot.Frozen = false
+		return true
+	}
+	return false
+}
+
 // KillBot sets a bot's HP to 0 (admin kill). Returns true if found and alive.
 func (e *GameEngine) KillBot(botID string) bool {
 	e.mu.Lock()
@@ -1122,6 +1406,7 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 		"dodge_cooldown":    bot.DodgeCooldown,
 		"invuln_ticks":      bot.InvulnTicks,
 		"stun_ticks":        bot.StunTicks,
+		"frozen":            bot.Frozen,
 		"shield_absorb":     round1(bot.ShieldAbsorb),
 		"active_effects":    bot.ActiveEffects,
 		"round_kills":       bot.RoundKills,
@@ -1134,6 +1419,7 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 		"round_pickups":      bot.RoundPickups,
 		"last_action_tick":   bot.LastActionTick,
 		"last_action_result": lastAction,
+		"connected_at":      bot.ConnectedAt,
 		"connection":         connInfo,
 	}, true
 }
@@ -1156,7 +1442,8 @@ func (e *GameEngine) ListAllBots() []map[string]interface{} {
 			"kills":       bot.RoundKills,
 			"deaths":      bot.RoundDeaths,
 			"status":      "active",
-			"connected":   bot.Conn != nil,
+			"connected":     bot.Conn != nil,
+			"connected_at":  bot.ConnectedAt,
 		}
 		result = append(result, entry)
 	}
@@ -1172,7 +1459,8 @@ func (e *GameEngine) ListAllBots() []map[string]interface{} {
 			"kills":       bot.RoundKills,
 			"deaths":      bot.RoundDeaths,
 			"status":      "waiting",
-			"connected":   bot.Conn != nil,
+			"connected":     bot.Conn != nil,
+			"connected_at":  bot.ConnectedAt,
 		}
 		result = append(result, entry)
 	}

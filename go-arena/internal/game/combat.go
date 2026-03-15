@@ -13,7 +13,7 @@ import (
 // and staff impacts as needed.
 func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles *[]Projectile, staffImpacts *[]StaffImpact, grid *SpatialGrid, tickCount int, dt float64) {
 	for _, bot := range bots {
-		if !bot.IsAlive || bot.PendingAction == nil {
+		if !bot.IsAlive || bot.PendingAction == nil || bot.Frozen {
 			continue
 		}
 		if bot.PendingAction.Type != ActionAttack {

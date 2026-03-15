@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"math"
 	"sync"
+	"time"
+
+	"arena-server/internal/config"
 
 	"github.com/gorilla/websocket"
 )
@@ -188,10 +191,11 @@ type BotState struct {
 	Stats map[string]int // {hp, speed, attack, defense}
 	Elo   int
 
-	// Dodge / stun / invuln
+	// Dodge / stun / invuln / freeze
 	DodgeCooldown int
 	InvulnTicks   int
 	StunTicks     int
+	Frozen        bool // admin freeze — cannot move or attack
 
 	// Shove cooldown (separate from weapon cooldown)
 	ShoveCooldown float64
@@ -230,6 +234,9 @@ type BotState struct {
 	// Per-tick feedback (cleared each tick)
 	HitsReceived    []HitRecord
 	LastActionResult *ActionResult
+
+	// Connection tracking
+	ConnectedAt time.Time
 
 	// WebSocket (nil for AI-only bots)
 	Conn     *websocket.Conn
@@ -314,16 +321,17 @@ func ComputeDerivedStats(stats map[string]int, weapon string) DerivedStats {
 	atk := stats["attack"]
 	def := stats["defense"]
 
+	c := &config.C
 	wc := GetWeaponConfig(weapon)
 
 	return DerivedStats{
-		MaxHP:           100.0 + float64(hp)*10.0,
-		MoveSpeed:       3.0 + float64(spd)*0.5,
-		AttackMult:      1.0 + float64(atk)*0.1,
-		DefenseReduction: float64(def) * 0.03,
-		AttackRange:     wc.Range,
-		CooldownSeconds: wc.Cooldown,
-		WeaponDamage:    float64(wc.Damage),
+		MaxHP:            c.StatHPBase + float64(hp)*c.StatHPPerPoint,
+		MoveSpeed:        c.StatSpeedBase + float64(spd)*c.StatSpeedPerPoint,
+		AttackMult:       c.StatAttackBase + float64(atk)*c.StatAttackPerPoint,
+		DefenseReduction: float64(def) * c.StatDefensePerPoint,
+		AttackRange:      wc.Range,
+		CooldownSeconds:  wc.Cooldown,
+		WeaponDamage:     float64(wc.Damage),
 	}
 }
 

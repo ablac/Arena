@@ -245,7 +245,20 @@ func SendError(bot *BotState, message string) {
 	SendToBot(bot, msg)
 }
 
-// SendKick sends a kick message to a bot.
+// SendStructuredError sends a structured error message with code and details.
+func SendStructuredError(bot *BotState, message, code string, details map[string]interface{}) {
+	msg := map[string]interface{}{
+		"type":    "error",
+		"message": message,
+		"code":    code,
+	}
+	if details != nil {
+		msg["details"] = details
+	}
+	SendToBot(bot, msg)
+}
+
+// SendKick sends a kick message to a bot with the reason.
 func SendKick(bot *BotState, reason string) {
 	msg := map[string]interface{}{
 		"type":   "kick",
