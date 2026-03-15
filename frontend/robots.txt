@@ -7,6 +7,7 @@ Allow: /js/
 Disallow: /api/
 Disallow: /ws/
 Disallow: /admin/
+Disallow: /dashboard/
 Disallow: /arena/api/
 Disallow: /arena/ws/
 Disallow: /arena/admin/

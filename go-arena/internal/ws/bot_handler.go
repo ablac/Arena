@@ -54,8 +54,9 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			return
 		}
 
-		// Per-IP WebSocket connection rate limiting.
-		if config.C.WSConnectRatePerMin > 0 {
+		// Per-IP WebSocket connection rate limiting (skip for localhost/demo bots).
+		isLocal := ip == "::1" || ip == "127.0.0.1" || ip == "localhost"
+		if config.C.WSConnectRatePerMin > 0 && !isLocal {
 			allowed, count, _, err := security.CheckRateLimit(r.Context(), "ws:bot:"+ip, config.C.WSConnectRatePerMin, 60)
 			if err != nil {
 				slog.Warn("ws rate limit check error, allowing", "error", err, "ip", ip)
@@ -126,8 +127,8 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			return
 		}
 
-		// Per-API-key reconnect cooldown (5 second minimum between connections).
-		if config.C.WSConnectRatePerMin > 0 {
+		// Per-API-key reconnect cooldown (5 second minimum between connections, skip for localhost).
+		if config.C.WSConnectRatePerMin > 0 && !isLocal {
 			keyRateKey := "ws:bot:key:" + botRecord.APIKeyID
 			allowed, _, _, err := security.CheckRateLimit(r.Context(), keyRateKey, 1, 5)
 			if err != nil {

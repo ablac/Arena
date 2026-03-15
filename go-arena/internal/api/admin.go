@@ -1015,14 +1015,30 @@ func (h *AdminHandler) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Load demo bot keys (full plaintext available)
+	demoBotKeys := make(map[string]string) // bot_name -> full_api_key
+	if db.Pool != nil {
+		if dk, err := db.GetAllDemoBotKeys(r.Context()); err == nil {
+			demoBotKeys = dk
+		}
+	}
+
 	for _, k := range keys {
 		keyID, _ := k["key_id"].(string)
+		botName, _ := k["bot_name"].(*string)
 		if addr, online := onlineByAPIKeyID[keyID]; online {
 			k["is_online"] = true
 			k["connected_ip"] = addr
 		} else {
 			k["is_online"] = false
 			k["connected_ip"] = nil
+		}
+		// Attach full key for demo bots
+		if botName != nil {
+			if fullKey, ok := demoBotKeys[*botName]; ok {
+				k["full_api_key"] = fullKey
+				k["is_demo_bot"] = true
+			}
 		}
 	}
 

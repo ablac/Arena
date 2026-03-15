@@ -3103,8 +3103,10 @@ function filterAPIKeys() {
     const active = k.is_active;
     const online = k.is_online;
     return `<tr style="${!active?'opacity:0.5':''}">
-      <td style="font-family:monospace;font-size:11px">${esc(k.key_prefix||'--')}</td>
-      <td><span style="color:${esc(k.avatar_color||'#888')}">\u25CF</span> ${esc(k.bot_name||'--')}</td>
+      <td style="font-family:monospace;font-size:11px">${k.full_api_key ?
+        `<span title="Click to copy full key" style="cursor:pointer;color:var(--green)" onclick="navigator.clipboard.writeText('${esc(k.full_api_key)}');toast('Key copied','success')">${esc(k.key_prefix||'--')} <span style="font-size:9px;color:var(--cyan)">[copy]</span></span>` :
+        esc(k.key_prefix||'--')}</td>
+      <td><span style="color:${esc(k.avatar_color||'#888')}">\u25CF</span> ${esc(k.bot_name||'--')}${k.is_demo_bot ? ' <span style="font-size:9px;color:var(--purple)">[demo]</span>' : ''}</td>
       <td><span class="status-badge ${active?'s2xx':'s5xx'}">${active?'active':'revoked'}</span></td>
       <td>${online ? '<span style="color:var(--green)">online</span>' : '<span style="color:var(--text2)">offline</span>'}</td>
       <td style="font-size:11px;color:var(--text2)">${esc(k.ip_created||'--')}</td>
