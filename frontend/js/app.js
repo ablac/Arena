@@ -122,10 +122,100 @@ function setupControls(engine) {
 
   const fullscreenBtn = document.getElementById('fullscreen-btn');
   if (fullscreenBtn) {
+    let savedRect = null;
+    let animating = false;
+
+    function setBtn(isMax) {
+      fullscreenBtn.textContent = isMax ? 'Exit Fullscreen' : 'Fullscreen';
+      fullscreenBtn.style.background = isMax ? '#e74c3c' : '';
+      fullscreenBtn.style.color = isMax ? '#fff' : '';
+      fullscreenBtn.style.borderColor = isMax ? '#e74c3c' : '';
+    }
+
+    function zoomIn() {
+      if (animating) return;
+      animating = true;
+      const section = document.getElementById('arena');
+      const rect = section.getBoundingClientRect();
+      savedRect = { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
+
+      section.classList.add('animating');
+      section.style.top = rect.top + 'px';
+      section.style.left = rect.left + 'px';
+      section.style.width = rect.width + 'px';
+      section.style.height = rect.height + 'px';
+      section.style.margin = '0';
+      section.style.padding = '0';
+      section.style.maxWidth = 'none';
+      document.body.style.overflow = 'hidden';
+
+      section.offsetHeight;
+      section.style.top = '0';
+      section.style.left = '0';
+      section.style.width = '100vw';
+      section.style.height = '100vh';
+      section.style.borderRadius = '0';
+
+      setTimeout(() => {
+        section.classList.remove('animating');
+        section.classList.add('maximized');
+        section.style.cssText = '';
+        setBtn(true);
+        engine.engine?.resize();
+        animating = false;
+      }, 420);
+    }
+
+    function zoomOut() {
+      if (animating) return;
+      animating = true;
+      const section = document.getElementById('arena');
+      if (!savedRect) savedRect = { top: 200, left: 100, width: 800, height: 500 };
+
+      section.classList.remove('maximized');
+      section.classList.add('animating');
+      section.style.top = '0';
+      section.style.left = '0';
+      section.style.width = '100vw';
+      section.style.height = '100vh';
+      section.style.margin = '0';
+      section.style.padding = '0';
+      section.style.maxWidth = 'none';
+      section.style.borderRadius = '0';
+
+      section.offsetHeight;
+      section.style.top = savedRect.top + 'px';
+      section.style.left = savedRect.left + 'px';
+      section.style.width = savedRect.width + 'px';
+      section.style.height = savedRect.height + 'px';
+      section.style.borderRadius = '12px';
+
+      setTimeout(() => {
+        section.classList.remove('animating');
+        section.style.cssText = '';
+        document.body.style.overflow = '';
+        setBtn(false);
+        engine.engine?.resize();
+        animating = false;
+      }, 420);
+    }
+
     fullscreenBtn.addEventListener('click', () => {
-      const container = document.querySelector('.arena-container');
-      container.classList.toggle('fullscreen');
-      engine.engine?.resize();
+      const section = document.getElementById('arena');
+      if (section.classList.contains('maximized')) {
+        zoomOut();
+      } else if (!animating) {
+        zoomIn();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const section = document.getElementById('arena');
+        if (section && section.classList.contains('maximized')) {
+          zoomOut();
+        }
+      }
     });
   }
 }

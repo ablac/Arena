@@ -29,9 +29,30 @@
   background: #050810;
 }
 .arena-container canvas#arena-canvas { width: 100% !important; height: 100% !important; display: block; }
-.arena-container.fullscreen {
-  position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-  z-index: 1000; border-radius: 0;
+/* Maximized arena — zoom animation */
+.arena-section.animating {
+  position: fixed !important; z-index: 10000 !important;
+  background: #050810 !important;
+  transition: top 0.4s ease, left 0.4s ease, width 0.4s ease, height 0.4s ease,
+              padding 0.4s ease, margin 0.4s ease, max-width 0.4s ease, border-radius 0.4s ease;
+}
+.arena-section.maximized {
+  position: fixed !important; top: 0 !important; left: 0 !important;
+  width: 100vw !important; height: 100vh !important;
+  z-index: 10000 !important;
+  background: #050810 !important; margin: 0 !important; padding: 0 !important;
+  max-width: none !important; display: flex !important; flex-direction: column !important;
+  border-radius: 0 !important;
+}
+.arena-section.maximized > .section-title { margin: 8px 16px !important; font-size: 1rem !important; flex-shrink: 0 !important; }
+.arena-section.maximized .arena-layout {
+  flex: 1 !important; border: none !important; border-radius: 0 !important;
+  height: 0 !important; min-height: 0 !important;
+}
+.arena-section.maximized .arena-container { min-height: 0 !important; }
+.arena-section.maximized .arena-controls {
+  flex-shrink: 0 !important; border-top: 1px solid var(--border-color) !important;
+  border-radius: 0 !important;
 }
 
 /* Arena sidebar — kill feed & players to the right */

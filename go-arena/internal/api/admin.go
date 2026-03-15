@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	"net"
 	"net/http"
@@ -11,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"arena-server/internal/config"
@@ -24,50 +28,111 @@ import (
 
 // AdminHandler holds references needed by admin endpoints.
 type AdminHandler struct {
-	Engine      *game.GameEngine
-	DemoManager *demobots.Manager
-	startTime   time.Time
+	Engine       *game.GameEngine
+	DemoManager  *demobots.Manager
+	startTime    time.Time
+	// Cache of DB token hashes to avoid DB hit on every request.
+	tokenHashes []string
+	tokenMu     sync.RWMutex
 }
 
 // NewAdminHandler creates a new AdminHandler.
 func NewAdminHandler(engine *game.GameEngine, demoManager *demobots.Manager) *AdminHandler {
-	return &AdminHandler{
+	h := &AdminHandler{
 		Engine:      engine,
 		DemoManager: demoManager,
 		startTime:   time.Now(),
 	}
+	// Initialize DB table and load token hashes.
+	ctx := context.Background()
+	if db.Pool != nil {
+		if err := db.EnsureAdminTokensTable(ctx); err != nil {
+			slog.Warn("failed to ensure admin_tokens table", "error", err)
+		}
+		h.reloadTokenHashes()
+	}
+	return h
+}
+
+func hashToken(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
+}
+
+func (h *AdminHandler) reloadTokenHashes() {
+	ctx := context.Background()
+	hashes, err := db.GetAllAdminTokenHashes(ctx)
+	if err != nil {
+		slog.Warn("failed to load admin token hashes", "error", err)
+		return
+	}
+	h.tokenMu.Lock()
+	h.tokenHashes = hashes
+	h.tokenMu.Unlock()
+}
+
+// IsValidAdminToken checks if the given token is either the env var token or
+// one of the database-stored tokens.
+func (h *AdminHandler) IsValidAdminToken(token string) bool {
+	if config.C.AdminToken != "" && token == config.C.AdminToken {
+		return true
+	}
+	hashed := hashToken(token)
+	h.tokenMu.RLock()
+	defer h.tokenMu.RUnlock()
+	for _, th := range h.tokenHashes {
+		if th == hashed {
+			return true
+		}
+	}
+	return false
 }
 
 // AdminAuthMiddleware checks the X-Admin-Token header against the configured
 // admin token. Localhost requests can bypass if ARENA_ADMIN_LOCALHOST_BYPASS is true.
-func AdminAuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cfg := &config.C
+// This is the legacy standalone version for backward compatibility.
+var AdminAuthMiddleware = MakeAdminAuthMiddleware(nil)
 
-		// Check localhost bypass.
-		if cfg.AdminLocalhostBypass && isLocalhost(r) {
-			next.ServeHTTP(w, r)
-			return
-		}
+// MakeAdminAuthMiddleware creates an admin auth middleware that checks both the
+// env var token and any dynamically created tokens via the handler.
+func MakeAdminAuthMiddleware(handler *AdminHandler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			cfg := &config.C
 
-		token := r.Header.Get("X-Admin-Token")
-		if token == "" {
-			writeError(w, http.StatusUnauthorized, "missing X-Admin-Token header")
-			return
-		}
+			// Check localhost bypass.
+			if cfg.AdminLocalhostBypass && isLocalhost(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 
-		if cfg.AdminToken == "" {
-			writeError(w, http.StatusServiceUnavailable, "admin token not configured")
-			return
-		}
+			token := r.Header.Get("X-Admin-Token")
+			if token == "" {
+				writeError(w, http.StatusUnauthorized, "missing X-Admin-Token header")
+				return
+			}
 
-		if token != cfg.AdminToken {
+			// Check env var token.
+			if cfg.AdminToken != "" && token == cfg.AdminToken {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Check dynamic tokens via handler.
+			if handler != nil && handler.IsValidAdminToken(token) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// If no token configured at all.
+			if cfg.AdminToken == "" && (handler == nil || len(handler.tokenHashes) == 0) {
+				writeError(w, http.StatusServiceUnavailable, "admin token not configured")
+				return
+			}
+
 			writeError(w, http.StatusForbidden, "invalid admin token")
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+		})
+	}
 }
 
 // isLocalhost returns true if the request originates from a loopback address.
@@ -118,6 +183,38 @@ func (h *AdminHandler) Routes(r chi.Router) {
 	r.Post("/db/reset-leaderboard", h.resetLeaderboard)
 	r.Post("/db/cleanup-stale", h.cleanupStale)
 	r.Get("/logs", h.getLogs)
+
+	// Spectator management.
+	r.Get("/spectators", h.listSpectators)
+	r.Post("/spectators/{index}/kick", h.kickSpectator)
+
+	// Bot profiler.
+	r.Get("/bots/{id}/profile", h.botProfile)
+
+	// Weapon balance tuning.
+	r.Get("/weapons", h.getWeapons)
+	r.Put("/weapons/{name}", h.updateWeapon)
+
+	// Freeze / unfreeze.
+	r.Post("/bots/{id}/freeze", h.freezeBot)
+	r.Post("/bots/{id}/unfreeze", h.unfreezeBot)
+
+	// IP banning.
+	r.Get("/ip-bans", h.listIPBans)
+	r.Post("/ip-bans", h.addIPBan)
+	r.Delete("/ip-bans/{ip}", h.removeIPBan)
+
+	// Anti-cheat analysis.
+	r.Get("/anticheat", h.anticheatScan)
+
+	// API key management.
+	r.Get("/api-keys", h.listAPIKeys)
+	r.Post("/api-keys/{id}/revoke", h.revokeAPIKey)
+
+	// Admin token management.
+	r.Get("/admin-tokens", h.listAdminTokens)
+	r.Post("/admin-tokens", h.createAdminToken)
+	r.Delete("/admin-tokens/{id}", h.deleteAdminToken)
 
 	// Server.
 	r.Get("/config", h.getServerConfig)
@@ -479,10 +576,18 @@ func (h *AdminHandler) getGameConfig(w http.ResponseWriter, r *http.Request) {
 		"zone_shrink_pct":    c.ZoneShrinkPercent,
 		"zone_shrink_interval": c.ZoneShrinkInterval,
 		"zone_min_radius":    c.ZoneMinRadius,
-		"dodge_speed_mult":   c.DodgeSpeedMult,
-		"dodge_cooldown":     c.DodgeCooldownTicks,
-		"projectile_speed":   c.ProjectileSpeed,
-		"afk_timeout_ticks":  c.AFKTimeoutTicks,
+		"dodge_speed_mult":       c.DodgeSpeedMult,
+		"dodge_invuln_ticks":     c.DodgeInvulnTicks,
+		"dodge_cooldown_ticks":   c.DodgeCooldownTicks,
+		"projectile_speed":       c.ProjectileSpeed,
+		"afk_timeout_ticks":      c.AFKTimeoutTicks,
+		"stat_hp_base":           c.StatHPBase,
+		"stat_hp_per_point":      c.StatHPPerPoint,
+		"stat_speed_base":        c.StatSpeedBase,
+		"stat_speed_per_point":   c.StatSpeedPerPoint,
+		"stat_attack_base":       c.StatAttackBase,
+		"stat_attack_per_point":  c.StatAttackPerPoint,
+		"stat_defense_per_point": c.StatDefensePerPoint,
 	})
 }
 
@@ -551,6 +656,57 @@ func (h *AdminHandler) updateGameConfig(w http.ResponseWriter, r *http.Request) 
 		case "view_radius":
 			if v, ok := toFloat(val); ok && v > 0 {
 				c.ViewRadius = v
+				applied[key] = v
+			}
+		// Stat multipliers
+		case "stat_hp_base":
+			if v, ok := toFloat(val); ok && v >= 0 {
+				c.StatHPBase = v
+				applied[key] = v
+			}
+		case "stat_hp_per_point":
+			if v, ok := toFloat(val); ok && v >= 0 {
+				c.StatHPPerPoint = v
+				applied[key] = v
+			}
+		case "stat_speed_base":
+			if v, ok := toFloat(val); ok && v >= 0 {
+				c.StatSpeedBase = v
+				applied[key] = v
+			}
+		case "stat_speed_per_point":
+			if v, ok := toFloat(val); ok && v >= 0 {
+				c.StatSpeedPerPoint = v
+				applied[key] = v
+			}
+		case "stat_attack_base":
+			if v, ok := toFloat(val); ok && v >= 0 {
+				c.StatAttackBase = v
+				applied[key] = v
+			}
+		case "stat_attack_per_point":
+			if v, ok := toFloat(val); ok && v >= 0 {
+				c.StatAttackPerPoint = v
+				applied[key] = v
+			}
+		case "stat_defense_per_point":
+			if v, ok := toFloat(val); ok && v >= 0 {
+				c.StatDefensePerPoint = v
+				applied[key] = v
+			}
+		case "dodge_speed_mult":
+			if v, ok := toFloat(val); ok && v >= 0 {
+				c.DodgeSpeedMult = v
+				applied[key] = v
+			}
+		case "dodge_invuln_ticks":
+			if v, ok := toInt(val); ok && v >= 0 {
+				c.DodgeInvulnTicks = v
+				applied[key] = v
+			}
+		case "dodge_cooldown_ticks":
+			if v, ok := toInt(val); ok && v >= 0 {
+				c.DodgeCooldownTicks = v
 				applied[key] = v
 			}
 		default:
@@ -828,4 +984,999 @@ func toFloat(v interface{}) (float64, bool) {
 		return f, err == nil
 	}
 	return 0, false
+}
+
+// ============================================================================
+// API Key Management
+// ============================================================================
+
+func (h *AdminHandler) listAPIKeys(w http.ResponseWriter, r *http.Request) {
+	keys, err := db.ListAllAPIKeys(r.Context())
+	if err != nil {
+		slog.Error("admin listAPIKeys failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list API keys")
+		return
+	}
+
+	// Enrich with online status from engine
+	onlineBots := h.Engine.ListAllBots()
+	onlineByAPIKeyID := make(map[string]string) // api_key_id -> remote_addr
+	for _, b := range onlineBots {
+		botID, _ := b["bot_id"].(string)
+		apiKeyID, _ := b["api_key_id"].(string)
+		if botID != "" && apiKeyID != "" {
+			if detail, ok := h.Engine.GetBotDetail(botID); ok {
+				if conn, ok := detail["connection"].(map[string]interface{}); ok {
+					if addr, ok := conn["remote_addr"].(string); ok {
+						onlineByAPIKeyID[apiKeyID] = addr
+					}
+				}
+			}
+		}
+	}
+
+	for _, k := range keys {
+		keyID, _ := k["key_id"].(string)
+		if addr, online := onlineByAPIKeyID[keyID]; online {
+			k["is_online"] = true
+			k["connected_ip"] = addr
+		} else {
+			k["is_online"] = false
+			k["connected_ip"] = nil
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"api_keys": keys,
+		"count":    len(keys),
+	})
+}
+
+func (h *AdminHandler) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing key id")
+		return
+	}
+
+	err := db.DeactivateAPIKey(r.Context(), id)
+	if err != nil {
+		slog.Error("admin revokeAPIKey failed", "error", err, "key_id", id)
+		writeError(w, http.StatusInternalServerError, "failed to revoke key")
+		return
+	}
+
+	// Also ban the key in-engine and kick any connected bot
+	h.Engine.BanKey(id)
+	for _, b := range h.Engine.ListAllBots() {
+		apiKeyID, _ := b["api_key_id"].(string)
+		botID, _ := b["bot_id"].(string)
+		if apiKeyID == id {
+			h.Engine.KickBot(botID, "API key revoked by admin")
+			break
+		}
+	}
+
+	slog.Info("admin revoked API key", "key_id", id)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "API key revoked",
+		"key_id":  id,
+	})
+}
+
+// ============================================================================
+// Admin Token Management
+// ============================================================================
+
+func (h *AdminHandler) listAdminTokens(w http.ResponseWriter, r *http.Request) {
+	tokens := make([]map[string]interface{}, 0)
+
+	// Primary token from env var (never show full token, just masked)
+	if config.C.AdminToken != "" {
+		t := config.C.AdminToken
+		masked := t[:min(4, len(t))] + "..." + t[max(0, len(t)-4):]
+		tokens = append(tokens, map[string]interface{}{
+			"id":         "primary",
+			"label":      "Primary (env var)",
+			"token_hint": masked,
+			"created_at": h.startTime,
+			"source":     "ARENA_ADMIN_TOKEN",
+			"deletable":  false,
+		})
+	}
+
+	// Database tokens
+	if db.Pool != nil {
+		dbTokens, err := db.ListAdminTokens(r.Context())
+		if err != nil {
+			slog.Warn("failed to list admin tokens from DB", "error", err)
+		} else {
+			for _, t := range dbTokens {
+				t["source"] = "database"
+				t["deletable"] = true
+				tokens = append(tokens, t)
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"tokens": tokens,
+		"count":  len(tokens),
+	})
+}
+
+func (h *AdminHandler) createAdminToken(w http.ResponseWriter, r *http.Request) {
+	if db.Pool == nil {
+		writeError(w, http.StatusServiceUnavailable, "database not available")
+		return
+	}
+
+	var req struct {
+		Label string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.Label = "Admin Token"
+	}
+	if req.Label == "" {
+		req.Label = "Admin Token"
+	}
+
+	// Generate a secure random token
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+	tokenStr := "arena_admin_" + hex.EncodeToString(tokenBytes)
+	tokenHash := hashToken(tokenStr)
+	tokenHint := tokenStr[:16] + "..." + tokenStr[len(tokenStr)-4:]
+
+	idBytes := make([]byte, 8)
+	if _, err := rand.Read(idBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate id")
+		return
+	}
+	id := hex.EncodeToString(idBytes)
+
+	if err := db.CreateAdminToken(r.Context(), id, req.Label, tokenHash, tokenHint); err != nil {
+		slog.Error("failed to create admin token", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save token")
+		return
+	}
+
+	// Reload cache
+	h.reloadTokenHashes()
+
+	slog.Info("admin created new admin token", "id", id, "label", req.Label)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"id":         id,
+		"label":      req.Label,
+		"token":      tokenStr,
+		"created_at": time.Now(),
+		"message":    "Store this token safely. It will not be shown again.",
+	})
+}
+
+func (h *AdminHandler) deleteAdminToken(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" || id == "primary" {
+		writeError(w, http.StatusBadRequest, "cannot delete primary token")
+		return
+	}
+
+	if db.Pool == nil {
+		writeError(w, http.StatusServiceUnavailable, "database not available")
+		return
+	}
+
+	if err := db.DeleteAdminToken(r.Context(), id); err != nil {
+		slog.Error("failed to delete admin token", "error", err, "id", id)
+		writeError(w, http.StatusNotFound, "token not found")
+		return
+	}
+
+	// Reload cache
+	h.reloadTokenHashes()
+
+	slog.Info("admin deleted admin token", "id", id)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "admin token deleted",
+		"id":      id,
+	})
+}
+
+// ============================================================================
+// Anti-Cheat Analysis
+// ============================================================================
+
+type acFlag struct {
+	Severity string `json:"severity"` // "critical", "high", "medium", "low"
+	Category string `json:"category"` // "stats", "accuracy", "damage", "speed", "kills", "connection"
+	Message  string `json:"message"`
+	Value    string `json:"value"`
+	Expected string `json:"expected"`
+}
+
+// ============================================================================
+// Spectator Management
+// ============================================================================
+
+func (h *AdminHandler) listSpectators(w http.ResponseWriter, r *http.Request) {
+	specs := h.Engine.ListSpectators()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"spectators": specs,
+		"count":      len(specs),
+	})
+}
+
+func (h *AdminHandler) kickSpectator(w http.ResponseWriter, r *http.Request) {
+	idx, err := strconv.Atoi(chi.URLParam(r, "index"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index")
+		return
+	}
+	if !h.Engine.KickSpectator(idx) {
+		writeError(w, http.StatusNotFound, "spectator not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "spectator kicked"})
+}
+
+// ============================================================================
+// Bot Behavior Profiler
+// ============================================================================
+
+func (h *AdminHandler) botProfile(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	// Samples parameter — how many snapshots to take (default 30, max 100)
+	samplesStr := r.URL.Query().Get("samples")
+	samples := 30
+	if n, err := strconv.Atoi(samplesStr); err == nil && n > 0 && n <= 100 {
+		samples = n
+	}
+
+	// Interval in ms between samples (default 100ms = 10 per second)
+	intervalStr := r.URL.Query().Get("interval_ms")
+	intervalMS := 100
+	if n, err := strconv.Atoi(intervalStr); err == nil && n >= 50 && n <= 2000 {
+		intervalMS = n
+	}
+
+	// Collect snapshots
+	type snapshot struct {
+		Action           string
+		TargetID         string
+		Position         [2]float64
+		HP               float64
+		CooldownLeft     float64
+		DodgeCooldown    int
+		IsAlive          bool
+		ClosestEnemyDist float64
+		InZone           bool
+		DistToZone       float64
+	}
+	snapshots := make([]snapshot, 0, samples)
+
+	for i := 0; i < samples; i++ {
+		profile, ok := h.Engine.GetBotProfile(id)
+		if !ok {
+			writeError(w, http.StatusNotFound, "bot not found or disconnected")
+			return
+		}
+
+		pos := [2]float64{0, 0}
+		if p, ok := profile["position"].([2]float64); ok {
+			pos = p
+		}
+		snap := snapshot{
+			Action:           fmt.Sprintf("%v", profile["current_action"]),
+			TargetID:         fmt.Sprintf("%v", profile["action_target"]),
+			HP:               toF(profile["hp"]),
+			CooldownLeft:     toF(profile["cooldown_remaining"]),
+			DodgeCooldown:    toI(profile["dodge_cooldown"]),
+			IsAlive:          profile["is_alive"] == true,
+			ClosestEnemyDist: toF(profile["closest_enemy_dist"]),
+			InZone:           profile["in_zone"] == true,
+			DistToZone:       toF(profile["dist_to_zone_center"]),
+			Position:         pos,
+		}
+		snapshots = append(snapshots, snap)
+
+		if i < samples-1 {
+			time.Sleep(time.Duration(intervalMS) * time.Millisecond)
+		}
+	}
+
+	// Get final profile for static data
+	finalProfile, ok := h.Engine.GetBotProfile(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "bot disconnected during profiling")
+		return
+	}
+
+	// Analyze actions
+	actionCounts := map[string]int{}
+	var totalMoveDist float64
+	var zoneTimeIn, zoneTimeOut int
+	var avgEnemyDist float64
+	var lowHPActions int // actions while HP < 30%
+	attackTargets := map[string]int{}
+
+	for i, s := range snapshots {
+		a := s.Action
+		if a == "" || a == "<nil>" {
+			a = "idle"
+		}
+		actionCounts[a]++
+
+		if s.InZone {
+			zoneTimeIn++
+		} else {
+			zoneTimeOut++
+		}
+		avgEnemyDist += s.ClosestEnemyDist
+
+		maxHP := toF(finalProfile["max_hp"])
+		if maxHP > 0 && s.HP < maxHP*0.3 {
+			lowHPActions++
+		}
+
+		if a == "attack" && s.TargetID != "" && s.TargetID != "<nil>" {
+			attackTargets[s.TargetID]++
+		}
+
+		if i > 0 {
+			dx := s.Position[0] - snapshots[i-1].Position[0]
+			dy := s.Position[1] - snapshots[i-1].Position[1]
+			totalMoveDist += (dx*dx + dy*dy) // squared, fine for relative comparison
+		}
+	}
+	if len(snapshots) > 0 {
+		avgEnemyDist /= float64(len(snapshots))
+	}
+
+	// Determine playstyle
+	totalActions := 0
+	for _, c := range actionCounts {
+		totalActions += c
+	}
+	pct := func(key string) float64 {
+		if totalActions == 0 {
+			return 0
+		}
+		return float64(actionCounts[key]) / float64(totalActions) * 100
+	}
+
+	// Behavioral classification
+	var playstyle string
+	var traits []string
+
+	movePct := pct("move") + pct("move_to")
+	attackPct := pct("attack")
+	dodgePct := pct("dodge")
+	idlePct := pct("idle")
+
+	if attackPct > 50 {
+		playstyle = "Aggressive"
+		traits = append(traits, "Heavy attacker — spends >50% of ticks attacking")
+	} else if attackPct > 30 {
+		playstyle = "Balanced"
+		traits = append(traits, "Balanced attack/movement ratio")
+	} else if movePct > 60 {
+		playstyle = "Evasive"
+		traits = append(traits, "Highly mobile — spends >60% of ticks moving")
+	} else if idlePct > 40 {
+		playstyle = "Passive"
+		traits = append(traits, "Often idle — may be AFK or waiting for opportunities")
+	} else {
+		playstyle = "Mixed"
+	}
+
+	if dodgePct > 10 {
+		traits = append(traits, "Dodge-heavy — uses dodge frequently")
+	}
+	if avgEnemyDist < 5 {
+		traits = append(traits, "Brawler — stays very close to enemies")
+	} else if avgEnemyDist > 15 {
+		traits = append(traits, "Kiter — maintains distance from enemies")
+	}
+
+	accuracy := toF(finalProfile["accuracy"])
+	if accuracy > 80 {
+		traits = append(traits, fmt.Sprintf("High accuracy (%.0f%%) — precise targeting", accuracy))
+	} else if accuracy < 30 && toI(finalProfile["round_shots_fired"]) > 5 {
+		traits = append(traits, fmt.Sprintf("Low accuracy (%.0f%%) — spray-and-pray style", accuracy))
+	}
+
+	zonePct := float64(zoneTimeIn) / float64(max(zoneTimeIn+zoneTimeOut, 1)) * 100
+	if zonePct > 80 {
+		traits = append(traits, "Zone-aware — stays inside safe zone")
+	} else if zonePct < 30 {
+		traits = append(traits, "Zone-ignorant — frequently outside safe zone")
+	}
+
+	lowHPPct := float64(lowHPActions) / float64(max(len(snapshots), 1)) * 100
+	if lowHPPct > 30 {
+		traits = append(traits, "Risk-taker — often fights at low HP")
+	}
+
+	if len(attackTargets) == 1 {
+		traits = append(traits, "Target-locked — focuses on a single enemy")
+	} else if len(attackTargets) > 3 {
+		traits = append(traits, "Target-switcher — attacks many different enemies")
+	}
+
+	// Top attack target
+	var topTarget string
+	var topTargetCount int
+	for t, c := range attackTargets {
+		if c > topTargetCount {
+			topTargetCount = c
+			topTarget = t
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"bot":             finalProfile,
+		"playstyle":       playstyle,
+		"traits":          traits,
+		"samples":         len(snapshots),
+		"interval_ms":     intervalMS,
+		"duration_ms":     len(snapshots) * intervalMS,
+		"action_breakdown": actionCounts,
+		"action_pcts": map[string]interface{}{
+			"move":   r1(movePct),
+			"attack": r1(attackPct),
+			"dodge":  r1(dodgePct),
+			"idle":   r1(idlePct),
+		},
+		"positioning": map[string]interface{}{
+			"avg_enemy_distance":    r1(avgEnemyDist),
+			"zone_time_in_pct":      r1(zonePct),
+			"low_hp_time_pct":       r1(lowHPPct),
+			"movement_intensity":    r1(totalMoveDist),
+		},
+		"targeting": map[string]interface{}{
+			"unique_targets":     len(attackTargets),
+			"top_target_id":     topTarget,
+			"top_target_attacks": topTargetCount,
+			"target_distribution": attackTargets,
+		},
+	})
+}
+
+func r1(f float64) float64 {
+	return float64(int(f*10+0.5)) / 10
+}
+
+func toF(v interface{}) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	}
+	return 0
+}
+func toI(v interface{}) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case float64:
+		return int(n)
+	}
+	return 0
+}
+
+// ============================================================================
+// Weapon Balance Tuning
+// ============================================================================
+
+func (h *AdminHandler) getWeapons(w http.ResponseWriter, r *http.Request) {
+	weapons := make(map[string]interface{})
+	for name, wc := range game.WeaponConfigs {
+		weapons[name] = map[string]interface{}{
+			"name":     wc.Name,
+			"damage":   wc.Damage,
+			"range":    wc.Range,
+			"cooldown": wc.Cooldown,
+			"special":  wc.Special,
+			"param":    wc.Param,
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"weapons": weapons,
+	})
+}
+
+func (h *AdminHandler) updateWeapon(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	wc, ok := game.WeaponConfigs[name]
+	if !ok {
+		writeError(w, http.StatusNotFound, "weapon not found: "+name)
+		return
+	}
+
+	var req map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	applied := []string{}
+
+	if v, ok := req["damage"]; ok {
+		if f, ok := toFloat(v); ok && f >= 0 {
+			wc.Damage = int(f)
+			applied = append(applied, fmt.Sprintf("damage=%d", wc.Damage))
+		}
+	}
+	if v, ok := req["range"]; ok {
+		if f, ok := toFloat(v); ok && f >= 0 {
+			wc.Range = f
+			applied = append(applied, fmt.Sprintf("range=%.1f", wc.Range))
+		}
+	}
+	if v, ok := req["cooldown"]; ok {
+		if f, ok := toFloat(v); ok && f > 0 {
+			wc.Cooldown = f
+			applied = append(applied, fmt.Sprintf("cooldown=%.2f", wc.Cooldown))
+		}
+	}
+	if v, ok := req["param"]; ok {
+		if f, ok := toFloat(v); ok {
+			wc.Param = f
+			applied = append(applied, fmt.Sprintf("param=%.2f", wc.Param))
+		}
+	}
+
+	game.WeaponConfigs[name] = wc
+
+	slog.Info("admin updated weapon", "weapon", name, "changes", applied)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "weapon updated",
+		"weapon":  name,
+		"applied": applied,
+		"config":  wc,
+	})
+}
+
+// ============================================================================
+// Freeze / Unfreeze
+// ============================================================================
+
+func (h *AdminHandler) freezeBot(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !h.Engine.FreezeBot(id) {
+		writeError(w, http.StatusNotFound, "bot not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "bot frozen", "bot_id": id})
+}
+
+func (h *AdminHandler) unfreezeBot(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !h.Engine.UnfreezeBot(id) {
+		writeError(w, http.StatusNotFound, "bot not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "bot unfrozen", "bot_id": id})
+}
+
+// ============================================================================
+// IP Banning
+// ============================================================================
+
+func (h *AdminHandler) listIPBans(w http.ResponseWriter, r *http.Request) {
+	ips := h.Engine.GetBannedIPs()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"banned_ips": ips,
+		"count":      len(ips),
+	})
+}
+
+func (h *AdminHandler) addIPBan(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IP string `json:"ip"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.IP == "" {
+		writeError(w, http.StatusBadRequest, "missing ip field")
+		return
+	}
+	h.Engine.BanIP(req.IP)
+
+	// Kick all bots from this IP
+	kicked := 0
+	for _, b := range h.Engine.ListAllBots() {
+		botID, _ := b["bot_id"].(string)
+		if botID == "" {
+			continue
+		}
+		if detail, ok := h.Engine.GetBotDetail(botID); ok {
+			if conn, ok := detail["connection"].(map[string]interface{}); ok {
+				if addr, ok := conn["remote_addr"].(string); ok {
+					host, _, _ := net.SplitHostPort(addr)
+					if host == req.IP {
+						h.Engine.KickBot(botID, "IP banned by admin")
+						kicked++
+					}
+				}
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":     "IP banned",
+		"ip":          req.IP,
+		"bots_kicked": kicked,
+	})
+}
+
+func (h *AdminHandler) removeIPBan(w http.ResponseWriter, r *http.Request) {
+	ip := chi.URLParam(r, "ip")
+	if ip == "" {
+		writeError(w, http.StatusBadRequest, "missing ip")
+		return
+	}
+	h.Engine.UnbanIP(ip)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "IP unbanned", "ip": ip})
+}
+
+// ============================================================================
+// Anti-Cheat Analysis
+// ============================================================================
+
+func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
+	c := &config.C
+
+	// Weapon max damage lookup: baseDmg * maxAttackMult(2.0)
+	weaponMaxDmg := map[string]float64{
+		"sword": 25 * 2.0, "bow": 12 * 2.0, "daggers": 12 * 2.0 * 2, // double strike
+		"shield": 15 * 2.0, "spear": 20 * 2.0, "staff": 18 * 2.0,
+	}
+	weaponCooldowns := map[string]float64{
+		"sword": 0.5, "bow": 1.4, "daggers": 0.3,
+		"shield": 0.7, "spear": 0.7, "staff": 1.3,
+	}
+
+	allBots := h.Engine.ListAllBots()
+	type botReport struct {
+		BotID       string    `json:"bot_id"`
+		Name        string    `json:"name"`
+		AvatarColor string    `json:"avatar_color"`
+		Weapon      string    `json:"weapon"`
+		Elo         int       `json:"elo"`
+		Status      string    `json:"status"`
+		Flags       []acFlag  `json:"flags"`
+		FlagCount   int       `json:"flag_count"`
+		RiskScore   int       `json:"risk_score"`
+	}
+
+	var flaggedBots []botReport
+	// Track IPs for multi-account detection
+	ipToBots := make(map[string][]string)
+
+	for _, b := range allBots {
+		botID, _ := b["bot_id"].(string)
+		if botID == "" {
+			continue
+		}
+		detail, ok := h.Engine.GetBotDetail(botID)
+		if !ok {
+			continue
+		}
+
+		var flags []acFlag
+		name, _ := detail["name"].(string)
+		weapon, _ := detail["weapon"].(string)
+		avatarColor, _ := detail["avatar_color"].(string)
+		elo, _ := detail["elo"].(int)
+		status, _ := b["status"].(string)
+
+		// --- Connection IP tracking ---
+		if conn, ok := detail["connection"].(map[string]interface{}); ok {
+			if addr, ok := conn["remote_addr"].(string); ok && addr != "" {
+				host, _, _ := net.SplitHostPort(addr)
+				if host != "" {
+					ipToBots[host] = append(ipToBots[host], name+" ("+botID[:8]+")")
+				}
+			}
+		}
+
+		// --- 1. Stat budget violation ---
+		if stats, ok := detail["stats"].(map[string]int); ok {
+			total := 0
+			for _, v := range stats {
+				total += v
+			}
+			if total > c.StatBudget {
+				flags = append(flags, acFlag{
+					Severity: "critical", Category: "stats",
+					Message: "Stat budget exceeded",
+					Value: fmt.Sprintf("%d points used", total),
+					Expected: fmt.Sprintf("<= %d", c.StatBudget),
+				})
+			}
+			for k, v := range stats {
+				if v < c.StatMin {
+					flags = append(flags, acFlag{
+						Severity: "critical", Category: "stats",
+						Message: fmt.Sprintf("Stat '%s' below minimum", k),
+						Value: fmt.Sprintf("%d", v), Expected: fmt.Sprintf(">= %d", c.StatMin),
+					})
+				}
+				if v > c.StatMax {
+					flags = append(flags, acFlag{
+						Severity: "critical", Category: "stats",
+						Message: fmt.Sprintf("Stat '%s' above maximum", k),
+						Value: fmt.Sprintf("%d", v), Expected: fmt.Sprintf("<= %d", c.StatMax),
+					})
+				}
+			}
+			// Check stat count (must be exactly 4)
+			if len(stats) != 4 {
+				flags = append(flags, acFlag{
+					Severity: "critical", Category: "stats",
+					Message: "Wrong number of stat keys",
+					Value: fmt.Sprintf("%d keys", len(stats)), Expected: "4 keys (hp,speed,attack,defense)",
+				})
+			}
+		}
+
+		// --- 2. HP exceeds max for stats ---
+		hp, _ := detail["hp"].(float64)
+		maxHP, _ := detail["max_hp"].(float64)
+		if stats, ok := detail["stats"].(map[string]int); ok {
+			expectedMax := 100.0 + float64(stats["hp"])*10.0
+			if maxHP > expectedMax+0.5 {
+				flags = append(flags, acFlag{
+					Severity: "critical", Category: "stats",
+					Message: "MaxHP exceeds stat-derived maximum",
+					Value: fmt.Sprintf("%.0f", maxHP), Expected: fmt.Sprintf("%.0f", expectedMax),
+				})
+			}
+			if hp > maxHP+0.5 {
+				flags = append(flags, acFlag{
+					Severity: "high", Category: "stats",
+					Message: "Current HP exceeds MaxHP",
+					Value: fmt.Sprintf("%.1f", hp), Expected: fmt.Sprintf("<= %.0f", maxHP),
+				})
+			}
+		}
+
+		// --- 3. Speed exceeds stat-derived max ---
+		speed, _ := detail["speed"].(float64)
+		if stats, ok := detail["stats"].(map[string]int); ok {
+			expectedSpeed := 3.0 + float64(stats["speed"])*0.5
+			// Allow 2x for speed boost pickup
+			maxPossibleSpeed := expectedSpeed * 2.0
+			if speed > maxPossibleSpeed+0.1 {
+				flags = append(flags, acFlag{
+					Severity: "high", Category: "speed",
+					Message: "Movement speed exceeds maximum (even with boost)",
+					Value: fmt.Sprintf("%.1f", speed), Expected: fmt.Sprintf("<= %.1f", maxPossibleSpeed),
+				})
+			}
+		}
+
+		// --- 4. Attack multiplier exceeds stat-derived max ---
+		atkMult, _ := detail["attack_multiplier"].(float64)
+		if stats, ok := detail["stats"].(map[string]int); ok {
+			expectedAtk := 1.0 + float64(stats["attack"])*0.1
+			// Allow 1.5x for damage boost pickup
+			maxPossibleAtk := expectedAtk * 1.5
+			if atkMult > maxPossibleAtk+0.05 {
+				flags = append(flags, acFlag{
+					Severity: "high", Category: "damage",
+					Message: "Attack multiplier exceeds maximum (even with boost)",
+					Value: fmt.Sprintf("%.2f", atkMult), Expected: fmt.Sprintf("<= %.2f", maxPossibleAtk),
+				})
+			}
+		}
+
+		// --- 5. Defense reduction exceeds stat-derived max ---
+		defRed, _ := detail["defense_reduction"].(float64)
+		if stats, ok := detail["stats"].(map[string]int); ok {
+			expectedDef := float64(stats["defense"]) * 0.03
+			if defRed > expectedDef+0.01 {
+				flags = append(flags, acFlag{
+					Severity: "high", Category: "stats",
+					Message: "Defense reduction exceeds stat-derived value",
+					Value: fmt.Sprintf("%.2f", defRed), Expected: fmt.Sprintf("<= %.2f", expectedDef),
+				})
+			}
+		}
+
+		// --- 6. Accuracy analysis ---
+		shotsFired, _ := detail["round_shots_fired"].(int)
+		shotsHit, _ := detail["round_shots_hit"].(int)
+		if shotsFired >= 10 {
+			accuracy := float64(shotsHit) / float64(shotsFired) * 100.0
+			if accuracy > 95.0 {
+				flags = append(flags, acFlag{
+					Severity: "high", Category: "accuracy",
+					Message: fmt.Sprintf("Suspiciously high accuracy (%d/%d shots)", shotsHit, shotsFired),
+					Value: fmt.Sprintf("%.1f%%", accuracy), Expected: "< 95%",
+				})
+			} else if accuracy > 85.0 {
+				flags = append(flags, acFlag{
+					Severity: "medium", Category: "accuracy",
+					Message: fmt.Sprintf("Very high accuracy (%d/%d shots)", shotsHit, shotsFired),
+					Value: fmt.Sprintf("%.1f%%", accuracy), Expected: "< 85%",
+				})
+			}
+		}
+
+		// --- 7. Damage per hit analysis ---
+		dmgDealt, _ := detail["round_damage_dealt"].(float64)
+		if shotsHit > 0 && weapon != "" {
+			avgDmg := dmgDealt / float64(shotsHit)
+			maxDmg := weaponMaxDmg[weapon]
+			if maxDmg == 0 {
+				maxDmg = 50
+			}
+			// With damage boost (1.5x) the absolute max is higher
+			maxDmgWithBoost := maxDmg * 1.5
+			if avgDmg > maxDmgWithBoost+1 {
+				flags = append(flags, acFlag{
+					Severity: "critical", Category: "damage",
+					Message: "Average damage per hit exceeds weapon maximum",
+					Value: fmt.Sprintf("%.1f per hit", avgDmg),
+					Expected: fmt.Sprintf("<= %.1f (%s max with boost)", maxDmgWithBoost, weapon),
+				})
+			}
+		}
+
+		// --- 8. Kill rate analysis ---
+		roundKills, _ := detail["round_kills"].(int)
+		if roundKills >= 3 && weapon != "" {
+			cooldown := weaponCooldowns[weapon]
+			if cooldown == 0 {
+				cooldown = 0.5
+			}
+			// Max theoretical kills per round at weapon cooldown
+			roundDuration := c.RoundDuration
+			maxKillsTheoretical := int(roundDuration / cooldown)
+			// Flag if kills approach theoretical max (>60% of max)
+			if roundKills > int(float64(maxKillsTheoretical)*0.6) {
+				flags = append(flags, acFlag{
+					Severity: "medium", Category: "kills",
+					Message: "Kill count approaching theoretical maximum for weapon cooldown",
+					Value: fmt.Sprintf("%d kills", roundKills),
+					Expected: fmt.Sprintf("<< %d theoretical max (%s, %.1fs cd)", maxKillsTheoretical, weapon, cooldown),
+				})
+			}
+		}
+
+		// --- 9. K/D ratio analysis ---
+		roundDeaths, _ := detail["round_deaths"].(int)
+		if roundKills >= 5 && roundDeaths == 0 {
+			flags = append(flags, acFlag{
+				Severity: "medium", Category: "kills",
+				Message: "High kills with zero deaths this round",
+				Value: fmt.Sprintf("%d kills, 0 deaths", roundKills), Expected: "Some deaths expected",
+			})
+		}
+
+		// --- 10. Damage taken analysis (invuln exploit) ---
+		dmgTaken, _ := detail["round_damage_taken"].(float64)
+		if roundKills >= 3 && dmgTaken < 1.0 {
+			flags = append(flags, acFlag{
+				Severity: "high", Category: "damage",
+				Message: "Active in combat but almost no damage taken",
+				Value: fmt.Sprintf("%.1f damage taken, %d kills", dmgTaken, roundKills),
+				Expected: "Some damage taken in active combat",
+			})
+		}
+
+		// --- 11. Impossible shield absorb ---
+		shieldAbsorb, _ := detail["shield_absorb"].(float64)
+		if shieldAbsorb > c.PickupShieldBubbleHP+1 {
+			flags = append(flags, acFlag{
+				Severity: "high", Category: "stats",
+				Message: "Shield absorb exceeds pickup shield HP",
+				Value: fmt.Sprintf("%.0f", shieldAbsorb),
+				Expected: fmt.Sprintf("<= %.0f", c.PickupShieldBubbleHP),
+			})
+		}
+
+		// --- 12. Invalid weapon ---
+		validWeapons := map[string]bool{"sword": true, "bow": true, "daggers": true, "shield": true, "spear": true, "staff": true}
+		if weapon != "" && !validWeapons[weapon] {
+			flags = append(flags, acFlag{
+				Severity: "critical", Category: "stats",
+				Message: "Unknown/invalid weapon equipped",
+				Value: weapon, Expected: "sword, bow, daggers, shield, spear, or staff",
+			})
+		}
+
+		// --- 13. Impossible distance traveled ---
+		dist, _ := detail["round_distance"].(float64)
+		if stats, ok := detail["stats"].(map[string]int); ok && dist > 0 {
+			maxSpeed := (3.0 + float64(stats["speed"])*0.5) * 2.0 // with speed boost
+			tickRate := float64(c.TickRate)
+			maxDistPerTick := maxSpeed / tickRate
+			maxTicks := c.RoundDuration * tickRate
+			maxPossibleDist := maxDistPerTick * maxTicks * 1.1 // 10% margin
+			if dist > maxPossibleDist {
+				flags = append(flags, acFlag{
+					Severity: "high", Category: "speed",
+					Message: "Distance traveled exceeds theoretical maximum",
+					Value: fmt.Sprintf("%.0f units", dist),
+					Expected: fmt.Sprintf("<= %.0f units", maxPossibleDist),
+				})
+			}
+		}
+
+		// --- 14. Permanent invulnerability ---
+		invuln, _ := detail["invuln_ticks"].(int)
+		dodge, _ := detail["dodge_cooldown"].(int)
+		if invuln > c.DodgeInvulnTicks+2 {
+			flags = append(flags, acFlag{
+				Severity: "critical", Category: "stats",
+				Message: "Invulnerability ticks exceed dodge maximum",
+				Value: fmt.Sprintf("%d ticks", invuln),
+				Expected: fmt.Sprintf("<= %d ticks", c.DodgeInvulnTicks),
+			})
+		}
+		_ = dodge // dodge cooldown is valid state
+
+		if len(flags) > 0 {
+			risk := 0
+			for _, f := range flags {
+				switch f.Severity {
+				case "critical":
+					risk += 40
+				case "high":
+					risk += 20
+				case "medium":
+					risk += 10
+				case "low":
+					risk += 5
+				}
+			}
+			if risk > 100 {
+				risk = 100
+			}
+			flaggedBots = append(flaggedBots, botReport{
+				BotID: botID, Name: name, AvatarColor: avatarColor,
+				Weapon: weapon, Elo: elo, Status: status,
+				Flags: flags, FlagCount: len(flags), RiskScore: risk,
+			})
+		}
+	}
+
+	// --- Multi-account IP analysis ---
+	var ipFlags []map[string]interface{}
+	for ip, bots := range ipToBots {
+		if len(bots) > 1 {
+			ipFlags = append(ipFlags, map[string]interface{}{
+				"ip":        ip,
+				"bot_count": len(bots),
+				"bots":      bots,
+				"severity":  "medium",
+				"message":   fmt.Sprintf("%d bots connected from same IP", len(bots)),
+			})
+		}
+	}
+
+	// Sort by risk score descending
+	for i := 0; i < len(flaggedBots); i++ {
+		for j := i + 1; j < len(flaggedBots); j++ {
+			if flaggedBots[j].RiskScore > flaggedBots[i].RiskScore {
+				flaggedBots[i], flaggedBots[j] = flaggedBots[j], flaggedBots[i]
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"flagged_bots":   flaggedBots,
+		"flagged_count":  len(flaggedBots),
+		"total_scanned":  len(allBots),
+		"clean_count":    len(allBots) - len(flaggedBots),
+		"ip_flags":       ipFlags,
+		"scan_time":      time.Now(),
+	})
 }

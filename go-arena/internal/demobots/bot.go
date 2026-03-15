@@ -227,6 +227,12 @@ func (b *demoBot) session(ctx context.Context) error {
 			if action.Direction != nil {
 				payload["direction"] = action.Direction
 			}
+			if action.TargetPosition != nil {
+				payload["target_position"] = action.TargetPosition
+			}
+			if action.ItemID != "" {
+				payload["item_id"] = action.ItemID
+			}
 			if err := conn.WriteJSON(payload); err != nil {
 				return fmt.Errorf("send action: %w", err)
 			}

@@ -110,14 +110,22 @@ func RateLimitMiddleware(rpm int) func(http.Handler) http.Handler {
 			}
 
 			if !allowed {
+				retryAfter := int(time.Until(resetAt).Seconds()) + 1
 				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(time.Until(resetAt).Seconds())+1))
+				w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
 				w.WriteHeader(http.StatusTooManyRequests)
 
-				resp := rateLimitResponse{
-					Error:     "rate limit exceeded",
-					Remaining: remaining,
-					ResetAt:   resetAt.Unix(),
+				resp := map[string]interface{}{
+					"error": "rate limit exceeded",
+					"code":  "RATE_LIMITED",
+					"details": map[string]interface{}{
+						"remaining":   remaining,
+						"reset_at":    resetAt.Unix(),
+						"retry_after": retryAfter,
+						"limit":       rpm,
+						"window":      "60s",
+						"path":        r.URL.Path,
+					},
 				}
 				json.NewEncoder(w).Encode(resp)
 				return

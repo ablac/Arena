@@ -1,0 +1,3462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arena Admin Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--border:#30363d;
+  --text:#c9d1d9;--text2:#8b949e;--accent:#58a6ff;--green:#3fb950;
+  --red:#f85149;--orange:#d29922;--purple:#bc8cff;--cyan:#39d353;
+}
+body{font-family:'JetBrains Mono','Fira Code','Courier New',monospace;background:var(--bg);color:var(--text);font-size:13px;overflow:hidden;height:100vh}
+a{color:var(--accent);text-decoration:none}
+button{font-family:inherit;font-size:12px;cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--text);padding:4px 10px;border-radius:4px}
+button:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+button.active{background:var(--accent);color:#fff}
+input,select{font-family:inherit;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:4px;outline:none}
+input:focus,select:focus{border-color:var(--accent)}
+
+/* Layout */
+#login{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}
+#login h1{color:var(--accent);font-size:18px}
+#login input{width:300px;padding:8px 12px}
+#login button{padding:8px 24px}
+#login .error{color:var(--red);font-size:12px;min-height:16px}
+
+#app{display:none;height:100vh;flex-direction:column}
+#header{display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0}
+#header h1{font-size:14px;color:var(--accent)}
+#header .status{display:flex;gap:12px;align-items:center;font-size:11px;color:var(--text2)}
+#header .status .dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block}
+#header .status .dot.off{background:var(--red)}
+
+#tabs{display:flex;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;position:relative}
+.tab-group{position:relative}
+.tab-group-label{padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2);border-bottom:2px solid transparent;white-space:nowrap;display:flex;align-items:center;gap:4px;user-select:none}
+.tab-group-label:hover{color:var(--text)}
+.tab-group-label.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-group-label .arrow{font-size:8px;opacity:0.5}
+.tab-dropdown{display:none;position:absolute;top:100%;left:0;background:var(--bg2);border:1px solid var(--border);border-top:none;border-radius:0 0 6px 6px;min-width:160px;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.4);padding:4px 0}
+.tab-group:hover .tab-dropdown,.tab-group.open .tab-dropdown{display:block}
+.tab-item{padding:5px 14px;font-size:12px;cursor:pointer;color:var(--text2);white-space:nowrap}
+.tab-item:hover{background:var(--bg3);color:var(--text)}
+.tab-item.active{color:var(--accent);background:rgba(88,166,255,0.08)}
+.tab-item .tab-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px}
+/* Direct tabs (no dropdown) */
+.tab-direct{padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2);border-bottom:2px solid transparent;white-space:nowrap}
+.tab-direct:hover{color:var(--text)}
+.tab-direct.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+#content{flex:1;overflow:auto;padding:12px}
+
+/* Panels */
+.panel{display:none}
+.panel.active{display:block}
+
+/* Cards / grid */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:16px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:12px}
+.card .label{font-size:11px;color:var(--text2);margin-bottom:4px}
+.card .value{font-size:20px;font-weight:bold;color:var(--accent)}
+.card .value.green{color:var(--green)}
+.card .value.red{color:var(--red)}
+.card .value.orange{color:var(--orange)}
+
+/* Tables */
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:6px 8px;color:var(--text2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg)}
+td{padding:5px 8px;border-bottom:1px solid var(--border)}
+tr:hover td{background:var(--bg2)}
+
+/* Log stream */
+.log-container{background:var(--bg2);border:1px solid var(--border);border-radius:6px;height:calc(100vh - 160px);overflow:auto;font-size:12px}
+.log-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.log-entry{padding:4px 8px;border-bottom:1px solid rgba(48,54,61,0.5);display:flex;gap:8px;align-items:flex-start}
+.log-entry:hover{background:var(--bg3)}
+.log-time{color:var(--text2);white-space:nowrap;flex-shrink:0;min-width:80px}
+.log-type{padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;flex-shrink:0;min-width:70px;text-align:center}
+.log-type.connection{background:#1f3d2a;color:var(--green)}
+.log-type.auth_failure{background:#3d1f1f;color:var(--red)}
+.log-type.http_request{background:#1f2d3d;color:var(--accent)}
+.log-type.game_event{background:#2d1f3d;color:var(--purple)}
+.log-type.ws_message{background:#1f3d3d;color:var(--cyan)}
+.log-type.rate_limit{background:#3d2d1f;color:var(--orange)}
+.log-type.error{background:#3d1f1f;color:var(--red)}
+.log-msg{flex:1;word-break:break-all}
+
+.status-badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px}
+.s2xx{background:#1f3d2a;color:var(--green)}
+.s3xx{background:#1f2d3d;color:var(--accent)}
+.s4xx{background:#3d2d1f;color:var(--orange)}
+.s5xx{background:#3d1f1f;color:var(--red)}
+
+/* Bot list */
+.bot-row{cursor:pointer}
+.bot-row.selected{background:rgba(88,166,255,0.08)}
+.bot-row.selected td{background:rgba(88,166,255,0.08)}
+.bot-select{width:14px;height:14px;cursor:pointer;accent-color:var(--accent)}
+#bulkActions{display:none;padding:8px 12px;background:var(--bg2);border:1px solid var(--accent);border-radius:6px;margin-bottom:10px;align-items:center;gap:8px;flex-wrap:wrap}
+#bulkActions.visible{display:flex}
+#bulkActions .bulk-count{color:var(--accent);font-weight:bold;font-size:12px;margin-right:4px}
+
+/* Anti-cheat */
+.ac-bot{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:10px}
+.ac-bot.risk-high{border-color:var(--red)}
+.ac-bot.risk-med{border-color:var(--orange)}
+.ac-bot.risk-low{border-color:var(--accent)}
+.ac-header{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+.ac-header .ac-name{font-weight:bold;color:var(--accent);font-size:13px}
+.ac-header .ac-meta{font-size:11px;color:var(--text2)}
+.ac-risk{font-weight:bold;padding:2px 8px;border-radius:3px;font-size:11px}
+.ac-risk.critical{background:rgba(248,81,73,0.2);color:var(--red)}
+.ac-risk.high{background:rgba(248,81,73,0.15);color:var(--red)}
+.ac-risk.medium{background:rgba(210,153,34,0.15);color:var(--orange)}
+.ac-risk.low{background:rgba(88,166,255,0.15);color:var(--accent)}
+.ac-flag{display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-bottom:1px solid rgba(48,54,61,0.4);font-size:12px}
+.ac-flag:last-child{border-bottom:none}
+.ac-sev{padding:1px 5px;border-radius:3px;font-size:10px;font-weight:bold;flex-shrink:0;min-width:55px;text-align:center}
+.ac-sev.critical{background:rgba(248,81,73,0.2);color:var(--red)}
+.ac-sev.high{background:rgba(248,81,73,0.12);color:#ff7b72}
+.ac-sev.medium{background:rgba(210,153,34,0.15);color:var(--orange)}
+.ac-sev.low{background:rgba(88,166,255,0.1);color:var(--accent)}
+.ac-cat{padding:1px 5px;border-radius:3px;font-size:10px;background:var(--bg3);color:var(--text2);flex-shrink:0;min-width:60px;text-align:center}
+.ac-detail{flex:1}
+.ac-detail .ac-msg{color:var(--text)}
+.ac-detail .ac-vals{font-size:11px;color:var(--text2);margin-top:2px}
+.ac-ip-flag{background:var(--bg2);border:1px solid var(--orange);border-radius:6px;padding:10px;margin-bottom:8px;font-size:12px}
+.ac-summary{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.ac-summary .card{min-width:140px}
+
+/* Profiler modal */
+#profilerOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9998;align-items:center;justify-content:center}
+#profilerOverlay.visible{display:flex}
+#profilerModal{background:var(--bg);border:1px solid var(--accent);border-radius:8px;max-width:700px;width:90%;max-height:85vh;overflow-y:auto;padding:20px;position:relative}
+#profilerModal .close-btn{position:absolute;top:8px;right:12px;cursor:pointer;color:var(--text2);font-size:18px}
+#profilerModal .close-btn:hover{color:var(--text)}
+.profile-playstyle{font-size:22px;font-weight:bold;color:var(--accent);margin:8px 0}
+.profile-traits{list-style:none;padding:0}
+.profile-traits li{padding:4px 0;border-bottom:1px solid var(--border);font-size:12px;color:var(--text)}
+.profile-traits li::before{content:'> ';color:var(--accent)}
+.profile-bars{margin-top:12px}
+.profile-bar{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.profile-bar .lbl{min-width:70px;font-size:11px;color:var(--text2);text-align:right}
+.profile-bar .bar{flex:1;height:14px;background:var(--bg3);border-radius:3px;overflow:hidden}
+.profile-bar .fill{height:100%;border-radius:3px}
+.profile-bar .val{min-width:45px;font-size:11px;text-align:right}
+
+/* Light theme */
+body.light{--bg:#f6f8fa;--bg2:#ffffff;--bg3:#e1e4e8;--border:#d0d7de;--text:#24292f;--text2:#57606a;--accent:#0969da;--green:#1a7f37;--red:#cf222e;--orange:#bf8700;--purple:#8250df;--cyan:#0550ae}
+
+/* Pinned bot */
+.bot-row.pinned td:first-child::before{content:'*';color:var(--orange);margin-right:4px;font-weight:bold}
+
+/* Bot note */
+.bot-note{font-size:10px;color:var(--orange);font-style:italic;margin-top:2px}
+
+/* Collapsible sections */
+.ctrl-section.collapsible h3{cursor:pointer;user-select:none}
+.ctrl-section.collapsible h3::after{content:' ▾';font-size:10px;opacity:0.5}
+.ctrl-section.collapsible.collapsed h3::after{content:' ▸'}
+.ctrl-section.collapsible.collapsed>*:not(h3){display:none}
+
+/* Fullscreen */
+#fsExitFloat{display:none;position:fixed;top:10px;right:10px;z-index:99999;padding:8px 16px;background:var(--bg2);border:2px solid var(--accent);border-radius:6px;font-size:12px;font-family:inherit;cursor:pointer;color:var(--accent);opacity:0.6;transition:opacity .2s}
+#fsExitFloat:hover{opacity:1;background:var(--accent);color:#fff}
+
+/* Keyboard shortcuts help */
+#kbdHelp{position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:none;align-items:center;justify-content:center}
+#kbdHelp.visible{display:flex}
+#kbdHelp .inner{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:20px;max-width:400px;width:90%}
+#kbdHelp kbd{display:inline-block;padding:1px 6px;background:var(--bg3);border:1px solid var(--border);border-radius:3px;font-size:11px;font-family:inherit;margin:0 2px}
+.bot-detail{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:16px;margin-top:12px}
+.bot-detail .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px}
+.bot-detail .item{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);gap:12px;font-size:11px}
+.bot-detail .item .k{color:var(--text2);white-space:nowrap;flex-shrink:0}
+.bot-detail .item span:last-child{word-break:break-all;text-align:right;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+
+/* Error table */
+.error-count{font-weight:bold;font-size:14px;color:var(--red)}
+
+/* Filters */
+.filters{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
+.filters label{color:var(--text2);font-size:11px}
+
+/* Admin controls */
+.ctrl-section{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:16px;margin-bottom:12px}
+.ctrl-section h3{color:var(--accent);font-size:13px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.ctrl-section h3 .icon{font-size:15px}
+.ctrl-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.ctrl-row:last-child{margin-bottom:0}
+button.btn-danger{border-color:var(--red);color:var(--red)}
+button.btn-danger:hover{background:var(--red);color:#fff;border-color:var(--red)}
+button.btn-warn{border-color:var(--orange);color:var(--orange)}
+button.btn-warn:hover{background:var(--orange);color:#fff;border-color:var(--orange)}
+button.btn-success{border-color:var(--green);color:var(--green)}
+button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--green)}
+.ctrl-result{font-size:11px;color:var(--text2);margin-top:6px;min-height:16px}
+.bot-actions{display:flex;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);flex-wrap:wrap}
+.bot-actions button{font-size:11px;padding:3px 8px}
+
+/* Toast notifications */
+#toast{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:6px}
+.toast-msg{padding:8px 14px;border-radius:4px;font-size:12px;animation:toastIn .2s ease;max-width:360px}
+.toast-msg.success{background:#1f3d2a;border:1px solid var(--green);color:var(--green)}
+.toast-msg.error{background:#3d1f1f;border:1px solid var(--red);color:var(--red)}
+.toast-msg.info{background:#1f2d3d;border:1px solid var(--accent);color:var(--accent)}
+@keyframes toastIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+/* Config editor */
+.config-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}
+.config-item{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.config-item label{color:var(--text2);font-size:11px;white-space:nowrap}
+.config-item input{width:80px;text-align:right}
+
+/* Mini-map */
+#minimapWrap{display:flex;gap:12px;flex-wrap:wrap}
+#minimapCanvas{background:var(--bg);border:1px solid var(--border);border-radius:6px;cursor:crosshair}
+#minimapLegend{font-size:11px;color:var(--text2);flex:1;min-width:200px}
+#minimapLegend .leg-item{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+#minimapLegend .leg-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+#minimapInfo{margin-top:8px;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;font-size:11px;min-height:60px}
+
+/* HP bar */
+.hp-bar-wrap{width:60px;height:10px;background:var(--bg3);border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle}
+.hp-bar{height:100%;border-radius:3px;transition:width .3s ease}
+
+/* Kill feed */
+.kill-entry{padding:6px 8px;border-bottom:1px solid rgba(48,54,61,0.5);font-size:12px}
+.kill-entry:hover{background:var(--bg3)}
+.kill-entry .weapon{color:var(--orange);font-weight:bold}
+.kill-entry .killer{color:var(--green)}
+.kill-entry .victim{color:var(--red)}
+
+/* Round history */
+.round-row{cursor:pointer}
+.round-detail-row td{background:var(--bg2)}
+
+/* Tick inspector */
+.tick-bar{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.tick-bar .bar-wrap{flex:1;height:16px;background:var(--bg3);border-radius:3px;overflow:hidden}
+.tick-bar .bar-fill{height:100%;border-radius:3px;transition:width .2s}
+.tick-bar .bar-label{font-size:11px;color:var(--text2);min-width:120px}
+.tick-bar .bar-value{font-size:11px;min-width:60px;text-align:right}
+
+/* Minimap context menu */
+#mapCtxMenu{position:absolute;z-index:9999;background:var(--bg2);border:1px solid var(--accent);border-radius:6px;padding:8px 0;min-width:180px;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.5)}
+#mapCtxMenu .ctx-header{padding:4px 12px 6px;border-bottom:1px solid var(--border);margin-bottom:4px}
+#mapCtxMenu .ctx-header b{color:var(--accent);font-size:12px}
+#mapCtxMenu .ctx-header .ctx-sub{font-size:10px;color:var(--text2)}
+#mapCtxMenu .ctx-item{padding:4px 12px;font-size:12px;cursor:pointer;color:var(--text)}
+#mapCtxMenu .ctx-item:hover{background:var(--bg3)}
+#mapCtxMenu .ctx-item.danger{color:var(--red)}
+#mapCtxMenu .ctx-item.danger:hover{background:rgba(248,81,73,0.15)}
+#mapCtxMenu .ctx-item.success{color:var(--green)}
+#mapCtxMenu .ctx-item.success:hover{background:rgba(63,185,80,0.15)}
+#mapCtxMenu .ctx-sep{border-top:1px solid var(--border);margin:4px 0}
+</style>
+</head>
+<body>
+
+<!-- Login Screen -->
+<div id="login">
+  <h1>// ARENA ADMIN</h1>
+  <input type="password" id="tokenInput" placeholder="Admin Token" autofocus>
+  <button onclick="doLogin()">Authenticate</button>
+  <div class="error" id="loginError"></div>
+</div>
+
+<!-- Main App -->
+<div id="app">
+  <div id="header">
+    <h1>// ARENA ADMIN</h1>
+    <div class="status">
+      <span id="statusDot"><span class="dot"></span> Connected</span>
+      <span id="uptimeDisplay">--</span>
+      <span id="botsCount">0 bots</span>
+      <span id="sessionTimer" style="font-size:10px">0:00</span>
+      <button onclick="shareTab()" style="font-size:11px;padding:2px 8px" title="Copy link to current tab">Share</button>
+      <button onclick="toggleFullscreen()" style="font-size:11px;padding:2px 8px" id="fsBtn" title="Toggle fullscreen (F11)">Full</button>
+      <button onclick="toggleTheme()" style="font-size:11px;padding:2px 8px" id="themeBtn">Light</button>
+      <label style="font-size:10px;cursor:pointer"><input type="checkbox" id="soundToggle" style="margin-right:3px" onchange="localStorage.setItem('arena_sound',this.checked)">Sound</label>
+      <button onclick="logout()" style="font-size:11px;padding:2px 8px">Logout</button>
+    </div>
+  </div>
+
+  <div id="tabs">
+    <div class="tab-direct active" data-tab="overview">Overview</div>
+
+    <div class="tab-group">
+      <div class="tab-group-label" data-group="monitor">Monitor <span class="arrow">&#9660;</span></div>
+      <div class="tab-dropdown">
+        <div class="tab-item" data-tab="minimap"><span class="tab-dot" style="background:var(--cyan)"></span>Live Map</div>
+        <div class="tab-item" data-tab="ticks">Tick Inspector</div>
+        <div class="tab-item" data-tab="debug">Debug Tools</div>
+        <div class="tab-item" data-tab="balance"><span class="tab-dot" style="background:var(--purple)"></span>Balance</div>
+      </div>
+    </div>
+
+    <div class="tab-group">
+      <div class="tab-group-label" data-group="bots">Bots <span class="arrow">&#9660;</span></div>
+      <div class="tab-dropdown">
+        <div class="tab-item" data-tab="bots">Bot Inspector</div>
+        <div class="tab-item" data-tab="killfeed"><span class="tab-dot" style="background:var(--red)"></span>Kill Feed</div>
+        <div class="tab-item" data-tab="damagelog">Damage Log</div>
+        <div class="tab-item" data-tab="forensics">Forensics</div>
+      </div>
+    </div>
+
+    <div class="tab-group">
+      <div class="tab-group-label" data-group="logs">Logs <span class="arrow">&#9660;</span></div>
+      <div class="tab-dropdown">
+        <div class="tab-item" data-tab="connections">Connections</div>
+        <div class="tab-item" data-tab="httplog">API Log</div>
+        <div class="tab-item" data-tab="wsmessages">WS Messages</div>
+        <div class="tab-item" data-tab="gameevents">Game Events</div>
+        <div class="tab-item" data-tab="errors">Error Console</div>
+        <div class="tab-item" data-tab="ratelimits">Rate Limits</div>
+      </div>
+    </div>
+
+    <div class="tab-group">
+      <div class="tab-group-label" data-group="security" style="color:var(--red)">Security <span class="arrow">&#9660;</span></div>
+      <div class="tab-dropdown">
+        <div class="tab-item" data-tab="anticheat"><span class="tab-dot" style="background:var(--red)"></span>Anti-Cheat</div>
+        <div class="tab-item" data-tab="apikeys">API Keys</div>
+        <div class="tab-item" data-tab="admintokens">Admin Tokens</div>
+        <div class="tab-item" data-tab="audit">Audit Log</div>
+      </div>
+    </div>
+
+    <div class="tab-group">
+      <div class="tab-group-label" data-group="admin" style="color:var(--orange)">Admin <span class="arrow">&#9660;</span></div>
+      <div class="tab-dropdown">
+        <div class="tab-item" data-tab="controls"><span class="tab-dot" style="background:var(--orange)"></span>Controls</div>
+        <div class="tab-item" data-tab="rounds">Round History</div>
+        <div class="tab-item" data-tab="leaderboard">Leaderboard</div>
+        <div class="tab-item" data-tab="connlog">Connection Log</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="content">
+    <!-- Overview Panel -->
+    <div class="panel active" id="panel-overview">
+      <div class="cards" id="overviewCards"></div>
+      <h3 style="margin:12px 0 8px;color:var(--text2)">Game State</h3>
+      <div id="gameStateInfo" style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:12px;font-size:12px"></div>
+      <h3 style="margin:12px 0 8px;color:var(--text2)">Spectators <span id="specCount" style="font-weight:normal">(0)</span></h3>
+      <div id="specList" style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:12px;font-size:12px">Loading...</div>
+    </div>
+
+    <!-- Live Mini-Map Panel -->
+    <div class="panel" id="panel-minimap">
+      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+        <button id="minimapToggle" onclick="toggleMinimap()">Pause</button>
+        <span style="color:var(--text2);font-size:11px">Refresh: <select id="minimapRate" onchange="setMinimapRate()" style="width:70px"><option value="200">200ms</option><option value="500" selected>500ms</option><option value="1000">1s</option><option value="2000">2s</option></select></span>
+        <span id="minimapTick" style="color:var(--text2);font-size:11px;margin-left:auto">Tick: --</span>
+      </div>
+      <div id="minimapWrap">
+        <canvas id="minimapCanvas" width="500" height="500"></canvas>
+        <div id="minimapLegend">
+          <div class="leg-item"><div class="leg-dot" style="background:var(--green)"></div> Alive Bot</div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--red)"></div> Dead Bot</div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--orange);border-radius:0;width:10px;height:10px"></div> Obstacle</div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--purple)"></div> Pickup</div>
+          <div class="leg-item"><div class="leg-dot" style="background:transparent;border:2px solid rgba(88,166,255,0.5)"></div> Safe Zone</div>
+          <div class="leg-item"><div class="leg-dot" style="background:transparent;border:2px dashed rgba(248,81,73,0.5)"></div> Target Zone</div>
+          <h4 style="color:var(--text2);margin:12px 0 6px">Hover Info</h4>
+          <div id="minimapInfo">Hover over a bot to see details</div>
+          <h4 style="color:var(--text2);margin:12px 0 6px">Weapon Stats (This Round)</h4>
+          <div id="minimapWeaponStats" style="font-size:11px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bot Inspector Panel (auto-refresh) -->
+    <div class="panel" id="panel-bots">
+      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+        <button onclick="refreshBots()">Refresh</button>
+        <label style="color:var(--text2);font-size:11px"><input type="checkbox" id="botAutoRefresh" checked onchange="toggleBotAutoRefresh()"> Auto-refresh (2s)</label>
+        <span id="botListCount" style="color:var(--text2);margin-left:8px">0 bots</span>
+      </div>
+      <div id="bulkActions">
+        <span class="bulk-count" id="bulkCount">0</span><span style="color:var(--text2);font-size:12px">selected</span>
+        <button class="btn-danger" onclick="bulkBotAction('kick')">Kick All</button>
+        <button class="btn-danger" onclick="bulkBotAction('ban')">Ban All</button>
+        <button class="btn-danger" onclick="bulkBotAction('kill')">Kill All</button>
+        <button class="btn-success" onclick="bulkBotAction('heal')">Heal All</button>
+        <button class="btn-warn" onclick="bulkBotAction('freeze')">Freeze All</button>
+        <button onclick="bulkBotAction('unfreeze')">Unfreeze All</button>
+        <button onclick="bulkBotAction('teleportCenter')">Teleport All to Center</button>
+        <button onclick="clearBotSelection()" style="margin-left:auto">Clear Selection</button>
+      </div>
+      <table id="botTable">
+        <thead><tr><th style="width:30px"><input type="checkbox" class="bot-select" id="selectAllBots" onchange="toggleSelectAllBots(this.checked)"></th><th style="width:20px"></th><th>Name</th><th>ID</th><th>HP</th><th>Weapon</th><th>Elo</th><th>K/D</th><th>Dmg</th><th>Uptime</th><th>Status</th></tr></thead>
+        <tbody id="botTableBody"></tbody>
+      </table>
+    </div>
+
+    <!-- Kill Feed Panel -->
+    <div class="panel" id="panel-killfeed">
+      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span style="color:var(--text2);font-size:12px">Live Kill Feed</span>
+        <button id="kfPause" onclick="togglePause('kf')">Pause</button>
+        <button onclick="clearLog('kf')">Clear</button>
+        <span style="color:var(--text2);font-size:11px;margin-left:auto" id="kfCount">0 kills</span>
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+        <div class="ctrl-section" style="flex:1;min-width:250px;margin-bottom:0">
+          <h3>Weapon Breakdown</h3>
+          <div id="kfWeaponBreakdown" style="font-size:12px"></div>
+        </div>
+        <div class="ctrl-section" style="flex:1;min-width:250px;margin-bottom:0">
+          <h3>Top Killers</h3>
+          <div id="kfTopKillers" style="font-size:12px"></div>
+        </div>
+        <div class="ctrl-section" style="flex:1;min-width:250px;margin-bottom:0">
+          <h3>Most Deaths</h3>
+          <div id="kfMostDeaths" style="font-size:12px"></div>
+        </div>
+      </div>
+      <div class="log-container" id="kfLog" style="height:calc(100vh - 340px)"></div>
+    </div>
+
+    <!-- Round History Panel -->
+    <div class="panel" id="panel-rounds">
+      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+        <button onclick="refreshRounds()">Refresh</button>
+        <label style="color:var(--text2);font-size:11px">Limit:</label>
+        <input type="number" id="roundLimit" value="20" min="1" max="100" style="width:60px">
+        <span id="roundCount" style="color:var(--text2);margin-left:8px">0 rounds</span>
+      </div>
+      <table id="roundTable">
+        <thead><tr><th>#</th><th>Started</th><th>Ended</th><th>Duration</th><th>Bots</th><th>MVP</th><th>Status</th></tr></thead>
+        <tbody id="roundTableBody"></tbody>
+      </table>
+    </div>
+
+    <!-- Tick Inspector Panel -->
+    <div class="panel" id="panel-ticks">
+      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+        <span style="color:var(--text2);font-size:12px">Live Tick Performance</span>
+        <label style="color:var(--text2);font-size:11px"><input type="checkbox" id="tickAutoRefresh" checked> Auto-refresh (1s)</label>
+      </div>
+      <div class="cards" id="tickCards" style="margin-bottom:12px"></div>
+      <div class="ctrl-section">
+        <h3>Resource Gauges</h3>
+        <div id="tickBars"></div>
+      </div>
+      <div class="ctrl-section">
+        <h3>Performance History (last 60 samples)</h3>
+        <canvas id="tickChart" width="800" height="200" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px"></canvas>
+      </div>
+    </div>
+
+    <!-- Live Connections Panel -->
+    <div class="panel" id="panel-connections">
+      <div class="log-toolbar">
+        <span style="color:var(--text2)">Live connection events</span>
+        <button id="connPause" onclick="togglePause('conn')">Pause</button>
+        <button onclick="clearLog('conn')">Clear</button>
+        <span id="connCount" style="color:var(--text2);margin-left:auto">0 events</span>
+      </div>
+      <div class="log-container" id="connLog"></div>
+    </div>
+
+    <!-- API Log Panel -->
+    <div class="panel" id="panel-httplog">
+      <div class="log-toolbar">
+        <div class="filters">
+          <label>Status:</label><input id="httpFilterStatus" placeholder="e.g. 4" style="width:60px" oninput="filterHTTPLog()">
+          <label>Path:</label><input id="httpFilterPath" placeholder="/api/..." style="width:120px" oninput="filterHTTPLog()">
+          <label>IP:</label><input id="httpFilterIP" placeholder="ip" style="width:100px" oninput="filterHTTPLog()">
+        </div>
+        <button id="httpPause" onclick="togglePause('http')">Pause</button>
+        <button onclick="clearLog('http')">Clear</button>
+        <span id="httpCount" style="color:var(--text2);margin-left:auto">0 requests</span>
+      </div>
+      <div class="log-container" id="httpLog"></div>
+    </div>
+
+    <!-- WS Messages Panel -->
+    <div class="panel" id="panel-wsmessages">
+      <div class="log-toolbar">
+        <span style="color:var(--text2)">WebSocket messages</span>
+        <button id="wsPause" onclick="togglePause('ws')">Pause</button>
+        <button onclick="clearLog('ws')">Clear</button>
+        <span id="wsCount" style="color:var(--text2);margin-left:auto">0 messages</span>
+      </div>
+      <div class="log-container" id="wsLog"></div>
+    </div>
+
+    <!-- Error Console Panel -->
+    <div class="panel" id="panel-errors">
+      <div style="margin-bottom:10px">
+        <button onclick="refreshErrors()">Refresh</button>
+        <span id="errorTotalCount" style="color:var(--text2);margin-left:8px">0 errors</span>
+      </div>
+      <table>
+        <thead><tr><th>Count</th><th>Code</th><th>Message</th><th>First Seen</th><th>Last Seen</th></tr></thead>
+        <tbody id="errorTableBody"></tbody>
+      </table>
+    </div>
+
+    <!-- Rate Limits Panel -->
+    <div class="panel" id="panel-ratelimits">
+      <div style="margin-bottom:10px">
+        <button onclick="refreshRateLimits()">Refresh</button>
+      </div>
+      <h3 style="color:var(--text2);margin-bottom:8px">Redis Rate Limit State</h3>
+      <table>
+        <thead><tr><th>Key</th><th>Count</th><th>TTL (s)</th></tr></thead>
+        <tbody id="rlRedisBody"></tbody>
+      </table>
+      <h3 style="color:var(--text2);margin:16px 0 8px">Recent Rate Limit Events</h3>
+      <div class="log-container" id="rlLog" style="height:300px"></div>
+    </div>
+
+    <!-- Game Events Panel -->
+    <div class="panel" id="panel-gameevents">
+      <div class="log-toolbar">
+        <span style="color:var(--text2)">Game events timeline</span>
+        <div class="filters">
+          <label>Type:</label>
+          <select id="geFilter" onchange="filterGameEvents()" style="font-family:inherit;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px">
+            <option value="">All</option>
+            <option value="kill">Kills</option>
+            <option value="round_start">Round Start</option>
+            <option value="round_end">Round End</option>
+            <option value="afk_kick">AFK Kick</option>
+          </select>
+        </div>
+        <button id="gePause" onclick="togglePause('ge')">Pause</button>
+        <button onclick="clearLog('ge')">Clear</button>
+        <span id="geCount" style="color:var(--text2);margin-left:auto">0 events</span>
+      </div>
+      <div class="log-container" id="geLog"></div>
+    </div>
+
+    <!-- Damage Log Panel -->
+    <div class="panel" id="panel-damagelog">
+      <div class="log-toolbar">
+        <span style="color:var(--text2)">Live Damage Events</span>
+        <input id="dmgFilterBot" placeholder="Filter by bot name..." style="width:150px" oninput="filterDmgLog()">
+        <button id="dmgPause" onclick="togglePause('dmg')">Pause</button>
+        <button onclick="clearLog('dmg')">Clear</button>
+        <span id="dmgCount" style="color:var(--text2);margin-left:auto">0 events</span>
+      </div>
+      <div class="log-container" id="dmgLog"></div>
+    </div>
+
+    <!-- Balance Panel -->
+    <div class="panel" id="panel-balance">
+      <div style="margin-bottom:10px"><button onclick="refreshBalance()">Refresh</button></div>
+
+      <!-- Weapon Tuning -->
+      <div class="ctrl-section">
+        <h3>Weapon Tuning (Live)</h3>
+        <div style="overflow-x:auto">
+          <table id="weaponTuneTable" style="font-size:12px">
+            <thead><tr><th>Weapon</th><th>Damage</th><th>Range</th><th>Cooldown (s)</th><th>Special Param</th><th></th></tr></thead>
+            <tbody id="weaponTuneBody"></tbody>
+          </table>
+        </div>
+        <div class="ctrl-result" id="weaponTuneResult"></div>
+      </div>
+
+      <!-- Stat Multiplier Tuning -->
+      <div class="ctrl-section">
+        <h3>Stat Multipliers (Live)</h3>
+        <div class="config-grid" id="statMultGrid"></div>
+        <div class="ctrl-row" style="margin-top:8px">
+          <button class="btn-success" onclick="saveStatMults()">Apply Stat Changes</button>
+        </div>
+        <div class="ctrl-result" id="statMultResult"></div>
+      </div>
+
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px">
+        <div class="ctrl-section" style="flex:1;min-width:300px">
+          <h3>Weapon Usage &amp; Performance</h3>
+          <div id="balWeapons" style="font-size:12px">Loading...</div>
+        </div>
+        <div class="ctrl-section" style="flex:1;min-width:300px">
+          <h3>Elo Distribution</h3>
+          <div id="eloSummary" style="font-size:12px;margin-bottom:8px;color:var(--text2)"></div>
+          <div id="eloChart" style="font-size:11px"></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px">
+        <div class="ctrl-section" style="flex:1;min-width:300px">
+          <h3>Stat Allocation Heatmap</h3>
+          <div id="balStats" style="font-size:12px">Loading...</div>
+        </div>
+        <div class="ctrl-section" style="flex:1;min-width:300px">
+          <h3>Round Duration Analysis</h3>
+          <div id="balRounds" style="font-size:12px">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Meta Analysis -->
+      <div class="ctrl-section" style="margin-top:12px">
+        <h3>Meta Analysis — Balance Flags</h3>
+        <div id="balMeta" style="font-size:12px">Hit Refresh to analyze...</div>
+      </div>
+
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px">
+        <div class="ctrl-section" style="flex:1;min-width:300px">
+          <h3>Loadout Tier List</h3>
+          <div id="balTierList" style="font-size:12px">Loading...</div>
+        </div>
+        <div class="ctrl-section" style="flex:1;min-width:300px">
+          <h3>Stat/Weapon Combo Performance</h3>
+          <div id="balCombos" style="font-size:12px">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Debug Panel -->
+    <div class="panel" id="panel-debug">
+      <div style="margin-bottom:10px"><button onclick="refreshDebug()">Refresh</button> <label style="color:var(--text2);font-size:11px"><input type="checkbox" id="debugAutoRefresh"> Auto (2s)</label></div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div class="ctrl-section" style="flex:1;min-width:250px">
+          <h3>Projectile Tracker</h3>
+          <div id="dbgProjectiles">--</div>
+        </div>
+        <div class="ctrl-section" style="flex:1;min-width:250px">
+          <h3>Pickup Inspector</h3>
+          <div id="dbgPickups">--</div>
+        </div>
+        <div class="ctrl-section" style="flex:1;min-width:250px">
+          <h3>Zone Damage</h3>
+          <div id="dbgZone">--</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px">
+        <div class="ctrl-section" style="flex:1;min-width:300px">
+          <h3>WS Backpressure</h3>
+          <div id="dbgWS">--</div>
+        </div>
+        <div class="ctrl-section" style="flex:1;min-width:300px">
+          <h3>DB Query Stats</h3>
+          <div id="dbgDB">--</div>
+        </div>
+        <div class="ctrl-section" style="flex:1;min-width:300px">
+          <h3>Memory Trend</h3>
+          <canvas id="memChart" width="400" height="150" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px"></canvas>
+        </div>
+      </div>
+      <div class="ctrl-section" style="margin-top:12px">
+        <h3>Server Alerts</h3>
+        <div id="dbgAlerts" style="font-size:12px;color:var(--green)">No alerts</div>
+      </div>
+    </div>
+
+    <!-- Forensics Panel -->
+    <div class="panel" id="panel-forensics">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+        <div class="ctrl-section" style="flex:1;min-width:300px">
+          <h3>Bot Diff Viewer</h3>
+          <div class="ctrl-row">
+            <select id="diffBot1" style="flex:1"><option value="">Select Bot A</option></select>
+            <span style="color:var(--text2)">vs</span>
+            <select id="diffBot2" style="flex:1"><option value="">Select Bot B</option></select>
+            <button onclick="runBotDiff()">Compare</button>
+          </div>
+          <div id="diffResult" style="margin-top:8px;font-size:12px"></div>
+        </div>
+      </div>
+      <div class="ctrl-section">
+        <h3>Recent Deaths (Forensics)</h3>
+        <div id="deathForensics" style="font-size:12px">Watching for deaths via game events...</div>
+      </div>
+    </div>
+
+    <!-- Audit Log Panel -->
+    <div class="panel" id="panel-audit">
+      <div class="log-toolbar">
+        <span style="color:var(--text2)">Admin Action Audit Log</span>
+        <span id="auditCount" style="color:var(--text2);margin-left:auto">0 events</span>
+      </div>
+      <div class="log-container" id="auditLog" style="height:calc(100vh - 160px)"></div>
+    </div>
+
+    <!-- Anti-Cheat Panel -->
+    <div class="panel" id="panel-anticheat">
+      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button onclick="runAnticheatScan()" class="btn-danger">Run Scan</button>
+        <label style="color:var(--text2);font-size:11px"><input type="checkbox" id="acAutoScan"> Auto-scan (5s)</label>
+        <span id="acScanTime" style="color:var(--text2);font-size:11px;margin-left:auto">Not scanned yet</span>
+      </div>
+      <div class="ac-summary" id="acSummary"></div>
+      <div id="acIPFlags"></div>
+      <div id="acBotFlags"></div>
+    </div>
+
+    <!-- API Keys Panel -->
+    <div class="panel" id="panel-apikeys">
+      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button onclick="refreshAPIKeys()">Refresh</button>
+        <label style="color:var(--text2);font-size:11px"><input type="checkbox" id="showRevokedKeys"> Show Revoked</label>
+        <input id="apiKeySearch" placeholder="Search name, prefix, IP..." style="width:200px" oninput="filterAPIKeys()">
+        <span id="apiKeyCount" style="color:var(--text2);margin-left:auto;font-size:11px">0 keys</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table id="apiKeyTable">
+          <thead><tr>
+            <th>Key Prefix</th>
+            <th>Bot Name</th>
+            <th>Status</th>
+            <th>Online</th>
+            <th>Creation IP</th>
+            <th>Connected IP</th>
+            <th>Created</th>
+            <th>Last Seen</th>
+            <th>Elo</th>
+            <th>K/D</th>
+            <th>Rounds</th>
+            <th>Actions</th>
+          </tr></thead>
+          <tbody id="apiKeyTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Admin Tokens Panel -->
+    <div class="panel" id="panel-admintokens">
+      <div style="margin-bottom:12px">
+        <div class="ctrl-section">
+          <h3>Generate New Admin Token</h3>
+          <div class="ctrl-row">
+            <label style="color:var(--text2);font-size:11px">Label:</label>
+            <input id="newTokenLabel" placeholder="e.g. CI Deploy, Keith Mobile" style="width:200px">
+            <button class="btn-success" onclick="createAdminToken()">Generate Token</button>
+          </div>
+          <div id="newTokenResult" style="display:none;margin-top:8px;background:var(--bg);border:1px solid var(--green);border-radius:4px;padding:10px">
+            <div style="color:var(--green);font-size:11px;margin-bottom:4px">Token generated! Copy it now — it won't be shown again.</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="newTokenValue" readonly style="flex:1;font-size:11px;background:var(--bg2);padding:6px 8px">
+              <button onclick="copyNewToken()">Copy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+        <button onclick="refreshAdminTokens()">Refresh</button>
+        <span id="adminTokenCount" style="color:var(--text2);font-size:11px">0 tokens</span>
+      </div>
+      <table>
+        <thead><tr><th>Label</th><th>Token Hint</th><th>Source</th><th>Created</th><th>Actions</th></tr></thead>
+        <tbody id="adminTokenTableBody"></tbody>
+      </table>
+    </div>
+
+    <!-- Leaderboard Panel -->
+    <div class="panel" id="panel-leaderboard">
+      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+        <button onclick="refreshLeaderboard()">Refresh</button>
+        <select id="lbSort" onchange="refreshLeaderboard()" style="font-size:12px"><option value="kills">Kills</option><option value="elo">Elo</option><option value="kd_ratio">K/D Ratio</option><option value="best_streak">Best Streak</option></select>
+        <span id="lbCount" style="color:var(--text2);font-size:11px;margin-left:auto">--</span>
+      </div>
+      <table><thead><tr><th>#</th><th>Name</th><th>Kills</th><th>Deaths</th><th>K/D</th><th>Elo</th><th>Best Streak</th><th>Dmg Dealt</th><th>Rounds</th><th>Wins</th></tr></thead><tbody id="lbBody"></tbody></table>
+    </div>
+
+    <!-- Connection Log Panel -->
+    <div class="panel" id="panel-connlog">
+      <div class="log-toolbar">
+        <span style="color:var(--text2)">Bot Connection History</span>
+        <button onclick="document.getElementById('connLogEntries').innerHTML=''">Clear</button>
+        <span id="connLogCount" style="color:var(--text2);margin-left:auto">0 events</span>
+      </div>
+      <div class="log-container" id="connLogEntries" style="height:calc(100vh - 160px)"></div>
+    </div>
+
+    <!-- Controls Panel -->
+    <div class="panel" id="panel-controls">
+      <div class="ctrl-section">
+        <h3><span class="icon">&#9654;</span> Game Controls</h3>
+        <div class="ctrl-row">
+          <button class="btn-warn" onclick="gameAction('pause')">Pause Game</button>
+          <button class="btn-success" onclick="gameAction('resume')">Resume Game</button>
+          <button class="btn-danger" onclick="gameAction('restart-round')">Restart Round</button>
+          <button class="btn-danger" onclick="serverRestart()">Kick All + Restart</button>
+        </div>
+        <div class="ctrl-result" id="gameCtrlResult"></div>
+      </div>
+
+      <div class="ctrl-section">
+        <h3><span class="icon">&#128203;</span> Config Change History</h3>
+        <div id="configHistory" style="font-size:11px;max-height:200px;overflow-y:auto;color:var(--text2)">No changes recorded this session</div>
+      </div>
+      <div class="ctrl-section">
+        <h3><span class="icon">&#9881;</span> Game Configuration</h3>
+        <div class="config-grid" id="gameConfigGrid"></div>
+        <div class="ctrl-row" style="margin-top:10px">
+          <button onclick="loadGameConfig()">Reload Config</button>
+          <button class="btn-success" onclick="saveGameConfig()">Save Config</button>
+        </div>
+        <div class="ctrl-result" id="configResult"></div>
+      </div>
+      <div class="ctrl-section">
+        <h3><span class="icon">&#9733;</span> Demo Bots</h3>
+        <div class="ctrl-row">
+          <label style="color:var(--text2);font-size:11px">Count:</label>
+          <input type="number" id="demoBotCount" value="5" min="1" max="50" style="width:60px">
+          <button class="btn-success" onclick="startDemoBots()">Start Demo Bots</button>
+          <button class="btn-danger" onclick="stopDemoBots()">Stop All Demo Bots</button>
+        </div>
+        <div class="ctrl-result" id="demoResult"></div>
+      </div>
+      <div class="ctrl-section">
+        <h3><span class="icon">&#9881;</span> Server</h3>
+        <div class="ctrl-row">
+          <button onclick="forceGC()">Force GC</button>
+          <button onclick="deepHealth()">Deep Health Check</button>
+          <button onclick="dbStats()">DB Stats</button>
+          <button onclick="viewServerConfig()">Server Config</button>
+          <button onclick="viewLogs()">Server Logs</button>
+        </div>
+        <div class="ctrl-result" id="serverResult"></div>
+        <pre id="serverOutput" style="display:none;margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:10px;font-size:11px;max-height:300px;overflow:auto;white-space:pre-wrap"></pre>
+      </div>
+      <div class="ctrl-section">
+        <h3><span class="icon">&#9940;</span> IP Bans</h3>
+        <div class="ctrl-row">
+          <input id="ipBanInput" placeholder="IP address" style="width:160px">
+          <button class="btn-danger" onclick="addIPBan()">Ban IP</button>
+          <button onclick="refreshIPBans()">Refresh List</button>
+        </div>
+        <div id="ipBanList" style="margin-top:8px;font-size:12px"></div>
+        <div class="ctrl-result" id="ipBanResult"></div>
+      </div>
+
+      <div class="ctrl-section">
+        <h3><span class="icon">&#128229;</span> Export / Import Config</h3>
+        <div class="ctrl-row">
+          <button onclick="exportConfig()">Export Config JSON</button>
+          <button onclick="document.getElementById('configImportFile').click()">Import Config JSON</button>
+          <input type="file" id="configImportFile" accept=".json" style="display:none" onchange="importConfig(this)">
+        </div>
+        <div class="ctrl-result" id="exportResult"></div>
+      </div>
+
+      <div class="ctrl-section">
+        <h3><span class="icon" style="color:var(--red)">&#9888;</span> Data Management (Destructive)</h3>
+        <div class="ctrl-row">
+          <button class="btn-danger" onclick="resetLeaderboard()">Reset Leaderboard</button>
+          <label style="color:var(--text2);font-size:11px;margin-left:16px">Stale days:</label>
+          <input type="number" id="staleDays" value="30" min="1" style="width:60px">
+          <button class="btn-warn" onclick="cleanupStale()">Cleanup Stale Keys</button>
+        </div>
+        <div class="ctrl-result" id="dataResult"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<button id="fsExitFloat" onclick="toggleFullscreen()">Exit Fullscreen (F)</button>
+
+<!-- Keyboard Shortcuts Help -->
+<div id="kbdHelp" onclick="if(event.target===this)this.classList.remove('visible')">
+  <div class="inner">
+    <h3 style="color:var(--accent);margin-bottom:10px;font-size:14px">Keyboard Shortcuts</h3>
+    <div style="font-size:12px;line-height:2">
+      <div><kbd>1</kbd> Overview &nbsp; <kbd>2</kbd> Monitor &gt; Live Map &nbsp; <kbd>3</kbd> Bot Inspector</div>
+      <div><kbd>4</kbd> Kill Feed &nbsp; <kbd>5</kbd> Anti-Cheat &nbsp; <kbd>6</kbd> Controls</div>
+      <div><kbd>7</kbd> Balance &nbsp; <kbd>8</kbd> Leaderboard &nbsp; <kbd>9</kbd> Damage Log</div>
+      <div><kbd>/</kbd> Focus search &nbsp; <kbd>F</kbd> Fullscreen &nbsp; <kbd>Esc</kbd> Close modals</div>
+      <div><kbd>?</kbd> This help</div>
+    </div>
+    <button onclick="document.getElementById('kbdHelp').classList.remove('visible')" style="margin-top:12px">Close</button>
+  </div>
+</div>
+
+<!-- Profiler Modal -->
+<div id="profilerOverlay" onclick="if(event.target===this)closeProfiler()">
+  <div id="profilerModal">
+    <span class="close-btn" onclick="closeProfiler()">&times;</span>
+    <div id="profilerContent">Loading...</div>
+  </div>
+</div>
+
+<!-- Minimap context menu -->
+<div id="mapCtxMenu">
+  <div class="ctx-header"><b id="ctxBotName">--</b><div class="ctx-sub" id="ctxBotSub">--</div></div>
+  <div class="ctx-item" onclick="ctxAction('inspect')">Inspect in Bot Inspector</div>
+  <div class="ctx-item" style="color:var(--purple)" onclick="ctxAction('profile')">Profile Behavior</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item success" onclick="ctxAction('heal')">Heal to 100</div>
+  <div class="ctx-item" onclick="ctxAction('teleportCenter')">Teleport to Center</div>
+  <div class="ctx-item" onclick="ctxAction('teleport')">Teleport to...</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" style="color:var(--orange)" onclick="ctxAction('freeze')">Freeze</div>
+  <div class="ctx-item" onclick="ctxAction('unfreeze')">Unfreeze</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item danger" onclick="ctxAction('kill')">Kill</div>
+  <div class="ctx-item danger" onclick="ctxAction('kick')">Kick</div>
+  <div class="ctx-item danger" onclick="ctxAction('ban')">Ban</div>
+</div>
+
+<!-- Toast container -->
+<div id="toast"></div>
+
+<script>
+// ========== State ==========
+let token = sessionStorage.getItem('arena_admin_token') || '';
+let sseSource = null;
+const paused = {conn:false,http:false,ws:false,ge:false,kf:false};
+const logs = {conn:[],http:[],ws:[],ge:[],kf:[]};
+const MAX_LOG = 500;
+let overviewInterval = null;
+let currentTab = 'overview';
+let minimapInterval = null;
+let minimapRunning = false;
+let botAutoRefreshInterval = null;
+let tickInterval = null;
+const tickHistory = []; // {tick,bots,projectiles,pickups,goroutines,heapMB}
+const TICK_HISTORY_MAX = 60;
+let lastGameState = null; // cached for minimap hover
+
+// Kill feed stats
+const kfWeapons = {};
+const kfKillers = {};
+const kfDeaths = {};
+
+// ========== API ==========
+const API_BASE = getAPIBase();
+
+function getAPIBase() {
+  const p = location.pathname;
+  if (p.startsWith('/arena/')) return '/arena/api/v1/admin';
+  return '/api/v1/admin';
+}
+
+async function api(path, opts={}) {
+  const res = await fetch(API_BASE + path, {
+    ...opts,
+    headers: {'X-Admin-Token': token, 'Content-Type':'application/json', ...(opts.headers||{})}
+  });
+  if (res.status === 401 || res.status === 403) { logout(); throw new Error('unauthorized'); }
+  return res.json();
+}
+
+// ========== Auth ==========
+function doLogin() {
+  const t = document.getElementById('tokenInput').value.trim();
+  if (!t) return;
+  token = t;
+  sessionStorage.setItem('arena_admin_token', token);
+  testAuth();
+}
+
+async function testAuth() {
+  try {
+    await api('/dashboard/overview');
+    showApp();
+  } catch(e) {
+    document.getElementById('loginError').textContent = 'Invalid token';
+    sessionStorage.removeItem('arena_admin_token');
+    token = '';
+  }
+}
+
+function logout() {
+  token = '';
+  sessionStorage.removeItem('arena_admin_token');
+  if (sseSource) sseSource.close();
+  if (overviewInterval) clearInterval(overviewInterval);
+  stopMinimap();
+  stopBotAutoRefresh();
+  stopTickInspector();
+  stopACAutoScan();
+  stopDebugAuto();
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login').style.display = 'flex';
+}
+
+function showApp() {
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  startSSE();
+  refreshOverview();
+  // Load tab from URL if present
+  if (urlTab) switchTab(urlTab);
+  overviewInterval = setInterval(() => { refreshOverview(); if(currentTab==='overview') refreshSpectators(); }, 3000);
+  refreshSpectators();
+}
+
+// ========== SSE ==========
+function startSSE() {
+  if (sseSource) sseSource.close();
+  startFetchSSE(API_BASE + '/dashboard/stream/all');
+}
+
+async function startFetchSSE(url) {
+  try {
+    const res = await fetch(url, {
+      headers: {'X-Admin-Token': token, 'Accept': 'text/event-stream'}
+    });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      let eventType = '';
+      let eventData = '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+        else if (line.startsWith('data: ')) eventData = line.slice(6);
+        else if (line === '' && eventData) {
+          handleSSEEvent(eventType, eventData);
+          eventType = '';
+          eventData = '';
+        }
+      }
+    }
+  } catch(e) {
+    console.error('SSE error:', e);
+    setTimeout(() => startFetchSSE(url), 3000);
+  }
+}
+
+function handleSSEEvent(type, data) {
+  try {
+    const evt = JSON.parse(data);
+    switch(type) {
+      case 'connection':
+      case 'auth_failure':
+        addLogEntry('conn', evt);
+        trackConnection(evt);
+        break;
+      case 'http_request':
+        addLogEntry('http', evt);
+        break;
+      case 'ws_message':
+        addLogEntry('ws', evt);
+        break;
+      case 'game_event':
+        addLogEntry('ge', evt);
+        if (evt.data && evt.data.event === 'kill') {
+          addKillFeedEntry(evt);
+          trackDeath(evt);
+        }
+        if (evt.data && evt.data.event === 'damage') {
+          handleDamageEvent(evt);
+        }
+        break;
+    }
+  } catch(e) {}
+}
+
+function addLogEntry(logType, evt) {
+  logs[logType].push(evt);
+  if (logs[logType].length > MAX_LOG) logs[logType].shift();
+  if (!paused[logType]) {
+    renderLogEntry(logType, evt);
+    updateLogCount(logType);
+  }
+}
+
+// ========== Tabs ==========
+function switchTab(tabName) {
+  // Clear all active states
+  document.querySelectorAll('.tab-direct,.tab-item').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-group-label').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+
+  // Activate the clicked item
+  const item = document.querySelector(`.tab-item[data-tab="${tabName}"]`) ||
+               document.querySelector(`.tab-direct[data-tab="${tabName}"]`);
+  if (item) item.classList.add('active');
+
+  // Highlight parent group label
+  const group = item?.closest('.tab-group');
+  if (group) group.querySelector('.tab-group-label')?.classList.add('active');
+
+  // Show panel
+  currentTab = tabName;
+  const panel = document.getElementById('panel-' + currentTab);
+  if (panel) panel.classList.add('active');
+
+  // Tab-specific init
+  if (currentTab === 'bots') { refreshBots(); startBotAutoRefresh(); } else stopBotAutoRefresh();
+  if (currentTab === 'minimap') startMinimap(); else stopMinimap();
+  if (currentTab === 'ticks') startTickInspector(); else stopTickInspector();
+  if (currentTab === 'debug') { refreshDebug(); startDebugAuto(); } else stopDebugAuto();
+  if (currentTab === 'anticheat') { runAnticheatScan(); startACAutoScan(); } else stopACAutoScan();
+  if (currentTab === 'errors') refreshErrors();
+  if (currentTab === 'ratelimits') refreshRateLimits();
+  if (currentTab === 'controls') { loadGameConfig(); refreshIPBans(); }
+  if (currentTab === 'rounds') refreshRounds();
+  if (currentTab === 'killfeed') renderKillFeedStats();
+  if (currentTab === 'balance') refreshBalance();
+  if (currentTab === 'forensics') { loadDiffSelects(); renderDeathForensics(); }
+  if (currentTab === 'apikeys') refreshAPIKeys();
+  if (currentTab === 'admintokens') refreshAdminTokens();
+  if (currentTab === 'leaderboard') refreshLeaderboard();
+  if (currentTab === 'controls') renderConfigHistory();
+}
+
+// Direct tab clicks
+document.querySelectorAll('.tab-direct').forEach(tab => {
+  tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+});
+
+// Dropdown item clicks
+document.querySelectorAll('.tab-item').forEach(item => {
+  item.addEventListener('click', (e) => {
+    switchTab(item.dataset.tab);
+    // Close dropdown after click
+    e.stopPropagation();
+  });
+});
+
+// ========== Overview ==========
+async function refreshOverview() {
+  try {
+    const data = await api('/dashboard/overview');
+    const gs = data.game_state || {};
+    let phase = 'lobby';
+    if (gs.round_phase) phase = gs.round_phase;
+
+    document.getElementById('uptimeDisplay').textContent = data.uptime || '--';
+    document.getElementById('botsCount').textContent = (data.bots_online||0) + ' bots';
+
+    const mem = data.memory || {};
+    const ec = data.event_counts || {};
+
+    document.getElementById('overviewCards').innerHTML = `
+      <div class="card"><div class="label">Bots Online</div><div class="value green">${data.bots_online||0}</div></div>
+      <div class="card"><div class="label">Spectators</div><div class="value">${data.spectators||0}</div></div>
+      <div class="card"><div class="label">Round Phase</div><div class="value ${phase==='active'?'green':''}">${phase}</div></div>
+      <div class="card"><div class="label">Round #</div><div class="value">${gs.round_number||0}</div></div>
+      <div class="card"><div class="label">Tick Rate</div><div class="value">${data.tick_rate||0}/s</div></div>
+      <div class="card"><div class="label">Uptime</div><div class="value" style="font-size:14px">${data.uptime||'--'}</div></div>
+      <div class="card"><div class="label">Heap Memory</div><div class="value" style="font-size:14px">${mem.heap_alloc_mb||0} MB</div></div>
+      <div class="card"><div class="label">Goroutines</div><div class="value">${data.goroutines||0}</div></div>
+      <div class="card"><div class="label">GC Runs</div><div class="value">${mem.gc_runs||0}</div></div>
+      <div class="card"><div class="label">Active Bots</div><div class="value green">${gs.bots_active||0}</div></div>
+      <div class="card"><div class="label">Waiting Bots</div><div class="value orange">${gs.bots_waiting||0}</div></div>
+      <div class="card"><div class="label">Paused</div><div class="value ${data.paused?'red':'green'}">${data.paused?'YES':'NO'}</div></div>
+    `;
+
+    const zone = gs.zone || {};
+    document.getElementById('gameStateInfo').innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px">
+        <div><span style="color:var(--text2)">Tick:</span> ${gs.tick||0}</div>
+        <div><span style="color:var(--text2)">Round ID:</span> ${(gs.round_id||'--').slice(0,8)}</div>
+        <div><span style="color:var(--text2)">Ticks Elapsed:</span> ${gs.ticks_elapsed||0}</div>
+        <div><span style="color:var(--text2)">Projectiles:</span> ${gs.projectiles||0}</div>
+        <div><span style="color:var(--text2)">Pickups:</span> ${gs.pickups||0}</div>
+        <div><span style="color:var(--text2)">Zone Radius:</span> ${zone.radius||'--'}</div>
+        <div><span style="color:var(--text2)">HTTP Events:</span> ${ec.http_log||0}</div>
+        <div><span style="color:var(--text2)">Connections:</span> ${ec.connections||0}</div>
+        <div><span style="color:var(--text2)">Game Events:</span> ${ec.game_events||0}</div>
+      </div>
+    `;
+  } catch(e) {}
+}
+
+// ========== Log Rendering ==========
+function renderLogEntry(logType, evt) {
+  const container = getLogContainer(logType);
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  const time = fmtTime(evt.timestamp);
+  const typeClass = evt.type || logType;
+  const d = evt.data || {};
+  let msg = '';
+  switch(logType) {
+    case 'conn': {
+      const action = d.action || '';
+      const err = d.error || '';
+      msg = `<b>${action}</b>`;
+      if (d.bot_name) msg += ` ${esc(d.bot_name)}`;
+      if (d.ip) msg += ` <span style="color:var(--text2)">${esc(d.ip)}</span>`;
+      if (err) msg += ` <span style="color:var(--red)">${esc(err)}</span>`;
+      break;
+    }
+    case 'http': {
+      const sc = statusClass(d.status);
+      msg = `<span class="status-badge ${sc}">${d.status}</span> <b>${esc(d.method||'')}</b> ${esc(d.path||'')} <span style="color:var(--text2)">${(d.duration_ms||0).toFixed(1)}ms ${esc(d.ip||'')}</span>`;
+      break;
+    }
+    case 'ws':
+      msg = `<b>${esc(d.action||'')}</b> <span style="color:var(--cyan)">${esc(d.bot_name||d.bot_id||'')}</span>`;
+      if (d.target) msg += ` -> ${esc(d.target)}`;
+      break;
+    case 'ge': {
+      const event = d.event || '';
+      msg = `<b style="color:var(--purple)">${esc(event)}</b>`;
+      if (event === 'kill') msg += ` ${esc(d.killer_name||'')} killed ${esc(d.victim_name||'')} with ${esc(d.weapon||'')}`;
+      else if (event === 'round_start') msg += ` Round #${d.round_number} (${d.bots} bots)`;
+      else if (event === 'round_end') msg += ` Round #${d.round_number} winner: ${esc(d.winner_name||'none')}`;
+      else if (event === 'afk_kick') msg += ` ${esc(d.bot_name||'')} kicked`;
+      else msg += ` ${JSON.stringify(d).slice(0,100)}`;
+      break;
+    }
+  }
+  div.innerHTML = `<span class="log-time">${time}</span><span class="log-type ${typeClass}">${typeClass}</span><span class="log-msg">${msg}</span>`;
+  container.prepend(div);
+  while (container.children.length > MAX_LOG) container.removeChild(container.lastChild);
+}
+
+function getLogContainer(type) {
+  const map = {conn:'connLog',http:'httpLog',ws:'wsLog',ge:'geLog',kf:'kfLog',dmg:'dmgLog'};
+  return document.getElementById(map[type]);
+}
+
+function updateLogCount(type) {
+  const map = {conn:'connCount',http:'httpCount',ws:'wsCount',ge:'geCount',kf:'kfCount',dmg:'dmgCount'};
+  const el = document.getElementById(map[type]);
+  if (el) el.textContent = logs[type].length + (type==='kf'?' kills':' events');
+}
+
+function togglePause(type) {
+  paused[type] = !paused[type];
+  const map = {conn:'connPause',http:'httpPause',ws:'wsPause',ge:'gePause',kf:'kfPause',dmg:'dmgPause'};
+  const btn = document.getElementById(map[type]);
+  if (btn) {
+    btn.textContent = paused[type] ? 'Resume' : 'Pause';
+    btn.classList.toggle('active', paused[type]);
+  }
+  if (!paused[type]) {
+    const container = getLogContainer(type);
+    if (container) container.innerHTML = '';
+    if (type === 'kf') {
+      logs.kf.forEach(evt => renderKillEntry(evt));
+    } else {
+      logs[type].forEach(evt => renderLogEntry(type, evt));
+    }
+    updateLogCount(type);
+  }
+}
+
+function clearLog(type) {
+  logs[type] = [];
+  const container = getLogContainer(type);
+  if (container) container.innerHTML = '';
+  updateLogCount(type);
+  if (type === 'kf') {
+    Object.keys(kfWeapons).forEach(k => delete kfWeapons[k]);
+    Object.keys(kfKillers).forEach(k => delete kfKillers[k]);
+    Object.keys(kfDeaths).forEach(k => delete kfDeaths[k]);
+    renderKillFeedStats();
+  }
+}
+
+// ========== HTTP Log Filtering ==========
+function filterHTTPLog() {
+  const status = document.getElementById('httpFilterStatus').value;
+  const path = document.getElementById('httpFilterPath').value.toLowerCase();
+  const ip = document.getElementById('httpFilterIP').value.toLowerCase();
+  const container = document.getElementById('httpLog');
+  container.innerHTML = '';
+  logs.http.forEach(evt => {
+    const d = evt.data || {};
+    if (status && !String(d.status||'').startsWith(status)) return;
+    if (path && !(d.path||'').toLowerCase().includes(path)) return;
+    if (ip && !(d.ip||'').toLowerCase().includes(ip)) return;
+    renderLogEntry('http', evt);
+  });
+}
+
+function filterGameEvents() {
+  const filter = document.getElementById('geFilter').value;
+  const container = document.getElementById('geLog');
+  container.innerHTML = '';
+  logs.ge.forEach(evt => {
+    const d = evt.data || {};
+    if (filter && (d.event||'') !== filter) return;
+    renderLogEntry('ge', evt);
+  });
+}
+
+// ========== Bot Inspector (auto-refresh + HP bars) ==========
+let botAutoRefreshEnabled = true;
+
+function startBotAutoRefresh() {
+  stopBotAutoRefresh();
+  if (document.getElementById('botAutoRefresh').checked) {
+    botAutoRefreshInterval = setInterval(refreshBots, 2000);
+  }
+}
+
+function stopBotAutoRefresh() {
+  if (botAutoRefreshInterval) { clearInterval(botAutoRefreshInterval); botAutoRefreshInterval = null; }
+}
+
+function toggleBotAutoRefresh() {
+  if (document.getElementById('botAutoRefresh').checked) startBotAutoRefresh();
+  else stopBotAutoRefresh();
+}
+
+async function refreshBots() {
+  try {
+    const data = await api('/dashboard/bots');
+    const bots = (data.bots || []).sort((a,b) => {
+      const pa = isPinned(a.bot_id) ? 0 : 1;
+      const pb = isPinned(b.bot_id) ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      return (a.bot_id||'').localeCompare(b.bot_id||'');
+    });
+    document.getElementById('botListCount').textContent = bots.length + ' bots';
+    const tbody = document.getElementById('botTableBody');
+
+    // Build a map of existing rows by bot_id for in-place updates
+    const existingRows = {};
+    tbody.querySelectorAll('tr.bot-row').forEach(tr => {
+      const id = tr.dataset.botId;
+      if (id) existingRows[id] = tr;
+    });
+
+    const newBotIds = new Set(bots.map(b => b.bot_id));
+
+    // Remove rows for bots that are gone (but not the detail row)
+    Object.keys(existingRows).forEach(id => {
+      if (!newBotIds.has(id)) {
+        existingRows[id].remove();
+        // Also remove its detail row if open
+        const detail = tbody.querySelector(`.bot-detail-row[data-bot-id="${id}"]`);
+        if (detail) detail.remove();
+      }
+    });
+
+    // Update or insert rows
+    let insertAfter = null; // track position for insertions
+    bots.forEach(b => {
+      const hpPct = b.max_hp ? Math.max(0, Math.min(100, (b.hp / b.max_hp) * 100)) : 0;
+      const hpColor = hpPct > 60 ? 'var(--green)' : hpPct > 25 ? 'var(--orange)' : 'var(--red)';
+
+      const hpHtml = b.is_alive ?
+        `<div class="hp-bar-wrap"><div class="hp-bar" style="width:${hpPct}%;background:${hpColor}"></div></div> <span style="color:${hpColor};font-size:11px">${Math.round(b.hp)}</span>` :
+        '<span style="color:var(--red)">dead</span>';
+      const statusBadge = `<span class="status-badge ${b.status==='active'?'s2xx':'s3xx'}">${b.status}</span>`;
+
+      const pinned = isPinned(b.bot_id);
+      const note = getBotNote(b.bot_id);
+      const noteHtml = note ? `<div class="bot-note">${esc(note)}</div>` : '';
+
+      const existing = existingRows[b.bot_id];
+      if (existing) {
+        const cells = existing.cells;
+        // 0=checkbox, 1=pin, 2=name, 3=id, 4=hp, 5=weapon, 6=elo, 7=kd, 8=dmg, 9=uptime, 10=status
+        cells[4].innerHTML = hpHtml;
+        cells[5].textContent = b.weapon || '';
+        cells[6].textContent = b.elo || '';
+        cells[7].textContent = (b.kills||0) + '/' + (b.deaths||0);
+        cells[8].textContent = b.round_damage_dealt ? Math.round(b.round_damage_dealt) : '--';
+        cells[9].textContent = b.connected_at ? fmtUptime(b.connected_at) : '--';
+        cells[10].innerHTML = statusBadge;
+        existing.classList.toggle('pinned', pinned);
+        insertAfter = existing;
+        const next = existing.nextElementSibling;
+        if (next && next.classList.contains('bot-detail-row')) insertAfter = next;
+      } else {
+        const tr = document.createElement('tr');
+        tr.className = 'bot-row' + (pinned ? ' pinned' : '');
+        tr.dataset.botId = b.bot_id;
+        tr.onclick = function() { inspectBot(b.bot_id, tr); };
+        tr.innerHTML = `
+          <td style="width:30px" onclick="event.stopPropagation()"><input type="checkbox" class="bot-select" onchange="updateBulkBar()" data-bot-id="${esc(b.bot_id)}" data-bot-name="${esc(b.name)}"></td>
+          <td style="width:20px;cursor:pointer;text-align:center" onclick="event.stopPropagation();togglePin('${esc(b.bot_id)}')" title="Pin/Unpin">${pinned?'&#9733;':'&#9734;'}</td>
+          <td><span style="color:${esc(b.avatar_color||'#888')}">\u25CF</span> ${esc(b.name)}${noteHtml}</td>
+          <td style="color:var(--text2)">${(b.bot_id||'').slice(0,8)}</td>
+          <td>${hpHtml}</td>
+          <td>${esc(b.weapon)}</td>
+          <td>${b.elo}</td>
+          <td>${b.kills||0}/${b.deaths||0}</td>
+          <td style="font-size:11px;color:var(--text2)">${b.round_damage_dealt ? Math.round(b.round_damage_dealt) : '--'}</td>
+          <td style="font-size:11px;color:var(--text2)">${b.connected_at ? fmtUptime(b.connected_at) : '--'}</td>
+          <td>${statusBadge}</td>`;
+        if (insertAfter && insertAfter.nextSibling) {
+          tbody.insertBefore(tr, insertAfter.nextSibling);
+        } else {
+          tbody.appendChild(tr);
+        }
+        insertAfter = tr;
+      }
+    });
+  } catch(e) {}
+}
+
+async function inspectBot(id, clickedRow) {
+  const existing = document.querySelector('.bot-detail-row');
+  if (existing) {
+    if (existing.dataset.botId === id) { existing.remove(); return; }
+    existing.remove();
+  }
+  try {
+    const b = await api('/dashboard/bots/' + id);
+    const items = Object.entries(b).map(([k,v]) => {
+      let val = v;
+      if (typeof v === 'object' && v !== null) val = JSON.stringify(v);
+      if (typeof v === 'number') val = Number.isInteger(v) ? v : v.toFixed(2);
+      return `<div class="item"><span class="k">${esc(k)}</span><span>${esc(String(val))}</span></div>`;
+    }).join('');
+
+    const detailRow = document.createElement('tr');
+    detailRow.className = 'bot-detail-row';
+    detailRow.dataset.botId = id;
+    detailRow.innerHTML = `
+      <td colspan="11" style="padding:0;border-bottom:1px solid var(--border)">
+        <div class="bot-detail" style="margin:0;border-radius:0;border:none;border-top:1px solid var(--accent)">
+          <h3 style="margin-bottom:10px;color:var(--accent)">${esc(b.name||id)} <span style="color:var(--text2);font-size:11px">${id}</span></h3>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px">
+            <div><span style="color:var(--text2)">HP:</span> ${typeof b.hp==='number'?b.hp.toFixed(1):'--'}/${b.max_hp||'--'}</div>
+            <div><span style="color:var(--text2)">Speed:</span> ${b.speed||'--'}</div>
+            <div><span style="color:var(--text2)">Weapon:</span> ${esc(b.weapon)}</div>
+            <div><span style="color:var(--text2)">Elo:</span> ${b.elo||'--'}</div>
+            <div><span style="color:var(--text2)">Kill Streak:</span> ${b.kill_streak||0}</div>
+            <div><span style="color:var(--text2)">Position:</span> ${b.position ? '('+b.position[0].toFixed(0)+', '+b.position[1].toFixed(0)+')' : '--'}</div>
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;font-size:11px;color:var(--text2)">
+            <div>Round K/D: <span style="color:var(--text)">${b.round_kills||0}/${b.round_deaths||0}</span></div>
+            <div>Dmg Dealt: <span style="color:var(--green)">${typeof b.round_damage_dealt==='number'?b.round_damage_dealt.toFixed(0):'--'}</span></div>
+            <div>Dmg Taken: <span style="color:var(--red)">${typeof b.round_damage_taken==='number'?b.round_damage_taken.toFixed(0):'--'}</span></div>
+            <div>Shots: <span style="color:var(--text)">${b.round_shots_hit||0}/${b.round_shots_fired||0}</span> (${b.round_shots_fired ? ((b.round_shots_hit/b.round_shots_fired)*100).toFixed(0)+'%' : '--'})</div>
+            <div>Distance: <span style="color:var(--text)">${typeof b.round_distance==='number'?b.round_distance.toFixed(0):'--'}</span></div>
+            <div>Pickups: <span style="color:var(--purple)">${b.round_pickups||0}</span></div>
+          </div>
+          <details style="margin-bottom:10px"><summary style="cursor:pointer;color:var(--text2);font-size:11px">All Fields</summary><div class="grid" style="margin-top:8px">${items}</div></details>
+          <div class="bot-actions">
+            <button class="btn-danger" onclick="event.stopPropagation();botAction('${esc(id)}','kick','${esc(b.name||id)}')">Kick</button>
+            <button class="btn-danger" onclick="event.stopPropagation();botAction('${esc(id)}','ban','${esc(b.name||id)}')">Ban</button>
+            <button class="btn-danger" onclick="event.stopPropagation();botAction('${esc(id)}','kill','${esc(b.name||id)}')">Kill</button>
+            <button class="btn-success" onclick="event.stopPropagation();botHeal('${esc(id)}','${esc(b.name||id)}')">Heal to 100</button>
+            <button style="border-color:var(--purple);color:var(--purple)" onclick="event.stopPropagation();profileBot('${esc(id)}','${esc(b.name||id)}')">Profile Behavior</button>
+            <button class="btn-warn" onclick="event.stopPropagation();freezeBot('${esc(id)}','${esc(b.name||id)}')">Freeze</button>
+            <button onclick="event.stopPropagation();unfreezeBot('${esc(id)}','${esc(b.name||id)}')">Unfreeze</button>
+            <button onclick="event.stopPropagation();botTeleport('${esc(id)}','${esc(b.name||id)}',1000,1000)">Teleport to Center</button>
+            <button onclick="event.stopPropagation();promptTeleport('${esc(id)}','${esc(b.name||id)}')">Teleport to...</button>
+            <button onclick="event.stopPropagation();addBotNote('${esc(id)}','${esc(b.name||id)}')" style="border-color:var(--text2)">Note</button>
+          </div>
+        </div>
+      </td>
+    `;
+    clickedRow.after(detailRow);
+  } catch(e) {}
+}
+
+// ========== Bot Multi-Select ==========
+function getSelectedBots() {
+  const checked = document.querySelectorAll('#botTableBody .bot-select:checked');
+  return Array.from(checked).map(cb => ({id: cb.dataset.botId, name: cb.dataset.botName}));
+}
+
+function updateBulkBar() {
+  const selected = getSelectedBots();
+  const bar = document.getElementById('bulkActions');
+  const count = document.getElementById('bulkCount');
+  if (selected.length > 0) {
+    bar.classList.add('visible');
+    count.textContent = selected.length;
+  } else {
+    bar.classList.remove('visible');
+  }
+  // Update row highlight
+  document.querySelectorAll('#botTableBody tr.bot-row').forEach(tr => {
+    const cb = tr.querySelector('.bot-select');
+    tr.classList.toggle('selected', cb && cb.checked);
+  });
+  // Update select-all checkbox state
+  const allCbs = document.querySelectorAll('#botTableBody .bot-select');
+  const allChecked = allCbs.length > 0 && selected.length === allCbs.length;
+  document.getElementById('selectAllBots').checked = allChecked;
+  document.getElementById('selectAllBots').indeterminate = selected.length > 0 && !allChecked;
+}
+
+function toggleSelectAllBots(checked) {
+  document.querySelectorAll('#botTableBody .bot-select').forEach(cb => cb.checked = checked);
+  updateBulkBar();
+}
+
+function clearBotSelection() {
+  document.querySelectorAll('#botTableBody .bot-select').forEach(cb => cb.checked = false);
+  document.getElementById('selectAllBots').checked = false;
+  updateBulkBar();
+}
+
+async function bulkBotAction(action) {
+  const bots = getSelectedBots();
+  if (!bots.length) return;
+  const names = bots.map(b => b.name).join(', ');
+
+  if (action === 'ban') {
+    if (!confirm('Ban ' + bots.length + ' bots? (' + names + ')\nThis will revoke their API keys.')) return;
+  } else if (action === 'kick') {
+    if (!confirm('Kick ' + bots.length + ' bots? (' + names + ')')) return;
+  }
+
+  let ok = 0, fail = 0;
+  for (const bot of bots) {
+    try {
+      switch(action) {
+        case 'kick':
+        case 'ban':
+        case 'kill':
+          await api('/bots/' + bot.id + '/' + action, {method:'POST', body:JSON.stringify({reason:'Admin bulk action'})});
+          break;
+        case 'heal':
+          await api('/bots/' + bot.id + '/heal', {method:'POST', body:JSON.stringify({hp:100})});
+          break;
+        case 'freeze':
+          await api('/bots/' + bot.id + '/freeze', {method:'POST'});
+          break;
+        case 'unfreeze':
+          await api('/bots/' + bot.id + '/unfreeze', {method:'POST'});
+          break;
+        case 'teleportCenter':
+          await api('/bots/' + bot.id + '/teleport', {method:'POST', body:JSON.stringify({x:1000, y:1000})});
+          break;
+      }
+      ok++;
+    } catch(e) { fail++; }
+  }
+
+  const label = {kick:'Kicked',ban:'Banned',kill:'Killed',heal:'Healed',freeze:'Froze',unfreeze:'Unfroze',teleportCenter:'Teleported'}[action] || action;
+  toast(label + ' ' + ok + '/' + bots.length + ' bots' + (fail ? ' (' + fail + ' failed)' : ''), fail ? 'error' : 'success');
+  clearBotSelection();
+  // Remove detail rows for kicked/banned bots
+  if (action === 'kick' || action === 'ban') {
+    document.querySelectorAll('.bot-detail-row').forEach(r => r.remove());
+  }
+  setTimeout(refreshBots, 500);
+}
+
+// ========== Kill Feed ==========
+function addKillFeedEntry(evt) {
+  const d = evt.data || {};
+  logs.kf.push(evt);
+  if (logs.kf.length > MAX_LOG) logs.kf.shift();
+
+  // Track stats
+  const w = d.weapon || 'unknown';
+  const k = d.killer_name || 'unknown';
+  const v = d.victim_name || 'unknown';
+  kfWeapons[w] = (kfWeapons[w]||0) + 1;
+  kfKillers[k] = (kfKillers[k]||0) + 1;
+  kfDeaths[v] = (kfDeaths[v]||0) + 1;
+
+  if (!paused.kf) {
+    renderKillEntry(evt);
+    updateLogCount('kf');
+    if (currentTab === 'killfeed') renderKillFeedStats();
+  }
+}
+
+function renderKillEntry(evt) {
+  const container = document.getElementById('kfLog');
+  if (!container) return;
+  const d = evt.data || {};
+  const div = document.createElement('div');
+  div.className = 'kill-entry';
+  div.innerHTML = `<span class="log-time">${fmtTime(evt.timestamp)}</span> <span class="killer">${esc(d.killer_name||'?')}</span> killed <span class="victim">${esc(d.victim_name||'?')}</span> with <span class="weapon">${esc(d.weapon||'?')}</span>`;
+  container.prepend(div);
+  while (container.children.length > MAX_LOG) container.removeChild(container.lastChild);
+}
+
+function renderKillFeedStats() {
+  // Weapons
+  const wSorted = Object.entries(kfWeapons).sort((a,b)=>b[1]-a[1]);
+  const totalKills = wSorted.reduce((s,e)=>s+e[1],0) || 1;
+  document.getElementById('kfWeaponBreakdown').innerHTML = wSorted.length ? wSorted.map(([w,c]) => {
+    const pct = ((c/totalKills)*100).toFixed(0);
+    return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px"><span style="color:var(--orange);min-width:80px">${esc(w)}</span><div class="hp-bar-wrap" style="flex:1"><div class="hp-bar" style="width:${pct}%;background:var(--orange)"></div></div><span style="min-width:50px;text-align:right">${c} (${pct}%)</span></div>`;
+  }).join('') : '<span style="color:var(--text2)">No kills yet</span>';
+
+  // Top killers
+  const kSorted = Object.entries(kfKillers).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  document.getElementById('kfTopKillers').innerHTML = kSorted.length ? kSorted.map(([n,c],i) =>
+    `<div style="margin-bottom:2px"><span style="color:var(--text2)">${i+1}.</span> <span style="color:var(--green)">${esc(n)}</span> <span style="color:var(--text2)">${c} kills</span></div>`
+  ).join('') : '<span style="color:var(--text2)">No kills yet</span>';
+
+  // Most deaths
+  const dSorted = Object.entries(kfDeaths).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  document.getElementById('kfMostDeaths').innerHTML = dSorted.length ? dSorted.map(([n,c],i) =>
+    `<div style="margin-bottom:2px"><span style="color:var(--text2)">${i+1}.</span> <span style="color:var(--red)">${esc(n)}</span> <span style="color:var(--text2)">${c} deaths</span></div>`
+  ).join('') : '<span style="color:var(--text2)">No deaths yet</span>';
+}
+
+// ========== Live Mini-Map ==========
+function startMinimap() {
+  if (minimapRunning) return;
+  minimapRunning = true;
+  const rate = parseInt(document.getElementById('minimapRate').value) || 500;
+  fetchAndDrawMap();
+  minimapInterval = setInterval(fetchAndDrawMap, rate);
+  document.getElementById('minimapToggle').textContent = 'Pause';
+}
+
+function stopMinimap() {
+  minimapRunning = false;
+  if (minimapInterval) { clearInterval(minimapInterval); minimapInterval = null; }
+}
+
+function toggleMinimap() {
+  if (minimapRunning) {
+    stopMinimap();
+    document.getElementById('minimapToggle').textContent = 'Resume';
+  } else {
+    startMinimap();
+  }
+}
+
+function setMinimapRate() {
+  if (minimapRunning) { stopMinimap(); startMinimap(); }
+}
+
+async function fetchAndDrawMap() {
+  try {
+    const gs = await api('/debug/game-state');
+    lastGameState = gs;
+    drawMinimap(gs);
+    document.getElementById('minimapTick').textContent = 'Tick: ' + (gs.tick||0) + ' | Phase: ' + (gs.round_phase||'--');
+
+    // Weapon stats from bots
+    const wStats = {};
+    (gs.bots||[]).forEach(b => {
+      const w = b.weapon || 'unknown';
+      if (!wStats[w]) wStats[w] = {count:0,alive:0,totalKills:0};
+      wStats[w].count++;
+      if (b.is_alive) wStats[w].alive++;
+      wStats[w].totalKills += (b.kills||0);
+    });
+    document.getElementById('minimapWeaponStats').innerHTML = Object.entries(wStats).sort((a,b) => a[0].localeCompare(b[0])).map(([w,s]) =>
+      `<div style="margin-bottom:2px"><span style="color:var(--orange)">${esc(w)}</span>: ${s.alive}/${s.count} alive, ${s.totalKills} kills</div>`
+    ).join('') || '<span style="color:var(--text2)">No bots</span>';
+  } catch(e) {}
+}
+
+function drawMinimap(gs) {
+  const canvas = document.getElementById('minimapCanvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+  const ARENA_W = 2000;
+  const ARENA_H = 2000;
+  const sx = W / ARENA_W;
+  const sy = H / ARENA_H;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Background grid
+  ctx.strokeStyle = 'rgba(48,54,61,0.3)';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 2000; i += 200) {
+    ctx.beginPath(); ctx.moveTo(i*sx, 0); ctx.lineTo(i*sx, H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i*sy); ctx.lineTo(W, i*sy); ctx.stroke();
+  }
+
+  // Zone
+  const zone = gs.zone || {};
+  if (zone.radius) {
+    // Target zone (dashed)
+    if (zone.target_center && zone.target_radius) {
+      ctx.beginPath();
+      ctx.setLineDash([4,4]);
+      ctx.arc(zone.target_center[0]*sx, zone.target_center[1]*sy, zone.target_radius*sx, 0, Math.PI*2);
+      ctx.strokeStyle = 'rgba(248,81,73,0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // Current zone
+    ctx.beginPath();
+    ctx.arc((zone.center?zone.center[0]:1000)*sx, (zone.center?zone.center[1]:1000)*sy, zone.radius*sx, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(88,166,255,0.5)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // Danger zone overlay
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0,0,W,H);
+    ctx.arc((zone.center?zone.center[0]:1000)*sx, (zone.center?zone.center[1]:1000)*sy, zone.radius*sx, 0, Math.PI*2, true);
+    ctx.fillStyle = 'rgba(248,81,73,0.08)';
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Obstacles (from game state if available via debug endpoint - draw as rectangles)
+  // The debug endpoint doesn't include obstacles, but we can show pickups
+
+  // Pickups
+  (gs.pickups_list||[]).forEach(p => {
+    if (!p.position) return;
+    ctx.beginPath();
+    ctx.arc(p.position[0]*sx, p.position[1]*sy, 4, 0, Math.PI*2);
+    ctx.fillStyle = '#bc8cff';
+    ctx.fill();
+  });
+
+  // Bots
+  (gs.bots||[]).forEach(b => {
+    if (!b.position) return;
+    const x = b.position[0] * sx;
+    const y = b.position[1] * sy;
+    const r = b.is_alive ? 5 : 3;
+
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI*2);
+    if (b.is_alive) {
+      ctx.fillStyle = b.avatar_color || '#3fb950';
+      ctx.fill();
+      // HP ring
+      const hpPct = b.max_hp ? b.hp / b.max_hp : 1;
+      ctx.beginPath();
+      ctx.arc(x, y, r+2, -Math.PI/2, -Math.PI/2 + Math.PI*2*hpPct);
+      ctx.strokeStyle = hpPct > 0.5 ? '#3fb950' : hpPct > 0.25 ? '#d29922' : '#f85149';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = 'rgba(248,81,73,0.4)';
+      ctx.fill();
+    }
+
+    // Name label
+    ctx.fillStyle = 'rgba(201,209,217,0.7)';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(b.name || '', x, y - r - 4);
+  });
+}
+
+// Minimap hover
+document.getElementById('minimapCanvas').addEventListener('mousemove', function(e) {
+  if (!lastGameState) return;
+  const rect = this.getBoundingClientRect();
+  const mx = ((e.clientX - rect.left) / rect.width) * 2000;
+  const my = ((e.clientY - rect.top) / rect.height) * 2000;
+
+  let closest = null;
+  let closestDist = 50; // pixel threshold in arena coords
+  (lastGameState.bots||[]).forEach(b => {
+    if (!b.position) return;
+    const dx = b.position[0] - mx;
+    const dy = b.position[1] - my;
+    const d = Math.sqrt(dx*dx + dy*dy);
+    if (d < closestDist) { closestDist = d; closest = b; }
+  });
+
+  const info = document.getElementById('minimapInfo');
+  if (closest) {
+    const b = closest;
+    const hpPct = b.max_hp ? ((b.hp/b.max_hp)*100).toFixed(0) : '--';
+    info.innerHTML = `<b style="color:var(--accent)">${esc(b.name)}</b> <span style="color:var(--text2)">${(b.bot_id||'').slice(0,8)}</span><br>`
+      + `HP: ${typeof b.hp==='number'?b.hp.toFixed(1):'--'}/${b.max_hp||'--'} (${hpPct}%) | Weapon: ${esc(b.weapon)} | K/D: ${b.kills||0}/${b.deaths||0}<br>`
+      + `Pos: (${b.position[0].toFixed(0)}, ${b.position[1].toFixed(0)}) | Elo: ${b.elo||'--'} | Streak: ${b.kill_streak||0}`
+      + (b.effects && b.effects.length ? `<br>Effects: ${b.effects.join(', ')}` : '');
+  } else {
+    const arenaX = mx.toFixed(0);
+    const arenaY = my.toFixed(0);
+    info.innerHTML = `Position: (${arenaX}, ${arenaY})`;
+  }
+});
+
+// Minimap click — open context menu on bot
+let ctxBot = null;
+document.getElementById('minimapCanvas').addEventListener('click', function(e) {
+  if (!lastGameState) return;
+  const rect = this.getBoundingClientRect();
+  const mx = ((e.clientX - rect.left) / rect.width) * 2000;
+  const my = ((e.clientY - rect.top) / rect.height) * 2000;
+
+  let closest = null;
+  let closestDist = 50;
+  (lastGameState.bots||[]).forEach(b => {
+    if (!b.position) return;
+    const dx = b.position[0] - mx;
+    const dy = b.position[1] - my;
+    const d = Math.sqrt(dx*dx + dy*dy);
+    if (d < closestDist) { closestDist = d; closest = b; }
+  });
+
+  const menu = document.getElementById('mapCtxMenu');
+  if (!closest) { menu.style.display = 'none'; ctxBot = null; return; }
+
+  ctxBot = closest;
+  document.getElementById('ctxBotName').textContent = closest.name || closest.bot_id;
+  const hpStr = typeof closest.hp==='number' ? closest.hp.toFixed(0)+'/'+closest.max_hp : '--';
+  document.getElementById('ctxBotSub').textContent = closest.bot_id.slice(0,8) + ' | HP: ' + hpStr + ' | ' + (closest.weapon||'--');
+
+  // Position menu near click, but keep it on screen
+  let left = e.clientX + 4;
+  let top = e.clientY + 4;
+  menu.style.display = 'block';
+  if (left + menu.offsetWidth > window.innerWidth) left = e.clientX - menu.offsetWidth - 4;
+  if (top + menu.offsetHeight > window.innerHeight) top = e.clientY - menu.offsetHeight - 4;
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+});
+
+// Close context menu on click elsewhere
+document.addEventListener('click', function(e) {
+  const menu = document.getElementById('mapCtxMenu');
+  if (!menu.contains(e.target) && e.target.id !== 'minimapCanvas') {
+    menu.style.display = 'none';
+    ctxBot = null;
+  }
+});
+
+function ctxAction(action) {
+  const menu = document.getElementById('mapCtxMenu');
+  menu.style.display = 'none';
+  if (!ctxBot) return;
+  const id = ctxBot.bot_id;
+  const name = ctxBot.name || id;
+
+  switch(action) {
+    case 'inspect':
+      switchTab('bots');
+      refreshBots().then(() => {
+        const row = document.querySelector(`tr.bot-row[data-bot-id="${id}"]`);
+        if (row) { inspectBot(id, row); row.scrollIntoView({behavior:'smooth', block:'center'}); }
+      });
+      break;
+    case 'heal':
+      botHeal(id, name);
+      break;
+    case 'teleportCenter':
+      botTeleport(id, name, 1000, 1000);
+      break;
+    case 'teleport':
+      promptTeleport(id, name);
+      break;
+    case 'kill':
+      botAction(id, 'kill', name);
+      break;
+    case 'profile':
+      profileBot(id, name);
+      break;
+    case 'freeze':
+      freezeBot(id, name);
+      break;
+    case 'unfreeze':
+      unfreezeBot(id, name);
+      break;
+    case 'kick':
+      botAction(id, 'kick', name);
+      break;
+    case 'ban':
+      botAction(id, 'ban', name);
+      break;
+  }
+  ctxBot = null;
+}
+
+// ========== Round History ==========
+async function refreshRounds() {
+  try {
+    const limit = parseInt(document.getElementById('roundLimit').value) || 20;
+    const data = await api('/debug/rounds?limit=' + limit);
+    const rounds = data.rounds || [];
+    document.getElementById('roundCount').textContent = (data.count||rounds.length) + ' rounds';
+
+    const tbody = document.getElementById('roundTableBody');
+    tbody.innerHTML = rounds.map(r => {
+      const started = r.started_at ? new Date(r.started_at) : null;
+      const ended = r.ended_at ? new Date(r.ended_at) : null;
+      let duration = '--';
+      if (started && ended) {
+        const secs = Math.round((ended - started)/1000);
+        duration = secs > 60 ? Math.floor(secs/60)+'m '+secs%60+'s' : secs+'s';
+      }
+      return `<tr class="round-row">
+        <td style="color:var(--accent)">${r.round_number||'--'}</td>
+        <td style="color:var(--text2)">${started ? started.toLocaleString() : '--'}</td>
+        <td style="color:var(--text2)">${ended ? ended.toLocaleString() : '--'}</td>
+        <td>${duration}</td>
+        <td>${r.bots_participated||'--'}</td>
+        <td style="color:var(--green)">${r.mvp_bot_id ? r.mvp_bot_id.slice(0,8) : '--'}</td>
+        <td><span class="status-badge ${r.status==='completed'?'s2xx':'s4xx'}">${r.status||'--'}</span></td>
+      </tr>`;
+    }).join('');
+  } catch(e) {}
+}
+
+// ========== Tick Inspector ==========
+function startTickInspector() {
+  stopTickInspector();
+  fetchTickData();
+  tickInterval = setInterval(() => {
+    if (document.getElementById('tickAutoRefresh').checked) fetchTickData();
+  }, 1000);
+}
+
+function stopTickInspector() {
+  if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+}
+
+async function fetchTickData() {
+  try {
+    const [metrics, gs] = await Promise.all([
+      api('/debug/metrics'),
+      api('/debug/game-state')
+    ]);
+
+    const mem = metrics.memory || {};
+    const gc = metrics.gc || {};
+    const game = metrics.game || {};
+
+    // Cards
+    document.getElementById('tickCards').innerHTML = `
+      <div class="card"><div class="label">Current Tick</div><div class="value">${gs.tick||0}</div></div>
+      <div class="card"><div class="label">Tick Rate</div><div class="value green">${game.tick_rate||0}/s</div></div>
+      <div class="card"><div class="label">Goroutines</div><div class="value">${metrics.goroutines||0}</div></div>
+      <div class="card"><div class="label">Heap Used</div><div class="value" style="font-size:14px">${mem.heap_alloc_mb||0} MB</div></div>
+      <div class="card"><div class="label">Heap Objects</div><div class="value" style="font-size:14px">${(mem.heap_objects||0).toLocaleString()}</div></div>
+      <div class="card"><div class="label">GC Pause Total</div><div class="value" style="font-size:14px">${(gc.pause_total_ms||0).toFixed(1)}ms</div></div>
+      <div class="card"><div class="label">Bots Connected</div><div class="value green">${game.bots_connected||0}</div></div>
+      <div class="card"><div class="label">Projectiles</div><div class="value orange">${gs.projectiles||0}</div></div>
+      <div class="card"><div class="label">Pickups</div><div class="value purple">${gs.pickups||0}</div></div>
+      <div class="card"><div class="label">CPUs</div><div class="value">${metrics.num_cpu||0}</div></div>
+      <div class="card"><div class="label">Stack Memory</div><div class="value" style="font-size:14px">${mem.stack_inuse_mb||0} MB</div></div>
+      <div class="card"><div class="label">Go Version</div><div class="value" style="font-size:12px">${esc(metrics.go_version||'--')}</div></div>
+    `;
+
+    // Resource bars
+    const maxBots = 50; // reasonable scale
+    const maxGoroutines = 500;
+    const maxHeap = 512;
+    const bars = [
+      {label:'Bots', val:game.bots_connected||0, max:maxBots, color:'var(--green)'},
+      {label:'Goroutines', val:metrics.goroutines||0, max:maxGoroutines, color:'var(--accent)'},
+      {label:'Heap (MB)', val:mem.heap_alloc_mb||0, max:maxHeap, color:'var(--orange)'},
+      {label:'Projectiles', val:gs.projectiles||0, max:200, color:'var(--purple)'},
+      {label:'Spectators', val:game.spectators||0, max:100, color:'var(--cyan)'},
+    ];
+    document.getElementById('tickBars').innerHTML = bars.map(b => {
+      const pct = Math.min(100, (b.val/b.max)*100);
+      const warn = pct > 80;
+      return `<div class="tick-bar"><span class="bar-label">${b.label}</span><div class="bar-wrap"><div class="bar-fill" style="width:${pct}%;background:${warn?'var(--red)':b.color}"></div></div><span class="bar-value" style="color:${warn?'var(--red)':b.color}">${b.val}</span></div>`;
+    }).join('');
+
+    // History
+    tickHistory.push({
+      tick: gs.tick||0,
+      bots: game.bots_connected||0,
+      projectiles: gs.projectiles||0,
+      goroutines: metrics.goroutines||0,
+      heapMB: mem.heap_alloc_mb||0,
+    });
+    if (tickHistory.length > TICK_HISTORY_MAX) tickHistory.shift();
+    drawTickChart();
+
+  } catch(e) {}
+}
+
+function drawTickChart() {
+  const canvas = document.getElementById('tickChart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  if (tickHistory.length < 2) return;
+
+  const series = [
+    {key:'bots', color:'#3fb950', label:'Bots'},
+    {key:'goroutines', color:'#58a6ff', label:'Goroutines', scale:0.1},
+    {key:'projectiles', color:'#bc8cff', label:'Projectiles'},
+    {key:'heapMB', color:'#d29922', label:'Heap MB'},
+  ];
+
+  // Find max for scaling
+  let maxVal = 10;
+  series.forEach(s => {
+    tickHistory.forEach(h => {
+      const v = (h[s.key]||0) * (s.scale||1);
+      if (v > maxVal) maxVal = v;
+    });
+  });
+
+  const pad = {top:15,right:10,bottom:20,left:10};
+  const chartW = W - pad.left - pad.right;
+  const chartH = H - pad.top - pad.bottom;
+
+  // Draw series
+  series.forEach(s => {
+    ctx.beginPath();
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 1.5;
+    tickHistory.forEach((h, i) => {
+      const x = pad.left + (i / (TICK_HISTORY_MAX - 1)) * chartW;
+      const v = (h[s.key]||0) * (s.scale||1);
+      const y = pad.top + chartH - (v / maxVal) * chartH;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+
+  // Legend
+  ctx.font = '10px monospace';
+  series.forEach((s, i) => {
+    const x = pad.left + 5 + i * 120;
+    ctx.fillStyle = s.color;
+    ctx.fillRect(x, 4, 10, 8);
+    ctx.fillStyle = '#8b949e';
+    ctx.fillText(s.label + (s.scale ? ' (x'+s.scale+')' : ''), x + 14, 12);
+  });
+}
+
+// ========== Error Console ==========
+async function refreshErrors() {
+  try {
+    const data = await api('/dashboard/errors');
+    const errs = data.errors || [];
+    document.getElementById('errorTotalCount').textContent = errs.length + ' unique errors';
+    errs.sort((a,b) => b.count - a.count);
+    document.getElementById('errorTableBody').innerHTML = errs.map(e => `
+      <tr>
+        <td class="error-count">${e.count}</td>
+        <td><span class="status-badge s4xx">${esc(e.code||'--')}</span></td>
+        <td>${esc(e.message)}</td>
+        <td style="color:var(--text2)">${fmtTime(e.first_seen)}</td>
+        <td style="color:var(--text2)">${fmtTime(e.last_seen)}</td>
+      </tr>
+    `).join('');
+  } catch(e) {}
+}
+
+// ========== Rate Limits ==========
+async function refreshRateLimits() {
+  try {
+    const data = await api('/dashboard/rate-limits');
+    const redis = data.redis_state || [];
+    document.getElementById('rlRedisBody').innerHTML = redis.length ? redis.map(r => `
+      <tr><td>${esc(r.key)}</td><td>${r.count}</td><td>${r.ttl}</td></tr>
+    `).join('') : '<tr><td colspan="3" style="color:var(--text2)">No active rate limits</td></tr>';
+
+    const events = data.recent_events || [];
+    const container = document.getElementById('rlLog');
+    container.innerHTML = '';
+    events.forEach(evt => {
+      const d = evt.data || {};
+      const div = document.createElement('div');
+      div.className = 'log-entry';
+      div.innerHTML = `<span class="log-time">${fmtTime(evt.timestamp)}</span><span class="log-type rate_limit">rate_limit</span><span class="log-msg"><b>${esc(d.key||'')}</b> ${esc(d.ip||'')} count:${d.count||0} limit:${d.limit||0} retry:${esc(d.retry_after||'')}</span>`;
+      container.appendChild(div);
+    });
+  } catch(e) {}
+}
+
+// ========== Helpers ==========
+function fmtTime(ts) {
+  if (!ts) return '--';
+  const d = new Date(ts);
+  return d.toLocaleTimeString('en-US', {hour12:false}) + '.' + String(d.getMilliseconds()).padStart(3,'0');
+}
+
+function statusClass(s) {
+  if (s >= 500) return 's5xx';
+  if (s >= 400) return 's4xx';
+  if (s >= 300) return 's3xx';
+  return 's2xx';
+}
+
+function esc(s) {
+  if (s == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+// ========== Toast Notifications ==========
+function toast(msg, type='info') {
+  const container = document.getElementById('toast');
+  const div = document.createElement('div');
+  div.className = 'toast-msg ' + type;
+  div.textContent = msg;
+  container.appendChild(div);
+  setTimeout(() => div.remove(), 4000);
+}
+
+// ========== Bot Actions ==========
+async function botAction(id, action, name) {
+  const labels = {kick:'Kick',ban:'Ban',kill:'Kill'};
+  if (action === 'ban') {
+    if (!confirm('Ban ' + name + '? This will revoke their API key and disconnect them.')) return;
+  }
+  try {
+    await api('/bots/' + id + '/' + action, {method:'POST', body:JSON.stringify({reason:'Admin action'})});
+    toast(labels[action] + ': ' + name, 'success');
+    logAudit('BOT_' + action.toUpperCase(), name + ' (' + id.slice(0,8) + ')');
+    const existing = document.querySelector('.bot-detail-row');
+    if (existing) existing.remove();
+    setTimeout(refreshBots, 500);
+  } catch(e) {
+    toast('Failed to ' + action + ' ' + name, 'error');
+  }
+}
+
+async function botHeal(id, name) {
+  try {
+    await api('/bots/' + id + '/heal', {method:'POST', body:JSON.stringify({hp:100})});
+    toast('Healed ' + name + ' to 100 HP', 'success');
+  } catch(e) { toast('Failed to heal ' + name, 'error'); }
+}
+
+async function botTeleport(id, name, x, y) {
+  try {
+    await api('/bots/' + id + '/teleport', {method:'POST', body:JSON.stringify({x, y})});
+    toast('Teleported ' + name + ' to (' + x + ', ' + y + ')', 'success');
+  } catch(e) { toast('Failed to teleport ' + name, 'error'); }
+}
+
+function promptTeleport(id, name) {
+  const input = prompt('Teleport ' + name + ' to coordinates (x, y):\nArena is 0-2000 x 0-2000', '1000, 1000');
+  if (!input) return;
+  const parts = input.split(',').map(s => parseFloat(s.trim()));
+  if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) {
+    toast('Invalid coordinates - use "x, y" format', 'error');
+    return;
+  }
+  botTeleport(id, name, parts[0], parts[1]);
+}
+
+async function freezeBot(id, name) {
+  try {
+    await api('/bots/' + id + '/freeze', {method:'POST'});
+    toast('Froze ' + name, 'success');
+  } catch(e) { toast('Failed to freeze ' + name, 'error'); }
+}
+async function unfreezeBot(id, name) {
+  try {
+    await api('/bots/' + id + '/unfreeze', {method:'POST'});
+    toast('Unfroze ' + name, 'success');
+  } catch(e) { toast('Failed to unfreeze ' + name, 'error'); }
+}
+
+// ========== Bot Behavior Profiler ==========
+async function profileBot(id, name) {
+  const overlay = document.getElementById('profilerOverlay');
+  const content = document.getElementById('profilerContent');
+  overlay.classList.add('visible');
+  content.innerHTML = `<div style="text-align:center;padding:40px"><div style="color:var(--accent);font-size:14px;margin-bottom:8px">Profiling ${esc(name)}...</div><div style="color:var(--text2);font-size:12px">Sampling 30 snapshots over 3 seconds</div></div>`;
+
+  try {
+    const data = await api('/bots/' + id + '/profile?samples=30&interval_ms=100');
+    const b = data.bot || {};
+    const ap = data.action_pcts || {};
+    const pos = data.positioning || {};
+    const tgt = data.targeting || {};
+    const ab = data.action_breakdown || {};
+
+    // Build action bars
+    const maxAct = Math.max(...Object.values(ab), 1);
+    const actionBars = Object.entries(ab).sort((a,b)=>b[1]-a[1]).map(([action, count]) => {
+      const pct = (count/maxAct*100).toFixed(0);
+      const colors = {move:'var(--accent)',move_to:'var(--accent)',attack:'var(--red)',dodge:'var(--orange)',idle:'var(--text2)',shove:'var(--purple)',use_item:'var(--green)'};
+      return `<div class="profile-bar"><span class="lbl">${esc(action)}</span><div class="bar"><div class="fill" style="width:${pct}%;background:${colors[action]||'var(--text2)'}"></div></div><span class="val">${count}</span></div>`;
+    }).join('');
+
+    // Positioning bars
+    const posBars = [
+      {lbl:'Zone Time', val:pos.zone_time_in_pct||0, max:100, color:'var(--green)', unit:'%'},
+      {lbl:'Low HP Time', val:pos.low_hp_time_pct||0, max:100, color:'var(--red)', unit:'%'},
+      {lbl:'Avg Enemy', val:pos.avg_enemy_distance||0, max:50, color:'var(--accent)', unit:' units'},
+    ].map(p => {
+      const pct = Math.min(100,(p.val/p.max)*100).toFixed(0);
+      return `<div class="profile-bar"><span class="lbl">${p.lbl}</span><div class="bar"><div class="fill" style="width:${pct}%;background:${p.color}"></div></div><span class="val">${typeof p.val==='number'?p.val.toFixed(1):'--'}${p.unit}</span></div>`;
+    }).join('');
+
+    content.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <span style="color:${esc(b.avatar_color||'#888')};font-size:20px">\u25CF</span>
+        <div>
+          <div style="font-size:16px;font-weight:bold;color:var(--accent)">${esc(b.name)}</div>
+          <div style="font-size:11px;color:var(--text2)">${esc(b.weapon)} | Elo: ${b.elo} | Fallback: ${esc(b.fallback_behavior)} | ${(b.bot_id||'').slice(0,8)}</div>
+        </div>
+      </div>
+
+      <div class="profile-playstyle">${esc(data.playstyle)} Playstyle</div>
+
+      <ul class="profile-traits">
+        ${(data.traits||[]).map(t => `<li>${esc(t)}</li>`).join('')}
+      </ul>
+
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:16px">
+        <div style="flex:1;min-width:200px">
+          <h4 style="color:var(--text2);margin-bottom:8px;font-size:12px">Action Distribution (${data.samples} samples / ${(data.duration_ms/1000).toFixed(1)}s)</h4>
+          <div class="profile-bars">${actionBars}</div>
+        </div>
+        <div style="flex:1;min-width:200px">
+          <h4 style="color:var(--text2);margin-bottom:8px;font-size:12px">Positioning</h4>
+          <div class="profile-bars">${posBars}</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:16px">
+        <div style="flex:1;min-width:200px">
+          <h4 style="color:var(--text2);margin-bottom:8px;font-size:12px">Combat Stats (This Round)</h4>
+          <div style="font-size:12px">
+            <div>K/D: <b>${b.round_kills||0}/${b.round_deaths||0}</b></div>
+            <div>Accuracy: <b style="color:${(b.accuracy||0)>80?'var(--green)':'var(--text)'}">${(b.accuracy||0).toFixed(1)}%</b> (${b.round_shots_hit||0}/${b.round_shots_fired||0})</div>
+            <div>Dmg Dealt: <b style="color:var(--green)">${(b.round_damage_dealt||0).toFixed(0)}</b></div>
+            <div>Dmg Taken: <b style="color:var(--red)">${(b.round_damage_taken||0).toFixed(0)}</b></div>
+            <div>Damage/Kill: <b>${(b.damage_per_kill||0).toFixed(0)}</b></div>
+            <div>Pickups: <b>${b.round_pickups||0}</b></div>
+          </div>
+        </div>
+        <div style="flex:1;min-width:200px">
+          <h4 style="color:var(--text2);margin-bottom:8px;font-size:12px">Targeting</h4>
+          <div style="font-size:12px">
+            <div>Unique Targets: <b>${tgt.unique_targets||0}</b></div>
+            ${tgt.top_target_id ? `<div>Focus Target: <b>${esc(tgt.top_target_id).slice(0,8)}</b> (${tgt.top_target_attacks} attacks)</div>` : ''}
+            <div>Closest Enemy: <b>${esc(b.closest_enemy_name||'--')}</b> (${(b.closest_enemy_dist||0).toFixed(0)} units)</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:16px;display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text2)">
+        <div>Stats: HP:${b.stats?.hp||'?'} SPD:${b.stats?.speed||'?'} ATK:${b.stats?.attack||'?'} DEF:${b.stats?.defense||'?'}</div>
+        <div>Max HP: ${b.max_hp} | Speed: ${b.speed} | Atk Mult: ${b.attack_multiplier}x | Def Red: ${(b.defense_reduction*100).toFixed(0)}%</div>
+      </div>
+    `;
+  } catch(e) {
+    content.innerHTML = `<div style="color:var(--red);text-align:center;padding:40px">Profiling failed — bot may have disconnected</div>`;
+  }
+}
+
+function closeProfiler() {
+  document.getElementById('profilerOverlay').classList.remove('visible');
+}
+
+// ========== Game Controls ==========
+async function gameAction(action) {
+  const el = document.getElementById('gameCtrlResult');
+  try {
+    await api('/game/' + action, {method:'POST'});
+    el.textContent = action + ': OK';
+    el.style.color = 'var(--green)';
+    toast('Game ' + action + ' successful', 'success');
+    logAudit('GAME_' + action.toUpperCase(), '');
+  } catch(e) {
+    el.textContent = action + ' failed';
+    el.style.color = 'var(--red)';
+    toast('Game ' + action + ' failed', 'error');
+  }
+}
+
+// ========== Game Config ==========
+const CONFIG_FIELDS = [
+  {key:'tick_rate', label:'Tick Rate', min:1, max:60},
+  {key:'max_bots', label:'Max Bots', min:1},
+  {key:'max_spectators', label:'Max Spectators', min:0},
+  {key:'round_duration', label:'Round Duration (s)', min:10},
+  {key:'intermission_time', label:'Intermission (s)', min:1},
+  {key:'lobby_countdown', label:'Lobby Countdown (s)', min:1},
+  {key:'min_bots_to_start', label:'Min Bots to Start', min:1},
+  {key:'zone_damage', label:'Zone Damage', min:0, step:0.1},
+  {key:'zone_shrink_pct', label:'Zone Shrink %', min:0, max:1, step:0.01},
+  {key:'afk_timeout_ticks', label:'AFK Timeout (ticks)', min:0},
+  {key:'view_radius', label:'View Radius', min:1},
+];
+let currentConfig = {};
+
+async function loadGameConfig() {
+  const el = document.getElementById('configResult');
+  try {
+    const data = await api('/game/config');
+    currentConfig = data;
+    renderConfigGrid(data);
+    el.textContent = 'Config loaded';
+    el.style.color = 'var(--green)';
+  } catch(e) {
+    el.textContent = 'Failed to load config';
+    el.style.color = 'var(--red)';
+  }
+}
+
+function renderConfigGrid(data) {
+  document.getElementById('gameConfigGrid').innerHTML = CONFIG_FIELDS.map(f => {
+    const val = data[f.key] != null ? data[f.key] : '';
+    return `<div class="config-item"><label>${f.label}</label><input type="number" id="cfg_${f.key}" value="${val}" min="${f.min||''}" max="${f.max||''}" step="${f.step||1}"></div>`;
+  }).join('');
+}
+
+async function saveGameConfig() {
+  const el = document.getElementById('configResult');
+  const body = {};
+  CONFIG_FIELDS.forEach(f => {
+    const input = document.getElementById('cfg_' + f.key);
+    if (input && input.value !== '') body[f.key] = parseFloat(input.value);
+  });
+  try {
+    await api('/game/config', {method:'PUT', body:JSON.stringify(body)});
+    el.textContent = 'Config saved';
+    el.style.color = 'var(--green)';
+    toast('Game config updated', 'success');
+  } catch(e) {
+    el.textContent = 'Failed to save config';
+    el.style.color = 'var(--red)';
+    toast('Failed to save config', 'error');
+  }
+}
+
+// ========== Demo Bots ==========
+async function startDemoBots() {
+  const count = parseInt(document.getElementById('demoBotCount').value) || 5;
+  const el = document.getElementById('demoResult');
+  try {
+    await api('/demobots/start', {method:'POST', body:JSON.stringify({count})});
+    el.textContent = 'Started ' + count + ' demo bots';
+    el.style.color = 'var(--green)';
+    toast('Started ' + count + ' demo bots', 'success');
+  } catch(e) {
+    el.textContent = 'Failed to start demo bots';
+    el.style.color = 'var(--red)';
+  }
+}
+
+async function stopDemoBots() {
+  const el = document.getElementById('demoResult');
+  try {
+    await api('/demobots/stop', {method:'POST'});
+    el.textContent = 'Stopped all demo bots';
+    el.style.color = 'var(--green)';
+    toast('Stopped all demo bots', 'success');
+  } catch(e) {
+    el.textContent = 'Failed to stop demo bots';
+    el.style.color = 'var(--red)';
+  }
+}
+
+// ========== Server Controls ==========
+function showServerOutput(data) {
+  const el = document.getElementById('serverOutput');
+  el.style.display = 'block';
+  el.textContent = JSON.stringify(data, null, 2);
+}
+
+async function forceGC() {
+  const el = document.getElementById('serverResult');
+  try {
+    const data = await api('/server/gc', {method:'POST'});
+    el.textContent = 'GC complete';
+    el.style.color = 'var(--green)';
+    showServerOutput(data);
+    toast('Garbage collection triggered', 'success');
+  } catch(e) { el.textContent = 'GC failed'; el.style.color = 'var(--red)'; }
+}
+
+async function deepHealth() {
+  const el = document.getElementById('serverResult');
+  try {
+    const data = await api('/health/deep');
+    el.textContent = 'Health: OK';
+    el.style.color = 'var(--green)';
+    showServerOutput(data);
+  } catch(e) { el.textContent = 'Health check failed'; el.style.color = 'var(--red)'; }
+}
+
+async function dbStats() {
+  const el = document.getElementById('serverResult');
+  try {
+    const data = await api('/db/stats');
+    el.textContent = 'DB stats loaded';
+    el.style.color = 'var(--green)';
+    showServerOutput(data);
+  } catch(e) { el.textContent = 'Failed'; el.style.color = 'var(--red)'; }
+}
+
+async function viewServerConfig() {
+  const el = document.getElementById('serverResult');
+  try {
+    const data = await api('/config');
+    el.textContent = 'Config loaded';
+    el.style.color = 'var(--green)';
+    showServerOutput(data);
+  } catch(e) { el.textContent = 'Failed'; el.style.color = 'var(--red)'; }
+}
+
+async function viewLogs() {
+  const el = document.getElementById('serverResult');
+  try {
+    const data = await api('/logs?lines=200');
+    el.textContent = 'Logs loaded';
+    el.style.color = 'var(--green)';
+    showServerOutput(data);
+  } catch(e) { el.textContent = 'Failed'; el.style.color = 'var(--red)'; }
+}
+
+// ========== Data Management ==========
+async function resetLeaderboard() {
+  if (!confirm('Are you sure you want to reset the entire leaderboard? This cannot be undone.')) return;
+  if (!confirm('FINAL WARNING: This will wipe all bot stats permanently.')) return;
+  const el = document.getElementById('dataResult');
+  try {
+    await api('/db/reset-leaderboard', {method:'POST', body:JSON.stringify({confirm:'RESET_ALL_STATS'})});
+    el.textContent = 'Leaderboard reset';
+    el.style.color = 'var(--green)';
+    toast('Leaderboard has been reset', 'success');
+  } catch(e) {
+    el.textContent = 'Reset failed';
+    el.style.color = 'var(--red)';
+    toast('Leaderboard reset failed', 'error');
+  }
+}
+
+async function cleanupStale() {
+  const days = parseInt(document.getElementById('staleDays').value) || 30;
+  if (!confirm('Delete API keys older than ' + days + ' days with no activity?')) return;
+  const el = document.getElementById('dataResult');
+  try {
+    await api('/db/cleanup-stale', {method:'POST', body:JSON.stringify({days})});
+    el.textContent = 'Cleanup done';
+    el.style.color = 'var(--green)';
+    toast('Stale keys cleaned up', 'success');
+  } catch(e) {
+    el.textContent = 'Cleanup failed';
+    el.style.color = 'var(--red)';
+  }
+}
+
+// ========== Damage Log ==========
+logs.dmg = [];
+paused.dmg = false;
+
+function handleDamageEvent(evt) {
+  const d = evt.data || {};
+  if (d.event !== 'damage') return;
+  logs.dmg.push(evt);
+  if (logs.dmg.length > MAX_LOG) logs.dmg.shift();
+  if (!paused.dmg) {
+    renderDmgEntry(evt);
+    document.getElementById('dmgCount').textContent = logs.dmg.length + ' events';
+  }
+}
+
+function renderDmgEntry(evt) {
+  const container = document.getElementById('dmgLog');
+  if (!container) return;
+  const d = evt.data || {};
+  const filter = (document.getElementById('dmgFilterBot').value || '').toLowerCase();
+  if (filter && !(d.attacker_name||'').toLowerCase().includes(filter) && !(d.target_name||'').toLowerCase().includes(filter)) return;
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  div.innerHTML = `<span class="log-time">${fmtTime(evt.timestamp)}</span><span class="log-type game_event" style="min-width:50px">dmg</span><span class="log-msg"><span style="color:var(--green)">${esc(d.attacker_name||'?')}</span> → <span style="color:var(--red)">${esc(d.target_name||'?')}</span> <b style="color:var(--orange)">${d.damage||0}</b> dmg (${esc(d.weapon||'?')}) dist:${(d.distance||0).toFixed(0)} hp:${(d.target_hp||0).toFixed(0)}</span>`;
+  container.prepend(div);
+  while (container.children.length > MAX_LOG) container.removeChild(container.lastChild);
+}
+
+function filterDmgLog() {
+  const container = document.getElementById('dmgLog');
+  container.innerHTML = '';
+  logs.dmg.forEach(evt => renderDmgEntry(evt));
+}
+
+// ========== Balance Dashboard ==========
+async function refreshBalance() {
+  try {
+    const [gs, roundsData, weaponsData, gameConfig] = await Promise.all([
+      api('/debug/game-state'),
+      api('/debug/rounds?limit=100'),
+      api('/weapons'),
+      api('/game/config')
+    ]);
+
+    // Weapon tuning table
+    const weapons = weaponsData.weapons || {};
+    document.getElementById('weaponTuneBody').innerHTML = Object.entries(weapons).sort((a,b)=>a[0].localeCompare(b[0])).map(([name, w]) =>
+      `<tr>
+        <td style="color:var(--orange);font-weight:bold">${esc(name)}</td>
+        <td><input type="number" id="wt_${name}_dmg" value="${w.damage}" min="0" style="width:60px"></td>
+        <td><input type="number" id="wt_${name}_range" value="${w.range}" min="0" step="0.5" style="width:60px"></td>
+        <td><input type="number" id="wt_${name}_cd" value="${w.cooldown}" min="0.1" step="0.1" style="width:60px"></td>
+        <td><input type="number" id="wt_${name}_param" value="${w.param}" step="0.1" style="width:60px"> <span style="color:var(--text2);font-size:10px">${esc(w.special)}</span></td>
+        <td><button onclick="saveWeapon('${esc(name)}')" style="font-size:10px;padding:2px 8px" class="btn-success">Apply</button></td>
+      </tr>`
+    ).join('');
+
+    // Stat multiplier grid
+    const smFields = [
+      {key:'stat_hp_base', label:'HP Base', val:gameConfig.stat_hp_base ?? 100, step:10},
+      {key:'stat_hp_per_point', label:'HP / Point', val:gameConfig.stat_hp_per_point ?? 10, step:1},
+      {key:'stat_speed_base', label:'Speed Base', val:gameConfig.stat_speed_base ?? 3.0, step:0.5},
+      {key:'stat_speed_per_point', label:'Speed / Point', val:gameConfig.stat_speed_per_point ?? 0.5, step:0.1},
+      {key:'stat_attack_base', label:'Attack Base', val:gameConfig.stat_attack_base ?? 1.0, step:0.1},
+      {key:'stat_attack_per_point', label:'Attack / Point', val:gameConfig.stat_attack_per_point ?? 0.1, step:0.01},
+      {key:'stat_defense_per_point', label:'Defense / Point', val:gameConfig.stat_defense_per_point ?? 0.03, step:0.01},
+      {key:'dodge_speed_mult', label:'Dodge Speed Mult', val:gameConfig.dodge_speed_mult ?? 2.0, step:0.1},
+      {key:'dodge_invuln_ticks', label:'Dodge Invuln Ticks', val:gameConfig.dodge_invuln_ticks ?? 3, step:1},
+      {key:'dodge_cooldown_ticks', label:'Dodge Cooldown Ticks', val:gameConfig.dodge_cooldown_ticks ?? 30, step:1},
+    ];
+    document.getElementById('statMultGrid').innerHTML = smFields.map(f =>
+      `<div class="config-item"><label>${f.label}</label><input type="number" id="sm_${f.key}" value="${f.val}" step="${f.step}" style="width:80px"></div>`
+    ).join('');
+    const bots = gs.bots || [];
+
+    // Weapon usage
+    const wp = {};
+    bots.forEach(b => {
+      const w = b.weapon || 'unknown';
+      if (!wp[w]) wp[w] = {count:0,alive:0,kills:0,deaths:0,dmg:0,elo:0};
+      wp[w].count++;
+      if (b.is_alive) wp[w].alive++;
+      wp[w].kills += b.kills||0;
+      wp[w].deaths += b.deaths||0;
+      wp[w].dmg += b.round_damage_dealt||0;
+      wp[w].elo += b.elo||0;
+    });
+    // Compute K/D and survival rate for meta analysis
+    const wpEntries = Object.entries(wp).sort((a,b) => a[0].localeCompare(b[0]));
+    const totalKills = wpEntries.reduce((s,e) => s + e[1].kills, 0) || 1;
+    const totalBots = bots.length || 1;
+
+    document.getElementById('balWeapons').innerHTML = '<table style="width:100%"><thead><tr><th>Weapon</th><th>Users</th><th>Alive</th><th>Kills</th><th>Deaths</th><th>K/D</th><th>Avg Elo</th><th>Kill Share</th><th>Total Dmg</th></tr></thead><tbody>' +
+      wpEntries.map(([w,s]) => {
+        const kd = s.deaths > 0 ? (s.kills/s.deaths).toFixed(1) : s.kills > 0 ? s.kills+'.0' : '0.0';
+        const kdColor = parseFloat(kd) > 2 ? 'var(--green)' : parseFloat(kd) < 0.8 ? 'var(--red)' : 'var(--text)';
+        const killShare = ((s.kills/totalKills)*100).toFixed(0);
+        const pickRate = ((s.count/totalBots)*100).toFixed(0);
+        return `<tr><td style="color:var(--orange)">${esc(w)}</td><td>${s.count} (${pickRate}%)</td><td style="color:var(--green)">${s.alive}</td><td>${s.kills}</td><td>${s.deaths}</td><td style="color:${kdColor};font-weight:bold">${kd}</td><td>${s.count?(s.elo/s.count).toFixed(0):'--'}</td><td>${killShare}%</td><td>${Math.round(s.dmg)}</td></tr>`;
+      }).join('') + '</tbody></table>';
+
+    // Elo distribution
+    drawEloChart(bots);
+
+    // Stat allocation
+    const statTotals = {hp:0,speed:0,attack:0,defense:0};
+    let statCount = 0;
+    bots.forEach(b => {
+      if (b.stats) {
+        for (const [k,v] of Object.entries(b.stats)) { statTotals[k] = (statTotals[k]||0) + v; }
+        statCount++;
+      }
+    });
+    document.getElementById('balStats').innerHTML = statCount ? Object.entries(statTotals).map(([k,v]) => {
+      const avg = (v/statCount).toFixed(1);
+      const pct = ((v/statCount)/10*100).toFixed(0);
+      return `<div class="tick-bar"><span class="bar-label">${k}</span><div class="bar-wrap"><div class="bar-fill" style="width:${pct}%;background:var(--accent)"></div></div><span class="bar-value">avg ${avg}</span></div>`;
+    }).join('') : 'No bots connected';
+
+    // Round duration
+    const rounds = roundsData.rounds || [];
+    if (rounds.length) {
+      const durations = rounds.filter(r=>r.started_at&&r.ended_at).map(r=>(new Date(r.ended_at)-new Date(r.started_at))/1000);
+      const avg = durations.length ? (durations.reduce((a,b)=>a+b,0)/durations.length).toFixed(0) : '--';
+      const min = durations.length ? Math.min(...durations).toFixed(0) : '--';
+      const max = durations.length ? Math.max(...durations).toFixed(0) : '--';
+      document.getElementById('balRounds').innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px"><div><span style="color:var(--text2)">Avg:</span> ${avg}s</div><div><span style="color:var(--text2)">Min:</span> ${min}s</div><div><span style="color:var(--text2)">Max:</span> ${max}s</div></div><div style="margin-top:8px;color:var(--text2)">${rounds.length} rounds analyzed</div>`;
+    } else {
+      document.getElementById('balRounds').innerHTML = 'No rounds yet';
+    }
+
+    // === Meta Analysis — Flag imbalances ===
+    const flags = [];
+    wpEntries.forEach(([w, s]) => {
+      if (s.count < 2) return;
+      const kd = s.deaths > 0 ? s.kills / s.deaths : s.kills;
+      const avgElo = s.elo / s.count;
+      const killShare = s.kills / totalKills * 100;
+      const pickRate = s.count / totalBots * 100;
+
+      if (kd > 2.5) flags.push({sev:'high', msg:`${w} has very high K/D (${kd.toFixed(1)}) — may be overpowered`});
+      if (kd < 0.5 && s.kills + s.deaths > 3) flags.push({sev:'medium', msg:`${w} has very low K/D (${kd.toFixed(1)}) — may be underpowered`});
+      if (avgElo > 1080) flags.push({sev:'high', msg:`${w} users have high avg Elo (${avgElo.toFixed(0)}) — weapon advantage`});
+      if (avgElo < 920) flags.push({sev:'medium', msg:`${w} users have low avg Elo (${avgElo.toFixed(0)}) — weapon disadvantage`});
+      if (killShare > 40 && wpEntries.length > 2) flags.push({sev:'high', msg:`${w} responsible for ${killShare.toFixed(0)}% of all kills — dominant weapon`});
+      if (pickRate > 50) flags.push({sev:'medium', msg:`${w} used by ${pickRate.toFixed(0)}% of bots — stale meta, one weapon dominates picks`});
+      if (s.count > 0 && s.alive === 0 && s.deaths > 2) flags.push({sev:'low', msg:`All ${w} users are dead — poor survivability`});
+    });
+
+    // Stat imbalance detection
+    if (statCount >= 3) {
+      const statAvgs = {};
+      for (const [k,v] of Object.entries(statTotals)) statAvgs[k] = v / statCount;
+      const idealAvg = 5; // 20 points / 4 stats
+      for (const [k, avg] of Object.entries(statAvgs)) {
+        if (avg > 7.5) flags.push({sev:'medium', msg:`"${k}" stat avg is ${avg.toFixed(1)} — most bots heavily invest here, may be too rewarding`});
+        if (avg < 2.5) flags.push({sev:'low', msg:`"${k}" stat avg is ${avg.toFixed(1)} — most bots skip this, may be too weak`});
+      }
+    }
+
+    const sevColors = {high:'var(--red)', medium:'var(--orange)', low:'var(--accent)'};
+    document.getElementById('balMeta').innerHTML = flags.length ?
+      flags.map(f => `<div style="padding:4px 0;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center">
+        <span style="color:${sevColors[f.sev]};font-weight:bold;min-width:55px;font-size:10px">[${f.sev.toUpperCase()}]</span>
+        <span>${esc(f.msg)}</span>
+      </div>`).join('') :
+      '<span style="color:var(--green)">No balance issues detected — meta looks healthy</span>';
+
+    // === Loadout Tier List — rank weapons by composite score ===
+    const tierData = wpEntries.filter(([,s]) => s.count > 0).map(([w, s]) => {
+      const kd = s.deaths > 0 ? s.kills / s.deaths : s.kills;
+      const avgElo = s.elo / s.count;
+      const survivalRate = s.count > 0 ? (s.alive / s.count * 100) : 0;
+      // Composite score: weighted K/D + Elo deviation from 1000 + survival
+      const score = (kd * 30) + ((avgElo - 1000) * 0.3) + (survivalRate * 0.2);
+      return {weapon: w, kd, avgElo, survivalRate, score, count: s.count};
+    }).sort((a,b) => b.score - a.score);
+
+    const tierLabels = ['S','A','B','C','D'];
+    const tierColors = ['var(--green)','var(--accent)','var(--text)','var(--orange)','var(--red)'];
+    document.getElementById('balTierList').innerHTML = tierData.length ? tierData.map((t, i) => {
+      const tier = tierLabels[Math.min(i, tierLabels.length-1)];
+      const tc = tierColors[Math.min(i, tierColors.length-1)];
+      return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border)">
+        <span style="color:${tc};font-weight:bold;font-size:16px;min-width:24px">${tier}</span>
+        <span style="color:var(--orange);min-width:60px">${esc(t.weapon)}</span>
+        <span style="color:var(--text2);font-size:11px">K/D: <b style="color:var(--text)">${t.kd.toFixed(1)}</b></span>
+        <span style="color:var(--text2);font-size:11px">Elo: <b style="color:var(--text)">${t.avgElo.toFixed(0)}</b></span>
+        <span style="color:var(--text2);font-size:11px">Surv: <b style="color:var(--text)">${t.survivalRate.toFixed(0)}%</b></span>
+        <span style="color:var(--text2);font-size:11px">${t.count} users</span>
+      </div>`;
+    }).join('') : 'Not enough data';
+
+    // === Stat/Weapon Combos ===
+    const combos = {};
+    bots.forEach(b => {
+      if (!b.stats || !b.weapon) return;
+      // Find dominant stat
+      let maxStat = '', maxVal = 0;
+      for (const [k,v] of Object.entries(b.stats)) {
+        if (v > maxVal) { maxVal = v; maxStat = k; }
+      }
+      const key = b.weapon + ' + ' + maxStat + '(' + maxVal + ')';
+      if (!combos[key]) combos[key] = {count:0, kills:0, deaths:0, elo:0};
+      combos[key].count++;
+      combos[key].kills += b.kills || 0;
+      combos[key].deaths += b.deaths || 0;
+      combos[key].elo += b.elo || 1000;
+    });
+    const comboEntries = Object.entries(combos).sort((a,b) => {
+      const aKD = a[1].deaths > 0 ? a[1].kills/a[1].deaths : a[1].kills;
+      const bKD = b[1].deaths > 0 ? b[1].kills/b[1].deaths : b[1].kills;
+      return bKD - aKD;
+    }).slice(0, 10);
+
+    document.getElementById('balCombos').innerHTML = comboEntries.length ?
+      '<table style="width:100%"><thead><tr><th>Loadout</th><th>Users</th><th>K/D</th><th>Avg Elo</th></tr></thead><tbody>' +
+      comboEntries.map(([combo, s]) => {
+        const kd = s.deaths > 0 ? (s.kills/s.deaths).toFixed(1) : s.kills+'.0';
+        const kdColor = parseFloat(kd) > 2 ? 'var(--green)' : parseFloat(kd) < 0.8 ? 'var(--red)' : 'var(--text)';
+        return `<tr><td style="color:var(--accent)">${esc(combo)}</td><td>${s.count}</td><td style="color:${kdColor};font-weight:bold">${kd}</td><td>${(s.elo/s.count).toFixed(0)}</td></tr>`;
+      }).join('') + '</tbody></table>' : 'Not enough data';
+
+  } catch(e) {}
+}
+
+function drawEloChart(allBots) {
+  const chartEl = document.getElementById('eloChart');
+  const summaryEl = document.getElementById('eloSummary');
+  if (!chartEl) return;
+
+  if (!allBots.length) {
+    summaryEl.innerHTML = 'No bots connected';
+    chartEl.innerHTML = '';
+    return;
+  }
+
+  const elos = allBots.map(b => b.elo || 1000).sort((a,b) => a - b);
+  const avg = (elos.reduce((a,b)=>a+b,0) / elos.length).toFixed(0);
+  const median = elos[Math.floor(elos.length/2)];
+  const lowest = elos[0];
+  const highest = elos[elos.length-1];
+  const spread = highest - lowest;
+
+  summaryEl.innerHTML = `
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div><span style="color:var(--text2)">Bots:</span> <b>${elos.length}</b></div>
+      <div><span style="color:var(--text2)">Avg:</span> <b>${avg}</b></div>
+      <div><span style="color:var(--text2)">Median:</span> <b>${median}</b></div>
+      <div><span style="color:var(--green)">Highest:</span> <b>${highest}</b></div>
+      <div><span style="color:var(--red)">Lowest:</span> <b>${lowest}</b></div>
+      <div><span style="color:var(--text2)">Spread:</span> <b>${spread}</b></div>
+    </div>
+  `;
+
+  // Dot map scale
+  const pad = 40;
+  const scaleMin = Math.floor(lowest / 100) * 100;
+  const scaleMax = Math.ceil(highest / 100) * 100;
+  const range = Math.max(scaleMax - scaleMin, 100);
+
+  // Build tick marks for the scale
+  const ticks = [];
+  for (let v = scaleMin; v <= scaleMax; v += 50) ticks.push(v);
+
+  // Sort bots by elo for stacking — group by rounded elo to stack dots vertically
+  const botsByElo = allBots.map(b => ({
+    name: b.name || '?',
+    elo: b.elo || 1000,
+    color: b.avatar_color || '#888',
+    weapon: b.weapon || '?',
+    alive: b.is_alive
+  })).sort((a,b) => a.elo - b.elo);
+
+  // Stack dots: group nearby elos (within 10 points) vertically
+  const stacks = [];
+  let currentStack = [];
+  botsByElo.forEach(b => {
+    if (currentStack.length && Math.abs(b.elo - currentStack[0].elo) > 10) {
+      stacks.push([...currentStack]);
+      currentStack = [];
+    }
+    currentStack.push(b);
+  });
+  if (currentStack.length) stacks.push(currentStack);
+
+  const maxStack = Math.max(...stacks.map(s => s.length), 1);
+  const dotSize = 10;
+  const chartHeight = Math.max(60, maxStack * (dotSize + 2) + 30);
+
+  let dotsHtml = '';
+  stacks.forEach(stack => {
+    const centerElo = stack[0].elo;
+    const leftPct = ((centerElo - scaleMin) / range * 100);
+    stack.forEach((b, i) => {
+      const bottom = 24 + i * (dotSize + 2);
+      const dotColor = b.elo < 900 ? 'var(--red)' : b.elo < 1000 ? 'var(--orange)' : b.elo < 1100 ? 'var(--accent)' : 'var(--green)';
+      const border = b.alive ? 'none' : '1px solid var(--red)';
+      const opacity = b.alive ? '1' : '0.5';
+      dotsHtml += `<div title="${esc(b.name)} — Elo: ${b.elo} — ${esc(b.weapon)}${b.alive?'':' (dead)'}" style="position:absolute;left:calc(${leftPct}% - ${dotSize/2}px);bottom:${bottom}px;width:${dotSize}px;height:${dotSize}px;border-radius:50%;background:${esc(b.color)};border:${border};opacity:${opacity};cursor:pointer;box-shadow:0 0 3px ${dotColor}"></div>`;
+    });
+  });
+
+  // Scale ticks
+  let ticksHtml = '';
+  ticks.forEach(v => {
+    const leftPct = ((v - scaleMin) / range * 100);
+    const isHundred = v % 100 === 0;
+    ticksHtml += `<div style="position:absolute;left:${leftPct}%;bottom:0;transform:translateX(-50%);text-align:center">
+      <div style="width:1px;height:${isHundred ? 10 : 5}px;background:${isHundred ? 'var(--text2)' : 'var(--border)'};margin:0 auto"></div>
+      ${isHundred ? `<div style="font-size:10px;color:var(--text2);margin-top:2px">${v}</div>` : ''}
+    </div>`;
+  });
+
+  // Average line
+  const avgPct = ((parseInt(avg) - scaleMin) / range * 100);
+
+  chartEl.innerHTML = `
+    <div style="position:relative;height:${chartHeight}px;margin-top:8px;border-bottom:1px solid var(--border)">
+      <div style="position:absolute;left:${avgPct}%;top:0;bottom:14px;width:1px;background:var(--accent);opacity:0.4"></div>
+      <div style="position:absolute;left:${avgPct}%;top:0;transform:translateX(-50%);font-size:9px;color:var(--accent)">avg</div>
+      ${dotsHtml}
+      ${ticksHtml}
+    </div>
+  `;
+}
+
+async function saveWeapon(name) {
+  const dmg = parseFloat(document.getElementById('wt_'+name+'_dmg').value);
+  const range = parseFloat(document.getElementById('wt_'+name+'_range').value);
+  const cd = parseFloat(document.getElementById('wt_'+name+'_cd').value);
+  const param = parseFloat(document.getElementById('wt_'+name+'_param').value);
+  try {
+    const res = await api('/weapons/' + name, {method:'PUT', body:JSON.stringify({damage:dmg, range:range, cooldown:cd, param:param})});
+    toast(name + ' updated: ' + (res.applied||[]).join(', '), 'success');
+    logAudit('WEAPON_UPDATE', name + ': ' + (res.applied||[]).join(', '));
+    logConfigChange('Weapon: ' + name, (res.applied||[]).join(', '));
+    document.getElementById('weaponTuneResult').textContent = name + ' updated';
+    document.getElementById('weaponTuneResult').style.color = 'var(--green)';
+  } catch(e) { toast('Failed to update ' + name, 'error'); }
+}
+
+async function saveStatMults() {
+  const body = {};
+  ['stat_hp_base','stat_hp_per_point','stat_speed_base','stat_speed_per_point','stat_attack_base','stat_attack_per_point','stat_defense_per_point','dodge_speed_mult','dodge_invuln_ticks','dodge_cooldown_ticks'].forEach(k => {
+    const el = document.getElementById('sm_' + k);
+    if (el && el.value !== '') body[k] = parseFloat(el.value);
+  });
+  try {
+    await api('/game/config', {method:'PUT', body:JSON.stringify(body)});
+    toast('Stat multipliers updated', 'success');
+    logAudit('STAT_MULTS_UPDATE', JSON.stringify(body));
+    logConfigChange('Stat Multipliers', Object.entries(body).map(([k,v])=>k+'='+v).join(', '));
+    document.getElementById('statMultResult').textContent = 'Applied';
+    document.getElementById('statMultResult').style.color = 'var(--green)';
+  } catch(e) { toast('Failed to update stat multipliers', 'error'); }
+}
+
+// ========== Debug Panel ==========
+let debugInterval = null;
+const memHistory = [];
+
+async function refreshDebug() {
+  try {
+    const [gs, metrics, dbStatsData] = await Promise.all([
+      api('/debug/game-state'),
+      api('/debug/metrics'),
+      api('/db/stats').catch(()=>({}))
+    ]);
+
+    // Projectiles
+    document.getElementById('dbgProjectiles').innerHTML = `<div style="font-size:20px;color:var(--orange);font-weight:bold">${gs.projectiles||0}</div><span style="color:var(--text2);font-size:11px">in-flight</span>`;
+
+    // Pickups
+    document.getElementById('dbgPickups').innerHTML = `<div style="font-size:20px;color:var(--purple);font-weight:bold">${gs.pickups||0}</div><span style="color:var(--text2);font-size:11px">active pickups</span>`;
+
+    // Zone
+    const z = gs.zone || {};
+    document.getElementById('dbgZone').innerHTML = `<div>Radius: <b>${z.radius ? z.radius.toFixed(0) : '--'}</b></div><div>Target: <b>${z.target_radius ? z.target_radius.toFixed(0) : '--'}</b></div>`;
+
+    // WS Backpressure — check each bot's connection
+    const bots = gs.bots || [];
+    const connIssues = [];
+    for (const b of bots.slice(0,20)) {
+      try {
+        const d = await api('/debug/bot/' + b.bot_id);
+        const conn = d.connection || {};
+        if (!conn.has_conn) connIssues.push({name:b.name,issue:'no connection'});
+        else if (!conn.has_send_chan) connIssues.push({name:b.name,issue:'no send channel'});
+      } catch(e) {}
+    }
+    document.getElementById('dbgWS').innerHTML = connIssues.length ?
+      connIssues.map(c=>`<div style="color:var(--orange)">${esc(c.name)}: ${c.issue}</div>`).join('') :
+      '<span style="color:var(--green)">All connections healthy</span>';
+
+    // DB Stats
+    document.getElementById('dbgDB').innerHTML = dbStatsData.tables ?
+      Object.entries(dbStatsData.tables).map(([t,c])=>`<div>${esc(t)}: <b>${c}</b> rows</div>`).join('') :
+      JSON.stringify(dbStatsData).slice(0,200);
+
+    // Memory trend
+    const mem = metrics.memory || {};
+    memHistory.push({t:Date.now(), heap:mem.heap_alloc_mb||0, stack:mem.stack_inuse_mb||0, goroutines:metrics.goroutines||0});
+    if (memHistory.length > 60) memHistory.shift();
+    drawMemChart();
+
+    // Alerts
+    const alerts = [];
+    if ((metrics.goroutines||0) > 300) alerts.push({sev:'high',msg:'Goroutines: '+metrics.goroutines+' (>300)'});
+    if ((mem.heap_alloc_mb||0) > 256) alerts.push({sev:'high',msg:'Heap: '+mem.heap_alloc_mb+'MB (>256)'});
+    if ((gs.projectiles||0) > 100) alerts.push({sev:'medium',msg:'Projectiles: '+gs.projectiles+' (>100)'});
+    const tickRate = metrics.game?.tick_rate || 10;
+    if (tickRate < 8) alerts.push({sev:'critical',msg:'Tick rate: '+tickRate+'/s (<8)'});
+    document.getElementById('dbgAlerts').innerHTML = alerts.length ?
+      alerts.map(a=>`<div style="color:var(${a.sev==='critical'?'--red':a.sev==='high'?'--orange':'--accent'})">[${a.sev.toUpperCase()}] ${esc(a.msg)}</div>`).join('') :
+      '<span style="color:var(--green)">No alerts — all systems nominal</span>';
+  } catch(e) {}
+}
+
+function drawMemChart() {
+  const canvas = document.getElementById('memChart');
+  if (!canvas || !memHistory.length) return;
+  const ctx = canvas.getContext('2d');
+  const W=canvas.width, H=canvas.height;
+  ctx.clearRect(0,0,W,H);
+  const maxHeap = Math.max(...memHistory.map(m=>m.heap),10);
+  const pad={top:10,right:10,bottom:15,left:10};
+  const cw=W-pad.left-pad.right, ch=H-pad.top-pad.bottom;
+  ctx.beginPath(); ctx.strokeStyle='#d29922'; ctx.lineWidth=1.5;
+  memHistory.forEach((m,i) => {
+    const x=pad.left+(i/(60-1))*cw;
+    const y=pad.top+ch-(m.heap/maxHeap)*ch;
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  ctx.fillStyle='#8b949e'; ctx.font='9px monospace';
+  ctx.fillText('Heap MB (max:'+maxHeap.toFixed(1)+')',pad.left+5,12);
+}
+
+function startDebugAuto() {
+  stopDebugAuto();
+  if (document.getElementById('debugAutoRefresh').checked) {
+    debugInterval = setInterval(refreshDebug, 2000);
+  }
+}
+function stopDebugAuto() {
+  if (debugInterval) { clearInterval(debugInterval); debugInterval = null; }
+}
+
+// ========== Forensics: Bot Diff ==========
+async function loadDiffSelects() {
+  try {
+    const data = await api('/dashboard/bots');
+    const bots = data.bots || [];
+    const opts = bots.map(b => `<option value="${esc(b.bot_id)}">${esc(b.name)} (${(b.bot_id||'').slice(0,8)})</option>`).join('');
+    document.getElementById('diffBot1').innerHTML = '<option value="">Select Bot A</option>' + opts;
+    document.getElementById('diffBot2').innerHTML = '<option value="">Select Bot B</option>' + opts;
+  } catch(e) {}
+}
+
+async function runBotDiff() {
+  const id1 = document.getElementById('diffBot1').value;
+  const id2 = document.getElementById('diffBot2').value;
+  if (!id1 || !id2) { toast('Select both bots', 'error'); return; }
+  try {
+    const [a, b] = await Promise.all([api('/dashboard/bots/'+id1), api('/dashboard/bots/'+id2)]);
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    const skip = new Set(['connection','last_action_result','active_effects','position']);
+    let html = '<table style="width:100%"><thead><tr><th>Field</th><th style="color:var(--accent)">'+esc(a.name||id1)+'</th><th style="color:var(--purple)">'+esc(b.name||id2)+'</th><th>Diff</th></tr></thead><tbody>';
+    for (const k of [...keys].sort()) {
+      if (skip.has(k)) continue;
+      let va = a[k], vb = b[k];
+      if (typeof va === 'object') va = JSON.stringify(va);
+      if (typeof vb === 'object') vb = JSON.stringify(vb);
+      const diff = va !== vb;
+      html += `<tr style="${diff?'background:rgba(88,166,255,0.05)':''}"><td style="color:var(--text2)">${esc(k)}</td><td>${esc(String(va??'--'))}</td><td>${esc(String(vb??'--'))}</td><td>${diff?'<span style="color:var(--orange)">DIFF</span>':''}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    document.getElementById('diffResult').innerHTML = html;
+  } catch(e) { toast('Failed to compare bots', 'error'); }
+}
+
+// ========== Forensics: Death Tracker ==========
+const deathLog = [];
+function trackDeath(evt) {
+  const d = evt.data || {};
+  if (d.event !== 'kill') return;
+  deathLog.unshift({time:evt.timestamp, killer:d.killer_name, victim:d.victim_name, weapon:d.weapon, tick:d.tick});
+  if (deathLog.length > 100) deathLog.pop();
+  if (currentTab === 'forensics') renderDeathForensics();
+}
+function renderDeathForensics() {
+  document.getElementById('deathForensics').innerHTML = deathLog.length ?
+    '<table style="width:100%"><thead><tr><th>Time</th><th>Victim</th><th>Killed By</th><th>Weapon</th><th>Tick</th></tr></thead><tbody>' +
+    deathLog.slice(0,50).map(d =>
+      `<tr><td style="color:var(--text2)">${fmtTime(d.time)}</td><td style="color:var(--red)">${esc(d.victim)}</td><td style="color:var(--green)">${esc(d.killer)}</td><td style="color:var(--orange)">${esc(d.weapon)}</td><td>${d.tick||'--'}</td></tr>`
+    ).join('') + '</tbody></table>' : 'No deaths recorded yet';
+}
+
+// ========== Audit Log ==========
+const auditEntries = [];
+function logAudit(action, detail) {
+  auditEntries.push({time:new Date().toISOString(), action, detail});
+  if (auditEntries.length > 500) auditEntries.shift();
+  renderAuditEntry(action, detail);
+  document.getElementById('auditCount').textContent = auditEntries.length + ' events';
+}
+function renderAuditEntry(action, detail) {
+  const container = document.getElementById('auditLog');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  div.innerHTML = `<span class="log-time">${fmtTime(new Date().toISOString())}</span><span class="log-type connection" style="min-width:60px">admin</span><span class="log-msg"><b>${esc(action)}</b> ${esc(detail)}</span>`;
+  container.prepend(div);
+}
+
+// ========== IP Ban Management ==========
+async function addIPBan() {
+  const ip = document.getElementById('ipBanInput').value.trim();
+  if (!ip) return;
+  if (!confirm('Ban IP ' + ip + '? All bots from this IP will be kicked.')) return;
+  try {
+    const data = await api('/ip-bans', {method:'POST', body:JSON.stringify({ip})});
+    toast('IP banned: ' + ip + ' (' + (data.bots_kicked||0) + ' kicked)', 'success');
+    logAudit('IP_BAN', ip + ' (' + (data.bots_kicked||0) + ' bots kicked)');
+    document.getElementById('ipBanInput').value = '';
+    refreshIPBans();
+  } catch(e) { toast('Failed to ban IP', 'error'); }
+}
+
+async function refreshIPBans() {
+  try {
+    const data = await api('/ip-bans');
+    const ips = data.banned_ips || [];
+    document.getElementById('ipBanList').innerHTML = ips.length ?
+      ips.map(ip => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="color:var(--red)">${esc(ip)}</span><button style="font-size:10px;padding:1px 6px" onclick="removeIPBan('${esc(ip)}')">Unban</button></div>`).join('') :
+      '<span style="color:var(--text2)">No IP bans active</span>';
+  } catch(e) {}
+}
+
+async function removeIPBan(ip) {
+  try {
+    await api('/ip-bans/' + encodeURIComponent(ip), {method:'DELETE'});
+    toast('IP unbanned: ' + ip, 'success');
+    logAudit('IP_UNBAN', ip);
+    refreshIPBans();
+  } catch(e) { toast('Failed to unban IP', 'error'); }
+}
+
+// ========== Export / Import Config ==========
+async function exportConfig() {
+  try {
+    const data = await api('/game/config');
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'arena-config-' + new Date().toISOString().slice(0,10) + '.json';
+    a.click(); URL.revokeObjectURL(url);
+    toast('Config exported', 'success');
+  } catch(e) { toast('Export failed', 'error'); }
+}
+
+async function importConfig(input) {
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const cfg = JSON.parse(text);
+    await api('/game/config', {method:'PUT', body:JSON.stringify(cfg)});
+    toast('Config imported successfully', 'success');
+    logAudit('CONFIG_IMPORT', file.name);
+  } catch(e) { toast('Import failed: ' + e.message, 'error'); }
+  input.value = '';
+}
+
+// ========== Anti-Cheat Scanner ==========
+let acInterval = null;
+
+function startACAutoScan() {
+  stopACAutoScan();
+  if (document.getElementById('acAutoScan').checked) {
+    acInterval = setInterval(runAnticheatScan, 5000);
+  }
+}
+function stopACAutoScan() {
+  if (acInterval) { clearInterval(acInterval); acInterval = null; }
+}
+
+async function runAnticheatScan() {
+  try {
+    const data = await api('/anticheat');
+    document.getElementById('acScanTime').textContent = 'Scanned: ' + new Date(data.scan_time).toLocaleTimeString();
+
+    // Summary cards
+    const flagged = data.flagged_count || 0;
+    const total = data.total_scanned || 0;
+    const clean = data.clean_count || 0;
+    const ipIssues = (data.ip_flags || []).length;
+    const maxRisk = (data.flagged_bots || []).length ? data.flagged_bots[0].risk_score : 0;
+    if (flagged > 0 && maxRisk >= 40) playAlert();
+
+    document.getElementById('acSummary').innerHTML = `
+      <div class="card"><div class="label">Bots Scanned</div><div class="value">${total}</div></div>
+      <div class="card"><div class="label">Clean</div><div class="value green">${clean}</div></div>
+      <div class="card"><div class="label">Flagged</div><div class="value ${flagged?'red':''}">${flagged}</div></div>
+      <div class="card"><div class="label">IP Issues</div><div class="value ${ipIssues?'orange':''}">${ipIssues}</div></div>
+      <div class="card"><div class="label">Highest Risk</div><div class="value ${maxRisk>50?'red':maxRisk>20?'orange':''}">${maxRisk}/100</div></div>
+    `;
+
+    // IP flags
+    const ipFlags = data.ip_flags || [];
+    document.getElementById('acIPFlags').innerHTML = ipFlags.length ? ipFlags.map(f =>
+      `<div class="ac-ip-flag"><span style="color:var(--orange);font-weight:bold">${esc(f.ip)}</span> — ${esc(f.message)}: ${f.bots.map(b => '<span style="color:var(--text)">'+esc(b)+'</span>').join(', ')}</div>`
+    ).join('') : '';
+
+    // Flagged bots
+    const bots = data.flagged_bots || [];
+    if (!bots.length) {
+      document.getElementById('acBotFlags').innerHTML = '<div style="text-align:center;padding:40px;color:var(--green);font-size:14px">All bots clean — no flags detected</div>';
+      return;
+    }
+
+    document.getElementById('acBotFlags').innerHTML = bots.map(b => {
+      const riskClass = b.risk_score >= 60 ? 'risk-high' : b.risk_score >= 30 ? 'risk-med' : 'risk-low';
+      const riskLabel = b.risk_score >= 60 ? 'critical' : b.risk_score >= 30 ? 'high' : b.risk_score >= 15 ? 'medium' : 'low';
+      return `<div class="ac-bot ${riskClass}">
+        <div class="ac-header">
+          <span style="color:${esc(b.avatar_color||'#888')}">\u25CF</span>
+          <span class="ac-name">${esc(b.name)}</span>
+          <span class="ac-meta">${(b.bot_id||'').slice(0,8)} | ${esc(b.weapon)} | Elo: ${b.elo} | ${b.status}</span>
+          <span class="ac-risk ${riskLabel}" style="margin-left:auto">Risk: ${b.risk_score}/100</span>
+          <span style="color:var(--text2);font-size:11px">${b.flag_count} flag${b.flag_count!==1?'s':''}</span>
+          <button class="btn-danger" style="font-size:10px;padding:2px 6px" onclick="botAction('${esc(b.bot_id)}','kick','${esc(b.name)}')">Kick</button>
+          <button class="btn-danger" style="font-size:10px;padding:2px 6px" onclick="botAction('${esc(b.bot_id)}','ban','${esc(b.name)}')">Ban</button>
+        </div>
+        <div>${b.flags.map(f => `
+          <div class="ac-flag">
+            <span class="ac-sev ${f.severity}">${f.severity}</span>
+            <span class="ac-cat">${esc(f.category)}</span>
+            <div class="ac-detail">
+              <div class="ac-msg">${esc(f.message)}</div>
+              <div class="ac-vals">Got: <b style="color:var(--text)">${esc(f.value)}</b> | Expected: <b style="color:var(--green)">${esc(f.expected)}</b></div>
+            </div>
+          </div>
+        `).join('')}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('acBotFlags').innerHTML = '<div style="color:var(--red)">Scan failed</div>';
+  }
+}
+
+// ========== API Key Management ==========
+let allAPIKeys = [];
+
+async function refreshAPIKeys() {
+  try {
+    const data = await api('/api-keys');
+    allAPIKeys = data.api_keys || [];
+    document.getElementById('apiKeyCount').textContent = allAPIKeys.length + ' keys';
+    filterAPIKeys();
+  } catch(e) { toast('Failed to load API keys', 'error'); }
+}
+
+function filterAPIKeys() {
+  const search = (document.getElementById('apiKeySearch').value || '').toLowerCase();
+  const showRevoked = document.getElementById('showRevokedKeys').checked;
+
+  let filtered = allAPIKeys;
+  if (!showRevoked) filtered = filtered.filter(k => k.is_active);
+  if (search) {
+    filtered = filtered.filter(k => {
+      const haystack = [k.key_prefix, k.bot_name, k.ip_created, k.connected_ip, k.key_id].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(search);
+    });
+  }
+
+  const tbody = document.getElementById('apiKeyTableBody');
+  tbody.innerHTML = filtered.map(k => {
+    const created = k.created_at ? new Date(k.created_at).toLocaleString() : '--';
+    const lastSeen = k.last_seen ? new Date(k.last_seen).toLocaleString() : 'never';
+    const active = k.is_active;
+    const online = k.is_online;
+    return `<tr style="${!active?'opacity:0.5':''}">
+      <td style="font-family:monospace;font-size:11px">${esc(k.key_prefix||'--')}</td>
+      <td><span style="color:${esc(k.avatar_color||'#888')}">\u25CF</span> ${esc(k.bot_name||'--')}</td>
+      <td><span class="status-badge ${active?'s2xx':'s5xx'}">${active?'active':'revoked'}</span></td>
+      <td>${online ? '<span style="color:var(--green)">online</span>' : '<span style="color:var(--text2)">offline</span>'}</td>
+      <td style="font-size:11px;color:var(--text2)">${esc(k.ip_created||'--')}</td>
+      <td style="font-size:11px;color:var(--text2)">${online ? esc(k.connected_ip||'--') : '--'}</td>
+      <td style="font-size:11px;color:var(--text2)">${created}</td>
+      <td style="font-size:11px;color:var(--text2)">${lastSeen}</td>
+      <td>${k.elo||'--'}</td>
+      <td>${k.kills||0}/${k.deaths||0}</td>
+      <td>${k.rounds_played||0}</td>
+      <td>${active ? '<button class="btn-danger" style="font-size:10px;padding:2px 6px" onclick="revokeAPIKey(\''+esc(k.key_id)+'\',\''+esc(k.bot_name||k.key_prefix)+'\')">Revoke</button>' : '<span style="color:var(--text2);font-size:10px">revoked</span>'}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function revokeAPIKey(keyId, label) {
+  if (!confirm('Revoke API key for ' + label + '? This will disconnect and ban the bot.')) return;
+  try {
+    await api('/api-keys/' + keyId + '/revoke', {method:'POST'});
+    toast('API key revoked: ' + label, 'success');
+    refreshAPIKeys();
+  } catch(e) { toast('Failed to revoke key', 'error'); }
+}
+
+// ========== Admin Token Management ==========
+async function refreshAdminTokens() {
+  try {
+    const data = await api('/admin-tokens');
+    const tokens = data.tokens || [];
+    document.getElementById('adminTokenCount').textContent = tokens.length + ' tokens';
+
+    document.getElementById('adminTokenTableBody').innerHTML = tokens.map(t => {
+      const created = t.created_at ? new Date(t.created_at).toLocaleString() : '--';
+      return `<tr>
+        <td><b>${esc(t.label)}</b></td>
+        <td style="font-family:monospace;font-size:11px;color:var(--text2)">${esc(t.token_hint)}</td>
+        <td><span class="status-badge ${t.source==='ARENA_ADMIN_TOKEN'?'s3xx':'s2xx'}">${esc(t.source)}</span></td>
+        <td style="font-size:11px;color:var(--text2)">${created}</td>
+        <td>${t.deletable ? '<button class="btn-danger" style="font-size:10px;padding:2px 6px" onclick="deleteAdminToken(\''+esc(t.id)+'\',\''+esc(t.label)+'\')">Delete</button>' : '<span style="color:var(--text2);font-size:10px">protected</span>'}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { toast('Failed to load admin tokens', 'error'); }
+}
+
+async function createAdminToken() {
+  const label = document.getElementById('newTokenLabel').value.trim() || 'Admin Token';
+  try {
+    const data = await api('/admin-tokens', {method:'POST', body:JSON.stringify({label})});
+    document.getElementById('newTokenValue').value = data.token;
+    document.getElementById('newTokenResult').style.display = 'block';
+    document.getElementById('newTokenLabel').value = '';
+    toast('Admin token created: ' + label, 'success');
+    refreshAdminTokens();
+  } catch(e) { toast('Failed to create token', 'error'); }
+}
+
+function copyNewToken() {
+  const input = document.getElementById('newTokenValue');
+  input.select();
+  navigator.clipboard.writeText(input.value).then(() => toast('Token copied to clipboard', 'success'));
+}
+
+async function deleteAdminToken(id, label) {
+  if (!confirm('Delete admin token "' + label + '"? Anyone using it will lose access.')) return;
+  try {
+    await api('/admin-tokens/' + id, {method:'DELETE'});
+    toast('Admin token deleted: ' + label, 'success');
+    refreshAdminTokens();
+  } catch(e) { toast('Failed to delete token', 'error'); }
+}
+
+// ========== Theme Toggle ==========
+function toggleTheme() {
+  document.body.classList.toggle('light');
+  const isLight = document.body.classList.contains('light');
+  localStorage.setItem('arena_theme', isLight ? 'light' : 'dark');
+  document.getElementById('themeBtn').textContent = isLight ? 'Dark' : 'Light';
+}
+if (localStorage.getItem('arena_theme') === 'light') {
+  document.body.classList.add('light');
+  document.getElementById('themeBtn').textContent = 'Dark';
+}
+if (localStorage.getItem('arena_sound') === 'true') {
+  document.getElementById('soundToggle').checked = true;
+}
+
+// ========== Notification Sound ==========
+function playAlert() {
+  if (!document.getElementById('soundToggle').checked) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 800;
+    gain.gain.value = 0.1;
+    osc.start();
+    osc.stop(ctx.currentTime + 0.15);
+  } catch(e) {}
+}
+
+// ========== Pinned Bots (localStorage) ==========
+function getPinnedBots() {
+  try { return JSON.parse(localStorage.getItem('arena_pinned') || '[]'); } catch(e) { return []; }
+}
+function isPinned(botId) { return getPinnedBots().includes(botId); }
+function togglePin(botId) {
+  let pins = getPinnedBots();
+  if (pins.includes(botId)) {
+    pins = pins.filter(p => p !== botId);
+    toast('Unpinned bot', 'info');
+  } else {
+    pins.push(botId);
+    toast('Pinned bot', 'success');
+  }
+  localStorage.setItem('arena_pinned', JSON.stringify(pins));
+  refreshBots();
+}
+
+// ========== Bot Notes (localStorage) ==========
+function getBotNotes() {
+  try { return JSON.parse(localStorage.getItem('arena_bot_notes') || '{}'); } catch(e) { return {}; }
+}
+function getBotNote(botId) { return getBotNotes()[botId] || ''; }
+function addBotNote(botId, name) {
+  const current = getBotNote(botId);
+  const note = prompt('Note for ' + name + ':', current);
+  if (note === null) return;
+  const notes = getBotNotes();
+  if (note.trim()) {
+    notes[botId] = note.trim();
+  } else {
+    delete notes[botId];
+  }
+  localStorage.setItem('arena_bot_notes', JSON.stringify(notes));
+  toast(note.trim() ? 'Note saved' : 'Note removed', 'success');
+  refreshBots();
+}
+
+// ========== Uptime Formatter ==========
+function fmtUptime(isoDate) {
+  if (!isoDate) return '--';
+  const ms = Date.now() - new Date(isoDate).getTime();
+  if (ms < 0) return '--';
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return secs + 's';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm ' + (secs%60) + 's';
+  const hrs = Math.floor(mins / 60);
+  return hrs + 'h ' + (mins%60) + 'm';
+}
+
+// ========== Spectator List ==========
+async function refreshSpectators() {
+  try {
+    const data = await api('/spectators');
+    const specs = data.spectators || [];
+    document.getElementById('specCount').textContent = '(' + specs.length + ')';
+    if (!specs.length) {
+      document.getElementById('specList').innerHTML = '<span style="color:var(--text2)">No spectators connected</span>';
+      return;
+    }
+    document.getElementById('specList').innerHTML = '<table style="width:100%"><thead><tr><th>#</th><th>IP</th><th>Connected</th><th>Uptime</th><th></th></tr></thead><tbody>' +
+      specs.map(s => `<tr>
+        <td>${s.index}</td>
+        <td style="color:var(--text2)">${esc(s.ip || s.remote_addr || '--')}</td>
+        <td style="color:var(--text2);font-size:11px">${s.connected_at ? new Date(s.connected_at).toLocaleTimeString() : '--'}</td>
+        <td>${s.connected_at ? fmtUptime(s.connected_at) : '--'}</td>
+        <td><button class="btn-danger" style="font-size:10px;padding:1px 6px" onclick="kickSpectator(${s.index})">Kick</button> ${s.ip ? `<button class="btn-danger" style="font-size:10px;padding:1px 6px" onclick="banSpectatorIP('${esc(s.ip)}',${s.index})">Ban IP</button>` : ''}</td>
+      </tr>`).join('') + '</tbody></table>';
+  } catch(e) {}
+}
+
+async function kickSpectator(index) {
+  try {
+    await api('/spectators/' + index + '/kick', {method:'POST'});
+    toast('Spectator kicked', 'success');
+    logAudit('SPECTATOR_KICK', 'index ' + index);
+    refreshSpectators();
+  } catch(e) { toast('Failed to kick spectator', 'error'); }
+}
+
+// ========== Server Restart ==========
+async function serverRestart() {
+  if (!confirm('This will kick ALL bots and restart the round. Continue?')) return;
+  try {
+    // Kick all bots
+    const data = await api('/dashboard/bots');
+    const bots = data.bots || [];
+    for (const b of bots) {
+      try { await api('/bots/' + b.bot_id + '/kick', {method:'POST', body:JSON.stringify({reason:'Server restart'})}); } catch(e) {}
+    }
+    // Restart round
+    await api('/game/restart-round', {method:'POST'});
+    toast('All bots kicked + round restarted', 'success');
+    logAudit('SERVER_RESTART', bots.length + ' bots kicked');
+  } catch(e) { toast('Restart failed', 'error'); }
+}
+
+// ========== Config Change History ==========
+const configHistory = [];
+function logConfigChange(category, changes) {
+  configHistory.unshift({time: new Date().toISOString(), category, changes});
+  if (configHistory.length > 100) configHistory.pop();
+  renderConfigHistory();
+}
+function renderConfigHistory() {
+  const el = document.getElementById('configHistory');
+  if (!el) return;
+  el.innerHTML = configHistory.length ? configHistory.map(c =>
+    `<div style="padding:3px 0;border-bottom:1px solid var(--border)"><span style="color:var(--text2)">${fmtTime(c.time)}</span> <b style="color:var(--accent)">${esc(c.category)}</b> ${esc(c.changes)}</div>`
+  ).join('') : 'No changes recorded this session';
+}
+
+// ========== Fullscreen ==========
+function toggleFullscreen() {
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    const el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen().catch(()=>{});
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  } else {
+    if (document.exitFullscreen) document.exitFullscreen().catch(()=>{});
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+  }
+}
+function onFsChange() {
+  const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  document.getElementById('fsBtn').textContent = isFs ? 'Exit' : 'Full';
+  document.getElementById('fsExitFloat').style.display = isFs ? 'block' : 'none';
+}
+document.addEventListener('fullscreenchange', onFsChange);
+document.addEventListener('webkitfullscreenchange', onFsChange);
+
+// ========== Share Tab Link ==========
+function shareTab() {
+  const url = new URL(window.location);
+  url.searchParams.set('tab', currentTab);
+  navigator.clipboard.writeText(url.toString()).then(() => toast('Link copied: ?tab=' + currentTab, 'success'));
+}
+
+// ========== Session Timer ==========
+const sessionStart = Date.now();
+setInterval(() => {
+  const el = document.getElementById('sessionTimer');
+  if (!el) return;
+  const secs = Math.floor((Date.now() - sessionStart) / 1000);
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  el.textContent = m + ':' + String(s).padStart(2, '0');
+}, 1000);
+
+// ========== Keyboard Shortcuts ==========
+document.addEventListener('keydown', (e) => {
+  // Don't fire when typing in inputs
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+  const key = e.key;
+  if (key === 'Escape') {
+    document.getElementById('profilerOverlay').classList.remove('visible');
+    document.getElementById('kbdHelp').classList.remove('visible');
+    document.getElementById('mapCtxMenu').style.display = 'none';
+    return;
+  }
+  if (key === '?' || (e.shiftKey && key === '/')) {
+    e.preventDefault();
+    document.getElementById('kbdHelp').classList.toggle('visible');
+    return;
+  }
+  if (key === '/') { e.preventDefault(); const s = document.getElementById('apiKeySearch') || document.getElementById('dmgFilterBot'); if(s) s.focus(); return; }
+  if ((key === 'f' || key === 'F') && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggleFullscreen(); return; }
+
+  const keyMap = {'1':'overview','2':'minimap','3':'bots','4':'killfeed','5':'anticheat','6':'controls','7':'balance','8':'leaderboard','9':'damagelog'};
+  if (keyMap[key]) { switchTab(keyMap[key]); }
+});
+
+// ========== Leaderboard ==========
+async function refreshLeaderboard() {
+  try {
+    const sort = document.getElementById('lbSort').value || 'kills';
+    // Use public leaderboard endpoint (no admin prefix)
+    const base = API_BASE.replace('/admin', '');
+    const res = await fetch(base + '/leaderboard?sort=' + sort + '&limit=50', {
+      headers: {'Content-Type':'application/json'}
+    });
+    const data = await res.json();
+    const entries = data.leaderboard || [];
+    document.getElementById('lbCount').textContent = entries.length + ' bots (sorted by ' + sort + ')';
+    document.getElementById('lbBody').innerHTML = entries.map(e => {
+      const kd = e.deaths > 0 ? (e.kills/e.deaths).toFixed(1) : e.kills+'.0';
+      return `<tr>
+        <td style="color:var(--accent)">${e.rank}</td>
+        <td><span style="color:${esc(e.avatar_color||'#888')}">\u25CF</span> ${esc(e.name)}</td>
+        <td>${e.kills}</td>
+        <td>${e.deaths}</td>
+        <td style="font-weight:bold">${kd}</td>
+        <td>${e.elo}</td>
+        <td style="color:var(--orange)">${e.best_streak}</td>
+        <td>${e.damage_dealt||0}</td>
+        <td>${e.rounds_played||0}</td>
+        <td style="color:var(--green)">${e.round_wins||0}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {}
+}
+
+// ========== Connection Log (from SSE) ==========
+const connLogEntries = [];
+function trackConnection(evt) {
+  const d = evt.data || {};
+  const action = d.action || evt.type || '';
+  if (!action) return;
+  connLogEntries.unshift({time: evt.timestamp, action, name: d.bot_name||'', ip: d.ip||'', error: d.error||''});
+  if (connLogEntries.length > 500) connLogEntries.pop();
+
+  const container = document.getElementById('connLogEntries');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  const isErr = d.error || action.includes('fail') || action.includes('banned');
+  div.innerHTML = `<span class="log-time">${fmtTime(evt.timestamp)}</span><span class="log-type ${isErr?'auth_failure':'connection'}">${esc(action)}</span><span class="log-msg">${d.bot_name ? '<b>'+esc(d.bot_name)+'</b> ' : ''}${d.ip ? '<span style="color:var(--text2)">'+esc(d.ip)+'</span> ' : ''}${d.error ? '<span style="color:var(--red)">'+esc(d.error)+'</span>' : ''}</span>`;
+  container.prepend(div);
+  while (container.children.length > 500) container.removeChild(container.lastChild);
+  document.getElementById('connLogCount').textContent = connLogEntries.length + ' events';
+}
+
+// ========== Collapsible Sections ==========
+document.addEventListener('click', (e) => {
+  const h3 = e.target.closest('.ctrl-section.collapsible > h3');
+  if (h3) h3.parentElement.classList.toggle('collapsed');
+});
+// Make all ctrl-sections collapsible
+document.querySelectorAll('.ctrl-section').forEach(s => s.classList.add('collapsible'));
+
+// ========== Ban Spectator IP ==========
+async function banSpectatorIP(ip, index) {
+  if (!confirm('Ban IP ' + ip + '? This will kick the spectator and block all future connections from this IP.')) return;
+  try {
+    await api('/ip-bans', {method:'POST', body:JSON.stringify({ip})});
+    toast('IP banned: ' + ip, 'success');
+    logAudit('SPECTATOR_IP_BAN', ip);
+    refreshSpectators();
+  } catch(e) { toast('Failed to ban IP', 'error'); }
+}
+
+// ========== Init ==========
+
+// Load tab from URL parameter
+const urlTab = new URLSearchParams(window.location.search).get('tab');
+
+if (token) {
+  testAuth();
+}
+</script>
+</body>
+</html>

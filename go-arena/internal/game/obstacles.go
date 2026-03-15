@@ -1,6 +1,9 @@
 package game
 
-import "math/rand"
+import (
+	"math"
+	"math/rand"
+)
 
 // GenerateObstacles creates a random set of rectangular obstacles for a round.
 // Count is chosen randomly between minCount and maxCount. Each obstacle is
@@ -61,27 +64,94 @@ func LineIntersectsObstacle(x1, y1, x2, y2 float64, obstacles []Obstacle) bool {
 }
 
 // SlideAlongObstacle attempts to move from (oldX,oldY) to (newX,newY),
-// sliding along obstacles if the direct path is blocked.
+// using stepped collision to prevent tunnelling through thin obstacles.
 //
-//	1. Try the full move.
-//	2. Try X-only movement.
-//	3. Try Y-only movement.
-//	4. Stay in place.
+//	1. Step along the path checking for collisions.
+//	2. If blocked, try X-only then Y-only sliding.
+//	3. Return the farthest valid position.
 func SlideAlongObstacle(oldX, oldY, newX, newY float64, obstacles []Obstacle, radius float64) (float64, float64) {
-	// Full move
-	if CollidesWithObstacle(newX, newY, obstacles, radius) == nil {
-		return newX, newY
+	dx := newX - oldX
+	dy := newY - oldY
+	dist := math.Sqrt(dx*dx + dy*dy)
+
+	// If movement is small enough, single check is fine
+	stepSize := radius * 0.8 // step in increments smaller than bot radius
+	if dist <= stepSize {
+		if CollidesWithObstacle(newX, newY, obstacles, radius) == nil {
+			return newX, newY
+		}
+		if CollidesWithObstacle(newX, oldY, obstacles, radius) == nil {
+			return newX, oldY
+		}
+		if CollidesWithObstacle(oldX, newY, obstacles, radius) == nil {
+			return oldX, newY
+		}
+		return oldX, oldY
 	}
-	// X only
-	if CollidesWithObstacle(newX, oldY, obstacles, radius) == nil {
-		return newX, oldY
+
+	// Step along the path
+	steps := int(math.Ceil(dist / stepSize))
+	if steps > 20 {
+		steps = 20 // cap iterations
 	}
-	// Y only
-	if CollidesWithObstacle(oldX, newY, obstacles, radius) == nil {
-		return oldX, newY
+
+	lastGoodX, lastGoodY := oldX, oldY
+	for i := 1; i <= steps; i++ {
+		t := float64(i) / float64(steps)
+		cx := oldX + dx*t
+		cy := oldY + dy*t
+		if CollidesWithObstacle(cx, cy, obstacles, radius) != nil {
+			// Hit something — try sliding at this step
+			if CollidesWithObstacle(cx, lastGoodY, obstacles, radius) == nil {
+				lastGoodX = cx
+			} else if CollidesWithObstacle(lastGoodX, cy, obstacles, radius) == nil {
+				lastGoodY = cy
+			}
+			return lastGoodX, lastGoodY
+		}
+		lastGoodX, lastGoodY = cx, cy
 	}
-	// Blocked
-	return oldX, oldY
+	return lastGoodX, lastGoodY
+}
+
+// EnforceObstacleBounds pushes a bot out of any obstacle it overlaps.
+// This is a safety net called after all movement to prevent bots from
+// ever being inside an obstacle.
+func EnforceObstacleBounds(bot *BotState, obstacles []Obstacle, radius float64) {
+	for _, obs := range obstacles {
+		// Expanded AABB
+		left := obs.X - radius
+		right := obs.X + obs.Width + radius
+		top := obs.Y - radius
+		bottom := obs.Y + obs.Height + radius
+
+		bx := bot.Position.X()
+		by := bot.Position.Y()
+
+		if bx >= left && bx <= right && by >= top && by <= bottom {
+			// Bot is inside expanded obstacle — push to nearest edge
+			pushLeft := bx - left
+			pushRight := right - bx
+			pushTop := by - top
+			pushBottom := bottom - by
+
+			minPush := pushLeft
+			pushX, pushY := left-0.1, by
+			if pushRight < minPush {
+				minPush = pushRight
+				pushX, pushY = right+0.1, by
+			}
+			if pushTop < minPush {
+				minPush = pushTop
+				pushX, pushY = bx, top-0.1
+			}
+			if pushBottom < minPush {
+				pushX, pushY = bx, bottom+0.1
+			}
+
+			bot.Position = NewVec2(pushX, pushY)
+		}
+	}
 }
 
 // pointInRect returns true if (x,y) lies inside the obstacle rectangle

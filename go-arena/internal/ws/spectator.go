@@ -8,6 +8,7 @@ import (
 
 	"arena-server/internal/config"
 	"arena-server/internal/game"
+	"arena-server/internal/security"
 
 	"github.com/gorilla/websocket"
 )
@@ -56,9 +57,11 @@ func SpectatorHandler(engine *game.GameEngine) http.HandlerFunc {
 
 		// Create spectator connection with buffered send channel.
 		spec := &game.SpectatorConn{
-			Conn:     conn,
-			SendChan: make(chan []byte, 32),
-			Done:     make(chan struct{}),
+			Conn:        conn,
+			SendChan:    make(chan []byte, 32),
+			Done:        make(chan struct{}),
+			IP:          security.ExtractClientIP(r),
+			ConnectedAt: time.Now(),
 		}
 
 		// Register with the engine.

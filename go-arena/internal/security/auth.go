@@ -3,10 +3,12 @@ package security
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math/big"
 	"net/http"
+	"strings"
 
 	"arena-server/internal/config"
 	"arena-server/internal/db"
@@ -97,14 +99,37 @@ func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiKey := r.Header.Get("X-Arena-Key")
 		if apiKey == "" {
-			http.Error(w, `{"error":"missing X-Arena-Key header"}`, http.StatusUnauthorized)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":   "missing X-Arena-Key header",
+				"code":    "MISSING_API_KEY",
+				"details": map[string]interface{}{"header": "X-Arena-Key"},
+			})
 			return
 		}
 
 		bot, err := VerifyAPIKey(r.Context(), apiKey)
 		if err != nil {
 			slog.Warn("auth failed", "error", err, "remote", r.RemoteAddr)
-			http.Error(w, `{"error":"invalid API key"}`, http.StatusUnauthorized)
+			code := "INVALID_API_KEY"
+			msg := "invalid API key"
+			if strings.Contains(err.Error(), "too short") {
+				code = "API_KEY_TOO_SHORT"
+				msg = "API key is too short"
+			} else if strings.Contains(err.Error(), "not found") {
+				code = "API_KEY_NOT_FOUND"
+				msg = "API key not found"
+			} else if strings.Contains(err.Error(), "no bot associated") {
+				code = "NO_BOT_FOR_KEY"
+				msg = "no bot associated with this API key"
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": msg,
+				"code":  code,
+			})
 			return
 		}
 

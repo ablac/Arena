@@ -17,6 +17,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// EventHook is a callback for dashboard event logging. Set by the api package
+// to avoid circular imports.
+var EventHook func(action, botName, botID, ip, apiKeyID, errMsg string)
+
+// WSMessageHook is a callback for WS message logging.
+var WSMessageHook func(botID, botName, action string, data map[string]interface{})
+
 // upgrader is the shared WebSocket upgrader for bot connections.
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
@@ -31,14 +38,44 @@ var upgrader = websocket.Upgrader{
 // engine registration, and the read/write message loops.
 func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ip := security.ExtractClientIP(r)
+
+		// Check IP ban.
+		if engine.IsIPBanned(ip) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "your IP has been banned",
+				"code":  "IP_BANNED",
+			})
+			if EventHook != nil {
+				EventHook("ip_banned", "", "", ip, "", "IP banned")
+			}
+			return
+		}
+
 		// Per-IP WebSocket connection rate limiting.
 		if config.C.WSConnectRatePerMin > 0 {
-			ip := security.ExtractClientIP(r)
-			allowed, _, _, err := security.CheckRateLimit(r.Context(), "ws:bot:"+ip, config.C.WSConnectRatePerMin, 60)
+			allowed, count, _, err := security.CheckRateLimit(r.Context(), "ws:bot:"+ip, config.C.WSConnectRatePerMin, 60)
 			if err != nil {
 				slog.Warn("ws rate limit check error, allowing", "error", err, "ip", ip)
 			} else if !allowed {
-				http.Error(w, "too many connections", http.StatusTooManyRequests)
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", "60")
+				w.WriteHeader(http.StatusTooManyRequests)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"error":       "too many connections",
+					"code":        "WS_RATE_LIMITED",
+					"details": map[string]interface{}{
+						"current_count": count,
+						"limit":         config.C.WSConnectRatePerMin,
+						"retry_after":   60,
+						"window":        "60s",
+					},
+				})
+				if EventHook != nil {
+					EventHook("ws_rate_limited", "", "", ip, "", "too many connections")
+				}
 				return
 			}
 		}
@@ -46,6 +83,9 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			slog.Error("websocket upgrade failed", "error", err, "remote", r.RemoteAddr)
+			if EventHook != nil {
+				EventHook("ws_upgrade_failed", "", "", ip, "", err.Error())
+			}
 			return
 		}
 
@@ -65,14 +105,24 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		botRecord, err := authenticateBot(r, conn, cfg)
 		if err != nil {
 			slog.Warn("bot auth failed", "error", err, "remote", r.RemoteAddr)
-			sendWSError(conn, err.Error())
+			sendWSErrorStructured(conn, err.Error(), "AUTH_FAILED", map[string]interface{}{
+				"ip": ip,
+			})
+			if EventHook != nil {
+				EventHook("auth_failed", "", "", ip, "", err.Error())
+			}
 			return
 		}
 
 		// Check if the bot's API key is banned.
 		if engine.IsKeyBanned(botRecord.APIKeyID) {
 			slog.Warn("banned bot attempted reconnection", "bot", botRecord.Name, "remote", r.RemoteAddr)
-			sendWSError(conn, "your API key has been banned")
+			sendWSErrorStructured(conn, "your API key has been banned", "KEY_BANNED", map[string]interface{}{
+				"api_key_id": botRecord.APIKeyID,
+			})
+			if EventHook != nil {
+				EventHook("auth_banned", botRecord.Name, botRecord.ID, ip, botRecord.APIKeyID, "key banned")
+			}
 			return
 		}
 
@@ -84,7 +134,12 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 				slog.Warn("key rate limit check error, allowing", "error", err)
 			} else if !allowed {
 				slog.Warn("bot reconnecting too fast", "bot", botRecord.Name, "key_id", botRecord.APIKeyID)
-				sendWSError(conn, "reconnecting too fast, wait a few seconds")
+				sendWSErrorStructured(conn, "reconnecting too fast, wait a few seconds", "RECONNECT_TOO_FAST", map[string]interface{}{
+					"retry_after": 5,
+				})
+				if EventHook != nil {
+					EventHook("reconnect_rate_limited", botRecord.Name, botRecord.ID, ip, botRecord.APIKeyID, "reconnecting too fast")
+				}
 				return
 			}
 		}
@@ -117,6 +172,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			FallbackBehavior: botRecord.DefaultFallback,
 			Elo:              startingElo,
 			IsAlive:          false,
+			ConnectedAt:      time.Now(),
 			Conn:             conn,
 			SendChan:         make(chan []byte, 64),
 			ActiveEffects:    []game.Effect{},
@@ -143,6 +199,9 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		if err := handleLoadoutPhase(conn, bot, cfg); err != nil {
 			slog.Warn("loadout phase failed", "error", err, "bot", bot.Name)
 			game.SendKick(bot, err.Error())
+			if EventHook != nil {
+				EventHook("loadout_failed", bot.Name, bot.BotID, ip, bot.APIKeyID, err.Error())
+			}
 			return
 		}
 
@@ -151,8 +210,18 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// ----------------------------------------------------------------
 		if !engine.AddBot(bot) {
 			slog.Warn("bot rejected: server at capacity", "bot", bot.Name, "remote", r.RemoteAddr)
-			sendWSError(conn, "server at capacity")
+			sendWSErrorStructured(conn, "server at capacity", "SERVER_FULL", map[string]interface{}{
+				"max_bots": config.C.MaxBots,
+			})
+			if EventHook != nil {
+				EventHook("server_full", bot.Name, bot.BotID, ip, bot.APIKeyID, "server at capacity")
+			}
 			return
+		}
+
+		// Log successful connection.
+		if EventHook != nil {
+			EventHook("connected", bot.Name, bot.BotID, ip, bot.APIKeyID, "")
 		}
 
 		// ----------------------------------------------------------------
@@ -182,6 +251,9 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 
 		wg.Wait()
 		slog.Info("bot disconnected", "bot", bot.Name, "bot_id", bot.BotID)
+		if EventHook != nil {
+			EventHook("disconnected", bot.Name, bot.BotID, ip, bot.APIKeyID, "")
+		}
 	}
 }
 
@@ -369,7 +441,11 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 
 		if len(msgTimestamps) >= maxPerSec {
 			slog.Warn("rate limited bot", "bot", bot.Name, "msgs_per_sec", len(msgTimestamps))
-			game.SendError(bot, "Rate limited")
+			game.SendStructuredError(bot, "Rate limited: too many messages per second", "WS_RATE_LIMITED", map[string]interface{}{
+				"current_count": len(msgTimestamps),
+				"limit":         maxPerSec,
+				"window":        "1s",
+			})
 			continue
 		}
 		msgTimestamps = append(msgTimestamps, now)
@@ -390,12 +466,22 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 			action := ActionMessageToAction(actionMsg)
 			engine.SetBotAction(bot.BotID, action)
 
+			// Log WS message for dashboard.
+			if WSMessageHook != nil {
+				WSMessageHook(bot.BotID, bot.Name, actionMsg.Action, map[string]interface{}{
+					"tick":   actionMsg.Tick,
+					"target": actionMsg.Target,
+				})
+			}
+
 		case "select_loadout":
 			// Loadout changes are only allowed during the initial phase.
-			game.SendError(bot, "Cannot change loadout mid-game")
+			game.SendStructuredError(bot, "Cannot change loadout mid-game", "LOADOUT_LOCKED", nil)
 
 		default:
-			game.SendError(bot, "Unexpected message type")
+			game.SendStructuredError(bot, "Unexpected message type: "+msgType, "UNKNOWN_MSG_TYPE", map[string]interface{}{
+				"received_type": msgType,
+			})
 		}
 	}
 }
@@ -438,6 +524,18 @@ func sendWSError(conn *websocket.Conn, message string) {
 	payload, _ := json.Marshal(map[string]string{
 		"type":    "error",
 		"message": message,
+	})
+	conn.WriteMessage(websocket.TextMessage, payload)
+}
+
+// sendWSErrorStructured writes a structured JSON error with code and details
+// to a WebSocket connection before closing it.
+func sendWSErrorStructured(conn *websocket.Conn, message, code string, details map[string]interface{}) {
+	payload, _ := json.Marshal(map[string]interface{}{
+		"type":    "error",
+		"message": message,
+		"code":    code,
+		"details": details,
 	})
 	conn.WriteMessage(websocket.TextMessage, payload)
 }
