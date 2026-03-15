@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bot Dashboard — AI Battle Arena</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--border:#30363d;--text:#c9d1d9;--text2:#8b949e;--accent:#58a6ff;--green:#3fb950;--red:#f85149;--orange:#d29922;--purple:#bc8cff;--cyan:#39d353;--gold:#f0c040}
+body{font-family:'JetBrains Mono','Fira Code',monospace;background:var(--bg);color:var(--text);font-size:13px;min-height:100vh}
+a{color:var(--accent);text-decoration:none}
+button{font-family:inherit;font-size:12px;cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--text);padding:6px 14px;border-radius:4px}
+button:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+button.active{background:var(--accent);color:#fff}
+button.sm{padding:3px 8px;font-size:11px}
+button.danger{border-color:var(--red);color:var(--red)}
+button.danger:hover{background:var(--red);color:#fff}
+input,select{font-family:inherit;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:6px 10px;border-radius:4px;outline:none}
+input:focus{border-color:var(--accent)}
+#login{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:14px}
+#login h1{color:var(--accent);font-size:20px}
+#login p{color:var(--text2);font-size:12px;max-width:400px;text-align:center}
+#login input{width:340px;padding:10px 14px}
+#login button{padding:10px 28px}
+#login .error{color:var(--red);font-size:12px;min-height:16px}
+#login .saved-keys{margin-top:16px;max-width:400px;width:100%}
+#login .saved-key{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;margin-bottom:4px;cursor:pointer}
+#login .saved-key:hover{border-color:var(--accent)}
+#login .saved-key .name{flex:1;color:var(--accent);font-size:12px}
+#login .saved-key .prefix{color:var(--text2);font-size:10px}
+#app{display:none;max-width:1100px;margin:0 auto;padding:20px}
+header{display:flex;align-items:center;justify-content:space-between;padding:10px 0;margin-bottom:16px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:8px}
+header h1{font-size:15px;color:var(--accent)}
+header .meta{display:flex;gap:10px;align-items:center;font-size:11px;color:var(--text2);flex-wrap:wrap}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px;margin-bottom:16px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:12px}
+.card .label{font-size:10px;color:var(--text2);margin-bottom:3px}
+.card .value{font-size:20px;font-weight:bold;color:var(--accent)}
+.card .value.green{color:var(--green)}.card .value.red{color:var(--red)}.card .value.gold{color:var(--gold)}.card .value.purple{color:var(--purple)}
+.card .sub{font-size:9px;color:var(--text2);margin-top:2px}
+.section{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:16px;margin-bottom:12px}
+.section h2{color:var(--accent);font-size:13px;margin-bottom:10px}
+.section h3{color:var(--text2);font-size:11px;margin:10px 0 6px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:5px 8px;color:var(--text2);border-bottom:1px solid var(--border)}
+td{padding:4px 8px;border-bottom:1px solid var(--border)}
+tr:hover td{background:var(--bg3)}
+.bar-w{height:12px;background:var(--bg3);border-radius:3px;overflow:hidden;flex:1}
+.bar-f{height:100%;border-radius:3px;transition:width .3s}
+.srow{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.srow .lbl{min-width:65px;font-size:11px;color:var(--text2);text-align:right}
+.srow .val{min-width:30px;font-size:11px}
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:14px;overflow-x:auto;flex-shrink:0}
+.tbtn{padding:7px 14px;font-size:11px;cursor:pointer;color:var(--text2);border:none;background:none;border-bottom:2px solid transparent;font-family:inherit;white-space:nowrap}
+.tbtn:hover{color:var(--text);background:none}
+.tbtn.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tpanel{display:none}.tpanel.active{display:block}
+.tip{background:var(--bg);border:1px solid var(--accent);border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:8px}
+.tip b{color:var(--accent)}
+.tip.warn{border-color:var(--orange)}.tip.warn b{color:var(--orange)}
+.tip.good{border-color:var(--green)}.tip.good b{color:var(--green)}
+.weapon-card{display:flex;gap:14px;align-items:flex-start;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:8px}
+.weapon-card .icon{font-size:26px;flex-shrink:0}
+.weapon-card .wname{color:var(--orange);font-weight:bold;font-size:13px}
+.weapon-card .wprop{font-size:10px;color:var(--text2);margin-top:2px}
+.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.config-field label{display:block;font-size:10px;color:var(--text2);margin-bottom:2px}
+.config-field input,.config-field select{width:100%}
+.online-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.code-block{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:10px;font-size:11px;overflow-x:auto;white-space:pre;margin-bottom:8px}
+.compare-grid{display:grid;grid-template-columns:1fr auto 1fr;gap:0}
+.compare-grid .col{padding:4px 8px;border-bottom:1px solid var(--border)}
+.compare-grid .lbl{text-align:center;color:var(--text2);font-size:10px;padding:4px 8px;border-bottom:1px solid var(--border)}
+.compare-grid .better{color:var(--green);font-weight:bold}
+.compare-grid .worse{color:var(--red)}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <h1>// BOT DASHBOARD</h1>
+  <p>Enter your API key to view stats, configure loadouts, and develop strategies. You can save multiple keys.</p>
+  <input type="password" id="apiKeyInput" placeholder="arena_..." autofocus>
+  <input id="keyLabel" placeholder="Label (optional, e.g. My Sniper Bot)" style="width:340px;margin-top:-4px">
+  <button onclick="doLogin()">Connect</button>
+  <div class="error" id="loginError"></div>
+  <div class="saved-keys" id="savedKeysList"></div>
+  <div style="margin-top:16px;font-size:11px;color:var(--text2)">
+    <a href="/">Back to Arena</a> &nbsp;|&nbsp; Don't have a key? <a href="/#keygen">Generate one</a>
+  </div>
+</div>
+
+<div id="app">
+  <header>
+    <h1>// <span id="botName">Bot</span></h1>
+    <div class="meta">
+      <span id="onlineStatus"></span>
+      <span id="arenaPhase"></span>
+      <select id="botSwitcher" onchange="switchBot(this.value)" style="font-size:11px"></select>
+      <button class="sm" onclick="refreshAll()">Refresh</button>
+      <button class="sm" onclick="logout()">Logout</button>
+    </div>
+  </header>
+
+  <div class="cards" id="statCards"></div>
+
+  <div class="tabs">
+    <div class="tbtn active" data-tab="overview">Overview</div>
+    <div class="tbtn" data-tab="config">Configure</div>
+    <div class="tbtn" data-tab="simulator">Stat Simulator</div>
+    <div class="tbtn" data-tab="weapons">Weapons</div>
+    <div class="tbtn" data-tab="leaderboard">Leaderboard</div>
+    <div class="tbtn" data-tab="compare">Compare Bots</div>
+    <div class="tbtn" data-tab="allbots">All My Bots</div>
+    <div class="tbtn" data-tab="codebook">Code Reference</div>
+    <div class="tbtn" data-tab="strategy">Strategy</div>
+  </div>
+
+  <div class="tpanel active" id="tab-overview">
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div class="section" style="flex:1;min-width:280px"><h2>Performance</h2><div id="perfBars"></div></div>
+      <div class="section" style="flex:1;min-width:280px"><h2>Elo History</h2><div id="eloHistory"></div></div>
+    </div>
+    <div class="section"><h2>Analysis</h2><div id="analysis"></div></div>
+  </div>
+
+  <div class="tpanel" id="tab-config">
+    <div class="section">
+      <h2>Bot Configuration</h2>
+      <div class="config-grid">
+        <div class="config-field"><label>Bot Name</label><input id="cfgName"></div>
+        <div class="config-field"><label>Avatar Color</label><input id="cfgColor" type="color" value="#58a6ff"></div>
+        <div class="config-field"><label>Default Weapon</label><select id="cfgWeapon"><option value="sword">Sword</option><option value="bow">Bow</option><option value="daggers">Daggers</option><option value="shield">Shield</option><option value="spear">Spear</option><option value="staff">Staff</option></select></div>
+        <div class="config-field"><label>Fallback Behavior</label><select id="cfgFallback"><option value="aggressive">Aggressive</option><option value="defensive">Defensive</option><option value="kite">Kite</option><option value="territorial">Territorial</option><option value="opportunistic">Opportunistic</option><option value="hunter">Hunter</option></select></div>
+      </div>
+      <h3>Default Stats (20 points, 1-10 each)</h3>
+      <div id="cfgStats"></div>
+      <div id="cfgBudget" style="margin-top:6px;font-size:11px"></div>
+      <button onclick="saveConfig()" style="margin-top:10px">Save Configuration</button>
+      <span id="cfgResult" style="margin-left:10px;font-size:11px"></span>
+    </div>
+  </div>
+
+  <div class="tpanel" id="tab-simulator">
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div class="section" style="flex:1;min-width:280px">
+        <h2>Stat Simulator</h2>
+        <div id="simStats"></div>
+        <div id="simBudget" style="margin-top:6px;font-size:11px"></div>
+        <div class="config-field" style="margin-top:10px"><label>Weapon</label><select id="simWeapon" onchange="updateSim()"><option value="sword">Sword</option><option value="bow">Bow</option><option value="daggers">Daggers</option><option value="shield">Shield</option><option value="spear">Spear</option><option value="staff">Staff</option></select></div>
+      </div>
+      <div class="section" style="flex:1;min-width:280px">
+        <h2>Derived Stats</h2>
+        <div id="simDerived"></div>
+        <h3>DPS Calculator</h3>
+        <div id="simDPS"></div>
+        <h3>Recommended Builds</h3>
+        <div id="simRecommend"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tpanel" id="tab-weapons"><div class="section"><h2>Weapon Reference &amp; Matchups</h2><div id="weaponGuide"></div></div></div>
+
+  <div class="tpanel" id="tab-leaderboard">
+    <div class="section">
+      <h2>Leaderboard <select id="lbSort" onchange="loadLB()" style="font-size:11px;margin-left:8px"><option value="elo">Elo</option><option value="kills">Kills</option><option value="kd_ratio">K/D</option><option value="best_streak">Streak</option></select></h2>
+      <table><thead><tr><th>#</th><th>Name</th><th>Kills</th><th>Deaths</th><th>K/D</th><th>Elo</th><th>Streak</th><th>Rounds</th><th>Wins</th></tr></thead><tbody id="lbBody"></tbody></table>
+    </div>
+  </div>
+
+  <div class="tpanel" id="tab-compare">
+    <div class="section">
+      <h2>Compare Your Bots</h2>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <select id="cmpA" style="flex:1"></select>
+        <span style="color:var(--text2);align-self:center">vs</span>
+        <select id="cmpB" style="flex:1"></select>
+        <button class="sm" onclick="runCompare()">Compare</button>
+      </div>
+      <div id="compareResult"></div>
+    </div>
+  </div>
+
+  <div class="tpanel" id="tab-allbots">
+    <div class="section">
+      <h2>All My Bots</h2>
+      <table><thead><tr><th>Name</th><th>Elo</th><th>K/D</th><th>Kills</th><th>Deaths</th><th>Wins</th><th>Rounds</th><th>Streak</th><th></th></tr></thead><tbody id="allBotsBody"></tbody></table>
+    </div>
+  </div>
+
+  <div class="tpanel" id="tab-codebook">
+    <div class="section"><h2>API Action Reference</h2><div id="codeRef"></div></div>
+    <div class="section"><h2>Code Snippets (Python)</h2><div id="codeSnippets"></div></div>
+  </div>
+
+  <div class="tpanel" id="tab-strategy"><div class="section"><h2>Strategy Guide</h2><div id="strategyTips"></div></div></div>
+</div>
+
+<script>
+const WEAPONS = {
+  sword:{name:'Sword',icon:'⚔️',dmg:25,range:2.5,cd:0.5,special:'Cleave',desc:'Hits 2 extra enemies at 50% dmg',style:'Aggressive melee',stats:'spd:6-7 atk:8-9 hp:3-4 def:1-2',counter:'Bow, Staff (outranged)',strongVs:'Daggers, Shield (cleave bypasses block range)'},
+  bow:{name:'Bow',icon:'🏹',dmg:12,range:15,cd:1.4,special:'Projectile',desc:'Fires arrow, long range',style:'Ranged kiter',stats:'spd:7-8 atk:8-9 hp:2-3 def:1-2',counter:'Daggers (too fast, close gap)',strongVs:'Shield, Spear (outranges both)'},
+  daggers:{name:'Daggers',icon:'🗡️',dmg:12,range:1.5,cd:0.3,special:'Double Strike',desc:'25% chance to hit twice',style:'Fast assassin',stats:'spd:9-10 atk:6-7 hp:2-3 def:1-2',counter:'Sword (cleave AoE), Spear (knockback)',strongVs:'Bow, Staff (close gap fast)'},
+  shield:{name:'Shield',icon:'🛡️',dmg:15,range:1.8,cd:0.7,special:'Block',desc:'Passive 50% dmg reduction + stun',style:'Tank',stats:'hp:8-9 def:6-7 atk:3-4 spd:2-3',counter:'Staff (AoE ignores positioning), Spear (knockback)',strongVs:'Daggers (reduction halves their DPS)'},
+  spear:{name:'Spear',icon:'🔱',dmg:20,range:3.5,cd:0.7,special:'Knockback',desc:'Pushes enemies back on hit',style:'Mid-range brawler',stats:'atk:6-7 spd:5-6 hp:4-5 def:3-4',counter:'Bow (outranged)',strongVs:'Daggers, Shield (knockback prevents close-in)'},
+  staff:{name:'Staff',icon:'🪄',dmg:18,range:12,cd:1.3,special:'Area',desc:'Delayed AoE (2 ticks), 3-unit radius',style:'AoE mage',stats:'atk:7-8 spd:5-6 hp:3-4 def:3-4',counter:'Daggers (dodge into range, burst before detonation)',strongVs:'Shield, Sword (AoE bypasses melee range advantage)'}
+};
+
+// ========== Key Management ==========
+function getSavedKeys() { try { return JSON.parse(localStorage.getItem('arena_keys')||'[]'); } catch(e) { return []; } }
+function saveKey(key, label, name) {
+  const keys = getSavedKeys().filter(k => k.key !== key);
+  keys.unshift({key, label: label || name || key.slice(0,12), name});
+  localStorage.setItem('arena_keys', JSON.stringify(keys.slice(0,20)));
+}
+function removeKey(key) {
+  localStorage.setItem('arena_keys', JSON.stringify(getSavedKeys().filter(k => k.key !== key)));
+  renderSavedKeys();
+}
+function renderSavedKeys() {
+  const keys = getSavedKeys();
+  document.getElementById('savedKeysList').innerHTML = keys.length ? '<div style="font-size:11px;color:var(--text2);margin-bottom:6px">Saved Keys:</div>' +
+    keys.map(k => `<div class="saved-key" onclick="loginWithKey('${esc(k.key)}')"><span class="name">${esc(k.label||k.name||'Bot')}</span><span class="prefix">${esc(k.key.slice(0,12))}...</span><button class="sm danger" onclick="event.stopPropagation();removeKey('${esc(k.key)}')" style="font-size:9px;padding:1px 5px">x</button></div>`).join('') : '';
+}
+renderSavedKeys();
+
+// ========== API ==========
+let apiKey = '';
+let stats = null;
+function getBase() { return location.pathname.startsWith('/arena/') ? '/arena/api/v1' : '/api/v1'; }
+async function api(path, opts={}) {
+  const r = await fetch(getBase()+path, {...opts, headers:{'X-Arena-Key':apiKey,'Content-Type':'application/json',...(opts.headers||{})}});
+  if (r.status===401||r.status===403) throw new Error('unauthorized');
+  return r.json();
+}
+async function pub(path) { return (await fetch(getBase()+path)).json(); }
+
+// ========== Auth ==========
+function doLogin() {
+  const k = document.getElementById('apiKeyInput').value.trim();
+  if (!k) return;
+  apiKey = k;
+  testAuth(document.getElementById('keyLabel').value.trim());
+}
+function loginWithKey(k) { apiKey = k; testAuth(); }
+async function testAuth(label) {
+  try {
+    stats = await api('/bot/stats');
+    saveKey(apiKey, label, stats.name);
+    document.getElementById('login').style.display='none';
+    document.getElementById('app').style.display='block';
+    buildBotSwitcher();
+    refreshAll();
+  } catch(e) {
+    document.getElementById('loginError').textContent='Invalid API key';
+    apiKey='';
+  }
+}
+function logout() { apiKey=''; document.getElementById('app').style.display='none'; document.getElementById('login').style.display='flex'; renderSavedKeys(); }
+function switchBot(key) { apiKey=key; refreshAll(); }
+
+function buildBotSwitcher() {
+  const keys = getSavedKeys();
+  document.getElementById('botSwitcher').innerHTML = keys.map(k => `<option value="${esc(k.key)}" ${k.key===apiKey?'selected':''}>${esc(k.label||k.name||'Bot')}</option>`).join('');
+  // Compare selects
+  const opts = keys.map(k=>`<option value="${esc(k.key)}">${esc(k.label||k.name)}</option>`).join('');
+  document.getElementById('cmpA').innerHTML = '<option value="">Select Bot A</option>'+opts;
+  document.getElementById('cmpB').innerHTML = '<option value="">Select Bot B</option>'+opts;
+}
+
+// ========== Tabs ==========
+document.querySelectorAll('.tbtn').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tbtn').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tpanel').forEach(p=>p.classList.remove('active'));
+  b.classList.add('active');
+  document.getElementById('tab-'+b.dataset.tab).classList.add('active');
+  if (b.dataset.tab==='leaderboard') loadLB();
+  if (b.dataset.tab==='weapons') renderWeapons();
+  if (b.dataset.tab==='simulator') initSim();
+  if (b.dataset.tab==='allbots') loadAllBots();
+  if (b.dataset.tab==='codebook') renderCodebook();
+  if (b.dataset.tab==='strategy') renderStrategy();
+}));
+
+// ========== Refresh ==========
+async function refreshAll() {
+  try {
+    const [s, arena] = await Promise.all([api('/bot/stats'), pub('/arena/status').catch(()=>({}))]);
+    stats = s;
+    // Track Elo history
+    trackElo(s.name, s.elo);
+
+    document.getElementById('botName').textContent = s.name||'Bot';
+    const isOnline = arena.bots_connected > 0;
+    document.getElementById('onlineStatus').innerHTML = `<span class="online-dot" style="background:${isOnline?'var(--green)':'var(--text2)'}"></span> ${isOnline?'Arena Online':'Arena Offline'}`;
+    document.getElementById('arenaPhase').textContent = (arena.status||'--') + ' | ' + (arena.bots_connected||0) + ' bots';
+
+    renderCards(s);
+    renderPerf(s);
+    renderEloHistory(s.name);
+    renderAnalysis(s);
+    loadConfigEditor(s);
+  } catch(e) {}
+}
+
+// ========== Cards ==========
+function renderCards(s) {
+  const kd = s.deaths>0?(s.kills/s.deaths).toFixed(2):s.kills+'.00';
+  const wr = s.rounds_played>0?((s.round_wins/s.rounds_played)*100).toFixed(1):'0.0';
+  const avgD = s.rounds_played>0?Math.round(s.damage_dealt/s.rounds_played):0;
+  const surv = s.rounds_played>0?Math.round(s.time_alive_seconds/s.rounds_played):0;
+  const dmgR = s.damage_taken>0?(s.damage_dealt/s.damage_taken).toFixed(1):'--';
+  document.getElementById('statCards').innerHTML = `
+    <div class="card"><div class="label">Elo</div><div class="value gold">${s.elo||1000}</div><div class="sub">Rank #${s.rank||'--'}</div></div>
+    <div class="card"><div class="label">K/D</div><div class="value ${parseFloat(kd)>=1.5?'green':parseFloat(kd)<0.8?'red':''}">${kd}</div><div class="sub">${s.kills}K / ${s.deaths}D</div></div>
+    <div class="card"><div class="label">Win Rate</div><div class="value ${parseFloat(wr)>=15?'green':''}">${wr}%</div><div class="sub">${s.round_wins}W / ${s.rounds_played}R</div></div>
+    <div class="card"><div class="label">Best Streak</div><div class="value purple">${s.best_streak||0}</div><div class="sub">Current: ${s.current_streak||0}</div></div>
+    <div class="card"><div class="label">Avg Dmg/Round</div><div class="value">${avgD}</div><div class="sub">${s.damage_dealt} total</div></div>
+    <div class="card"><div class="label">Avg Survival</div><div class="value">${surv}s</div><div class="sub">Best: ${s.longest_life_secs||0}s</div></div>
+    <div class="card"><div class="label">Dmg Ratio</div><div class="value ${parseFloat(dmgR)>=1.5?'green':parseFloat(dmgR)<0.8?'red':''}">${dmgR}</div><div class="sub">Dealt/Taken</div></div>
+    <div class="card"><div class="label">Pickups</div><div class="value">${s.pickups_collected||0}</div><div class="sub">${s.rounds_played>0?(s.pickups_collected/s.rounds_played).toFixed(1):0}/round</div></div>
+  `;
+}
+
+// ========== Performance Bars ==========
+function renderPerf(s) {
+  const kd=s.deaths>0?s.kills/s.deaths:s.kills;
+  const dr=s.damage_taken>0?s.damage_dealt/s.damage_taken:s.damage_dealt?99:0;
+  const bars=[
+    {l:'K/D',v:kd,m:5,c:kd>=1.5?'var(--green)':kd<0.8?'var(--red)':'var(--accent)'},
+    {l:'Win %',v:s.rounds_played>0?s.round_wins/s.rounds_played*100:0,m:50,c:'var(--gold)'},
+    {l:'Dmg Ratio',v:dr,m:3,c:dr>=1.5?'var(--green)':'var(--orange)'},
+    {l:'Kills/Rnd',v:s.rounds_played>0?s.kills/s.rounds_played:0,m:5,c:'var(--accent)'},
+    {l:'Pickups/R',v:s.rounds_played>0?s.pickups_collected/s.rounds_played:0,m:5,c:'var(--purple)'},
+    {l:'Dist/Rnd',v:s.rounds_played>0?s.distance_traveled/s.rounds_played:0,m:2000,c:'var(--cyan)'},
+  ];
+  document.getElementById('perfBars').innerHTML = bars.map(b=>`<div class="srow"><span class="lbl">${b.l}</span><div class="bar-w"><div class="bar-f" style="width:${Math.min(100,b.v/b.m*100).toFixed(0)}%;background:${b.c}"></div></div><span class="val">${b.v.toFixed(1)}</span></div>`).join('');
+}
+
+// ========== Elo History ==========
+function trackElo(name, elo) {
+  const key = 'elo_history_'+name;
+  let h; try { h=JSON.parse(localStorage.getItem(key)||'[]'); } catch(e) { h=[]; }
+  const now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  if (!h.length || h[h.length-1].elo !== elo) h.push({time:now, elo});
+  if (h.length > 50) h.shift();
+  localStorage.setItem(key, JSON.stringify(h));
+}
+function renderEloHistory(name) {
+  const key = 'elo_history_'+name;
+  let h; try { h=JSON.parse(localStorage.getItem(key)||'[]'); } catch(e) { h=[]; }
+  if (h.length < 2) { document.getElementById('eloHistory').innerHTML='<span style="color:var(--text2)">Refresh multiple times to build Elo history</span>'; return; }
+  const min=Math.min(...h.map(e=>e.elo))-20, max=Math.max(...h.map(e=>e.elo))+20;
+  const rng=max-min||1;
+  let svg = `<svg width="100%" height="120" viewBox="0 0 ${h.length*20} 120" style="background:var(--bg);border:1px solid var(--border);border-radius:4px">`;
+  // Line
+  const pts = h.map((e,i)=>`${i*20+10},${110-((e.elo-min)/rng)*100}`).join(' ');
+  svg += `<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2"/>`;
+  // Dots + labels
+  h.forEach((e,i)=>{
+    const y=110-((e.elo-min)/rng)*100;
+    svg+=`<circle cx="${i*20+10}" cy="${y}" r="3" fill="var(--accent)"><title>${e.time}: ${e.elo}</title></circle>`;
+    if (i===0||i===h.length-1) svg+=`<text x="${i*20+10}" y="${y-8}" fill="var(--text2)" font-size="9" text-anchor="middle">${e.elo}</text>`;
+  });
+  svg += '</svg>';
+  const diff = h[h.length-1].elo - h[0].elo;
+  document.getElementById('eloHistory').innerHTML = svg + `<div style="font-size:11px;color:var(--text2);margin-top:4px">Change: <b style="color:${diff>=0?'var(--green)':'var(--red)'}"> ${diff>=0?'+':''}${diff}</b> over ${h.length} samples</div>`;
+}
+
+// ========== Analysis ==========
+function renderAnalysis(s) {
+  const tips=[];
+  const kd=s.deaths>0?s.kills/s.deaths:s.kills;
+  if (kd<0.5&&s.rounds_played>=3) tips.push({t:'warn',m:'K/D below 0.5 — try more attack stats or a different weapon.'});
+  if (kd>=2.0) tips.push({t:'good',m:'Excellent K/D ('+kd.toFixed(1)+')!'});
+  if (s.rounds_played>=5&&s.round_wins===0) tips.push({t:'warn',m:'No wins in '+s.rounds_played+' rounds. Focus on survival — last alive wins.'});
+  if (s.round_wins>0) tips.push({t:'good',m:'Win rate: '+(s.round_wins/s.rounds_played*100).toFixed(0)+'%'});
+  if (s.damage_taken>s.damage_dealt*1.5&&s.rounds_played>=3) tips.push({t:'warn',m:'Taking 1.5x more damage than dealing. More defense/dodge or try shield.'});
+  if (s.damage_dealt>s.damage_taken*2) tips.push({t:'good',m:'Great damage efficiency — 2x dealt vs taken.'});
+  if (s.pickups_collected<s.rounds_played*0.5&&s.rounds_played>=3) tips.push({t:'warn',m:'Low pickup collection ('+s.pickups_collected+'/'+s.rounds_played+' rounds). Pickups are huge advantages.'});
+  if (s.best_streak>=5) tips.push({t:'good',m:'Impressive best streak of '+s.best_streak+'!'});
+  if (s.longest_life_secs<30&&s.rounds_played>=3) tips.push({t:'warn',m:'Short average life. Invest in HP/defense or use dodge more.'});
+  if (!tips.length) tips.push({t:'tip',m:'Play more rounds for personalized analysis!'});
+  document.getElementById('analysis').innerHTML=tips.map(t=>`<div class="tip ${t.t==='warn'?'warn':t.t==='good'?'good':''}">${t.m}</div>`).join('');
+}
+
+// ========== Config Editor ==========
+function loadConfigEditor(s) {
+  if (s.name) document.getElementById('cfgName').value=s.name;
+  const sts=['hp','speed','attack','defense'];
+  document.getElementById('cfgStats').innerHTML=sts.map(st=>`<div class="srow"><span class="lbl">${st}</span><input type="range" min="1" max="10" value="5" id="cfg_${st}" oninput="updBudget('cfg')" style="flex:1;accent-color:var(--accent)"><span class="val" id="cfgV_${st}">5</span></div>`).join('');
+  updBudget('cfg');
+}
+function updBudget(pfx) {
+  let t=0;['hp','speed','attack','defense'].forEach(s=>{const v=parseInt(document.getElementById(pfx+'_'+s).value);document.getElementById(pfx+'V_'+s).textContent=v;t+=v;});
+  document.getElementById(pfx+'Budget').innerHTML=`<b style="color:${t===20?'var(--green)':'var(--red)'}"> ${t}/20</b>${t===20?'':' — must equal 20'}`;
+  return t;
+}
+async function saveConfig() {
+  const body={};
+  const n=document.getElementById('cfgName').value.trim();if(n)body.name=n;
+  body.avatar_color=document.getElementById('cfgColor').value;
+  const sts={};let t=0;['hp','speed','attack','defense'].forEach(s=>{sts[s]=parseInt(document.getElementById('cfg_'+s).value);t+=sts[s];});
+  if(t!==20){document.getElementById('cfgResult').innerHTML='<span style="color:var(--red)">Must total 20</span>';return;}
+  body.default_loadout={weapon:document.getElementById('cfgWeapon').value,stats:sts,fallback_behavior:document.getElementById('cfgFallback').value};
+  try{await api('/bot/config',{method:'PUT',body:JSON.stringify(body)});document.getElementById('cfgResult').innerHTML='<span style="color:var(--green)">Saved!</span>';refreshAll();}catch(e){document.getElementById('cfgResult').innerHTML='<span style="color:var(--red)">Failed</span>';}
+}
+
+// ========== Stat Simulator ==========
+function initSim() {
+  const sts=['hp','speed','attack','defense'];
+  document.getElementById('simStats').innerHTML=sts.map(st=>`<div class="srow"><span class="lbl">${st}</span><input type="range" min="1" max="10" value="5" id="sim_${st}" oninput="updateSim()" style="flex:1;accent-color:var(--accent)"><span class="val" id="simV_${st}">5</span></div>`).join('');
+  document.getElementById('simBudget').innerHTML='';
+  updateSim();
+}
+function updateSim() {
+  const t=updBudget('sim');
+  const hp=parseInt(document.getElementById('sim_hp').value);
+  const spd=parseInt(document.getElementById('sim_speed').value);
+  const atk=parseInt(document.getElementById('sim_attack').value);
+  const def=parseInt(document.getElementById('sim_defense').value);
+  const w=document.getElementById('simWeapon').value;
+  const wc=WEAPONS[w];
+
+  const maxHP=100+hp*10, moveSpd=3+spd*0.5, atkMult=1+atk*0.1, defRed=def*0.03;
+  const dmgPerHit=wc.dmg*atkMult;
+  const dps=dmgPerHit/wc.cd;
+  const ehp=maxHP/(1-defRed); // effective HP accounting for defense
+
+  document.getElementById('simDerived').innerHTML=`
+    <div class="srow"><span class="lbl">Max HP</span><div class="bar-w"><div class="bar-f" style="width:${(maxHP/200*100).toFixed(0)}%;background:var(--green)"></div></div><span class="val">${maxHP}</span></div>
+    <div class="srow"><span class="lbl">Speed</span><div class="bar-w"><div class="bar-f" style="width:${(moveSpd/8*100).toFixed(0)}%;background:var(--cyan)"></div></div><span class="val">${moveSpd.toFixed(1)}</span></div>
+    <div class="srow"><span class="lbl">Atk Mult</span><div class="bar-w"><div class="bar-f" style="width:${(atkMult/2*100).toFixed(0)}%;background:var(--orange)"></div></div><span class="val">${atkMult.toFixed(1)}x</span></div>
+    <div class="srow"><span class="lbl">Def Red</span><div class="bar-w"><div class="bar-f" style="width:${(defRed/0.3*100).toFixed(0)}%;background:var(--purple)"></div></div><span class="val">${(defRed*100).toFixed(0)}%</span></div>
+    <div class="srow"><span class="lbl">Effective HP</span><div class="bar-w"><div class="bar-f" style="width:${Math.min(100,ehp/300*100).toFixed(0)}%;background:var(--gold)"></div></div><span class="val">${ehp.toFixed(0)}</span></div>
+  `;
+
+  // DPS table vs different defense levels
+  let dpsHTML='<table><thead><tr><th>Enemy Def</th><th>Dmg/Hit</th><th>DPS</th><th>Hits to Kill (150hp)</th></tr></thead><tbody>';
+  [0,3,5,7,10].forEach(d=>{
+    const dr=d*0.03;
+    const dmg=wc.dmg*atkMult*(1-dr);
+    const hits=Math.ceil(150/dmg);
+    dpsHTML+=`<tr><td>${d}</td><td>${dmg.toFixed(1)}</td><td>${(dmg/wc.cd).toFixed(1)}</td><td>${hits} (${(hits*wc.cd).toFixed(1)}s)</td></tr>`;
+  });
+  dpsHTML+='</tbody></table>';
+  if(w==='shield') dpsHTML+='<div style="font-size:10px;color:var(--text2);margin-top:4px">Note: Shield halves incoming damage passively</div>';
+  if(w==='daggers') dpsHTML+='<div style="font-size:10px;color:var(--text2);margin-top:4px">Note: 25% chance for double strike (effective DPS ~25% higher)</div>';
+  document.getElementById('simDPS').innerHTML=dpsHTML;
+
+  // Recommendations
+  const rec=WEAPONS[w].stats;
+  document.getElementById('simRecommend').innerHTML=`<div style="font-size:11px">Recommended for <b style="color:var(--orange)">${wc.name}</b>: ${rec}</div>`;
+}
+
+// ========== Weapons ==========
+function renderWeapons() {
+  let html='';
+  for(const[k,w] of Object.entries(WEAPONS)){
+    html+=`<div class="weapon-card"><div class="icon">${w.icon}</div><div style="flex:1">
+      <div class="wname">${w.name}</div>
+      <div class="wprop">Dmg: <b>${w.dmg}</b> | Range: <b>${w.range}</b> | CD: <b>${w.cd}s</b> | ${w.special}: ${w.desc}</div>
+      <div style="font-size:11px;margin-top:4px">${w.style}. Stats: ${w.stats}</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:2px">Strong vs: <span style="color:var(--green)">${w.strongVs}</span> | Countered by: <span style="color:var(--red)">${w.counter}</span></div>
+    </div></div>`;
+  }
+  document.getElementById('weaponGuide').innerHTML=html;
+}
+
+// ========== Leaderboard ==========
+async function loadLB() {
+  try{
+    const d=await pub('/leaderboard?sort='+document.getElementById('lbSort').value+'&limit=50');
+    const e=d.leaderboard||d.entries||[];
+    const me=stats?.name||'';
+    document.getElementById('lbBody').innerHTML=e.map(r=>{
+      const kd=r.deaths>0?(r.kills/r.deaths).toFixed(1):r.kills+'.0';
+      const isMe=r.name===me;
+      return `<tr style="${isMe?'background:rgba(240,192,64,0.08)':''}"><td style="color:var(--accent)">${r.rank}</td><td>${isMe?'<b style="color:var(--gold)">★ ':''}${esc(r.name)}${isMe?'</b>':''}</td><td>${r.kills}</td><td>${r.deaths}</td><td>${kd}</td><td>${r.elo}</td><td style="color:var(--orange)">${r.best_streak}</td><td>${r.rounds_played||0}</td><td style="color:var(--green)">${r.round_wins||0}</td></tr>`;
+    }).join('');
+  }catch(e){}
+}
+
+// ========== Compare Bots ==========
+async function runCompare() {
+  const kA=document.getElementById('cmpA').value, kB=document.getElementById('cmpB').value;
+  if(!kA||!kB){document.getElementById('compareResult').innerHTML='<span style="color:var(--text2)">Select both bots</span>';return;}
+  try{
+    const[a,b]=await Promise.all([
+      fetch(getBase()+'/bot/stats',{headers:{'X-Arena-Key':kA}}).then(r=>r.json()),
+      fetch(getBase()+'/bot/stats',{headers:{'X-Arena-Key':kB}}).then(r=>r.json())
+    ]);
+    const fields=[
+      {l:'Elo',k:'elo',higher:true},{l:'Kills',k:'kills',higher:true},{l:'Deaths',k:'deaths',higher:false},
+      {l:'K/D',k:null,fn:s=>s.deaths>0?s.kills/s.deaths:s.kills,higher:true,fmt:v=>v.toFixed(2)},
+      {l:'Win Rate',k:null,fn:s=>s.rounds_played>0?s.round_wins/s.rounds_played*100:0,higher:true,fmt:v=>v.toFixed(1)+'%'},
+      {l:'Damage Dealt',k:'damage_dealt',higher:true},{l:'Damage Taken',k:'damage_taken',higher:false},
+      {l:'Best Streak',k:'best_streak',higher:true},{l:'Rounds',k:'rounds_played',higher:true},
+      {l:'Wins',k:'round_wins',higher:true},{l:'Pickups',k:'pickups_collected',higher:true},
+    ];
+    let html=`<div class="compare-grid"><div class="col" style="text-align:center;color:var(--accent);font-weight:bold">${esc(a.name)}</div><div class="lbl"></div><div class="col" style="text-align:center;color:var(--purple);font-weight:bold">${esc(b.name)}</div>`;
+    fields.forEach(f=>{
+      const va=f.fn?f.fn(a):(a[f.k]||0);
+      const vb=f.fn?f.fn(b):(b[f.k]||0);
+      const fmt=f.fmt||(v=>typeof v==='number'?v.toLocaleString():v);
+      const aBetter=f.higher?(va>vb):(va<vb);
+      const bBetter=f.higher?(vb>va):(vb<va);
+      html+=`<div class="col ${aBetter?'better':bBetter?'worse':''}">${fmt(va)}</div><div class="lbl">${f.l}</div><div class="col ${bBetter?'better':aBetter?'worse':''}">${fmt(vb)}</div>`;
+    });
+    html+='</div>';
+    document.getElementById('compareResult').innerHTML=html;
+  }catch(e){document.getElementById('compareResult').innerHTML='<span style="color:var(--red)">Failed to load</span>';}
+}
+
+// ========== All My Bots ==========
+async function loadAllBots() {
+  const keys=getSavedKeys();
+  const results=[];
+  for(const k of keys){
+    try{
+      const s=await fetch(getBase()+'/bot/stats',{headers:{'X-Arena-Key':k.key}}).then(r=>r.json());
+      results.push({...s,_key:k.key,_label:k.label});
+    }catch(e){results.push({name:k.label||'?',_key:k.key,_error:true});}
+  }
+  document.getElementById('allBotsBody').innerHTML=results.map(s=>{
+    if(s._error) return `<tr style="opacity:0.4"><td>${esc(s.name)}</td><td colspan="7" style="color:var(--red)">Key invalid</td><td><button class="sm danger" onclick="removeKey('${esc(s._key)}');loadAllBots()">Remove</button></td></tr>`;
+    const kd=s.deaths>0?(s.kills/s.deaths).toFixed(1):s.kills+'.0';
+    const isActive=s._key===apiKey;
+    return `<tr style="${isActive?'background:rgba(88,166,255,0.06)':''}"><td>${isActive?'<b style="color:var(--accent)">':''}${esc(s.name)}${isActive?'</b>':''}</td><td>${s.elo}</td><td>${kd}</td><td>${s.kills}</td><td>${s.deaths}</td><td style="color:var(--green)">${s.round_wins||0}</td><td>${s.rounds_played||0}</td><td style="color:var(--orange)">${s.best_streak||0}</td><td><button class="sm" onclick="switchBot('${esc(s._key)}')">View</button></td></tr>`;
+  }).join('');
+}
+
+// ========== Code Reference ==========
+function renderCodebook() {
+  const actions=[
+    {name:'move',desc:'Move in a direction',json:`{"type":"action","tick":N,"action":"move","direction":[dx,dy]}`},
+    {name:'move_to',desc:'Pathfind to position (avoids obstacles)',json:`{"type":"action","tick":N,"action":"move_to","target_position":[x,y]}`},
+    {name:'attack',desc:'Attack a target bot',json:`{"type":"action","tick":N,"action":"attack","target":"bot-uuid"}`},
+    {name:'attack (staff)',desc:'Staff area attack with direction',json:`{"type":"action","tick":N,"action":"attack","target":"bot-uuid","direction":[tx,ty]}`},
+    {name:'dodge',desc:'Dodge roll (3 tick invuln, 30 tick cd)',json:`{"type":"action","tick":N,"action":"dodge","direction":[dx,dy]}`},
+    {name:'shove',desc:'Knockback + stun (separate cooldown)',json:`{"type":"action","tick":N,"action":"shove","target":"bot-uuid"}`},
+    {name:'use_item',desc:'Collect a nearby pickup',json:`{"type":"action","tick":N,"action":"use_item","item_id":"pickup-uuid"}`},
+    {name:'idle',desc:'Do nothing this tick',json:`{"type":"action","tick":N,"action":"idle"}`},
+  ];
+  document.getElementById('codeRef').innerHTML=actions.map(a=>`<div style="margin-bottom:10px"><b style="color:var(--orange)">${a.name}</b> — ${a.desc}<div class="code-block">${esc(a.json)}</div></div>`).join('');
+
+  document.getElementById('codeSnippets').innerHTML=`
+<h3>Dodge When Hit</h3>
+<div class="code-block">hits = state["your_state"].get("hits_received", [])
+if hits and state["your_state"]["dodge_cooldown"] <= 0:
+    # Dodge perpendicular to attacker
+    enemy = next((e for e in nearby if e["id"] == hits[0]["attacker_id"]), None)
+    if enemy:
+        dx, dy = my_pos[0]-enemy["position"][0], my_pos[1]-enemy["position"][1]
+        return {"type":"action","tick":tick,"action":"dodge","direction":[-dy,dx]}</div>
+
+<h3>Kite at Optimal Range</h3>
+<div class="code-block">optimal = weapon_range * 0.7
+if enemy_dist < optimal * 0.4:
+    # Too close — retreat
+    return {"type":"action","tick":tick,"action":"move","direction":away_dir}
+elif enemy_dist <= weapon_range and weapon_ready:
+    return {"type":"action","tick":tick,"action":"attack","target":enemy_id}
+elif enemy_dist <= weapon_range:
+    # On cooldown — strafe
+    return {"type":"action","tick":tick,"action":"move","direction":perp_dir}
+else:
+    return {"type":"action","tick":tick,"action":"move_to","target_position":enemy_pos}</div>
+
+<h3>Collect Pickups</h3>
+<div class="code-block">pickups = [e for e in nearby if e["type"] == "pickup"]
+for p in sorted(pickups, key=lambda p: distance(my_pos, p["position"])):
+    d = distance(my_pos, p["position"])
+    if d < 12:  # Collection range
+        return {"type":"action","tick":tick,"action":"use_item","item_id":p["id"]}
+    elif d < 20:
+        return {"type":"action","tick":tick,"action":"move_to","target_position":p["position"]}</div>
+
+<h3>Use Hints When No Enemies Visible</h3>
+<div class="code-block">if not enemies and "hints" in state:
+    for hint in state["hints"]:
+        if hint["hint_type"] == "bot":
+            target = [my_pos[0]+hint["direction"][0]*hint["distance"],
+                      my_pos[1]+hint["direction"][1]*hint["distance"]]
+            return {"type":"action","tick":tick,"action":"move_to","target_position":target}</div>
+  `;
+}
+
+// ========== Strategy ==========
+function renderStrategy() {
+  document.getElementById('strategyTips').innerHTML=`
+<div class="tip"><b>Stat Budget:</b> 20 points across HP, Speed, Attack, Defense (1-10 each). Specialize — don't spread evenly!</div>
+<div class="tip"><b>Dodge:</b> 3 ticks invulnerable, 30 tick cooldown. Use reactively (when hit) or offensively (gap close). Dodge perpendicular for unpredictability.</div>
+<div class="tip"><b>Shove:</b> Knockback + brief stun. Use when weapon is on cooldown for free damage windows.</div>
+<div class="tip"><b>Pickups:</b> Health (+30), Damage Boost (1.5x/5s), Speed Boost (2x/5s), Shield (50 HP absorb). Always grab nearby pickups — they're massive advantages.</div>
+<div class="tip"><b>Zone:</b> Shrinks over time, 3 HP/tick outside. Use <code>zone_target_center</code> to anticipate where it's going.</div>
+<div class="tip"><b>Hints:</b> When no enemies in view radius, server sends directional hints to bots and pickups. Follow them to find fights!</div>
+<div class="tip"><b>Cooldown Management:</b> Check <code>weapon_ready</code> before attacking. While on cooldown, strafe perpendicular to enemies — don't waste ticks standing still.</div>
+<div class="tip"><b>Target Selection:</b> Focus low HP enemies (<code>hp</code>). Prioritize stunned targets (<code>is_stunned</code>). Skip dodging targets (<code>is_dodging</code> = invulnerable).</div>
+<div class="tip"><b>Pathfinding:</b> Use <code>move_to</code> for long-range navigation (server pathfinds around obstacles). Use <code>move</code> only for short strafing/retreating.</div>
+<div class="tip"><b>Winning:</b> Last alive wins, not most kills. Sometimes retreating and letting others fight is the best strategy.</div>
+
+<h3 style="margin-top:14px;color:var(--accent)">Weapon Tips</h3>
+${Object.entries(WEAPONS).map(([k,w])=>`<div class="tip"><b>${w.icon} ${w.name}:</b> ${w.desc}. ${w.style}. Build: ${w.stats}. Strong vs ${w.strongVs}. Countered by ${w.counter}.</div>`).join('')}
+  `;
+}
+
+function esc(s){if(s==null)return'';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
+</script>
+</body>
+</html>

@@ -7,6 +7,8 @@ import (
 	"math/rand"
 	"sync"
 	"time"
+
+	"arena-server/internal/db"
 )
 
 // botEntry tracks a running demo bot and its cancel function.
@@ -71,6 +73,13 @@ func (m *Manager) Start(ctx context.Context) {
 
 	slog.Info("starting demo bots", "count", len(toStart))
 
+	// Ensure DB table for persisted keys.
+	if db.Pool != nil {
+		if err := db.EnsureDemoBotKeysTable(ctx); err != nil {
+			slog.Warn("failed to ensure demo_bot_keys table", "error", err)
+		}
+	}
+
 	// Give the HTTP server a moment to start accepting connections.
 	select {
 	case <-ctx.Done():
@@ -84,12 +93,12 @@ func (m *Manager) Start(ctx context.Context) {
 		}
 		m.launchBot(ctx, entry)
 
-		// Stagger launches to avoid overwhelming the server.
+		// Stagger launches — fast enough that all bots join before lobby countdown expires.
 		if i < len(toStart)-1 {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Duration(1000+rand.Intn(1000)) * time.Millisecond):
+			case <-time.After(time.Duration(200+rand.Intn(300)) * time.Millisecond):
 			}
 		}
 	}

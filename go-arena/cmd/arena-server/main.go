@@ -17,6 +17,7 @@ import (
 	"arena-server/internal/demobots"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
+	"arena-server/internal/ws"
 )
 
 func main() {
@@ -54,6 +55,17 @@ func main() {
 		routerOpts = append(routerOpts, api.WithDemoManager(demoManager))
 	}
 	router := api.NewRouter(engine, routerOpts...)
+
+	// Wire up event hooks for dashboard logging.
+	ws.EventHook = func(action, botName, botID, ip, apiKeyID, errMsg string) {
+		api.EmitConnection(api.GlobalEventBus, action, botName, botID, ip, apiKeyID, errMsg)
+	}
+	ws.WSMessageHook = func(botID, botName, action string, data map[string]interface{}) {
+		api.EmitWSMessage(api.GlobalEventBus, botID, botName, action, data)
+	}
+	game.GameEventHook = func(eventName string, data map[string]interface{}) {
+		api.EmitGameEvent(api.GlobalEventBus, eventName, data)
+	}
 
 	// Start the HTTP server.
 	addr := fmt.Sprintf("%s:%d", config.C.ServerHost, config.C.ServerPort)

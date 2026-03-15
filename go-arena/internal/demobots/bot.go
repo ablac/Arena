@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"time"
 
+	"arena-server/internal/db"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -31,10 +33,26 @@ func newDemoBot(cfg BotConfig, serverURL string) *demoBot {
 	}
 }
 
-// register calls POST /api/v1/keys/generate to obtain an API key, then
-// configures the bot name and avatar via PUT /api/v1/bot/config.
+// register either reuses a persisted API key or generates a new one,
+// then configures the bot name and avatar.
 func (b *demoBot) register(ctx context.Context) error {
-	// Generate a key.
+	// Try to load an existing key from the database.
+	if db.Pool != nil {
+		existing, err := db.GetDemoBotKey(ctx, b.config.Name)
+		if err == nil && existing != "" {
+			// Verify the key still works by attempting a config call.
+			b.apiKey = existing
+			if err := b.configure(ctx); err == nil {
+				b.logger.Info("reusing persisted key", "key_prefix", existing[:min(12, len(existing))]+"...")
+				return nil
+			}
+			// Key is dead (revoked/invalid) — fall through to generate new one.
+			b.logger.Info("persisted key invalid, generating new one")
+			b.apiKey = ""
+		}
+	}
+
+	// Generate a new key.
 	url := b.serverURL + "/api/v1/keys/generate"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
@@ -65,6 +83,13 @@ func (b *demoBot) register(ctx context.Context) error {
 		b.logger.Info("registered demo bot", "key_prefix", b.apiKey[:12]+"...")
 	} else {
 		b.logger.Info("registered demo bot")
+	}
+
+	// Persist the key for next restart.
+	if db.Pool != nil {
+		if err := db.SaveDemoBotKey(ctx, b.config.Name, b.apiKey); err != nil {
+			b.logger.Warn("failed to persist demo bot key", "error", err)
+		}
 	}
 
 	// Configure the bot name and avatar.
@@ -226,6 +251,12 @@ func (b *demoBot) session(ctx context.Context) error {
 			}
 			if action.Direction != nil {
 				payload["direction"] = action.Direction
+			}
+			if action.TargetPosition != nil {
+				payload["target_position"] = action.TargetPosition
+			}
+			if action.ItemID != "" {
+				payload["item_id"] = action.ItemID
 			}
 			if err := conn.WriteJSON(payload); err != nil {
 				return fmt.Errorf("send action: %w", err)

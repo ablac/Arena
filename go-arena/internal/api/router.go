@@ -20,6 +20,10 @@ import (
 	"github.com/go-chi/cors"
 )
 
+// GlobalEventBus is the shared event bus for dashboard logging.
+// It is initialised by NewRouter and accessible to other packages via this variable.
+var GlobalEventBus *EventBus
+
 // NewRouter builds the HTTP router with all API routes, WebSocket endpoints,
 // middleware, and static file serving.
 func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
@@ -28,6 +32,10 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		opt(&ro)
 	}
 	r := chi.NewRouter()
+
+	// --- Event Bus for dashboard ---
+	bus := NewEventBus()
+	GlobalEventBus = bus
 
 	// --- Middleware ---
 
@@ -48,6 +56,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		MaxAge:           300,
 	}))
 
+	// Dashboard HTTP logging middleware (before request logger so it captures all).
+	r.Use(DashboardLogMiddleware(bus))
+
 	// Request logging via slog.
 	r.Use(requestLogger)
 
@@ -63,6 +74,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	} else {
 		adminHandler = NewAdminHandler(engine, nil)
 	}
+
+	// Create dashboard handler.
+	dashboardHandler := NewDashboardHandler(bus, adminHandler)
 
 	r.Route("/api/v1", func(api chi.Router) {
 		// Health check (public).
@@ -92,9 +106,14 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 		// Admin routes (token-authenticated, rate-limited).
 		api.Route("/admin", func(admin chi.Router) {
-			admin.Use(AdminAuthMiddleware)
+			admin.Use(MakeAdminAuthMiddleware(adminHandler))
 			admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
 			adminHandler.Routes(admin)
+
+			// Dashboard API endpoints.
+			admin.Route("/dashboard", func(dash chi.Router) {
+				dashboardHandler.DashboardRoutes(dash)
+			})
 		})
 	})
 
@@ -126,9 +145,13 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 			// Admin routes (mirrored under /arena prefix).
 			api.Route("/admin", func(admin chi.Router) {
-				admin.Use(AdminAuthMiddleware)
+				admin.Use(MakeAdminAuthMiddleware(adminHandler))
 				admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
 				adminHandler.Routes(admin)
+
+				admin.Route("/dashboard", func(dash chi.Router) {
+					dashboardHandler.DashboardRoutes(dash)
+				})
 			})
 		})
 
