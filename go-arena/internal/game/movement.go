@@ -14,8 +14,8 @@ func ProcessMovement(bots map[string]*BotState, obstacles []Obstacle, grid *Spat
 			continue
 		}
 
-		// Stunned bots cannot move.
-		if bot.StunTicks > 0 {
+		// Stunned or frozen bots cannot move.
+		if bot.StunTicks > 0 || bot.Frozen {
 			continue
 		}
 

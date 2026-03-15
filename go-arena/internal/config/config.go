@@ -42,6 +42,15 @@ type Config struct {
 	LobbyCountdown    float64 `envconfig:"ARENA_LOBBY_COUNTDOWN" default:"10"`
 	MinBotsToStart    int     `envconfig:"ARENA_MIN_BOTS_TO_START" default:"2"`
 
+	// Stat multipliers (for live balance tuning)
+	StatHPBase       float64 `envconfig:"ARENA_STAT_HP_BASE" default:"100"`
+	StatHPPerPoint   float64 `envconfig:"ARENA_STAT_HP_PER_POINT" default:"10"`
+	StatSpeedBase    float64 `envconfig:"ARENA_STAT_SPEED_BASE" default:"3.0"`
+	StatSpeedPerPoint float64 `envconfig:"ARENA_STAT_SPEED_PER_POINT" default:"0.5"`
+	StatAttackBase   float64 `envconfig:"ARENA_STAT_ATTACK_BASE" default:"1.0"`
+	StatAttackPerPoint float64 `envconfig:"ARENA_STAT_ATTACK_PER_POINT" default:"0.1"`
+	StatDefensePerPoint float64 `envconfig:"ARENA_STAT_DEFENSE_PER_POINT" default:"0.03"`
+
 	// Dodge
 	DodgeSpeedMult   float64 `envconfig:"ARENA_DODGE_SPEED_MULT" default:"2.0"`
 	DodgeInvulnTicks int     `envconfig:"ARENA_DODGE_INVULN_TICKS" default:"3"`

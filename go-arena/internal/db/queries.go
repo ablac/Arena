@@ -8,6 +8,156 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ---------- demo_bot_keys ----------
+
+// EnsureDemoBotKeysTable creates the demo_bot_keys table if it doesn't exist.
+func EnsureDemoBotKeysTable(ctx context.Context) error {
+	_, err := Pool.Exec(ctx,
+		`CREATE TABLE IF NOT EXISTS demo_bot_keys (
+			name TEXT PRIMARY KEY,
+			api_key TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`)
+	return err
+}
+
+// GetDemoBotKey returns the stored API key for a demo bot by name, or empty if not found.
+func GetDemoBotKey(ctx context.Context, name string) (string, error) {
+	var key string
+	err := Pool.QueryRow(ctx,
+		`SELECT api_key FROM demo_bot_keys WHERE name = $1`, name,
+	).Scan(&key)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return "", nil
+		}
+		return "", err
+	}
+	return key, nil
+}
+
+// GetAllDemoBotKeys returns all demo bot name→key mappings.
+func GetAllDemoBotKeys(ctx context.Context) (map[string]string, error) {
+	rows, err := Pool.Query(ctx, `SELECT name, api_key FROM demo_bot_keys`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string]string)
+	for rows.Next() {
+		var name, key string
+		if err := rows.Scan(&name, &key); err != nil {
+			return nil, err
+		}
+		result[name] = key
+	}
+	return result, rows.Err()
+}
+
+// SaveDemoBotKey upserts a demo bot's API key.
+func SaveDemoBotKey(ctx context.Context, name, apiKey string) error {
+	_, err := Pool.Exec(ctx,
+		`INSERT INTO demo_bot_keys (name, api_key) VALUES ($1, $2)
+		 ON CONFLICT (name) DO UPDATE SET api_key = $2`,
+		name, apiKey,
+	)
+	return err
+}
+
+// ---------- admin_tokens ----------
+
+// EnsureAdminTokensTable creates the admin_tokens table if it doesn't exist.
+func EnsureAdminTokensTable(ctx context.Context) error {
+	_, err := Pool.Exec(ctx,
+		`CREATE TABLE IF NOT EXISTS admin_tokens (
+			id TEXT PRIMARY KEY,
+			label TEXT NOT NULL DEFAULT 'Admin Token',
+			token_hash TEXT NOT NULL,
+			token_hint TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`)
+	if err != nil {
+		return fmt.Errorf("EnsureAdminTokensTable: %w", err)
+	}
+	return nil
+}
+
+// ListAdminTokens returns all admin tokens (without the actual token, just metadata).
+func ListAdminTokens(ctx context.Context) ([]map[string]interface{}, error) {
+	rows, err := Pool.Query(ctx,
+		`SELECT id, label, token_hint, created_at FROM admin_tokens ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("ListAdminTokens: %w", err)
+	}
+	defer rows.Close()
+	var results []map[string]interface{}
+	for rows.Next() {
+		var id, label, tokenHint string
+		var createdAt time.Time
+		if err := rows.Scan(&id, &label, &tokenHint, &createdAt); err != nil {
+			return nil, fmt.Errorf("ListAdminTokens scan: %w", err)
+		}
+		results = append(results, map[string]interface{}{
+			"id":         id,
+			"label":      label,
+			"token_hint": tokenHint,
+			"created_at": createdAt,
+		})
+	}
+	return results, rows.Err()
+}
+
+// CreateAdminToken inserts a new admin token.
+func CreateAdminToken(ctx context.Context, id, label, tokenHash, tokenHint string) error {
+	_, err := Pool.Exec(ctx,
+		`INSERT INTO admin_tokens (id, label, token_hash, token_hint) VALUES ($1, $2, $3, $4)`,
+		id, label, tokenHash, tokenHint)
+	if err != nil {
+		return fmt.Errorf("CreateAdminToken: %w", err)
+	}
+	return nil
+}
+
+// DeleteAdminToken deletes an admin token by ID.
+func DeleteAdminToken(ctx context.Context, id string) error {
+	ct, err := Pool.Exec(ctx, `DELETE FROM admin_tokens WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("DeleteAdminToken: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("token not found")
+	}
+	return nil
+}
+
+// GetAdminTokenHash returns the hash for a given token ID.
+func GetAdminTokenHash(ctx context.Context, id string) (string, error) {
+	var hash string
+	err := Pool.QueryRow(ctx, `SELECT token_hash FROM admin_tokens WHERE id = $1`, id).Scan(&hash)
+	if err != nil {
+		return "", fmt.Errorf("GetAdminTokenHash: %w", err)
+	}
+	return hash, nil
+}
+
+// GetAllAdminTokenHashes returns all token hashes for auth checking.
+func GetAllAdminTokenHashes(ctx context.Context) ([]string, error) {
+	rows, err := Pool.Query(ctx, `SELECT token_hash FROM admin_tokens`)
+	if err != nil {
+		return nil, fmt.Errorf("GetAllAdminTokenHashes: %w", err)
+	}
+	defer rows.Close()
+	var hashes []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, fmt.Errorf("GetAllAdminTokenHashes scan: %w", err)
+		}
+		hashes = append(hashes, h)
+	}
+	return hashes, rows.Err()
+}
+
 // ---------- api_keys ----------
 
 // GetAPIKeyByPrefix retrieves an active API key by its prefix.
@@ -59,6 +209,59 @@ func UpdateAPIKeyLastSeen(ctx context.Context, id string) error {
 		return fmt.Errorf("UpdateAPIKeyLastSeen: %w", err)
 	}
 	return nil
+}
+
+// ListAllAPIKeys returns all API keys with their associated bot info.
+func ListAllAPIKeys(ctx context.Context) ([]map[string]interface{}, error) {
+	rows, err := Pool.Query(ctx,
+		`SELECT k.id, k.key_prefix, k.created_at, k.last_seen, k.is_active, k.ip_created,
+		        b.id AS bot_id, b.name AS bot_name, b.avatar_color,
+		        COALESCE(s.kills, 0) AS kills, COALESCE(s.deaths, 0) AS deaths,
+		        COALESCE(s.elo, 1000) AS elo, COALESCE(s.rounds_played, 0) AS rounds_played
+		 FROM api_keys k
+		 LEFT JOIN bots b ON b.api_key_id = k.id
+		 LEFT JOIN bot_stats s ON s.bot_id = b.id
+		 ORDER BY k.created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("ListAllAPIKeys: %w", err)
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var (
+			keyID, keyPrefix                    string
+			createdAt                           time.Time
+			lastSeen                            *time.Time
+			isActive                            bool
+			ipCreated, botID, botName, avatarColor *string
+			kills, deaths, elo, roundsPlayed    int
+		)
+		if err := rows.Scan(&keyID, &keyPrefix, &createdAt, &lastSeen, &isActive, &ipCreated,
+			&botID, &botName, &avatarColor, &kills, &deaths, &elo, &roundsPlayed); err != nil {
+			return nil, fmt.Errorf("ListAllAPIKeys scan: %w", err)
+		}
+		entry := map[string]interface{}{
+			"key_id":        keyID,
+			"key_prefix":    keyPrefix,
+			"created_at":    createdAt,
+			"last_seen":     lastSeen,
+			"is_active":     isActive,
+			"ip_created":    ipCreated,
+			"bot_id":        botID,
+			"bot_name":      botName,
+			"avatar_color":  avatarColor,
+			"kills":         kills,
+			"deaths":        deaths,
+			"elo":           elo,
+			"rounds_played": roundsPlayed,
+		}
+		results = append(results, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ListAllAPIKeys rows: %w", err)
+	}
+	return results, nil
 }
 
 // ---------- bots ----------

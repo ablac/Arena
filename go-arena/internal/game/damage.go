@@ -48,6 +48,23 @@ func ApplyDamage(target, attacker *BotState, baseDamage float64, weapon string, 
 		Weapon:     weapon,
 	})
 
+	// Emit damage event to dashboard.
+	if GameEventHook != nil {
+		dist := attacker.Position.DistanceTo(target.Position)
+		GameEventHook("damage", map[string]interface{}{
+			"attacker_id":   attacker.BotID,
+			"attacker_name": attacker.Name,
+			"target_id":     target.BotID,
+			"target_name":   target.Name,
+			"damage":        round1(actual),
+			"base_damage":   round1(baseDamage),
+			"weapon":        weapon,
+			"target_hp":     round1(target.HP),
+			"distance":      round1(dist),
+			"tick":          tickCount,
+		})
+	}
+
 	return actual
 }
 
