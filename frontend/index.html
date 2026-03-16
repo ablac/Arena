@@ -21,7 +21,6 @@
     <div class="cta-group">
       <a href="#keygen" class="btn btn-gold">Generate API Key</a>
       <a href="#arena" class="btn btn-secondary">Watch Live</a>
-      <a href="https://buymeacoffee.com/ablac" target="_blank" rel="noopener" class="btn btn-coffee" style="background:#FFDD00;color:#000;border:none;font-weight:700">☕ Buy Me a Coffee</a>
     </div>
   </section>
 
@@ -252,10 +251,11 @@
           <pre class="code-block">wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY</pre>
           <h4>Connection Flow</h4>
           <ol class="api-flow">
-            <li>Connect &rarr; receive <code>connected</code> message</li>
+            <li>Connect &rarr; receive <code>connected</code> message (includes grid_size, fog_radius)</li>
             <li>Send <code>select_loadout</code> within 10 seconds</li>
             <li>Receive <code>loadout_confirmed</code></li>
             <li>Wait for <code>lobby</code> or <code>round_start</code></li>
+            <li>Receive <code>map_init</code> (terrain grid &mdash; cache this!)</li>
             <li>Game loop: receive <code>tick</code>, send <code>action</code></li>
           </ol>
         </div>
@@ -273,6 +273,9 @@
   "type": "connected",
   "bot_id": "uuid",
   "arena_size": [2000, 2000],
+  "grid_size": [100, 100],
+  "cell_size": 20,
+  "fog_radius": 7,
   "available_weapons": ["sword", "bow", "daggers", "shield", "spear", "staff"],
   "stat_budget": 20,
   "stat_min": 1,
@@ -295,7 +298,7 @@
     "move_speed": 6.0,
     "attack_mult": 1.5,
     "defense_red": 0.09,
-    "attack_range": 2.5,
+    "attack_range": 1,
     "cooldown_seconds": 0.5,
     "weapon_damage": 25
   },
@@ -322,37 +325,53 @@
       <details class="api-details">
         <summary><span class="api-msg">round_start</span> <span class="api-label">Round begins</span></summary>
         <div class="api-body">
-          <p>Sent once at the start of each round. Obstacles are static for the entire round.</p>
+          <p>Sent once at the start of each round. Followed immediately by <code>map_init</code>.</p>
           <pre class="code-block">{
   "type": "round_start",
   "round_number": 12,
-  "position": [850, 1000],
+  "position": [42, 50],
   "bots_in_round": 15,
-  "obstacles": [
-    {"x": 500, "y": 600, "width": 100, "height": 50}
-  ],
-  "all_positions": {"bot_id_1": [850, 1000], "bot_id_2": [1150, 1000]},
-  "arena_size": [2000, 2000],
+  "all_positions": {"bot_id_1": [42, 50], "bot_id_2": [57, 50]},
   "safe_zone": {
-    "center": [1000, 1000],
-    "radius": 1000,
-    "target_center": [900, 1100],
-    "target_radius": 175
+    "center": [50, 50], "radius": 50,
+    "target_center": [45, 55], "target_radius": 9
   }
 }</pre>
+          <p style="margin:4px 0 0;font-size:0.85em;color:var(--text-secondary)">All positions are <strong>[col, row] grid coordinates</strong> (integers). Zone radius is in tiles.</p>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-msg">map_init</span> <span class="api-label">Terrain grid (once per round)</span></summary>
+        <div class="api-body">
+          <p>Sent once after <code>round_start</code>. Contains the full terrain grid. Cache this &mdash; terrain is static for the round and not repeated in tick messages.</p>
+          <pre class="code-block">{
+  "type": "map_init",
+  "width": 100, "height": 100,
+  "cell_size": 20,
+  "terrain": [
+    [".", ".", "#", ".", ...],
+    [".", "#", "#", ".", ...],
+    ...
+  ],
+  "legend": {".": "ground", "#": "wall", "V": "void", "~": "water"}
+}</pre>
+          <p style="margin:4px 0 0;font-size:0.85em;color:var(--text-secondary)"><code>terrain[row][col]</code> &mdash; row-major 2D array of single characters. Use this for pathfinding and navigation.</p>
         </div>
       </details>
 
       <details class="api-details">
         <summary><span class="api-msg">tick</span> <span class="api-label">Game state update (~10/sec)</span></summary>
         <div class="api-body">
-          <p>Sent every game tick. Contains your state, visible entities, and zone info.</p>
+          <p>Sent every game tick. Contains your state and visible entities within <code>fog_radius</code>. All positions are <strong>[col, row] grid coordinates</strong>.</p>
           <pre class="code-block">{
   "type": "tick",
   "tick": 342,
+  "tick_number": 342,
+  "fog_radius": 7,
   "your_state": {
     "bot_id": "uuid",
-    "position": [1050, 1020],
+    "position": [52, 51],
     "hp": 120, "max_hp": 160,
     "speed": 6.0,
     "weapon": "sword",
@@ -377,45 +396,36 @@
       {"killer": "MyBot", "victim": "FooBot", "weapon": "sword", "tick": 340}
     ],
     "in_safe_zone": true,
-    "distance_to_zone_edge": 250.5,
-    "zone_radius": 800,
-    "zone_center": [1000, 1000],
-    "zone_target_center": [900, 1100],
-    "zone_target_radius": 175
+    "distance_to_zone_edge": 12,
+    "zone_radius": 40,
+    "zone_center": [50, 50],
+    "zone_target_center": [45, 55],
+    "zone_target_radius": 9
   },
   "nearby_entities": [
     {
       "type": "bot", "bot_id": "enemy_id", "name": "EnemyBot",
-      "position": [1075, 1030], "hp": 85, "max_hp": 120,
+      "position": [53, 52], "hp": 85, "max_hp": 120,
       "weapon": "bow", "is_alive": true, "avatar_color": "#0000ff",
       "last_action": "attack", "is_dodging": false, "is_stunned": false
     },
     {
       "type": "pickup", "pickup_id": "p_123",
-      "pickup_type": "health_pack", "position": [1100, 1050]
-    },
-    {
-      "type": "obstacle",
-      "x": 900, "y": 900, "width": 100, "height": 100
+      "pickup_type": "health_pack", "position": [55, 51]
     }
   ],
-  "view_radius": 100,
   "safe_zone": {
-    "center": [1000, 1000], "radius": 800,
-    "target_center": [900, 1100], "target_radius": 175
-  },
-  "arena_size": [2000, 2000]
+    "center": [50, 50], "radius": 40,
+    "target_center": [45, 55], "target_radius": 9
+  }
 }</pre>
-          <h4>Hints (only when no bots in view range)</h4>
-          <p>When no enemy bots are within your <code>view_radius</code>, a <code>hints</code> array is included with directions to the nearest 3 bots and the nearest pickup of each type.</p>
+          <p style="margin:4px 0 0;font-size:0.85em;color:var(--text-secondary)"><strong>Grid-based:</strong> No obstacle entities in ticks &mdash; use the <code>map_init</code> terrain instead. Fog radius = 7 tiles (visible area is 15&times;15).</p>
+          <h4>Hints (only when no bots in fog range)</h4>
+          <p>When no enemy bots are within your <code>fog_radius</code>, a <code>hints</code> array is included with directions to the nearest 3 bots and the nearest pickup of each type.</p>
           <pre class="code-block">"hints": [
   {"hint_type": "bot", "direction": [0.7, -0.7], "distance": 342.5},
-  {"hint_type": "bot", "direction": [-0.3, 0.9], "distance": 510.2},
-  {"hint_type": "bot", "direction": [0.1, -1.0], "distance": 720.0},
   {"hint_type": "pickup", "pickup_type": "health_pack",
-   "direction": [0.5, 0.9], "distance": 180.3},
-  {"hint_type": "pickup", "pickup_type": "speed_boost",
-   "direction": [-0.8, 0.6], "distance": 290.1}
+   "direction": [0.5, 0.9], "distance": 180.3}
 ]</pre>
         </div>
       </details>
@@ -510,10 +520,10 @@
       <details class="api-details">
         <summary><span class="api-msg-send">action</span> <span class="api-label">Game actions (send each tick)</span></summary>
         <div class="api-body">
-          <h4>Move</h4>
-          <pre class="code-block">{"type": "action", "tick": 342, "action": "move", "direction": [0.7, -0.7]}</pre>
-          <h4>Move To Position</h4>
-          <pre class="code-block">{"type": "action", "tick": 342, "action": "move_to", "target_position": [1500, 1200]}</pre>
+          <h4>Move (1 tile per tick, direction is -1/0/1)</h4>
+          <pre class="code-block">{"type": "action", "tick": 342, "action": "move", "direction": [1, 0]}</pre>
+          <h4>Move To Grid Position (A* pathfinding)</h4>
+          <pre class="code-block">{"type": "action", "tick": 342, "action": "move_to", "target_position": [75, 60]}</pre>
           <h4>Attack</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "attack", "target": "enemy_bot_id"}</pre>
           <h4>Dodge</h4>
@@ -522,7 +532,7 @@
           <pre class="code-block">{"type": "action", "tick": 342, "action": "use_item", "item_id": "pickup_123"}</pre>
           <h4>Shove</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "shove", "target": "enemy_bot_id"}</pre>
-          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Knocks the target back 15 units and stuns for 2 ticks. No damage. 1.5s cooldown (separate from weapon). Range: 2.0 units (melee).</p>
+          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Knocks the target back 2 tiles and stuns for 2 ticks. No damage. 1.5s cooldown (separate from weapon). Range: 1 tile (adjacent).</p>
           <h4>Idle</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "idle"}</pre>
         </div>
@@ -535,15 +545,15 @@
       <div class="api-body" style="padding:16px">
         <table class="api-table api-table-full">
           <thead>
-            <tr><th>Weapon</th><th>Damage</th><th>Range</th><th>Cooldown</th><th>Special</th></tr>
+            <tr><th>Weapon</th><th>Damage</th><th>Range (tiles)</th><th>Cooldown</th><th>Special</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>sword</code></td><td>25</td><td>2.5</td><td>0.5s</td><td>Cleave (hits multiple)</td></tr>
-            <tr><td><code>bow</code></td><td>12</td><td>15.0</td><td>1.4s</td><td>Projectile (ranged)</td></tr>
-            <tr><td><code>daggers</code></td><td>12</td><td>1.5</td><td>0.3s</td><td>Double strike</td></tr>
-            <tr><td><code>shield</code></td><td>15</td><td>1.8</td><td>0.7s</td><td>Block (50% dmg reduction)</td></tr>
-            <tr><td><code>spear</code></td><td>20</td><td>3.5</td><td>0.7s</td><td>Knockback (2.0 force)</td></tr>
-            <tr><td><code>staff</code></td><td>18</td><td>12.0</td><td>1.3s</td><td>Area damage (3.0 radius)</td></tr>
+            <tr><td><code>sword</code></td><td>25</td><td>1</td><td>0.5s</td><td>Cleave (hits multiple in 2 tiles)</td></tr>
+            <tr><td><code>bow</code></td><td>12</td><td>7</td><td>1.4s</td><td>Projectile (ranged)</td></tr>
+            <tr><td><code>daggers</code></td><td>12</td><td>1</td><td>0.3s</td><td>Double strike (25% chance)</td></tr>
+            <tr><td><code>shield</code></td><td>15</td><td>1</td><td>0.7s</td><td>Block (50% dmg reduction)</td></tr>
+            <tr><td><code>spear</code></td><td>20</td><td>2</td><td>0.7s</td><td>Knockback (1 extra tile)</td></tr>
+            <tr><td><code>staff</code></td><td>18</td><td>5</td><td>1.3s</td><td>Area damage (2 tile radius)</td></tr>
           </tbody>
         </table>
       </div>
@@ -560,7 +570,7 @@
           </thead>
           <tbody>
             <tr><td><code>hp</code></td><td>100 + stat &times; 10</td><td>150 HP</td></tr>
-            <tr><td><code>speed</code></td><td>3.0 + stat &times; 0.5</td><td>5.5 units/tick</td></tr>
+            <tr><td><code>speed</code></td><td>1 tile/tick (2 with speed boost)</td><td>affects dodge</td></tr>
             <tr><td><code>attack</code></td><td>1.0 + stat &times; 0.1</td><td>1.5x multiplier</td></tr>
             <tr><td><code>defense</code></td><td>stat &times; 0.03</td><td>15% damage reduction</td></tr>
           </tbody>
@@ -584,7 +594,7 @@
             <tr><td><code>shield_bubble</code></td><td>50 HP damage shield</td><td>Until depleted</td></tr>
           </tbody>
         </table>
-        <p style="margin-top:12px">Pickups within 2.0 units are auto-collected, or use <code>use_item</code> action.</p>
+        <p style="margin-top:12px">Pickups in the same tile are auto-collected. Use <code>use_item</code> to collect from 1 tile away.</p>
       </div>
     </details>
 
@@ -597,19 +607,19 @@
             <tr><th>Mechanic</th><th>Value</th></tr>
           </thead>
           <tbody>
-            <tr><td>Arena size</td><td>2000 &times; 2000 units</td></tr>
+            <tr><td>Grid size</td><td>100 &times; 100 tiles (cell size: 20 units)</td></tr>
             <tr><td>Tick rate</td><td>10 Hz (100ms per tick)</td></tr>
-            <tr><td>View radius</td><td>100 units</td></tr>
-            <tr><td>Bot collision radius</td><td>5 units</td></tr>
-            <tr><td>Safe zone initial radius</td><td>1000 units</td></tr>
-            <tr><td>Safe zone min radius</td><td>175 units</td></tr>
+            <tr><td>Fog radius</td><td>7 tiles (visible area: 15&times;15)</td></tr>
+            <tr><td>Movement speed</td><td>1 tile/tick (2 with speed boost)</td></tr>
+            <tr><td>Safe zone initial radius</td><td>50 tiles</td></tr>
+            <tr><td>Safe zone min radius</td><td>9 tiles</td></tr>
             <tr><td>Zone damage (outside)</td><td>3 HP/tick</td></tr>
             <tr><td>Zone shrink delay</td><td>60 seconds</td></tr>
             <tr><td>Round duration</td><td>240 seconds max</td></tr>
+            <tr><td>Dodge distance</td><td>2 tiles + 3 ticks invulnerability</td></tr>
             <tr><td>Dodge cooldown</td><td>30 ticks (~3s)</td></tr>
-            <tr><td>Dodge invulnerability</td><td>3 ticks</td></tr>
-            <tr><td>Shove range</td><td>2.0 units (melee)</td></tr>
-            <tr><td>Shove knockback</td><td>15 units</td></tr>
+            <tr><td>Shove range</td><td>1 tile (adjacent)</td></tr>
+            <tr><td>Shove knockback</td><td>2 tiles</td></tr>
             <tr><td>Shove stun</td><td>2 ticks</td></tr>
             <tr><td>Shove cooldown</td><td>1.5 seconds</td></tr>
             <tr><td>ELO starting</td><td>1000</td></tr>
@@ -651,37 +661,38 @@
   </section>
   <script>
     // Inject example code safely via textContent
-    document.getElementById('example-code').textContent = `import asyncio, websockets, json, math
+    document.getElementById('example-code').textContent = `import asyncio, websockets, json
 
 API_KEY = "YOUR_KEY"
 URI = "wss://arena.angel-serv.com/ws/bot?key=" + API_KEY
 
-obstacles = []   # [{x, y, width, height}, ...] — set at round_start
-arena_size = [2000, 2000]
+terrain = []   # 2D grid from map_init: terrain[row][col]
+map_w, map_h = 0, 0
 
-def distance(a, b):
-    return math.sqrt((a[0]-b[0])**2 + (a[1]-b[1])**2)
+def grid_dist(a, b):
+    """Chebyshev distance (tiles) between two [col, row] positions."""
+    return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
 
-def point_in_rect(px, py, obs):
-    return (obs["x"] <= px <= obs["x"] + obs["width"]
-            and obs["y"] <= py <= obs["y"] + obs["height"])
+def sign(n):
+    return 1 if n > 0 else (-1 if n < 0 else 0)
+
+def dir_toward(me, target):
+    """Grid direction [-1/0/1, -1/0/1] toward target."""
+    return [sign(target[0] - me[0]), sign(target[1] - me[1])]
 
 async def my_bot():
-    global obstacles, arena_size
-    while True:  # Auto-reconnect loop
+    global terrain, map_w, map_h
+    while True:
         try:
             async with websockets.connect(URI, ping_interval=20) as ws:
-                # 1. Connection — server sends bot_id, arena size, weapons
+                # 1. Connection — server sends grid size, fog radius
                 connected = json.loads(await ws.recv())
                 bot_id = connected["bot_id"]
-                arena_size = connected["arena_size"]
                 print(f"Connected! ID: {bot_id}")
-                print(f"Arena: {arena_size}")
-                print(f"Weapons: {connected['available_weapons']}")
-                print(f"Stat budget: {connected['stat_budget']} pts")
+                print(f"Grid: {connected['grid_size']}, "
+                      f"fog: {connected['fog_radius']} tiles")
 
-                # 2. Select loadout (REQUIRED — 20 pts across hp/speed/attack/defense)
-                # Weapons: sword|bow|daggers|shield|spear|staff
+                # 2. Select loadout (20 pts across hp/speed/attack/defense)
                 await ws.send(json.dumps({
                     "type": "select_loadout",
                     "weapon": "sword",
@@ -691,86 +702,79 @@ async def my_bot():
                 confirm = json.loads(await ws.recv())
                 print(f"Loadout: {confirm['weapon']} | "
                       f"HP: {confirm['computed']['max_hp']} | "
-                      f"Speed: {confirm['computed']['move_speed']}")
+                      f"Range: {confirm['computed']['attack_range']} tiles")
 
                 # 3. Game loop
                 while True:
                     msg = json.loads(await ws.recv())
                     t = msg["type"]
 
-                    if t == "tick":
+                    if t == "map_init":
+                        # Cache terrain grid (static for the round)
+                        terrain = msg["terrain"]
+                        map_w, map_h = msg["width"], msg["height"]
+                        walls = sum(c == "#" for row in terrain for c in row)
+                        print(f"Map: {map_w}x{map_h}, {walls} walls")
+
+                    elif t == "tick":
                         me = msg["your_state"]
-                        my_pos = me["position"]
+                        my_pos = me["position"]       # [col, row]
                         tick = msg["tick"]
+                        fog = msg["fog_radius"]        # 7 tiles
 
-                        # Safe zone (blue circle) — stay inside!
                         zone = msg["safe_zone"]
-                        zone_center = zone["center"]
-                        zone_radius = zone["radius"]
+                        zone_center = zone["center"]   # [col, row]
 
-                        # nearby_entities includes bots, pickups, and obstacles
-                        enemies = [e for e in msg["nearby_entities"]
+                        # Nearby entities (bots + pickups, no obstacles)
+                        entities = msg.get("nearby_entities") or []
+                        enemies = [e for e in entities
                                    if e.get("type") == "bot"
                                    and e.get("is_alive")
                                    and e["bot_id"] != bot_id]
 
-                        # Move toward safe zone if outside it
                         if not me["in_safe_zone"]:
-                            dx = zone_center[0] - my_pos[0]
-                            dy = zone_center[1] - my_pos[1]
+                            # Move toward zone center
+                            d = dir_toward(my_pos, zone_center)
                             await ws.send(json.dumps({
                                 "type": "action", "tick": tick,
-                                "action": "move",
-                                "direction": [dx, dy]
+                                "action": "move", "direction": d
                             }))
                         elif enemies:
                             target = min(enemies,
-                                key=lambda e: distance(e["position"], my_pos))
-                            d = distance(target["position"], my_pos)
+                                key=lambda e: grid_dist(e["position"], my_pos))
+                            d = grid_dist(target["position"], my_pos)
 
-                            if d <= 2.0:  # sword range
+                            if d <= 1:  # sword: 1 tile range
                                 await ws.send(json.dumps({
                                     "type": "action", "tick": tick,
                                     "action": "attack",
                                     "target": target["bot_id"]
                                 }))
                             else:
-                                dx = target["position"][0] - my_pos[0]
-                                dy = target["position"][1] - my_pos[1]
+                                d = dir_toward(my_pos, target["position"])
                                 await ws.send(json.dumps({
                                     "type": "action", "tick": tick,
-                                    "action": "move",
-                                    "direction": [dx, dy]
+                                    "action": "move", "direction": d
                                 }))
                         else:
-                            # No enemies — drift toward zone center
-                            dx = zone_center[0] - my_pos[0]
-                            dy = zone_center[1] - my_pos[1]
+                            d = dir_toward(my_pos, zone_center)
                             await ws.send(json.dumps({
                                 "type": "action", "tick": tick,
-                                "action": "move",
-                                "direction": [dx, dy]
+                                "action": "move", "direction": d
                             }))
 
                     elif t == "round_start":
-                        obstacles = msg.get("obstacles", [])
-                        arena_size = msg.get("arena_size", arena_size)
-                        zone = msg["safe_zone"]
                         print(f"Round {msg['round_number']}! "
                               f"{msg['bots_in_round']} bots, "
-                              f"{len(obstacles)} obstacles, "
-                              f"zone radius {zone['radius']}")
+                              f"zone radius {msg['safe_zone']['radius']} tiles")
                     elif t == "kill":
-                        print(f"Kill! {msg['victim_name']} (+streak {msg['your_kill_streak']})")
+                        print(f"Kill! {msg['victim_name']}")
                     elif t == "death":
-                        print(f"Died! By: {msg['killed_by']} ({msg['weapon_used']})")
-                        print(f"  Respawn in {msg['respawn_in_seconds']}s")
-                    elif t == "respawn":
-                        print(f"Respawned at {msg['position']} HP:{msg['hp']}")
+                        print(f"Died! By: {msg.get('killer_name')}")
                     elif t == "round_end":
                         print(f"Round over! Winner: {msg.get('round_winner')}")
                     elif t == "lobby":
-                        pass  # Waiting for players
+                        pass
 
         except (websockets.ConnectionClosed, OSError) as e:
             print(f"Disconnected: {e}. Reconnecting in 5s...")
@@ -805,14 +809,6 @@ asyncio.run(my_bot())`;
       <a href="#example">SDK Examples</a>
       <a href="#arena">Watch Live</a>
     </div>
-    <a href="https://buymeacoffee.com/ablac" target="_blank" rel="noopener"
-       style="display:inline-block;margin:16px 0;padding:10px 24px;background:#FFDD00;color:#000;
-       font-weight:700;border-radius:8px;text-decoration:none;font-size:0.95rem;
-       transition:transform 0.2s,filter 0.2s"
-       onmouseover="this.style.transform='translateY(-2px)';this.style.filter='brightness(1.1)'"
-       onmouseout="this.style.transform='';this.style.filter=''">
-      ☕ Buy Me a Coffee
-    </a>
     <p class="footer-stats" id="footer-stats">Loading stats...</p>
   </footer>
 
