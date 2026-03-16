@@ -155,6 +155,9 @@ func (b *demoBot) run(ctx context.Context) {
 				return
 			}
 			b.logger.Warn("session ended", "error", err, "reconnect_in", fmt.Sprintf("%.0fs", backoff))
+		} else {
+			// Successful session — reset backoff.
+			backoff = 1.0
 		}
 
 		select {
