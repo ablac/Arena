@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"arena-server/internal/config"
+	"arena-server/internal/db"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -27,6 +28,7 @@ type GameEngine struct {
 	Arena        *ArenaMap
 	Grid         *SpatialGrid
 	NavGrid      *NavGrid
+	Terrain      *TerrainGrid
 	KillFeed     *KillFeed
 
 	// Anti-teaming
@@ -248,10 +250,30 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Bot separation.
 	SeparateBots(e.Bots, e.Arena.Obstacles, e.Grid)
 
-	// Enforce obstacle bounds — safety net to prevent any bot from being inside an obstacle.
-	for _, bot := range e.Bots {
-		if bot.IsAlive {
-			EnforceObstacleBounds(bot, e.Arena.Obstacles, config.C.BotRadius)
+	// Enforce obstacle bounds — safety net: snap to nearest unblocked cell.
+	if ActiveTerrain != nil {
+		for _, bot := range e.Bots {
+			if !bot.IsAlive {
+				continue
+			}
+			cell := ActiveTerrain.WorldToGrid(bot.Position)
+			if ActiveTerrain.IsBlocked(cell[0], cell[1]) {
+				// Push to nearest unblocked cell.
+				for _, d := range directions {
+					nc := [2]int{cell[0] + d.dx, cell[1] + d.dy}
+					if !ActiveTerrain.IsBlocked(nc[0], nc[1]) {
+						bot.Position = ActiveTerrain.GridToWorld(nc)
+						e.Grid.Update(bot.BotID, bot.Position)
+						break
+					}
+				}
+			}
+		}
+	} else {
+		for _, bot := range e.Bots {
+			if bot.IsAlive {
+				EnforceObstacleBounds(bot, e.Arena.Obstacles, config.C.BotRadius)
+			}
 		}
 	}
 
@@ -331,6 +353,10 @@ func (e *GameEngine) startRound() {
 	// Build navigation grid.
 	e.NavGrid = NewNavGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.BotRadius)
 
+	// Build terrain grid for the grid-based map system.
+	e.Terrain = NewTerrainGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.PathfindingCellSize, c.BotRadius)
+	ActiveTerrain = e.Terrain
+
 	// Clear transient state.
 	e.Pickups = nil
 	e.Projectiles = nil
@@ -341,9 +367,13 @@ func (e *GameEngine) startRound() {
 	e.KillFeed.Clear()
 	e.AntiTeam.Clear()
 
+	// Reset tick counter so each round starts fresh.
+	e.TickCount = 0
+	e.lastPersistTick = 0
+
 	// Set round state.
 	e.Round.Phase = PhaseActive
-	e.Round.StartTick = e.TickCount
+	e.Round.StartTick = 0
 	e.Round.RoundID = uuid.New().String()
 
 	// Spawn bots evenly around the zone perimeter.
@@ -359,9 +389,10 @@ func (e *GameEngine) startRound() {
 		bot.LastActionTick = 0 // Reset AFK timer so bots aren't kicked at round start
 	}
 
-	// Send round_start message to every bot.
+	// Send round_start and map_init messages to every bot.
 	for _, bot := range e.Bots {
-		SendRoundStart(bot, e.Round, e.Bots, obstacles, e.Arena)
+		SendRoundStart(bot, e.Round, e.Bots, e.Arena)
+		SendMapInit(bot, e.Terrain)
 	}
 
 	slog.Info("round started",
@@ -401,6 +432,19 @@ func (e *GameEngine) endRound() {
 
 	// Persist final stats for the round.
 	go PersistBotStatsFromSnapshot(context.Background(), e.snapshotBotStats())
+
+	// Record per-round per-bot stats for time-based leaderboards.
+	roundNum := e.Round.RoundNumber
+	go func(bots map[string]*BotState, wID string) {
+		ctx := context.Background()
+		for _, bot := range bots {
+			won := bot.BotID == wID
+			db.InsertRoundBotStats(ctx, roundNum, bot.BotID, bot.Name,
+				bot.RoundKills, bot.RoundDeaths,
+				int64(bot.RoundDamageDealt), int64(bot.RoundDamageTaken),
+				bot.RoundPickups, bot.RoundDistance, bot.Elo, won)
+		}
+	}(e.copyBotsForPersist(), winnerID)
 
 	slog.Info("round ended",
 		"round", e.Round.RoundNumber,
@@ -463,6 +507,14 @@ func (e *GameEngine) SetBotAction(botID string, action *Action) {
 	if bot, ok := e.Bots[botID]; ok {
 		bot.PendingAction = action
 		bot.LastActionTick = e.TickCount
+		// Track action history
+		if bot.ActionHistoryMax == 0 {
+			bot.ActionHistoryMax = 100
+		}
+		bot.ActionHistory = append(bot.ActionHistory, action.Type)
+		if len(bot.ActionHistory) > bot.ActionHistoryMax {
+			bot.ActionHistory = bot.ActionHistory[len(bot.ActionHistory)-bot.ActionHistoryMax:]
+		}
 	}
 }
 
@@ -600,7 +652,8 @@ func (e *GameEngine) applyFallbacks() {
 			continue
 		}
 
-		nearbyIDs := e.Grid.QueryRadius(bot.Position, config.C.ViewRadius)
+		viewRadius := float64(config.C.FogRadius) * config.C.PathfindingCellSize
+		nearbyIDs := e.Grid.QueryRadius(bot.Position, viewRadius)
 		var nearbyBots []*BotState
 		for _, id := range nearbyIDs {
 			if id == bot.BotID {
@@ -747,6 +800,9 @@ func (e *GameEngine) checkAFK() {
 		// Bot with no websocket connection is a ghost — remove immediately.
 		if bot.Conn == nil {
 			isAFK = true
+		} else if !bot.IsAlive {
+			// Dead bots can't act — don't kick them for AFK.
+			continue
 		} else if bot.LastActionTick > 0 && e.TickCount-bot.LastActionTick > c.AFKTimeoutTicks {
 			// Standard AFK: had actions before but stopped.
 			isAFK = true
@@ -778,7 +834,11 @@ func (e *GameEngine) checkAFK() {
 }
 
 // sendBotTickUpdates sends the per-tick state update to each connected bot.
+// Uses fog_radius (grid tiles) to determine entity visibility.
 func (e *GameEngine) sendBotTickUpdates() {
+	fogRadius := config.C.FogRadius
+	viewRadius := float64(fogRadius) * config.C.PathfindingCellSize
+
 	for _, bot := range e.Bots {
 		if bot.SendChan == nil {
 			continue
@@ -786,46 +846,43 @@ func (e *GameEngine) sendBotTickUpdates() {
 
 		yourState := BuildYourState(bot, e.Arena, e.KillFeed, e.TickCount)
 
-		// Build nearby entities.
-		nearbyIDs := e.Grid.QueryRadius(bot.Position, config.C.ViewRadius)
+		// Build nearby entities using fog radius.
+		nearbyIDs := e.Grid.QueryRadius(bot.Position, viewRadius)
 		var nearby []map[string]interface{}
 
+		nearbyBotCount := 0
 		for _, id := range nearbyIDs {
 			if id == bot.BotID {
 				continue
 			}
 			if other, ok := e.Bots[id]; ok {
 				nearby = append(nearby, BuildBotNearbyView(other))
+				nearbyBotCount++
 			}
 		}
 
-		// Include nearby pickups.
+		// Include pickups within fog radius.
 		for _, p := range e.Pickups {
-			if bot.Position.DistanceTo(p.Position) <= config.C.ViewRadius {
+			if ActiveTerrain != nil {
+				botCell := ActiveTerrain.WorldToGrid(bot.Position)
+				pickupCell := ActiveTerrain.WorldToGrid(p.Position)
+				if GridDistance(botCell, pickupCell) <= fogRadius {
+					nearby = append(nearby, BuildPickupNearbyView(p))
+				}
+			} else if bot.Position.DistanceTo(p.Position) <= viewRadius {
 				nearby = append(nearby, BuildPickupNearbyView(p))
 			}
 		}
 
-		// Include nearby obstacles.
-		for _, obs := range e.Arena.Obstacles {
-			if obstacleInRange(obs, bot.Position, config.C.ViewRadius) {
-				nearby = append(nearby, BuildObstacleNearbyView(obs))
-			}
-		}
+		// No obstacle views in ticks — terrain was sent via map_init.
 
-		// Build directional hints when no bots are within view radius.
+		// Build directional hints when no bots are within fog radius.
 		var hints []map[string]interface{}
-		nearbyBotCount := 0
-		for _, id := range nearbyIDs {
-			if id != bot.BotID {
-				nearbyBotCount++
-			}
-		}
 		if nearbyBotCount == 0 {
 			hints = buildHints(bot, e.Bots, e.Pickups)
 		}
 
-		SendTickUpdate(bot, yourState, nearby, e.TickCount, e.Arena, hints)
+		SendTickUpdate(bot, yourState, nearby, e.TickCount, e.Arena, hints, fogRadius)
 	}
 }
 
@@ -1420,8 +1477,18 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 		"last_action_tick":   bot.LastActionTick,
 		"last_action_result": lastAction,
 		"connected_at":      bot.ConnectedAt,
+		"action_counts":     botActionCounts(bot),
 		"connection":         connInfo,
 	}, true
+}
+
+// botActionCounts returns a map of action type → count from the bot's action history.
+func botActionCounts(bot *BotState) map[string]int {
+	counts := make(map[string]int)
+	for _, a := range bot.ActionHistory {
+		counts[string(a)]++
+	}
+	return counts
 }
 
 // ListAllBots returns summary info for all connected bots.
@@ -1535,6 +1602,16 @@ type BotStatsSnapshot struct {
 	PersistedDamageTaken float64
 	PersistedDistance     float64
 	PersistedPickups     int
+}
+
+// copyBotsForPersist returns a shallow map copy safe for goroutine use.
+// BotState fields read are value types so no deep copy needed.
+func (e *GameEngine) copyBotsForPersist() map[string]*BotState {
+	cp := make(map[string]*BotState, len(e.Bots))
+	for id, bot := range e.Bots {
+		cp[id] = bot
+	}
+	return cp
 }
 
 // snapshotBotStats returns value copies of the stats fields needed for
