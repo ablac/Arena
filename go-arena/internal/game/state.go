@@ -168,8 +168,9 @@ type BotState struct {
 	AvatarColor string
 
 	// Position & movement
-	Position Vec2
-	Speed    float64
+	Position          Vec2
+	LastValidPosition Vec2 // last position in an unblocked cell — for wall rejection
+	Speed             float64
 
 	// Health & combat
 	HP               float64
@@ -203,6 +204,12 @@ type BotState struct {
 	// Shield
 	ShieldAbsorb float64
 
+	// Movement cooldown: bots move every 2nd tick (halved base speed).
+	MoveCooldown int
+
+	// Stuck detection: counts consecutive ticks at the same grid cell.
+	StuckTicks int
+
 	// Pathfinding
 	CurrentPath []Vec2
 	PathTarget  *Vec2
@@ -230,6 +237,10 @@ type BotState struct {
 	// Kill attribution
 	LastDamagedBy    string
 	LastDamageTick   int
+
+	// Action history (last 100 actions for profiling)
+	ActionHistory []ActionType
+	ActionHistoryMax int
 
 	// Per-tick feedback (cleared each tick)
 	HitsReceived    []HitRecord
@@ -294,13 +305,15 @@ type RoundEndInfo struct {
 
 // SpectatorState is the serialized arena state for spectators.
 type SpectatorState struct {
-	Type      string                   `json:"type"`
-	Tick      int                      `json:"tick"`
-	Bots      []map[string]interface{} `json:"bots"`
-	SafeZone  map[string]interface{}   `json:"safe_zone"`
-	Pickups   []map[string]interface{} `json:"pickups"`
-	KillFeed  []map[string]interface{} `json:"kill_feed"`
-	Obstacles []Obstacle               `json:"obstacles"`
+	Type       string                   `json:"type"`
+	Tick       int                      `json:"tick"`
+	RoundTick  int                      `json:"round_tick"`
+	Bots       []map[string]interface{} `json:"bots"`
+	SafeZone   map[string]interface{}   `json:"safe_zone"`
+	Pickups    []map[string]interface{} `json:"pickups"`
+	KillFeed   []map[string]interface{} `json:"kill_feed"`
+	Obstacles  []Obstacle               `json:"obstacles"`
+	WaitingBots []map[string]interface{} `json:"waiting_bots,omitempty"`
 }
 
 // DerivedStats are computed from stat allocations.
@@ -329,7 +342,7 @@ func ComputeDerivedStats(stats map[string]int, weapon string) DerivedStats {
 		MoveSpeed:        c.StatSpeedBase + float64(spd)*c.StatSpeedPerPoint,
 		AttackMult:       c.StatAttackBase + float64(atk)*c.StatAttackPerPoint,
 		DefenseReduction: float64(def) * c.StatDefensePerPoint,
-		AttackRange:      wc.Range,
+		AttackRange:      float64(wc.GridRange),
 		CooldownSeconds:  wc.Cooldown,
 		WeaponDamage:     float64(wc.Damage),
 	}

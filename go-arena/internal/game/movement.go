@@ -8,6 +8,7 @@ import (
 )
 
 // ProcessMovement handles MOVE, MOVE_TO, and DODGE actions for all alive bots.
+// Movement is grid-based: bots move 1 cell per tick (2 with speed boost).
 func ProcessMovement(bots map[string]*BotState, obstacles []Obstacle, grid *SpatialGrid, navGrid *NavGrid, dt float64) {
 	for _, bot := range bots {
 		if !bot.IsAlive || bot.PendingAction == nil {
@@ -19,15 +20,26 @@ func ProcessMovement(bots map[string]*BotState, obstacles []Obstacle, grid *Spat
 			continue
 		}
 
+		// Movement cooldown: bots move every 2nd tick (halved base speed).
+		// Dodge always goes through immediately (it's a combat ability).
+		if bot.PendingAction.Type != ActionDodge {
+			if bot.MoveCooldown > 0 {
+				bot.MoveCooldown--
+				continue
+			}
+		}
+
 		switch bot.PendingAction.Type {
 		case ActionDodge:
 			processDodge(bot, obstacles, grid, dt)
 
 		case ActionMove:
 			processMove(bot, obstacles, grid, dt)
+			bot.MoveCooldown = 1 // skip next tick
 
 		case ActionMoveTo:
 			processMoveTo(bot, obstacles, grid, navGrid, dt)
+			bot.MoveCooldown = 1 // skip next tick
 		}
 	}
 
@@ -39,7 +51,58 @@ func ProcessMovement(bots map[string]*BotState, obstacles []Obstacle, grid *Spat
 	}
 }
 
-// processDodge executes the dodge action for a single bot.
+// processMove executes grid-based directional movement for a single bot.
+// The bot moves 1 cell per tick (2 with speed boost).
+func processMove(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, dt float64) {
+	if ActiveTerrain == nil {
+		return
+	}
+
+	dir := bot.PendingAction.Direction
+	dx := SnapDirection(dir.X())
+	dy := SnapDirection(dir.Y())
+	if dx == 0 && dy == 0 {
+		return
+	}
+
+	// Determine number of cells to move (1 base, 2 with speed boost).
+	cells := 1
+	for _, eff := range bot.ActiveEffects {
+		if eff.Name == "speed_boost" {
+			cells = 2
+			break
+		}
+	}
+
+	currentCell := ActiveTerrain.WorldToGrid(bot.Position)
+	oldPos := bot.Position
+
+	for step := 0; step < cells; step++ {
+		// Hard wall check: if the target cell is blocked, STOP. No sliding.
+		if ActiveTerrain.IsMoveBlocked(currentCell[0], currentCell[1], dx, dy) {
+			break
+		}
+		currentCell = [2]int{currentCell[0] + dx, currentCell[1] + dy}
+	}
+
+	newPos := ActiveTerrain.GridToWorld(currentCell)
+
+	// Final validation: never place bot in a blocked cell.
+	if ActiveTerrain.IsBlocked(currentCell[0], currentCell[1]) {
+		return // reject move entirely
+	}
+
+	bot.Position = newPos
+	bot.LastValidPosition = newPos
+
+	// Track distance traveled.
+	dist := oldPos.DistanceTo(bot.Position)
+	bot.RoundDistance += dist
+
+	grid.Update(bot.BotID, bot.Position)
+}
+
+// processDodge executes a grid-based dodge: moves 2 cells + grants invulnerability.
 func processDodge(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, dt float64) {
 	if bot.DodgeCooldown > 0 {
 		bot.LastActionResult = &ActionResult{
@@ -50,25 +113,62 @@ func processDodge(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, dt flo
 		return
 	}
 
-	dir := bot.PendingAction.Direction.Normalized()
-	// If direction is zero, pick a random one.
-	if dir.Length() < 1e-10 {
-		angle := rand.Float64() * 2 * math.Pi
-		dir = NewVec2(math.Cos(angle), math.Sin(angle))
+	if ActiveTerrain == nil {
+		return
 	}
 
-	speed := bot.Speed * config.C.DodgeSpeedMult
-	newX := bot.Position.X() + dir.X()*speed
-	newY := bot.Position.Y() + dir.Y()*speed
+	dir := bot.PendingAction.Direction.Normalized()
+	dx := SnapDirection(dir.X())
+	dy := SnapDirection(dir.Y())
 
-	// Slide along obstacles.
-	newX, newY = SlideAlongObstacle(bot.Position.X(), bot.Position.Y(), newX, newY, obstacles, config.C.BotRadius)
+	// If direction is zero, pick a random one.
+	if dx == 0 && dy == 0 {
+		angle := rand.Float64() * 2 * math.Pi
+		dx = SnapDirection(math.Cos(angle))
+		dy = SnapDirection(math.Sin(angle))
+		if dx == 0 && dy == 0 {
+			dx = 1
+		}
+	}
 
-	// Clamp to arena bounds.
-	newX = clampToArena(newX, config.C.BotRadius, config.C.ArenaWidth)
-	newY = clampToArena(newY, config.C.BotRadius, config.C.ArenaHeight)
+	currentCell := ActiveTerrain.WorldToGrid(bot.Position)
 
-	bot.Position = NewVec2(newX, newY)
+	// Walk cell by cell (up to 2); stop at the first wall or diagonal
+	// corner so we never teleport through a blocked cell.
+	destCell := currentCell
+	placed := false
+	prev := currentCell
+	for step := 1; step <= 2; step++ {
+		next := [2]int{currentCell[0] + dx*step, currentCell[1] + dy*step}
+		if ActiveTerrain.IsMoveBlocked(prev[0], prev[1], dx, dy) {
+			break
+		}
+		prev = next
+		destCell = next
+		placed = true
+	}
+
+	if !placed {
+		bot.LastActionResult = &ActionResult{
+			Action:  "dodge",
+			Success: false,
+			Message: "no valid dodge destination",
+		}
+		return
+	}
+
+	// Final validation: never place bot in a blocked cell.
+	if ActiveTerrain.IsBlocked(destCell[0], destCell[1]) {
+		bot.LastActionResult = &ActionResult{
+			Action:  "dodge",
+			Success: false,
+			Message: "no valid dodge destination",
+		}
+		return
+	}
+
+	bot.Position = ActiveTerrain.GridToWorld(destCell)
+	bot.LastValidPosition = bot.Position
 	bot.InvulnTicks = config.C.DodgeInvulnTicks
 	bot.DodgeCooldown = config.C.DodgeCooldownTicks
 
@@ -80,52 +180,31 @@ func processDodge(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, dt flo
 	}
 }
 
-// processMove executes a directional move for a single bot.
-func processMove(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, dt float64) {
-	dir := bot.PendingAction.Direction.Normalized()
-	if dir.Length() < 1e-10 {
-		return
-	}
-
-	effectiveSpeed := bot.Speed
-
-	// Apply speed boost effects.
-	for _, eff := range bot.ActiveEffects {
-		if eff.Name == "speed_boost" {
-			effectiveSpeed *= eff.Value
-		}
-	}
-
-	oldPos := bot.Position
-	newX := bot.Position.X() + dir.X()*effectiveSpeed
-	newY := bot.Position.Y() + dir.Y()*effectiveSpeed
-
-	// Slide along obstacles.
-	newX, newY = SlideAlongObstacle(bot.Position.X(), bot.Position.Y(), newX, newY, obstacles, config.C.BotRadius)
-
-	// Clamp to arena bounds.
-	newX = clampToArena(newX, config.C.BotRadius, config.C.ArenaWidth)
-	newY = clampToArena(newY, config.C.BotRadius, config.C.ArenaHeight)
-
-	bot.Position = NewVec2(newX, newY)
-
-	// Track distance traveled.
-	dist := oldPos.DistanceTo(bot.Position)
-	bot.RoundDistance += dist
-
-	grid.Update(bot.BotID, bot.Position)
-}
-
 // processMoveTo executes pathfinding-based movement for a single bot.
+// Moves 1 cell per tick along the A* path.
 func processMoveTo(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, navGrid *NavGrid, dt float64) {
 	action := bot.PendingAction
 
 	// Determine the goal position.
 	var goal Vec2
 	if action.TargetPosition != nil {
-		goal = *action.TargetPosition
+		tp := *action.TargetPosition
+		if ActiveTerrain != nil {
+			// If both coords are within grid dimensions, treat as grid coordinates.
+			// If either coord exceeds grid dimensions, treat as world coordinates.
+			if tp.X() < float64(ActiveTerrain.Width) && tp.Y() < float64(ActiveTerrain.Height) &&
+				tp.X() >= 0 && tp.Y() >= 0 {
+				cell := [2]int{int(tp.X()), int(tp.Y())}
+				goal = ActiveTerrain.GridToWorld(cell)
+			} else {
+				// World coordinates — convert to nearest grid cell center.
+				cell := ActiveTerrain.WorldToGrid(tp)
+				goal = ActiveTerrain.GridToWorld(cell)
+			}
+		} else {
+			goal = tp
+		}
 	} else {
-		// No target position specified; nothing to do.
 		return
 	}
 
@@ -138,7 +217,6 @@ func processMoveTo(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, navGr
 		if navGrid != nil {
 			bot.CurrentPath = FindPath(bot.Position, goal, navGrid)
 		} else {
-			// No nav grid available; move directly.
 			bot.CurrentPath = []Vec2{goal}
 		}
 		goalCopy := goal
@@ -149,13 +227,25 @@ func processMoveTo(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, navGr
 		return
 	}
 
-	// Follow the first waypoint.
-	for len(bot.CurrentPath) > 1 {
-		wp := bot.CurrentPath[0]
-		if bot.Position.DistanceTo(wp) < 1.0 {
-			bot.CurrentPath = bot.CurrentPath[1:]
-		} else {
-			break
+	// Follow the first waypoint: advance past any already-reached waypoints.
+	if ActiveTerrain != nil {
+		currentCell := ActiveTerrain.WorldToGrid(bot.Position)
+		for len(bot.CurrentPath) > 1 {
+			wpCell := ActiveTerrain.WorldToGrid(bot.CurrentPath[0])
+			if wpCell == currentCell {
+				bot.CurrentPath = bot.CurrentPath[1:]
+			} else {
+				break
+			}
+		}
+	} else {
+		for len(bot.CurrentPath) > 1 {
+			wp := bot.CurrentPath[0]
+			if bot.Position.DistanceTo(wp) < 1.0 {
+				bot.CurrentPath = bot.CurrentPath[1:]
+			} else {
+				break
+			}
 		}
 	}
 
@@ -164,129 +254,140 @@ func processMoveTo(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, navGr
 	}
 
 	waypoint := bot.CurrentPath[0]
-	dir := waypoint.Sub(bot.Position).Normalized()
-	if dir.Length() < 1e-10 {
-		// Already at waypoint.
-		bot.CurrentPath = bot.CurrentPath[1:]
-		return
-	}
 
-	effectiveSpeed := bot.Speed
+	if ActiveTerrain != nil {
+		// Grid-based: move 1 cell toward the waypoint.
+		currentCell := ActiveTerrain.WorldToGrid(bot.Position)
+		wpCell := ActiveTerrain.WorldToGrid(waypoint)
 
-	// Apply speed boost effects.
-	for _, eff := range bot.ActiveEffects {
-		if eff.Name == "speed_boost" {
-			effectiveSpeed *= eff.Value
+		dx := 0
+		if wpCell[0] > currentCell[0] {
+			dx = 1
+		} else if wpCell[0] < currentCell[0] {
+			dx = -1
+		}
+		dy := 0
+		if wpCell[1] > currentCell[1] {
+			dy = 1
+		} else if wpCell[1] < currentCell[1] {
+			dy = -1
+		}
+
+		// Hard wall check: if blocked, don't move. No sliding.
+		if !ActiveTerrain.IsMoveBlocked(currentCell[0], currentCell[1], dx, dy) {
+			targetCell := [2]int{currentCell[0] + dx, currentCell[1] + dy}
+			// Final validation: never place bot in a blocked cell.
+			if !ActiveTerrain.IsBlocked(targetCell[0], targetCell[1]) {
+				oldPos := bot.Position
+				bot.Position = ActiveTerrain.GridToWorld(targetCell)
+				bot.RoundDistance += oldPos.DistanceTo(bot.Position)
+				bot.LastValidPosition = bot.Position
+			}
+		}
+
+		// If we reached the waypoint cell, advance.
+		newCell := ActiveTerrain.WorldToGrid(bot.Position)
+		if newCell == wpCell {
+			bot.CurrentPath = bot.CurrentPath[1:]
+		}
+	} else {
+		// Fallback: float-based movement.
+		dir := waypoint.Sub(bot.Position).Normalized()
+		if dir.Length() < 1e-10 {
+			bot.CurrentPath = bot.CurrentPath[1:]
+			return
+		}
+
+		effectiveSpeed := bot.Speed
+		for _, eff := range bot.ActiveEffects {
+			if eff.Name == "speed_boost" {
+				effectiveSpeed *= eff.Value
+			}
+		}
+
+		oldPos := bot.Position
+		newX := bot.Position.X() + dir.X()*effectiveSpeed
+		newY := bot.Position.Y() + dir.Y()*effectiveSpeed
+
+		newX, newY = SlideAlongObstacle(bot.Position.X(), bot.Position.Y(), newX, newY, obstacles, config.C.BotRadius)
+		newX = clampToArena(newX, config.C.BotRadius, config.C.ArenaWidth)
+		newY = clampToArena(newY, config.C.BotRadius, config.C.ArenaHeight)
+
+		bot.Position = NewVec2(newX, newY)
+		bot.RoundDistance += oldPos.DistanceTo(bot.Position)
+
+		if bot.Position.DistanceTo(waypoint) < 1.0 {
+			bot.CurrentPath = bot.CurrentPath[1:]
 		}
 	}
 
-	oldPos := bot.Position
-	newX := bot.Position.X() + dir.X()*effectiveSpeed
-	newY := bot.Position.Y() + dir.Y()*effectiveSpeed
-
-	// Slide along obstacles.
-	newX, newY = SlideAlongObstacle(bot.Position.X(), bot.Position.Y(), newX, newY, obstacles, config.C.BotRadius)
-
-	// Clamp to arena bounds.
-	newX = clampToArena(newX, config.C.BotRadius, config.C.ArenaWidth)
-	newY = clampToArena(newY, config.C.BotRadius, config.C.ArenaHeight)
-
-	bot.Position = NewVec2(newX, newY)
-
-	// Track distance traveled.
-	dist := oldPos.DistanceTo(bot.Position)
-	bot.RoundDistance += dist
-
 	grid.Update(bot.BotID, bot.Position)
-
-	// If we reached the current waypoint, advance.
-	if bot.Position.DistanceTo(waypoint) < 1.0 {
-		bot.CurrentPath = bot.CurrentPath[1:]
-	}
 }
 
-// SeparateBots pushes overlapping bots apart over 2 iterations.
+// SeparateBots pushes overlapping bots apart. With grid-based movement this
+// is less critical, but knockback can place two bots in the same cell.
 func SeparateBots(bots map[string]*BotState, obstacles []Obstacle, grid *SpatialGrid) {
-	queryRadius := config.C.BotSeparationDist + 5.0
-	minDist := 2.0 * config.C.BotRadius
+	if ActiveTerrain == nil {
+		return
+	}
 
-	for iter := 0; iter < 2; iter++ {
-		for id, bot := range bots {
-			if !bot.IsAlive {
-				continue
+	// Build occupation map: cell -> list of bot IDs.
+	occupied := make(map[[2]int][]string)
+	for id, bot := range bots {
+		if !bot.IsAlive {
+			continue
+		}
+		cell := ActiveTerrain.WorldToGrid(bot.Position)
+		occupied[cell] = append(occupied[cell], id)
+	}
+
+	// For cells with multiple bots, push extras to adjacent empty cells.
+	for cell, ids := range occupied {
+		if len(ids) <= 1 {
+			continue
+		}
+
+		// First bot stays, others get pushed to adjacent cells.
+		for i := 1; i < len(ids); i++ {
+			bot := bots[ids[i]]
+			placed := false
+
+			// Try all 8 directions (using IsMoveBlocked for diagonal corner-cutting).
+			for _, d := range directions {
+				nc := [2]int{cell[0] + d.dx, cell[1] + d.dy}
+				if !ActiveTerrain.IsMoveBlocked(cell[0], cell[1], d.dx, d.dy) {
+					if occs := occupied[nc]; len(occs) == 0 {
+						bot.Position = ActiveTerrain.GridToWorld(nc)
+						bot.LastValidPosition = bot.Position
+						grid.Update(ids[i], bot.Position)
+						occupied[nc] = append(occupied[nc], ids[i])
+						placed = true
+						break
+					}
+				}
 			}
 
-			nearby := grid.QueryRadius(bot.Position, queryRadius)
-			for _, otherID := range nearby {
-				if otherID == id {
-					continue
-				}
-				other, ok := bots[otherID]
-				if !ok || !other.IsAlive {
-					continue
-				}
-
-				dist := bot.Position.DistanceTo(other.Position)
-				if dist >= minDist {
-					continue
-				}
-
-				// Compute separation vector.
-				sep := bot.Position.Sub(other.Position)
-				if sep.Length() < 1e-10 {
-					// Bots are exactly on top of each other; push in a random direction.
-					angle := rand.Float64() * 2 * math.Pi
-					sep = NewVec2(math.Cos(angle), math.Sin(angle))
-				}
-				sep = sep.Normalized()
-
-				push := config.C.BotSeparationFactor * (minDist - dist) * 0.5
-
-				// Push this bot.
-				botMoved := false
-				newX := bot.Position.X() + sep.X()*push
-				newY := bot.Position.Y() + sep.Y()*push
-
-				if CollidesWithObstacle(newX, newY, obstacles, config.C.BotRadius) == nil {
-					newX = clampToArena(newX, config.C.BotRadius, config.C.ArenaWidth)
-					newY = clampToArena(newY, config.C.BotRadius, config.C.ArenaHeight)
-					bot.Position = NewVec2(newX, newY)
-					grid.Update(id, bot.Position)
-					botMoved = true
-				}
-
-				// Push the other bot in the opposite direction.
-				otherMoved := false
-				otherNewX := other.Position.X() - sep.X()*push
-				otherNewY := other.Position.Y() - sep.Y()*push
-
-				if CollidesWithObstacle(otherNewX, otherNewY, obstacles, config.C.BotRadius) == nil {
-					otherNewX = clampToArena(otherNewX, config.C.BotRadius, config.C.ArenaWidth)
-					otherNewY = clampToArena(otherNewY, config.C.BotRadius, config.C.ArenaHeight)
-					other.Position = NewVec2(otherNewX, otherNewY)
-					grid.Update(otherID, other.Position)
-					otherMoved = true
-				}
-
-				// If both pushes failed, try perpendicular nudge to unstick.
-				if !botMoved && !otherMoved {
-					perp := NewVec2(-sep.Y(), sep.X())
-					px := bot.Position.X() + perp.X()*push
-					py := bot.Position.Y() + perp.Y()*push
-					if CollidesWithObstacle(px, py, obstacles, config.C.BotRadius) == nil {
-						px = clampToArena(px, config.C.BotRadius, config.C.ArenaWidth)
-						py = clampToArena(py, config.C.BotRadius, config.C.ArenaHeight)
-						bot.Position = NewVec2(px, py)
-						grid.Update(id, bot.Position)
+			if !placed {
+				// All adjacent cells occupied — try a wider ring (distance 2).
+				for _, d1 := range directions {
+					nc := [2]int{cell[0] + d1.dx*2, cell[1] + d1.dy*2}
+					mid := [2]int{cell[0] + d1.dx, cell[1] + d1.dy}
+					if !ActiveTerrain.IsMoveBlocked(cell[0], cell[1], d1.dx, d1.dy) &&
+						!ActiveTerrain.IsMoveBlocked(mid[0], mid[1], d1.dx, d1.dy) {
+						if occs := occupied[nc]; len(occs) == 0 {
+							bot.Position = ActiveTerrain.GridToWorld(nc)
+							bot.LastValidPosition = bot.Position
+							grid.Update(ids[i], bot.Position)
+							occupied[nc] = append(occupied[nc], ids[i])
+							placed = true
+							break
+						}
 					}
-					opx := other.Position.X() - perp.X()*push
-					opy := other.Position.Y() - perp.Y()*push
-					if CollidesWithObstacle(opx, opy, obstacles, config.C.BotRadius) == nil {
-						opx = clampToArena(opx, config.C.BotRadius, config.C.ArenaWidth)
-						opy = clampToArena(opy, config.C.BotRadius, config.C.ArenaHeight)
-						other.Position = NewVec2(opx, opy)
-						grid.Update(otherID, other.Position)
-					}
+				}
+				// If still not placed, stay in current cell (stacked) rather than
+				// phasing through a wall.
+				if !placed {
+					grid.Update(ids[i], bot.Position)
 				}
 			}
 		}

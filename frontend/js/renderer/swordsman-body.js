@@ -33,7 +33,8 @@
  * @module renderer/swordsman-body
  */
 
-import { parseColor, makeMat, createTextPlane } from './utils.js';
+import { parseColor, makeMat } from './utils.js';
+import { getGuiTexture } from './bot-body.js';
 import { SwordsmanAnimState } from './swordsman-anims.js';
 
 // ─── Scale ───────────────────────────────────────────────────────────────────
@@ -85,15 +86,8 @@ const GRIP_H   = 0.15 * S;
 const GRIP_D   = 0.03 * S;
 const POMMEL_R = 0.025 * S;
 
-// ─── HUD constants (same as bot-body.js) ────────────────────────────────────
-const HP_BAR_W = 40;
-const HP_BAR_H = 4;
-const LABEL_W  = 80;
-const LABEL_H  = 25;
-
 // ─── Shared materials ───────────────────────────────────────────────────────
 let _shdMat = null;
-let _hpBgMat = null;
 let _swordBladeMat = null;
 let _swordGuardMat = null;
 let _swordGripMat = null;
@@ -112,21 +106,6 @@ function _getShadowMat(scene) {
     _shdMat.freeze();
   }
   return _shdMat;
-}
-
-function _getHpBgMat(scene) {
-  if (!_hpBgMat || _hpBgMat.isDisposed) {
-    const B = window.BABYLON;
-    _hpBgMat = new B.StandardMaterial('hpbgm-sw-shared', scene);
-    _hpBgMat.diffuseColor = new B.Color3(0.1, 0.1, 0.1);
-    _hpBgMat.specularColor = B.Color3.Black();
-    _hpBgMat.emissiveColor = B.Color3.Black();
-    _hpBgMat.disableLighting = true;
-    _hpBgMat.alpha = 0.7;
-    _hpBgMat.backFaceCulling = false;
-    _hpBgMat.freeze();
-  }
-  return _hpBgMat;
 }
 
 function _getSwordMats(scene) {
@@ -346,35 +325,42 @@ export function createSwordsmanEntry(bot, scene) {
   shadow.isPickable = false;
   shadow.alwaysSelectAsActiveMesh = true;
 
-  // ── Name label ──
-  const totalH = BODY_Y + TORSO_H / 2 + HEAD_R * 2;
-  const label = createTextPlane(id, bot.name || '???', color, scene, LABEL_W, LABEL_H);
-  label.plane.position.y = totalH + 8;
-  label.plane.parent = root;
+  // ── GUI-based name label & HP bar ──
+  const GUI = window.BABYLON.GUI;
+  const adt = getGuiTexture();
 
-  // ── HP bar ──
-  const hpBg = B.MeshBuilder.CreatePlane(`swHpBg-${id}`, {
-    width: HP_BAR_W, height: HP_BAR_H
-  }, scene);
-  hpBg.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
-  hpBg.position.y = totalH + 2;
-  hpBg.parent = root;
-  hpBg.material = _getHpBgMat(scene);
-  hpBg.isPickable = false;
-  hpBg.alwaysSelectAsActiveMesh = true;
+  // Name label
+  const nameLabel = new GUI.TextBlock(`sw-lbl-${id}`);
+  const displayName = (bot.name || '???');
+  nameLabel.text = displayName.length > 12 ? displayName.slice(0, 11) + '\u2026' : displayName;
+  nameLabel.color = 'white';
+  nameLabel.fontSize = 14;
+  nameLabel.fontFamily = 'monospace';
+  nameLabel.fontWeight = 'bold';
+  nameLabel.resizeToFit = true;
+  adt.addControl(nameLabel);
+  nameLabel.linkWithMesh(root);
+  nameLabel.linkOffsetY = -50;
 
-  const hpBar = B.MeshBuilder.CreatePlane(`swHp-${id}`, {
-    width: HP_BAR_W, height: HP_BAR_H
-  }, scene);
-  hpBar.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
-  hpBar.position.y = totalH + 2.2;
-  hpBar.parent = root;
-  hpBar.isPickable = false;
-  hpBar.alwaysSelectAsActiveMesh = true;
-  const hpMat = makeMat(`sw-hpm-${id}`, scene, new B.Color3(0, 1, 0), {
-    noLight: true, emissiveFactor: 1
-  });
-  hpBar.material = hpMat;
+  // HP bar background container
+  const hpContainer = new GUI.Rectangle(`sw-hpbg-${id}`);
+  hpContainer.width = '60px';
+  hpContainer.height = '8px';
+  hpContainer.background = '#1a1a1a';
+  hpContainer.thickness = 0;
+  hpContainer.alpha = 0.85;
+  adt.addControl(hpContainer);
+  hpContainer.linkWithMesh(root);
+  hpContainer.linkOffsetY = -38;
+
+  // HP bar fill
+  const hpFill = new GUI.Rectangle(`sw-hp-${id}`);
+  hpFill.width = 1;
+  hpFill.height = 1;
+  hpFill.background = '#00ff00';
+  hpFill.thickness = 0;
+  hpFill.horizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+  hpContainer.addControl(hpFill);
 
   // ── Joint references for animation system ──
   const joints = {
@@ -404,10 +390,9 @@ export function createSwordsmanEntry(bot, scene) {
     armMat,
     shadow,
     weapon: sword,       // kept for disposeWeapon compat
-    hpBar,
-    hpMat,
-    hpBg,
-    label,
+    hpContainer,
+    hpFill,
+    nameLabel,
     anim: new SwordsmanAnimState(),
     isAlive: true,
     _wasAlive: true,
@@ -418,7 +403,7 @@ export function createSwordsmanEntry(bot, scene) {
     joints,
 
     // Per-bot mats for disposal
-    _swMats: [bodyMat, headMat, armMat, handMat, legMat, hpMat],
+    _swMats: [bodyMat, headMat, armMat, handMat, legMat],
   };
 }
 
@@ -427,11 +412,9 @@ export function createSwordsmanEntry(bot, scene) {
  * Shared weapon materials are NOT disposed (they persist across bots).
  */
 export function disposeSwordsmanEntry(entry) {
-  if (entry.label) {
-    entry.label.plane.dispose();
-    entry.label.mat.dispose();
-    entry.label.tex.dispose();
-  }
+  // Remove GUI controls from the fullscreen texture
+  if (entry.nameLabel) entry.nameLabel.dispose();
+  if (entry.hpContainer) entry.hpContainer.dispose();
   for (const mat of entry._swMats) {
     if (mat && !mat.isDisposed) mat.dispose();
   }

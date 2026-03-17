@@ -52,7 +52,7 @@ func NewNavGrid(arenaW, arenaH float64, obstacles []Obstacle, botRadius float64)
 		blocked[cx] = make([]bool, rows)
 	}
 
-	pad := botPadding
+	pad := botRadius
 	for _, obs := range obstacles {
 		// Expand the obstacle AABB by padding.
 		ox := obs.X - pad

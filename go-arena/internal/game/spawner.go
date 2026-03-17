@@ -1,8 +1,33 @@
 package game
 
 // SpawnBotAt places a bot at a specific position and resets its combat state.
+// If the chosen cell is blocked it searches outward for the nearest open cell.
 func SpawnBotAt(bot *BotState, pos Vec2, grid *SpatialGrid, tickCount int) {
+	// Snap position to the nearest grid cell centre.
+	if ActiveTerrain != nil {
+		cell := ActiveTerrain.WorldToGrid(pos)
+		// If the cell is a wall, spiral outward to find an unblocked cell.
+		if ActiveTerrain.IsBlocked(cell[0], cell[1]) {
+			found := false
+			for radius := 1; radius <= 10 && !found; radius++ {
+				for dx := -radius; dx <= radius && !found; dx++ {
+					for dy := -radius; dy <= radius && !found; dy++ {
+						if dx != -radius && dx != radius && dy != -radius && dy != radius {
+							continue // only check the ring perimeter
+						}
+						nc := [2]int{cell[0] + dx, cell[1] + dy}
+						if !ActiveTerrain.IsBlocked(nc[0], nc[1]) {
+							cell = nc
+							found = true
+						}
+					}
+				}
+			}
+		}
+		pos = ActiveTerrain.GridToWorld(cell)
+	}
 	bot.Position = pos
+	bot.LastValidPosition = pos
 	bot.HP = bot.MaxHP
 	bot.IsAlive = true
 	bot.CooldownRemaining = 0

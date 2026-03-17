@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"arena-server/internal/config"
+	"arena-server/internal/db"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -27,6 +28,7 @@ type GameEngine struct {
 	Arena        *ArenaMap
 	Grid         *SpatialGrid
 	NavGrid      *NavGrid
+	Terrain      *TerrainGrid
 	KillFeed     *KillFeed
 
 	// Anti-teaming
@@ -212,6 +214,36 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Movement.
 	ProcessMovement(e.Bots, e.Arena.Obstacles, e.Grid, e.NavGrid, dt)
 
+	// Anti-stuck: if a bot hasn't moved for 10+ ticks, nudge it to a
+	// random adjacent passable cell so it doesn't stay glued to a wall.
+	if ActiveTerrain != nil {
+		for _, bot := range e.Bots {
+			if !bot.IsAlive {
+				continue
+			}
+			cell := ActiveTerrain.WorldToGrid(bot.Position)
+			prevCell := ActiveTerrain.WorldToGrid(bot.LastValidPosition)
+			if cell == prevCell {
+				bot.StuckTicks++
+			} else {
+				bot.StuckTicks = 0
+			}
+			if bot.StuckTicks >= 10 {
+				// Try each direction randomly until we find a passable cell
+				for _, d := range directions {
+					if !ActiveTerrain.IsMoveBlocked(cell[0], cell[1], d.dx, d.dy) {
+						nc := [2]int{cell[0] + d.dx, cell[1] + d.dy}
+						bot.Position = ActiveTerrain.GridToWorld(nc)
+						bot.LastValidPosition = bot.Position
+						bot.StuckTicks = 0
+						e.Grid.Update(bot.BotID, bot.Position)
+						break
+					}
+				}
+			}
+		}
+	}
+
 	// Shoves (before combat so shoved bots can't attack this tick).
 	ProcessShoves(e.Bots, e.Arena.Obstacles)
 
@@ -248,10 +280,51 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Bot separation.
 	SeparateBots(e.Bots, e.Arena.Obstacles, e.Grid)
 
-	// Enforce obstacle bounds — safety net to prevent any bot from being inside an obstacle.
-	for _, bot := range e.Bots {
-		if bot.IsAlive {
-			EnforceObstacleBounds(bot, e.Arena.Obstacles, config.C.BotRadius)
+	// HARD WALL ENFORCEMENT: Every tick, validate every bot's position.
+	// If a bot is in a blocked cell, revert to LastValidPosition.
+	// Then update LastValidPosition for next tick.
+	if ActiveTerrain != nil {
+		for _, bot := range e.Bots {
+			if !bot.IsAlive {
+				continue
+			}
+			cell := ActiveTerrain.WorldToGrid(bot.Position)
+			if ActiveTerrain.IsBlocked(cell[0], cell[1]) {
+				// Revert to last known valid position.
+				prevCell := ActiveTerrain.WorldToGrid(bot.LastValidPosition)
+				if !ActiveTerrain.IsBlocked(prevCell[0], prevCell[1]) {
+					bot.Position = bot.LastValidPosition
+				} else {
+					// Last valid position is also blocked (shouldn't happen).
+					// Spiral outward toward arena center to find an open cell.
+					found := false
+					for radius := 1; radius <= 15 && !found; radius++ {
+						for _, d := range directions {
+							nc := [2]int{cell[0] + d.dx*radius, cell[1] + d.dy*radius}
+							if !ActiveTerrain.IsBlocked(nc[0], nc[1]) {
+								bot.Position = ActiveTerrain.GridToWorld(nc)
+								found = true
+								break
+							}
+						}
+					}
+					// If spiral failed, don't update LastValidPosition so next
+					// tick retries rather than locking in a blocked cell.
+					if !found {
+						e.Grid.Update(bot.BotID, bot.Position)
+						continue
+					}
+				}
+				e.Grid.Update(bot.BotID, bot.Position)
+			}
+			// Record this tick's valid position for next tick's enforcement.
+			bot.LastValidPosition = bot.Position
+		}
+	} else {
+		for _, bot := range e.Bots {
+			if bot.IsAlive {
+				EnforceObstacleBounds(bot, e.Arena.Obstacles, config.C.BotRadius)
+			}
 		}
 	}
 
@@ -331,6 +404,10 @@ func (e *GameEngine) startRound() {
 	// Build navigation grid.
 	e.NavGrid = NewNavGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.BotRadius)
 
+	// Build terrain grid for the grid-based map system.
+	e.Terrain = NewTerrainGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.PathfindingCellSize, c.BotRadius)
+	ActiveTerrain = e.Terrain
+
 	// Clear transient state.
 	e.Pickups = nil
 	e.Projectiles = nil
@@ -359,9 +436,10 @@ func (e *GameEngine) startRound() {
 		bot.LastActionTick = 0 // Reset AFK timer so bots aren't kicked at round start
 	}
 
-	// Send round_start message to every bot.
+	// Send round_start and map_init messages to every bot.
 	for _, bot := range e.Bots {
-		SendRoundStart(bot, e.Round, e.Bots, obstacles, e.Arena)
+		SendRoundStart(bot, e.Round, e.Bots, e.Arena)
+		SendMapInit(bot, e.Terrain)
 	}
 
 	slog.Info("round started",
@@ -401,6 +479,19 @@ func (e *GameEngine) endRound() {
 
 	// Persist final stats for the round.
 	go PersistBotStatsFromSnapshot(context.Background(), e.snapshotBotStats())
+
+	// Record per-round per-bot stats for time-based leaderboards.
+	roundNum := e.Round.RoundNumber
+	go func(bots map[string]*BotState, wID string) {
+		ctx := context.Background()
+		for _, bot := range bots {
+			won := bot.BotID == wID
+			db.InsertRoundBotStats(ctx, roundNum, bot.BotID, bot.Name,
+				bot.RoundKills, bot.RoundDeaths,
+				int64(bot.RoundDamageDealt), int64(bot.RoundDamageTaken),
+				bot.RoundPickups, bot.RoundDistance, bot.Elo, won)
+		}
+	}(e.copyBotsForPersist(), winnerID)
 
 	slog.Info("round ended",
 		"round", e.Round.RoundNumber,
@@ -463,6 +554,14 @@ func (e *GameEngine) SetBotAction(botID string, action *Action) {
 	if bot, ok := e.Bots[botID]; ok {
 		bot.PendingAction = action
 		bot.LastActionTick = e.TickCount
+		// Track action history
+		if bot.ActionHistoryMax == 0 {
+			bot.ActionHistoryMax = 100
+		}
+		bot.ActionHistory = append(bot.ActionHistory, action.Type)
+		if len(bot.ActionHistory) > bot.ActionHistoryMax {
+			bot.ActionHistory = bot.ActionHistory[len(bot.ActionHistory)-bot.ActionHistoryMax:]
+		}
 	}
 }
 
@@ -538,7 +637,7 @@ func (e *GameEngine) GetState() SpectatorState {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	return BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount)
+	return BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.WaitingBots)
 }
 
 // ArenaSnapshot holds read-only arena state for the REST API.
@@ -600,7 +699,8 @@ func (e *GameEngine) applyFallbacks() {
 			continue
 		}
 
-		nearbyIDs := e.Grid.QueryRadius(bot.Position, config.C.ViewRadius)
+		viewRadius := float64(config.C.FogRadius) * config.C.PathfindingCellSize
+		nearbyIDs := e.Grid.QueryRadius(bot.Position, viewRadius)
 		var nearbyBots []*BotState
 		for _, id := range nearbyIDs {
 			if id == bot.BotID {
@@ -747,6 +847,9 @@ func (e *GameEngine) checkAFK() {
 		// Bot with no websocket connection is a ghost — remove immediately.
 		if bot.Conn == nil {
 			isAFK = true
+		} else if !bot.IsAlive {
+			// Dead bots can't act — don't kick them for AFK.
+			continue
 		} else if bot.LastActionTick > 0 && e.TickCount-bot.LastActionTick > c.AFKTimeoutTicks {
 			// Standard AFK: had actions before but stopped.
 			isAFK = true
@@ -778,7 +881,11 @@ func (e *GameEngine) checkAFK() {
 }
 
 // sendBotTickUpdates sends the per-tick state update to each connected bot.
+// Uses fog_radius (grid tiles) to determine entity visibility.
 func (e *GameEngine) sendBotTickUpdates() {
+	fogRadius := config.C.FogRadius
+	viewRadius := float64(fogRadius) * config.C.PathfindingCellSize
+
 	for _, bot := range e.Bots {
 		if bot.SendChan == nil {
 			continue
@@ -786,46 +893,43 @@ func (e *GameEngine) sendBotTickUpdates() {
 
 		yourState := BuildYourState(bot, e.Arena, e.KillFeed, e.TickCount)
 
-		// Build nearby entities.
-		nearbyIDs := e.Grid.QueryRadius(bot.Position, config.C.ViewRadius)
+		// Build nearby entities using fog radius.
+		nearbyIDs := e.Grid.QueryRadius(bot.Position, viewRadius)
 		var nearby []map[string]interface{}
 
+		nearbyBotCount := 0
 		for _, id := range nearbyIDs {
 			if id == bot.BotID {
 				continue
 			}
 			if other, ok := e.Bots[id]; ok {
 				nearby = append(nearby, BuildBotNearbyView(other))
+				nearbyBotCount++
 			}
 		}
 
-		// Include nearby pickups.
+		// Include pickups within fog radius.
 		for _, p := range e.Pickups {
-			if bot.Position.DistanceTo(p.Position) <= config.C.ViewRadius {
+			if ActiveTerrain != nil {
+				botCell := ActiveTerrain.WorldToGrid(bot.Position)
+				pickupCell := ActiveTerrain.WorldToGrid(p.Position)
+				if GridDistance(botCell, pickupCell) <= fogRadius {
+					nearby = append(nearby, BuildPickupNearbyView(p))
+				}
+			} else if bot.Position.DistanceTo(p.Position) <= viewRadius {
 				nearby = append(nearby, BuildPickupNearbyView(p))
 			}
 		}
 
-		// Include nearby obstacles.
-		for _, obs := range e.Arena.Obstacles {
-			if obstacleInRange(obs, bot.Position, config.C.ViewRadius) {
-				nearby = append(nearby, BuildObstacleNearbyView(obs))
-			}
-		}
+		// No obstacle views in ticks — terrain was sent via map_init.
 
-		// Build directional hints when no bots are within view radius.
+		// Build directional hints when no bots are within fog radius.
 		var hints []map[string]interface{}
-		nearbyBotCount := 0
-		for _, id := range nearbyIDs {
-			if id != bot.BotID {
-				nearbyBotCount++
-			}
-		}
 		if nearbyBotCount == 0 {
 			hints = buildHints(bot, e.Bots, e.Pickups)
 		}
 
-		SendTickUpdate(bot, yourState, nearby, e.TickCount, e.Arena, hints)
+		SendTickUpdate(bot, yourState, nearby, e.TickCount, e.Arena, hints, fogRadius)
 	}
 }
 
@@ -892,7 +996,7 @@ func (e *GameEngine) sendLobbyStateUpdate() {
 
 // sendSpectatorUpdate broadcasts the full arena state to all spectators.
 func (e *GameEngine) sendSpectatorUpdate() {
-	state := BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount)
+	state := BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.WaitingBots)
 	data, err := marshalJSON(state)
 	if err != nil {
 		slog.Error("failed to marshal spectator state", "error", err)
@@ -1258,8 +1362,19 @@ func (e *GameEngine) TeleportBot(botID string, x, y float64) bool {
 		return false
 	}
 
+	newPos := NewVec2(x, y)
+	// Validate destination is not inside a wall.
+	if ActiveTerrain != nil {
+		cell := ActiveTerrain.WorldToGrid(newPos)
+		if ActiveTerrain.IsBlocked(cell[0], cell[1]) {
+			slog.Warn("admin teleport blocked: destination is a wall cell", "bot_id", botID, "x", x, "y", y)
+			return false
+		}
+	}
+
 	e.Grid.Remove(botID)
-	bot.Position = NewVec2(x, y)
+	bot.Position = newPos
+	bot.LastValidPosition = newPos
 	e.Grid.Insert(botID, bot.Position)
 	slog.Info("admin teleported bot", "bot_id", botID, "name", bot.Name, "x", x, "y", y)
 	return true
@@ -1420,8 +1535,18 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 		"last_action_tick":   bot.LastActionTick,
 		"last_action_result": lastAction,
 		"connected_at":      bot.ConnectedAt,
+		"action_counts":     botActionCounts(bot),
 		"connection":         connInfo,
 	}, true
+}
+
+// botActionCounts returns a map of action type → count from the bot's action history.
+func botActionCounts(bot *BotState) map[string]int {
+	counts := make(map[string]int)
+	for _, a := range bot.ActionHistory {
+		counts[string(a)]++
+	}
+	return counts
 }
 
 // ListAllBots returns summary info for all connected bots.
@@ -1535,6 +1660,31 @@ type BotStatsSnapshot struct {
 	PersistedDamageTaken float64
 	PersistedDistance     float64
 	PersistedPickups     int
+}
+
+// copyBotsForPersist returns a deep copy of bots safe for goroutine use.
+// BotState contains slices (ActiveEffects, HitsReceived, etc.) that would
+// race if only the pointer were copied.
+func (e *GameEngine) copyBotsForPersist() map[string]*BotState {
+	cp := make(map[string]*BotState, len(e.Bots))
+	for id, bot := range e.Bots {
+		b := *bot // value copy of the struct
+		// Deep-copy slices to avoid data races.
+		if bot.ActiveEffects != nil {
+			b.ActiveEffects = make([]Effect, len(bot.ActiveEffects))
+			copy(b.ActiveEffects, bot.ActiveEffects)
+		}
+		if bot.HitsReceived != nil {
+			b.HitsReceived = make([]HitRecord, len(bot.HitsReceived))
+			copy(b.HitsReceived, bot.HitsReceived)
+		}
+		if bot.CurrentPath != nil {
+			b.CurrentPath = make([]Vec2, len(bot.CurrentPath))
+			copy(b.CurrentPath, bot.CurrentPath)
+		}
+		cp[id] = &b
+	}
+	return cp
 }
 
 // snapshotBotStats returns value copies of the stats fields needed for

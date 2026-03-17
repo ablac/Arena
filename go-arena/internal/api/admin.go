@@ -1,12 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -220,6 +222,7 @@ func (h *AdminHandler) Routes(r chi.Router) {
 	r.Get("/config", h.getServerConfig)
 	r.Get("/health/deep", h.deepHealthCheck)
 	r.Post("/server/gc", h.triggerGC)
+	r.Post("/server/restart", h.restartServer)
 }
 
 // ============================================================================
@@ -956,6 +959,21 @@ func (h *AdminHandler) triggerGC(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *AdminHandler) restartServer(w http.ResponseWriter, r *http.Request) {
+	slog.Warn("admin triggered server restart")
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "server restarting — Docker will auto-restart the container",
+	})
+
+	// Give the response time to flush, then exit.
+	// Docker's restart policy (unless-stopped) will bring the container back up.
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		slog.Info("shutting down for restart...")
+		os.Exit(0)
+	}()
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -971,6 +989,39 @@ func toInt(v interface{}) (int, bool) {
 		return int(i), err == nil
 	}
 	return 0, false
+}
+
+// cloudflareBlockIP creates a Cloudflare IP Access Rule to block the given IP.
+func cloudflareBlockIP(ip, note string) error {
+	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/firewall/access_rules/rules", config.C.CloudflareZoneID)
+	body := map[string]interface{}{
+		"mode": "block",
+		"configuration": map[string]interface{}{
+			"target": "ip",
+			"value":  ip,
+		},
+		"notes": note,
+	}
+	bodyJSON, _ := json.Marshal(body)
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(bodyJSON))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+config.C.CloudflareAPIToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("cloudflare API returned %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
 }
 
 func toFloat(v interface{}) (float64, bool) {
@@ -1623,10 +1674,23 @@ func (h *AdminHandler) addIPBan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Push to Cloudflare if configured
+	cfResult := ""
+	if config.C.CloudflareAPIToken != "" && config.C.CloudflareZoneID != "" {
+		if err := cloudflareBlockIP(req.IP, "Banned via Arena admin dashboard"); err != nil {
+			slog.Error("cloudflare IP block failed", "ip", req.IP, "error", err)
+			cfResult = "cloudflare push failed: " + err.Error()
+		} else {
+			cfResult = "pushed to cloudflare"
+			slog.Info("IP blocked on cloudflare", "ip", req.IP)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message":     "IP banned",
 		"ip":          req.IP,
 		"bots_kicked": kicked,
+		"cloudflare":  cfResult,
 	})
 }
 

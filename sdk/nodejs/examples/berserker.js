@@ -13,6 +13,7 @@ import { distance } from '../src/helpers.js';
 class BerserkerBot extends ArenaBot {
   /**
    * Every tick: find the closest enemy, charge at it, and attack.
+   * Positions are [col, row] integers; distances are Chebyshev (tile count).
    * @param {object} state - Our bot's current state.
    * @param {object[]} nearby - Nearby entities.
    * @param {object} safeZone - Safe zone boundaries.
@@ -24,8 +25,8 @@ class BerserkerBot extends ArenaBot {
 
     const dist = distance(state.position, enemy.position);
 
-    // Close enough to swing — attack
-    if (dist <= 3.0) {
+    // Adjacent tile — attack
+    if (dist <= 1) {
       return this.attack(enemy.id);
     }
 

@@ -3,6 +3,8 @@ package game
 import (
 	"math"
 	"sort"
+
+	"arena-server/internal/config"
 )
 
 // round1 rounds a float64 to 1 decimal place, matching Python's round(x, 1).
@@ -18,20 +20,31 @@ func botTargetID(bot *BotState) string {
 	return ""
 }
 
+// posToGrid converts a Vec2 to grid coordinates [col, row].
+// Returns [0, 0] if no terrain grid is active.
+func posToGrid(pos Vec2) [2]int {
+	if ActiveTerrain != nil {
+		return ActiveTerrain.WorldToGrid(pos)
+	}
+	return [2]int{int(pos.X()), int(pos.Y())}
+}
+
 // BuildBotNearbyView builds the protocol-compatible map for a bot as seen by
-// a nearby observer.
+// a nearby observer. Position is reported as grid coordinates.
 func BuildBotNearbyView(bot *BotState) map[string]interface{} {
 	var lastAction interface{}
 	if bot.LastActionResult != nil {
 		lastAction = bot.LastActionResult.Action
 	}
 
+	gridPos := posToGrid(bot.Position)
+
 	return map[string]interface{}{
 		"type":         "bot",
 		"id":           bot.BotID,
 		"bot_id":       bot.BotID,
 		"name":         bot.Name,
-		"position":     bot.Position,
+		"position":     [2]int{gridPos[0], gridPos[1]},
 		"hp":           math.Round(bot.HP),
 		"max_hp":       math.Round(bot.MaxHP),
 		"weapon":       bot.Weapon,
@@ -45,40 +58,22 @@ func BuildBotNearbyView(bot *BotState) map[string]interface{} {
 	}
 }
 
-// BuildObstacleNearbyView builds the protocol-compatible map for an obstacle.
-func BuildObstacleNearbyView(obs Obstacle) map[string]interface{} {
-	return map[string]interface{}{
-		"type":   "obstacle",
-		"x":      obs.X,
-		"y":      obs.Y,
-		"width":  obs.Width,
-		"height": obs.Height,
-	}
-}
-
-// obstacleInRange checks whether any part of an obstacle rectangle is within
-// radius of the given position (circle-AABB intersection).
-func obstacleInRange(obs Obstacle, pos Vec2, radius float64) bool {
-	// Find the closest point on the rectangle to the circle center.
-	cx := math.Max(obs.X, math.Min(pos.X(), obs.X+obs.Width))
-	cy := math.Max(obs.Y, math.Min(pos.Y(), obs.Y+obs.Height))
-	dx := pos.X() - cx
-	dy := pos.Y() - cy
-	return dx*dx+dy*dy <= radius*radius
-}
-
 // BuildPickupNearbyView builds the protocol-compatible map for a pickup.
+// Position is reported as grid coordinates.
 func BuildPickupNearbyView(p Pickup) map[string]interface{} {
+	gridPos := posToGrid(p.Position)
+
 	return map[string]interface{}{
 		"type":        "pickup",
 		"id":          p.ID,
 		"pickup_id":   p.ID,
 		"pickup_type": string(p.Type),
-		"position":    p.Position,
+		"position":    [2]int{gridPos[0], gridPos[1]},
 	}
 }
 
 // BuildYourState builds the full your_state dict sent to a bot each tick.
+// All positions and distances are reported in grid coordinates/tiles.
 func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCount int) map[string]interface{} {
 	// Effective speed (apply speed boost effects).
 	effectiveSpeed := bot.Speed
@@ -125,13 +120,25 @@ func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCoun
 		})
 	}
 
-	// Zone info.
+	// Zone info in grid coordinates.
 	inSafeZone := arena.IsInZone(bot.Position)
 	distToEdge := arena.DistanceToZoneEdge(bot.Position)
 
+	gridPos := posToGrid(bot.Position)
+	zoneCenter := posToGrid(arena.ZoneCenter)
+	zoneTargetCenter := posToGrid(arena.ZoneTargetCenter)
+
+	var cellSize float64 = 20
+	if ActiveTerrain != nil {
+		cellSize = ActiveTerrain.CellSize
+	}
+	zoneRadiusTiles := int(math.Round(arena.ZoneRadius / cellSize))
+	zoneTargetRadiusTiles := int(math.Round(arena.ZoneTargetRadius / cellSize))
+	distToEdgeTiles := int(math.Round(distToEdge / cellSize))
+
 	state := map[string]interface{}{
 		"bot_id":             bot.BotID,
-		"position":           bot.Position,
+		"position":           [2]int{gridPos[0], gridPos[1]},
 		"hp":                 math.Round(bot.HP),
 		"max_hp":             math.Round(bot.MaxHP),
 		"speed":              round1(effectiveSpeed),
@@ -149,23 +156,45 @@ func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCoun
 		"last_action_result": lastActionResult,
 		"hits_received":      hitsReceived,
 		"kill_feed":          killFeedEntries,
-		// Zone info.
+		// Zone info (in grid tiles).
 		"in_safe_zone":          inSafeZone,
-		"distance_to_zone_edge": round1(distToEdge),
-		"zone_radius":           round1(arena.ZoneRadius),
-		"zone_center":           arena.ZoneCenter,
-		"zone_target_center":    arena.ZoneTargetCenter,
-		"zone_target_radius":    round1(arena.ZoneTargetRadius),
+		"distance_to_zone_edge": distToEdgeTiles,
+		"zone_radius":           zoneRadiusTiles,
+		"zone_center":           [2]int{zoneCenter[0], zoneCenter[1]},
+		"zone_target_center":    [2]int{zoneTargetCenter[0], zoneTargetCenter[1]},
+		"zone_target_radius":    zoneTargetRadiusTiles,
 	}
 
 	return state
 }
 
 // BuildSpectatorState builds the full arena snapshot for spectator clients.
-func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []Pickup, killFeed *KillFeed, tickCount int) SpectatorState {
+// Spectators still receive float positions for smooth rendering.
+func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []Pickup, killFeed *KillFeed, tickCount int, roundStartTick int, waitingBots map[string]*BotState) SpectatorState {
 	botViews := make([]map[string]interface{}, 0, len(bots))
 	for _, bot := range bots {
-		botViews = append(botViews, BuildBotNearbyView(bot))
+		// Spectators get float positions for smooth canvas rendering.
+		var lastAction interface{}
+		if bot.LastActionResult != nil {
+			lastAction = bot.LastActionResult.Action
+		}
+		botViews = append(botViews, map[string]interface{}{
+			"type":         "bot",
+			"id":           bot.BotID,
+			"bot_id":       bot.BotID,
+			"name":         bot.Name,
+			"position":     bot.Position,
+			"hp":           math.Round(bot.HP),
+			"max_hp":       math.Round(bot.MaxHP),
+			"weapon":       bot.Weapon,
+			"is_alive":     bot.IsAlive,
+			"avatar_color": bot.AvatarColor,
+			"last_action":  lastAction,
+			"action":       lastAction,
+			"target_id":    botTargetID(bot),
+			"is_dodging":   bot.InvulnTicks > 0,
+			"is_stunned":   bot.StunTicks > 0,
+		})
 	}
 	sort.Slice(botViews, func(i, j int) bool {
 		return botViews[i]["name"].(string) < botViews[j]["name"].(string)
@@ -173,7 +202,13 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 
 	pickupViews := make([]map[string]interface{}, 0, len(pickups))
 	for _, p := range pickups {
-		pickupViews = append(pickupViews, BuildPickupNearbyView(p))
+		pickupViews = append(pickupViews, map[string]interface{}{
+			"type":        "pickup",
+			"id":          p.ID,
+			"pickup_id":   p.ID,
+			"pickup_type": string(p.Type),
+			"position":    p.Position,
+		})
 	}
 
 	recentKills := killFeed.GetAll()
@@ -194,13 +229,58 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 		"target_radius": round1(arena.ZoneTargetRadius),
 	}
 
+	// Send collision-accurate obstacles: expand by botRadius padding and snap
+	// to grid cell boundaries so the visual walls match exactly what blocks
+	// movement on the server.
+	visObstacles := arena.Obstacles
+	if ActiveTerrain != nil {
+		visObstacles = make([]Obstacle, len(arena.Obstacles))
+		cs := ActiveTerrain.CellSize
+		pad := config.C.BotRadius
+		for i, obs := range arena.Obstacles {
+			ox := obs.X - pad
+			oy := obs.Y - pad
+			ow := obs.Width + 2*pad
+			oh := obs.Height + 2*pad
+			// Snap to grid cell boundaries.
+			minCX := math.Floor(ox / cs)
+			minCY := math.Floor(oy / cs)
+			maxCX := math.Floor((ox+ow)/cs) + 1
+			maxCY := math.Floor((oy+oh)/cs) + 1
+			visObstacles[i] = Obstacle{
+				X:      minCX * cs,
+				Y:      minCY * cs,
+				Width:  (maxCX - minCX) * cs,
+				Height: (maxCY - minCY) * cs,
+			}
+		}
+	}
+
+	// Build waiting bots list for the lobby tab during active rounds.
+	var waitingViews []map[string]interface{}
+	if len(waitingBots) > 0 {
+		waitingViews = make([]map[string]interface{}, 0, len(waitingBots))
+		for _, bot := range waitingBots {
+			waitingViews = append(waitingViews, map[string]interface{}{
+				"name":         bot.Name,
+				"avatar_color": bot.AvatarColor,
+				"weapon":       bot.Weapon,
+			})
+		}
+		sort.Slice(waitingViews, func(i, j int) bool {
+			return waitingViews[i]["name"].(string) < waitingViews[j]["name"].(string)
+		})
+	}
+
 	return SpectatorState{
-		Type:      "arena_state",
-		Tick:      tickCount,
-		Bots:      botViews,
-		SafeZone:  safeZone,
-		Pickups:   pickupViews,
-		KillFeed:  killFeedViews,
-		Obstacles: arena.Obstacles,
+		Type:        "arena_state",
+		Tick:        tickCount,
+		RoundTick:   tickCount - roundStartTick,
+		Bots:        botViews,
+		SafeZone:    safeZone,
+		Pickups:     pickupViews,
+		KillFeed:    killFeedViews,
+		Obstacles:   visObstacles,
+		WaitingBots: waitingViews,
 	}
 }

@@ -40,18 +40,23 @@ export class ObstacleRenderer {
   update(obstacles) {
     if (!obstacles) return;
     const B = window.BABYLON;
+
+    // Detect if obstacles changed (new round). Build a fingerprint from
+    // the obstacle data to compare against last update.
+    const fp = obstacles.map(o => `${o.x},${o.y},${o.width},${o.height}`).join('|');
+    if (fp !== this._lastFingerprint) {
+      // Obstacles changed — dispose all old meshes and rebuild from scratch.
+      // This handles frozen world matrices and size changes between rounds.
+      this.clear();
+      this._lastFingerprint = fp;
+    }
+
     const seen = new Set();
 
     obstacles.forEach((obs, i) => {
       seen.add(i);
       if (this.meshes.has(i)) {
-        // Update position only
-        const entry = this.meshes.get(i);
-        entry.mesh.position.x = obs.x + obs.width / 2;
-        entry.mesh.position.z = obs.y + obs.height / 2;
-        entry.edge.position.x = obs.x + obs.width / 2;
-        entry.edge.position.z = obs.y + obs.height / 2;
-        return;
+        return; // Already created for this round's layout
       }
 
       // Stone pillar

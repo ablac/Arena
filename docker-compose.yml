@@ -38,6 +38,7 @@ services:
       context: .
       dockerfile: go-arena/Dockerfile
     container_name: arena-server
+    restart: unless-stopped
     ports:
       - "127.0.0.1:8700:8000"
     depends_on:
