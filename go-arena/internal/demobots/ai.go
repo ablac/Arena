@@ -191,7 +191,7 @@ func bfsStep(sc, sr, gc, gr int) [2]int {
 		}
 	}
 
-	for i := 0; i < len(queue) && i < 30*9; i++ {
+	for i := 0; i < len(queue) && i < 200*9; i++ {
 		n := queue[i]
 		if n.col == gc && n.row == gr {
 			return [2]int{n.firstDC, n.firstDR}
@@ -214,7 +214,21 @@ func bfsStep(sc, sr, gc, gr int) [2]int {
 		}
 	}
 
-	// No path found — pick a random passable direction to escape walls
+	// BFS exhausted — fall back to direct direction toward goal.
+	// This may walk into a wall occasionally, but the anti-stuck
+	// mechanism will nudge the bot if it gets truly stuck.
+	direct := [2]int{intSign(gc - sc), intSign(gr - sr)}
+	if !t.isMoveBlocked(sc, sr, direct[0], direct[1]) {
+		return direct
+	}
+	// Direct path blocked — try cardinal components separately
+	if direct[0] != 0 && !t.isMoveBlocked(sc, sr, direct[0], 0) {
+		return [2]int{direct[0], 0}
+	}
+	if direct[1] != 0 && !t.isMoveBlocked(sc, sr, 0, direct[1]) {
+		return [2]int{0, direct[1]}
+	}
+	// Fully stuck — try any passable direction
 	dirs := [][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}}
 	rand.Shuffle(len(dirs), func(i, j int) { dirs[i], dirs[j] = dirs[j], dirs[i] })
 	for _, d := range dirs {
@@ -680,35 +694,23 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		}
 	}
 
-	// === NO ENEMIES: Hunt aggressively ===
+	// === NO ENEMIES VISIBLE: Hunt them down (last bot standing wins!) ===
 	if len(ts.Enemies) == 0 {
-		// Grab nearby pickup only if right next to us
-		p, pd := nearestPickup(pos, ts.Pickups)
-		if p != nil && pd <= 3 {
-			return moveTo(pos, p.Position)
-		}
-		// Follow bot hints — chase enemies
+		// Follow bot hints first — these point toward distant enemies
 		for _, h := range ts.Hints {
 			if h.HintType == "bot" {
 				target := [2]float64{pos[0] + h.Direction[0]*h.Distance, pos[1] + h.Direction[1]*h.Distance}
 				return moveTo(pos, target)
 			}
 		}
-		// Follow pickup hints
-		for _, h := range ts.Hints {
-			if h.HintType == "pickup" && h.Distance < 10 {
-				target := [2]float64{pos[0] + h.Direction[0]*h.Distance, pos[1] + h.Direction[1]*h.Distance}
-				return moveTo(pos, target)
-			}
+		// Grab nearby pickup on the way
+		p, pd := nearestPickup(pos, ts.Pickups)
+		if p != nil && pd <= 3 {
+			return moveTo(pos, p.Position)
 		}
-		// Patrol toward zone target center
-		d := chebyshev(pos, ts.ZoneTargetCenter)
-		if d > 3 {
-			return moveTo(pos, ts.ZoneTargetCenter)
-		}
-		dx := float64(rand.Intn(3) - 1)
-		dy := float64(rand.Intn(3) - 1)
-		return moveDir([2]float64{dx, dy})
+		// No hints — head to zone center where enemies converge
+		// (zone shrinks over time, so center is where fights happen)
+		return moveTo(pos, ts.ZoneTargetCenter)
 	}
 
 	// === COMBAT: Strategy-specific ===
@@ -730,24 +732,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	}
 }
 
-// zoneCheck returns a move action toward zone center if the bot is outside
-// the zone or dangerously close to the edge, UNLESS an enemy is in attack
-// range (attack first, then retreat). Returns nil if zone is fine.
-func zoneCheck(ts tickState, near *entity, nearD, wrange float64, canAtk bool, weapon string) *actionResult {
-	if ts.InZone && ts.ZoneDist > 2 {
-		return nil // safe inside zone
-	}
-	// Outside zone or close to edge — attack if enemy is right here, else retreat
-	if !ts.InZone {
-		if near != nil && nearD <= wrange && canAtk {
-			a := atk(near, weapon)
-			return &a
-		}
-		a := moveTo(ts.Position, ts.ZoneCenter)
-		return &a
-	}
-	return nil
-}
+// (zone awareness handled by the shared preamble — combat strategies fight freely)
 
 // AGGRESSIVE: Rush enemies, attack on cooldown, shove when close, chase relentlessly.
 func aiAggressive(ts tickState, near *entity, nearD, wrange float64, weapon string, canAtk, canDodge bool) actionResult {
@@ -757,10 +742,6 @@ func aiAggressive(ts tickState, near *entity, nearD, wrange float64, weapon stri
 	canShv := ts.ShoveCool <= 0
 
 	// Zone safety — don't chase enemies out of the zone
-	if z := zoneCheck(ts, near, nearD, wrange, canAtk, weapon); z != nil {
-		return *z
-	}
-
 	// Attack best target in range
 	target := bestTarget(ts.Position, ts.Enemies, wrange)
 	if target != nil && canAtk {
@@ -780,13 +761,8 @@ func aiAggressive(ts tickState, near *entity, nearD, wrange float64, weapon stri
 		return moveDir(perpDir(gridDir(ts.Position, near.Position)))
 	}
 
-	// Only chase enemies that are inside or near the zone
-	enemyDistToZone := chebyshev(near.Position, ts.ZoneCenter)
-	if enemyDistToZone < ts.ZoneRadius+3 {
-		return moveTo(ts.Position, near.Position)
-	}
-	// Enemy too far outside zone — head to zone center instead
-	return moveTo(ts.Position, ts.ZoneCenter)
+	// Chase — but don't follow enemies outside the zone (zone damage kills)
+	return moveTo(ts.Position, near.Position)
 }
 
 // BERSERKER: Never retreat, dodge INTO enemies, shove constantly, fight to the death.
@@ -797,10 +773,6 @@ func aiBerserker(ts tickState, near *entity, nearD, wrange float64, weapon strin
 	canShv := ts.ShoveCool <= 0
 
 	// Even berserkers respect the zone — dying to zone damage isn't fighting
-	if z := zoneCheck(ts, near, nearD, wrange, canAtk, weapon); z != nil {
-		return *z
-	}
-
 	// Attack anything in range
 	if nearD <= wrange && canAtk {
 		target := bestTarget(ts.Position, ts.Enemies, wrange)
@@ -820,12 +792,8 @@ func aiBerserker(ts tickState, near *entity, nearD, wrange float64, weapon strin
 		return dodge(gridDir(ts.Position, near.Position))
 	}
 
-	// Chase — but not outside the zone
-	enemyDistToZone := chebyshev(near.Position, ts.ZoneCenter)
-	if enemyDistToZone < ts.ZoneRadius+3 {
-		return moveTo(ts.Position, near.Position)
-	}
-	return moveTo(ts.Position, ts.ZoneCenter)
+	// Chase relentlessly — but don't leave the zone
+	return moveTo(ts.Position, near.Position)
 }
 
 // KITE: Stay at range but prioritize attacking. Shove if enemies close in.
@@ -834,10 +802,6 @@ func aiKite(ts tickState, near *entity, nearD, wrange float64, weapon string, ca
 		return moveTo(ts.Position, ts.ZoneTargetCenter)
 	}
 	canShv := ts.ShoveCool <= 0
-
-	if z := zoneCheck(ts, near, nearD, wrange, canAtk, weapon); z != nil {
-		return *z
-	}
 
 	// Always attack first if possible
 	if nearD <= wrange && canAtk {
@@ -866,17 +830,13 @@ func aiKite(ts tickState, near *entity, nearD, wrange float64, weapon string, ca
 		return moveDir(perpDir(gridDir(ts.Position, near.Position)))
 	}
 
-	// Too far — approach
+	// Too far — approach (but not outside zone)
 	return moveTo(ts.Position, near.Position)
 }
 
 // ASSASSIN: Hunt weakest, dodge to gap-close, shove + burst, relentless.
 func aiAssassin(ts tickState, near *entity, nearD, wrange float64, weapon string, canAtk, canDodge bool) actionResult {
 	canShv := ts.ShoveCool <= 0
-
-	if z := zoneCheck(ts, near, nearD, wrange, canAtk, weapon); z != nil {
-		return *z
-	}
 
 	// Find weakest enemy (prioritize low HP targets)
 	prey, preyD := weakest(ts.Position, ts.Enemies)
@@ -904,12 +864,8 @@ func aiAssassin(ts tickState, near *entity, nearD, wrange float64, weapon string
 		return dodge(gridDir(ts.Position, prey.Position))
 	}
 
-	// Chase — but not outside the zone
-	enemyDistToZone := chebyshev(prey.Position, ts.ZoneCenter)
-	if enemyDistToZone < ts.ZoneRadius+3 {
-		return moveTo(ts.Position, prey.Position)
-	}
-	return moveTo(ts.Position, ts.ZoneCenter)
+	// Hunt them down — but don't leave the zone
+	return moveTo(ts.Position, prey.Position)
 }
 
 // DEFENSIVE: Counter-attack focused, shove intruders, hold ground but fight.
@@ -922,10 +878,6 @@ func aiDefensive(ts tickState, near *entity, nearD, wrange float64, weapon strin
 		return idle()
 	}
 	canShv := ts.ShoveCool <= 0
-
-	if z := zoneCheck(ts, near, nearD, wrange, canAtk, weapon); z != nil {
-		return *z
-	}
 
 	// Attack best target in range — always prioritize damage
 	target := bestTarget(ts.Position, ts.Enemies, wrange)
@@ -965,10 +917,6 @@ func aiTerritorial(ts tickState, near *entity, nearD, wrange float64, weapon str
 		return idle()
 	}
 	canShv := ts.ShoveCool <= 0
-
-	if z := zoneCheck(ts, near, nearD, wrange, canAtk, weapon); z != nil {
-		return *z
-	}
 
 	// Attack anything in range
 	target := bestTarget(ts.Position, ts.Enemies, wrange)
