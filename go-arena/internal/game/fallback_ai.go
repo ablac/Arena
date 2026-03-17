@@ -34,8 +34,7 @@ func aiAggressive(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 	if canAttack(bot, target) {
 		return &Action{Type: ActionAttack, TargetID: target.BotID}
 	}
-	dir := directionToward(bot.Position, target.Position)
-	return &Action{Type: ActionMove, Direction: dir}
+	return moveTowardPos(bot, target.Position)
 }
 
 // aiDefensive attacks if in range, retreats if enemies are close, otherwise
@@ -52,9 +51,8 @@ func aiDefensive(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 	if canAttack(bot, target) {
 		return &Action{Type: ActionAttack, TargetID: target.BotID}
 	}
-	if bot.Position.DistanceTo(target.Position) < config.C.ViewRadius*0.5 {
-		dir := directionAway(bot.Position, target.Position)
-		return &Action{Type: ActionMove, Direction: dir}
+	if IsInRange(bot.Position, target.Position, config.C.FogRadius/2) {
+		return moveAwayFrom(bot, target.Position)
 	}
 	return idleOrMoveToZone(bot, arena)
 }
@@ -75,8 +73,7 @@ func aiOpportunistic(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action
 			return &Action{Type: ActionAttack, TargetID: target.BotID}
 		}
 		if target != nil {
-			dir := directionToward(bot.Position, target.Position)
-			return &Action{Type: ActionMove, Direction: dir}
+			return moveTowardPos(bot, target.Position)
 		}
 	}
 
@@ -89,8 +86,7 @@ func aiOpportunistic(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action
 	}
 	nearest := findNearest(bot, strong)
 	if nearest != nil {
-		dir := directionAway(bot.Position, nearest.Position)
-		return &Action{Type: ActionMove, Direction: dir}
+		return moveAwayFrom(bot, nearest.Position)
 	}
 
 	return idleOrMoveToZone(bot, arena)
@@ -100,16 +96,26 @@ func aiOpportunistic(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action
 // position. Attacks intruders, moves toward zone if outside it, otherwise idles.
 func aiTerritorial(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 	wc := GetWeaponConfig(bot.Weapon)
-	territory := wc.Range * 2
+	territoryTiles := wc.GridRange * 2
 
-	// Find nearest enemy within territory.
+	// Find nearest enemy within territory (grid distance).
 	var nearest *BotState
-	nearestDist := territory + 1
+	nearestDist := territoryTiles + 1
 	for _, b := range nearby {
-		d := bot.Position.DistanceTo(b.Position)
-		if d <= territory && d < nearestDist {
-			nearest = b
-			nearestDist = d
+		if ActiveTerrain != nil {
+			bc := ActiveTerrain.WorldToGrid(bot.Position)
+			oc := ActiveTerrain.WorldToGrid(b.Position)
+			d := GridDistance(bc, oc)
+			if d <= territoryTiles && d < nearestDist {
+				nearest = b
+				nearestDist = d
+			}
+		} else {
+			d := int(bot.Position.DistanceTo(b.Position))
+			if d <= territoryTiles && d < nearestDist {
+				nearest = b
+				nearestDist = d
+			}
 		}
 	}
 
@@ -117,8 +123,7 @@ func aiTerritorial(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 		if canAttack(bot, nearest) {
 			return &Action{Type: ActionAttack, TargetID: nearest.BotID}
 		}
-		dir := directionToward(bot.Position, nearest.Position)
-		return &Action{Type: ActionMove, Direction: dir}
+		return moveTowardPos(bot, nearest.Position)
 	}
 
 	return idleOrMoveToZone(bot, arena)
@@ -133,8 +138,7 @@ func aiHunter(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 	if canAttack(bot, target) {
 		return &Action{Type: ActionAttack, TargetID: target.BotID}
 	}
-	dir := directionToward(bot.Position, target.Position)
-	return &Action{Type: ActionMove, Direction: dir}
+	return moveTowardPos(bot, target.Position)
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +214,7 @@ func canShove(bot *BotState, target *BotState) bool {
 	if bot.ShoveCooldown > 0 {
 		return false
 	}
-	return bot.Position.DistanceTo(target.Position) <= config.C.ShoveRange+config.C.BotRadius*2
+	return IsInRange(bot.Position, target.Position, 1)
 }
 
 // canAttack returns true if the bot's weapon is ready and the target is alive
@@ -223,19 +227,30 @@ func canAttack(bot *BotState, target *BotState) bool {
 		return false
 	}
 	wc := GetWeaponConfig(bot.Weapon)
-	return IsInRange(bot.Position, target.Position, wc.Range)
+	return IsInRange(bot.Position, target.Position, wc.GridRange)
 }
 
-// idleOrMoveToZone idles if the bot is inside the safe zone, otherwise moves
-// toward the zone center. This prevents bots from clustering at map center
-// when no enemies are visible.
-func idleOrMoveToZone(bot *BotState, arena *ArenaMap) *Action {
-	if arena.IsInZone(bot.Position) {
-		return &Action{Type: ActionIdle}
-	}
-	dir := directionToward(bot.Position, arena.ZoneCenter)
+// moveTowardPos returns a move_to action that uses server-side pathfinding,
+// which navigates around walls instead of walking into them.
+func moveTowardPos(bot *BotState, target Vec2) *Action {
+	return &Action{Type: ActionMoveTo, TargetPosition: &target}
+}
+
+// moveAwayFrom moves in the opposite direction from the threat, using
+// grid-aware direction to avoid walking into walls.
+func moveAwayFrom(bot *BotState, threat Vec2) *Action {
+	dir := directionAway(bot.Position, threat)
 	if dir.Length() < 1e-10 {
 		return &Action{Type: ActionIdle}
 	}
 	return &Action{Type: ActionMove, Direction: dir}
+}
+
+// idleOrMoveToZone idles if the bot is inside the safe zone, otherwise moves
+// toward the zone center using pathfinding.
+func idleOrMoveToZone(bot *BotState, arena *ArenaMap) *Action {
+	if arena.IsInZone(bot.Position) {
+		return &Action{Type: ActionIdle}
+	}
+	return moveTowardPos(bot, arena.ZoneCenter)
 }

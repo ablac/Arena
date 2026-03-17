@@ -13,7 +13,7 @@ import (
 func MaybeSpawnPickup(pickups *[]Pickup, arena *ArenaMap, tickCount int) {
 	c := &config.C
 
-	if tickCount%c.PickupSpawnIntervalTicks != 0 {
+	if c.PickupSpawnIntervalTicks <= 0 || tickCount%c.PickupSpawnIntervalTicks != 0 {
 		return
 	}
 	if len(*pickups) >= c.PickupMaxActive {
@@ -25,6 +25,18 @@ func MaybeSpawnPickup(pickups *[]Pickup, arena *ArenaMap, tickCount int) {
 	pType := types[rand.Intn(len(types))]
 
 	pos := arena.GetSpawnPoint()
+	// Snap pickup position to grid cell centre; retry if it lands in a wall.
+	if ActiveTerrain != nil {
+		cell := ActiveTerrain.WorldToGrid(pos)
+		for retries := 0; retries < 10 && ActiveTerrain.IsBlocked(cell[0], cell[1]); retries++ {
+			pos = arena.GetSpawnPoint()
+			cell = ActiveTerrain.WorldToGrid(pos)
+		}
+		if ActiveTerrain.IsBlocked(cell[0], cell[1]) {
+			return // give up — no valid spawn found
+		}
+		pos = ActiveTerrain.GridToWorld(cell)
+	}
 
 	var value float64
 	switch pType {
@@ -49,9 +61,6 @@ func MaybeSpawnPickup(pickups *[]Pickup, arena *ArenaMap, tickCount int) {
 // CheckAutoCollect checks each alive bot against every active pickup and
 // auto-collects any pickup within collection range.
 func CheckAutoCollect(bots map[string]*BotState, pickups *[]Pickup) {
-	c := &config.C
-	collectDist := c.PickupCollectRadius + c.BotRadius
-
 	for _, bot := range bots {
 		if !bot.IsAlive {
 			continue
@@ -60,7 +69,8 @@ func CheckAutoCollect(bots map[string]*BotState, pickups *[]Pickup) {
 		// Iterate backwards so removals don't skip entries.
 		for i := len(*pickups) - 1; i >= 0; i-- {
 			p := (*pickups)[i]
-			if bot.Position.DistanceTo(p.Position) <= collectDist {
+			// Grid-based: collect if in same cell or adjacent.
+			if IsInRange(bot.Position, p.Position, 0) {
 				applyPickupEffect(bot, p)
 				*pickups = append((*pickups)[:i], (*pickups)[i+1:]...)
 			}
@@ -71,14 +81,12 @@ func CheckAutoCollect(bots map[string]*BotState, pickups *[]Pickup) {
 // CollectByAction attempts to collect a specific pickup by ID for a bot.
 // Returns true if the pickup was found and collected.
 func CollectByAction(bot *BotState, itemID string, pickups *[]Pickup) bool {
-	c := &config.C
-	collectDist := c.PickupCollectRadius + c.BotRadius + 5.0
-
 	for i, p := range *pickups {
 		if p.ID != itemID {
 			continue
 		}
-		if bot.Position.DistanceTo(p.Position) > collectDist {
+		// Grid-based: must be within 1 tile to collect.
+		if !IsInRange(bot.Position, p.Position, 1) {
 			return false
 		}
 		applyPickupEffect(bot, p)

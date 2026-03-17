@@ -151,3 +151,92 @@ func GetBotStats(engine *game.GameEngine) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, resp)
 	}
 }
+
+// GetBotLive returns real-time game state for the authenticated bot.
+// Returns whether the bot is connected, its current HP, position, action, etc.
+func GetBotLive(engine *game.GameEngine) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		bot := security.GetBotFromContext(r.Context())
+		if bot == nil {
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+
+		// Check if bot is currently in the game
+		detail, ok := engine.GetBotDetail(bot.ID)
+		if !ok {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"online":  false,
+				"bot_id":  bot.ID,
+				"name":    bot.Name,
+				"message": "Bot is not currently connected to the arena",
+			})
+			return
+		}
+
+		// Get arena status for context
+		gs := engine.GetFullGameState()
+		phase, _ := gs["round_phase"].(string)
+
+		// Build radar metrics (0-100 scale for visualization)
+		roundKills, _ := detail["round_kills"].(int)
+		roundDeaths, _ := detail["round_deaths"].(int)
+		dmgDealt, _ := detail["round_damage_dealt"].(float64)
+		dmgTaken, _ := detail["round_damage_taken"].(float64)
+		shotsFired, _ := detail["round_shots_fired"].(int)
+		shotsHit, _ := detail["round_shots_hit"].(int)
+		distance, _ := detail["round_distance"].(float64)
+		pickups, _ := detail["round_pickups"].(int)
+		hp, _ := detail["hp"].(float64)
+		maxHP, _ := detail["max_hp"].(float64)
+		speed, _ := detail["speed"].(float64)
+		atkMult, _ := detail["attack_multiplier"].(float64)
+		defRed, _ := detail["defense_reduction"].(float64)
+		killStreak, _ := detail["kill_streak"].(int)
+
+		var accuracy float64
+		if shotsFired > 0 {
+			accuracy = float64(shotsHit) / float64(shotsFired) * 100
+		}
+		var dmgRatio float64
+		if dmgTaken > 0 {
+			dmgRatio = dmgDealt / dmgTaken
+		} else if dmgDealt > 0 {
+			dmgRatio = 10
+		}
+
+		// Action distribution from history
+		actionCounts := detail["action_counts"]
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"online":         true,
+			"bot_id":         bot.ID,
+			"name":           bot.Name,
+			"phase":          phase,
+			"hp":             hp,
+			"max_hp":         maxHP,
+			"position":       detail["position"],
+			"weapon":         detail["weapon"],
+			"is_alive":       detail["is_alive"],
+			"speed":          speed,
+			"attack_mult":    atkMult,
+			"defense_red":    defRed,
+			"kill_streak":    killStreak,
+			"round_kills":    roundKills,
+			"round_deaths":   roundDeaths,
+			"round_damage_dealt": dmgDealt,
+			"round_damage_taken": dmgTaken,
+			"round_shots_fired":  shotsFired,
+			"round_shots_hit":    shotsHit,
+			"round_distance":     distance,
+			"round_pickups":      pickups,
+			"accuracy":           accuracy,
+			"damage_ratio":       dmgRatio,
+			"active_effects":     detail["active_effects"],
+			"dodge_cooldown":     detail["dodge_cooldown"],
+			"cooldown_remaining": detail["cooldown_remaining"],
+			"frozen":             detail["frozen"],
+			"action_counts":      actionCounts,
+		})
+	}
+}

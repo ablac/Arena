@@ -24,13 +24,51 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 			continue // Remove: expired
 		}
 
-		// 3. Check obstacle collision.
-		if CollidesWithObstacle(proj.Position.X(), proj.Position.Y(), obstacles, 0.5) != nil {
+		// 3. Check obstacle/terrain collision.
+		//    Ray-march from previous position to current position so fast
+		//    projectiles can never skip over a wall cell.
+		if ActiveTerrain != nil {
+			hitWall := false
+			prevPos := proj.Position.Sub(proj.Direction.Scale(proj.Speed * dt))
+			prevCell := ActiveTerrain.WorldToGrid(prevPos)
+			curCell := ActiveTerrain.WorldToGrid(proj.Position)
+
+			if ActiveTerrain.IsBlocked(curCell[0], curCell[1]) {
+				hitWall = true
+			} else if prevCell != curCell {
+				// DDA ray-march: step through cells using world-space line
+				// to avoid rounding into adjacent blocked cells.
+				dx := curCell[0] - prevCell[0]
+				dy := curCell[1] - prevCell[1]
+				adx := dx
+				if adx < 0 {
+					adx = -adx
+				}
+				ady := dy
+				if ady < 0 {
+					ady = -ady
+				}
+				steps := adx
+				if ady > steps {
+					steps = ady
+				}
+				for s := 1; s < steps; s++ {
+					cx := prevCell[0] + dx*s/steps
+					cy := prevCell[1] + dy*s/steps
+					if ActiveTerrain.IsBlocked(cx, cy) {
+						hitWall = true
+						break
+					}
+				}
+			}
+			if hitWall {
+				continue // Remove: hit wall
+			}
+		} else if CollidesWithObstacle(proj.Position.X(), proj.Position.Y(), obstacles, 0.5) != nil {
 			continue // Remove: hit obstacle
 		}
 
-		// 4. Check bot hits.
-		hitRadius := config.C.ProjectileHitRadius + config.C.BotRadius
+		// 4. Check bot hits (grid-based: projectile hits bot in same cell).
 		hit := false
 
 		for _, bot := range bots {
@@ -38,8 +76,7 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 				continue
 			}
 
-			dist := proj.Position.DistanceTo(bot.Position)
-			if dist > hitRadius {
+			if !IsInRange(proj.Position, bot.Position, 0) {
 				continue
 			}
 
@@ -54,7 +91,7 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 
 			if ownerOk {
 				ApplyDamage(bot, owner, proj.Damage, proj.Weapon, tickCount)
-				ApplyHitKnockback(bot, proj.Position.Sub(proj.Direction.Scale(proj.Speed*dt)), 2.5, obstacles)
+				ApplyGridKnockback(bot, proj.Position.Sub(proj.Direction.Scale(proj.Speed*dt)), 1, obstacles)
 				owner.RoundShotsHit++
 			}
 

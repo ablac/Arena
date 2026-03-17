@@ -12,79 +12,107 @@ const SORT_OPTIONS = {
   streak: 'Best Streak',
 };
 
-const WEAPON_ICONS = {
-  sword: '\u2694\uFE0F', bow: '\uD83C\uDFF9', daggers: '\uD83D\uDDE1\uFE0F',
-  shield: '\uD83D\uDEE1\uFE0F', spear: '\uD83D\uDD31', staff: '\uD83E\uDE84',
+const PERIOD_OPTIONS = {
+  '1h': 'Last Hour',
+  '24h': '24 Hours',
+  '7d': '7 Days',
+  '30d': '30 Days',
+  all_time: 'All Time',
 };
 
 /** @type {string} */
 let currentSort = 'elo';
+/** @type {string} */
+let currentPeriod = '1h';
 /** @type {number|null} */
 let refreshTimer = null;
 
 /**
  * Fetch leaderboard data from the API.
- * @param {string} sort - Sort field
- * @param {number} limit - Number of entries
- * @returns {Promise<Object>}
  */
-export async function fetchLeaderboard(sort = 'elo', limit = 50) {
+export async function fetchLeaderboard(sort = 'elo', limit = 50, period = 'all_time') {
   const baseUrl = window.location.origin;
-  const resp = await fetch(`${baseUrl}/api/v1/leaderboard?sort=${sort}&limit=${limit}`);
+  const resp = await fetch(`${baseUrl}/api/v1/leaderboard?sort=${sort}&limit=${limit}&period=${period}`);
   if (!resp.ok) throw new Error(`Leaderboard fetch failed: ${resp.status}`);
   return resp.json();
 }
 
 /**
  * Render leaderboard entries into a container.
- * @param {Object} data - API response with entries array
- * @param {HTMLElement} tbody - Table body element
- * @param {string} sort - Current sort field
  */
 export function renderLeaderboard(data, tbody, sort) {
   tbody.innerHTML = '';
-  if (!data.entries || data.entries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px">No bots qualified yet — get your first kill!</td></tr>';
+  const entries = data.entries || data.leaderboard || [];
+  if (entries.length === 0) {
+    const msg = currentPeriod === 'all_time'
+      ? 'No bots qualified yet — get your first kill!'
+      : `No data for this time period yet. Rounds need to complete to populate.`;
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px">${msg}</td></tr>`;
     return;
   }
-  data.entries.forEach((entry, i) => {
+  entries.forEach((entry, i) => {
     const rank = entry.rank || i + 1;
-    const rankClass = rank <= 3 ? ` class="rank-${rank}"` : '';
     const statValue = getStatValue(entry, sort);
+    const kd = entry.deaths > 0 ? (entry.kills / entry.deaths).toFixed(1) : entry.kills + '.0';
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td${rankClass ? ` class="rank-${rank}"` : ''}>${getRankDisplay(rank)}</td>
+    tr.innerHTML = `<td${rank <= 3 ? ` class="rank-${rank}"` : ''}>${getRankDisplay(rank)}</td>
       <td>${escapeHtml(entry.name)}</td>
       <td>${statValue}</td>
       <td>${entry.kills}/${entry.deaths}</td>
       <td>${entry.elo}</td>`;
-    if (rankClass) tr.className = `rank-${rank}`;
+    if (rank <= 3) tr.className = `rank-${rank}`;
     tbody.appendChild(tr);
   });
 }
 
 /**
  * Initialize leaderboard tabs and auto-refresh.
- * @param {HTMLElement} tabsContainer - Tabs container element
- * @param {HTMLElement} tbody - Table body element
  */
 export function initLeaderboard(tabsContainer, tbody) {
+  // Sort tabs
   Object.entries(SORT_OPTIONS).forEach(([key, label]) => {
     const btn = document.createElement('button');
     btn.textContent = label;
     btn.dataset.sort = key;
     if (key === currentSort) btn.classList.add('active');
-    btn.addEventListener('click', () => switchTab(key, tabsContainer, tbody));
+    btn.addEventListener('click', () => switchSort(key, tabsContainer, tbody));
     tabsContainer.appendChild(btn);
   });
+
+  // Period tabs — add a separator then period buttons
+  const sep = document.createElement('span');
+  sep.textContent = '|';
+  sep.style.cssText = 'color:var(--text-muted);margin:0 6px;opacity:0.3;align-self:center';
+  tabsContainer.appendChild(sep);
+
+  Object.entries(PERIOD_OPTIONS).forEach(([key, label]) => {
+    const btn = document.createElement('button');
+    btn.textContent = label;
+    btn.dataset.period = key;
+    if (key === currentPeriod) btn.classList.add('active');
+    btn.style.fontSize = '0.75rem';
+    btn.addEventListener('click', () => switchPeriod(key, tabsContainer, tbody));
+    tabsContainer.appendChild(btn);
+  });
+
   refreshData(tbody);
   startAutoRefresh(tbody);
 }
 
 /** @private */
-function switchTab(sort, tabsContainer, tbody) {
+function switchSort(sort, tabsContainer, tbody) {
   currentSort = sort;
-  tabsContainer.querySelectorAll('button').forEach(b => {
+  tabsContainer.querySelectorAll('button[data-sort]').forEach(b => {
     b.classList.toggle('active', b.dataset.sort === sort);
+  });
+  refreshData(tbody);
+}
+
+/** @private */
+function switchPeriod(period, tabsContainer, tbody) {
+  currentPeriod = period;
+  tabsContainer.querySelectorAll('button[data-period]').forEach(b => {
+    b.classList.toggle('active', b.dataset.period === period);
   });
   refreshData(tbody);
 }
@@ -92,7 +120,7 @@ function switchTab(sort, tabsContainer, tbody) {
 /** @private */
 async function refreshData(tbody) {
   try {
-    const data = await fetchLeaderboard(currentSort);
+    const data = await fetchLeaderboard(currentSort, 50, currentPeriod);
     renderLeaderboard(data, tbody, currentSort);
   } catch (err) {
     console.error('[Leaderboard] Fetch error:', err);
@@ -109,7 +137,10 @@ function startAutoRefresh(tbody) {
 function getStatValue(entry, sort) {
   switch (sort) {
     case 'kills': return entry.kills;
-    case 'kd_ratio': return (entry.kd_ratio || 0).toFixed(2);
+    case 'kd_ratio': {
+      const kd = entry.deaths > 0 ? entry.kills / entry.deaths : entry.kills;
+      return kd.toFixed(2);
+    }
     case 'streak': return entry.best_streak;
     default: return entry.elo;
   }

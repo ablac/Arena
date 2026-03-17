@@ -12,15 +12,17 @@ import sys
 from enum import Enum, auto
 
 from arena_sdk import ArenaBot
+from arena_sdk.helpers import distance
 
+# All distance constants are in grid tiles (Chebyshev distance).
 _AGGRESSIVE_HP: float = 0.7
 _DEFENSIVE_HP: float = 0.3
 _SCAVENGE_HP: float = 0.5
 _OUTNUMBER_THRESHOLD: int = 3
-_OUTNUMBER_RANGE: float = 15.0
-_ATTACK_RANGE: float = 5.0
-_DODGE_RANGE: float = 7.0
-_ZONE_SMALL: float = 30.0
+_OUTNUMBER_RANGE: int = 8      # tiles
+_ATTACK_RANGE: int = 2         # adjacent tiles
+_DODGE_RANGE: int = 3          # tiles
+_ZONE_SMALL: int = 15          # zone radius in tiles
 
 
 class Mode(Enum):
@@ -46,16 +48,12 @@ class SmartBot(ArenaBot):
     # Helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _dist(a: list[float], b: list[float]) -> float:
-        return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
-
-    def _enemies_in_range(self, my_pos: list[float], nearby: list, radius: float) -> list[dict]:
+    def _enemies_in_range(self, my_pos: list[int], nearby: list, radius: int) -> list[dict]:
         return [
             e for e in nearby
             if e.get("type") == "bot"
             and e.get("is_alive", True)
-            and self._dist(my_pos, e["position"]) <= radius
+            and distance(my_pos, e["position"]) <= radius
         ]
 
     @staticmethod
@@ -64,16 +62,16 @@ class SmartBot(ArenaBot):
         hp_ratio: float = enemy.get("hp", 1) / max(enemy.get("max_hp", 1), 1)
         return (1.0 - hp_ratio) * 0.4 + 0.6  # Healthy enemies are still threats.
 
-    def _incoming_projectile(self, my_pos: list[float], nearby: list) -> dict | None:
+    def _incoming_projectile(self, my_pos: list[int], nearby: list) -> dict | None:
         """Return the closest projectile heading our way, if any."""
         projectiles: list[dict] = [
             e for e in nearby if e.get("type") == "projectile"
         ]
         if not projectiles:
             return None
-        projectiles.sort(key=lambda p: self._dist(my_pos, p["position"]))
+        projectiles.sort(key=lambda p: distance(my_pos, p["position"]))
         closest = projectiles[0]
-        if self._dist(my_pos, closest["position"]) < _DODGE_RANGE:
+        if distance(my_pos, closest["position"]) < _DODGE_RANGE:
             return closest
         return None
 
@@ -86,7 +84,7 @@ class SmartBot(ArenaBot):
         hp_ratio: float,
         enemies_close: int,
         health_nearby: bool,
-        zone_radius: float,
+        zone_radius: int,
     ) -> Mode:
         # Zone pressure overrides everything when the circle is tiny.
         if zone_radius < _ZONE_SMALL:
@@ -111,7 +109,7 @@ class SmartBot(ArenaBot):
     async def on_tick(
         self, state: dict, nearby: list, safe_zone: dict
     ) -> dict:
-        my_pos: list[float] = state["position"]
+        my_pos: list[int] = state["position"]  # [col, row]
         hp: int = state["hp"]
         max_hp: int = state["max_hp"]
         hp_ratio: float = hp / max(max_hp, 1)
@@ -137,7 +135,7 @@ class SmartBot(ArenaBot):
             if target is None:
                 target = self.closest_enemy(nearby)
             if target is not None:
-                if self._dist(my_pos, target["position"]) < _ATTACK_RANGE:
+                if distance(my_pos, target["position"]) < _ATTACK_RANGE:
                     return self.attack(target["id"])
                 return self.move_toward(my_pos, target["position"])
 
@@ -147,7 +145,7 @@ class SmartBot(ArenaBot):
                 return self.move_toward(my_pos, health_pickups[0]["position"])
             enemy = self.closest_enemy(nearby)
             if enemy is not None:
-                if self._dist(my_pos, enemy["position"]) < _ATTACK_RANGE:
+                if distance(my_pos, enemy["position"]) < _ATTACK_RANGE:
                     return self.attack(enemy["id"])
                 return self.move_away(my_pos, enemy["position"])
             return self.move_toward(my_pos, safe_zone["center"])
@@ -158,16 +156,17 @@ class SmartBot(ArenaBot):
             if pickups:
                 return self.move_toward(my_pos, pickups[0]["position"])
             enemy = self.closest_enemy(nearby)
-            if enemy is not None and self._dist(my_pos, enemy["position"]) < _ATTACK_RANGE:
+            if enemy is not None and distance(my_pos, enemy["position"]) < _ATTACK_RANGE:
                 return self.attack(enemy["id"])
 
         # --- ZONE_AWARE (default fallback) ---
-        zone_dist: float = self._dist(my_pos, safe_zone["center"])
-        if zone_dist > safe_zone["radius"] * 0.5:
+        zone_dist: int = distance(my_pos, safe_zone["center"])
+        zone_radius: int = safe_zone["radius"]
+        if zone_dist > zone_radius // 2:
             return self.move_toward(my_pos, safe_zone["center"])
 
         enemy = self.closest_enemy(nearby)
-        if enemy is not None and self._dist(my_pos, enemy["position"]) < _ATTACK_RANGE:
+        if enemy is not None and distance(my_pos, enemy["position"]) < _ATTACK_RANGE:
             return self.attack(enemy["id"])
 
         return self.idle()

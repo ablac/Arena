@@ -1,121 +1,166 @@
 'use strict';
 
 /**
- * Movement trail system — translucent fading discs behind moving bots.
- * Uses a shared template disc + per-bot material for performance.
+ * Movement trail system — smooth fading ribbons behind moving bots.
+ * Samples bot visual positions every render frame and builds a flat ribbon
+ * mesh with vertex alpha fading from bot (opaque) to tail (transparent).
  * @module renderer/trails
  */
 
 import { parseColor } from './utils.js';
 
-const MAX_TRAIL_POINTS = 3;
-const TRAIL_LIFETIME_MS = 250;
-const TRAIL_RADIUS = 12;
-const MIN_MOVE_DIST = 6;
+const MAX_HISTORY = 20;        // number of position samples kept
+const SAMPLE_INTERVAL = 0.03;  // seconds between samples (~33fps sampling)
+const TRAIL_WIDTH = 6;         // half-width of ribbon perpendicular to direction
+const TRAIL_Y = 0.4;           // height above ground
 
 export class TrailRenderer {
   /** @param {BABYLON.Scene} scene */
   constructor(scene) {
     this.scene = scene;
-    /** @type {Map<string, {mat: BABYLON.StandardMaterial, points: Array}>} */
+    /**
+     * Per-bot trail state.
+     * @type {Map<string, {history: Array<{x:number,z:number}>, mesh: BABYLON.Mesh|null, mat: BABYLON.StandardMaterial, timer: number}>}
+     */
     this.trails = new Map();
-    /** @type {Map<string, number[]>} */
-    this.lastPositions = new Map();
-    this._template = null;
   }
 
-  /** @private Get or create the template disc for cloning. */
-  _getTemplate() {
-    if (!this._template || this._template.isDisposed()) {
-      this._template = window.BABYLON.MeshBuilder.CreateDisc('trail-tpl', {
-        radius: TRAIL_RADIUS, tessellation: 8
-      }, this.scene);
-      this._template.rotation.x = Math.PI / 2;
-      this._template.setEnabled(false);
-    }
-    return this._template;
-  }
+  /**
+   * Called every render frame with the bot renderer's entries map.
+   * Samples visual positions and rebuilds ribbon meshes.
+   * @param {Map<string, Object>|null} botEntries
+   * @param {number} dt - frame delta in seconds
+   */
+  render(botEntries, dt) {
+    if (!botEntries) return;
+    const B = window.BABYLON;
+    const seen = new Set();
 
-  update(bots) {
-    const now = Date.now();
-    const aliveBots = new Set();
+    for (const [botId, entry] of botEntries) {
+      if (!entry.isAlive || !entry._interpReady) continue;
+      seen.add(botId);
 
-    for (const bot of bots) {
-      if (!bot.is_alive) continue;
-      aliveBots.add(bot.bot_id);
+      const x = entry.root.position.x;
+      const z = entry.root.position.z;
 
-      const x = bot.position[0], z = bot.position[1];
-      const lastPos = this.lastPositions.get(bot.bot_id);
+      let trail = this.trails.get(botId);
+      if (!trail) {
+        const color = entry.bodyMat ? entry.bodyMat.diffuseColor : new B.Color3(0.5, 0.5, 0.5);
+        const mat = new B.StandardMaterial(`tmat-${botId}`, this.scene);
+        mat.emissiveColor = color.clone();
+        mat.diffuseColor = color.clone();
+        mat.disableLighting = true;
+        mat.backFaceCulling = false;
+        mat.alpha = 1;
+        trail = { history: [{ x, z }], mesh: null, mat, timer: 0 };
+        this.trails.set(botId, trail);
+      }
 
-      if (lastPos) {
-        const dx = x - lastPos[0], dz = z - lastPos[1];
-        if (dx * dx + dz * dz > MIN_MOVE_DIST * MIN_MOVE_DIST) {
-          this._addTrailPoint(bot.bot_id, lastPos[0], lastPos[1], bot.avatar_color, now);
+      // Sample position at fixed interval
+      trail.timer += dt;
+      if (trail.timer >= SAMPLE_INTERVAL) {
+        trail.timer = 0;
+        const last = trail.history[trail.history.length - 1];
+        const dx = x - last.x;
+        const dz = z - last.z;
+        // Only add if bot actually moved
+        if (dx * dx + dz * dz > 0.5) {
+          trail.history.push({ x, z });
+          if (trail.history.length > MAX_HISTORY) {
+            trail.history.shift();
+          }
         }
       }
-      this.lastPositions.set(bot.bot_id, [x, z]);
+
+      // Need at least 2 points for a ribbon
+      if (trail.history.length < 2) continue;
+
+      // Build ribbon paths: two parallel paths offset perpendicular to direction
+      const left = [];
+      const right = [];
+      const hist = trail.history;
+
+      for (let i = 0; i < hist.length; i++) {
+        // Compute direction at this point
+        let nx, nz;
+        if (i < hist.length - 1) {
+          nx = hist[i + 1].x - hist[i].x;
+          nz = hist[i + 1].z - hist[i].z;
+        } else {
+          nx = hist[i].x - hist[i - 1].x;
+          nz = hist[i].z - hist[i - 1].z;
+        }
+        const len = Math.sqrt(nx * nx + nz * nz) || 1;
+        // Perpendicular direction (rotate 90°)
+        const px = -nz / len;
+        const pz = nx / len;
+
+        // Alpha: 0 at tail (index 0), 1 at head (last index)
+        const alpha = i / (hist.length - 1);
+        const w = TRAIL_WIDTH * alpha; // taper from nothing to full width
+
+        left.push(new B.Vector3(hist[i].x + px * w, TRAIL_Y, hist[i].z + pz * w));
+        right.push(new B.Vector3(hist[i].x - px * w, TRAIL_Y, hist[i].z - pz * w));
+      }
+
+      // Dispose old mesh and create new ribbon
+      if (trail.mesh) {
+        trail.mesh.dispose();
+        trail.mesh = null;
+      }
+
+      try {
+        const ribbon = B.MeshBuilder.CreateRibbon(`trail-${botId}`, {
+          pathArray: [left, right],
+          updatable: false,
+          sideOrientation: B.Mesh.DOUBLESIDE,
+        }, this.scene);
+        ribbon.material = trail.mat;
+        ribbon.isPickable = false;
+        ribbon.alwaysSelectAsActiveMesh = true;
+
+        // Apply vertex alpha: fade from transparent (tail) to semi-opaque (head)
+        const vertexCount = ribbon.getTotalVertices();
+        const colors = new Float32Array(vertexCount * 4);
+        const c = trail.mat.emissiveColor;
+        const pointsPerSide = hist.length;
+
+        for (let v = 0; v < vertexCount; v++) {
+          // Each side has pointsPerSide vertices; vertex order is left[0..n-1], right[0..n-1]
+          const idx = v % pointsPerSide;
+          const alpha = idx / (pointsPerSide - 1);
+          colors[v * 4 + 0] = c.r;
+          colors[v * 4 + 1] = c.g;
+          colors[v * 4 + 2] = c.b;
+          colors[v * 4 + 3] = alpha * 0.3; // max 30% opacity at head
+        }
+        ribbon.setVerticesData(B.VertexBuffer.ColorKind, colors);
+        ribbon.hasVertexAlpha = true;
+        // Override material alpha since we use vertex alpha
+        trail.mat.alpha = 1;
+        trail.mat.useVertexAlpha = true;
+
+        trail.mesh = ribbon;
+      } catch {
+        // CreateRibbon can fail with degenerate geometry — ignore
+      }
     }
 
-    // Cleanup
+    // Cleanup trails for bots that are gone
     for (const [botId, trail] of this.trails) {
-      if (!aliveBots.has(botId)) {
-        for (const pt of trail.points) pt.mesh.dispose();
+      if (!seen.has(botId)) {
+        if (trail.mesh) trail.mesh.dispose();
         trail.mat.dispose();
         this.trails.delete(botId);
-        this.lastPositions.delete(botId);
-        continue;
-      }
-      for (let i = trail.points.length - 1; i >= 0; i--) {
-        const age = now - trail.points[i].created;
-        if (age > TRAIL_LIFETIME_MS) {
-          trail.points[i].mesh.dispose();
-          trail.points.splice(i, 1);
-        } else {
-          const t = 1 - age / TRAIL_LIFETIME_MS;
-          trail.points[i].mesh.visibility = t * 0.25;
-          const scale = 0.4 + t * 0.6;
-          trail.points[i].mesh.scaling.x = scale;
-          trail.points[i].mesh.scaling.z = scale;
-        }
       }
     }
-  }
-
-  /** @private */
-  _addTrailPoint(botId, x, z, hexColor, now) {
-    let trail = this.trails.get(botId);
-    if (!trail) {
-      const B = window.BABYLON;
-      const color = parseColor(hexColor);
-      const mat = new B.StandardMaterial(`tmat-${botId}`, this.scene);
-      mat.emissiveColor = color;
-      mat.diffuseColor = color;
-      mat.disableLighting = true;
-      mat.backFaceCulling = false;
-      trail = { mat, points: [] };
-      this.trails.set(botId, trail);
-    }
-
-    if (trail.points.length >= MAX_TRAIL_POINTS) {
-      trail.points.shift().mesh.dispose();
-    }
-
-    const mesh = this._getTemplate().clone(`tr-${botId}-${now}`);
-    mesh.position.set(x, 0.3, z);
-    mesh.material = trail.mat;
-    mesh.setEnabled(true);
-    mesh.visibility = 0.25;
-
-    trail.points.push({ mesh, created: now });
   }
 
   dispose() {
     for (const [, trail] of this.trails) {
-      for (const pt of trail.points) pt.mesh.dispose();
+      if (trail.mesh) trail.mesh.dispose();
       trail.mat.dispose();
     }
     this.trails.clear();
-    this.lastPositions.clear();
-    if (this._template) this._template.dispose();
   }
 }

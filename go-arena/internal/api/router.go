@@ -96,6 +96,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				security.RateLimitMiddleware(config.C.RateLimitBotConfigPerMin),
 			).Put("/bot/config", UpdateBotConfig)
 			auth.Get("/bot/stats", GetBotStats(engine))
+			auth.Get("/bot/live", GetBotLive(engine))
 		})
 
 		// Leaderboard (public).
@@ -139,6 +140,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 					security.RateLimitMiddleware(config.C.RateLimitBotConfigPerMin),
 				).Put("/bot/config", UpdateBotConfig)
 				auth.Get("/bot/stats", GetBotStats(engine))
+				auth.Get("/bot/live", GetBotLive(engine))
 			})
 			api.Get("/leaderboard", GetLeaderboard)
 			api.Get("/arena/status", GetArenaStatus(engine))

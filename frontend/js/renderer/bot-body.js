@@ -6,7 +6,7 @@
  * @module renderer/bot-body
  */
 
-import { parseColor, makeMat, createTextPlane } from './utils.js';
+import { parseColor, makeMat } from './utils.js';
 import { createWeaponMesh, disposeWeapon } from './weapons.js';
 import { BotAnimState } from './animations.js';
 import { createSwordsmanEntry, disposeSwordsmanEntry } from './swordsman-body.js';
@@ -16,14 +16,24 @@ const BODY_R = 5;
 const HEAD_R = 4;
 const ARM_H = 10;
 const ARM_R = 1.5;
-const HP_BAR_W = 40;
-const HP_BAR_H = 4;
-const LABEL_W = 80;
-const LABEL_H = 25;
 
 /** Shared materials (created once, reused across all bots). */
 let _shdMat = null;
-let _hpBgMat = null;
+
+/** Singleton fullscreen GUI texture for all bot HUD elements. */
+let _guiTexture = null;
+
+/**
+ * Get or create the singleton AdvancedDynamicTexture for bot GUI overlays.
+ * @returns {BABYLON.GUI.AdvancedDynamicTexture}
+ */
+export function getGuiTexture() {
+  if (!_guiTexture || _guiTexture.isDisposed) {
+    const GUI = window.BABYLON.GUI;
+    _guiTexture = GUI.AdvancedDynamicTexture.CreateFullscreenUI('botUI');
+  }
+  return _guiTexture;
+}
 
 function _getShadowMat(scene) {
   if (!_shdMat || _shdMat.isDisposed) {
@@ -38,21 +48,6 @@ function _getShadowMat(scene) {
     _shdMat.freeze();
   }
   return _shdMat;
-}
-
-function _getHpBgMat(scene) {
-  if (!_hpBgMat || _hpBgMat.isDisposed) {
-    const B = window.BABYLON;
-    _hpBgMat = new B.StandardMaterial('hpbgm-shared', scene);
-    _hpBgMat.diffuseColor = new B.Color3(0.1, 0.1, 0.1);
-    _hpBgMat.specularColor = B.Color3.Black();
-    _hpBgMat.emissiveColor = B.Color3.Black();
-    _hpBgMat.disableLighting = true;
-    _hpBgMat.alpha = 0.7;
-    _hpBgMat.backFaceCulling = false;
-    _hpBgMat.freeze();
-  }
-  return _hpBgMat;
 }
 
 export function createBotEntry(bot, scene) {
@@ -138,40 +133,47 @@ export function createBotEntry(bot, scene) {
   // Weapon
   const weapon = createWeaponMesh(bot.weapon || 'sword', id, scene, root);
 
-  // Name label
-  const label = createTextPlane(id, bot.name || '???', color, scene, LABEL_W, LABEL_H);
-  label.plane.position.y = BODY_H + HEAD_R * 2 + 8;
-  label.plane.parent = root;
+  // ── GUI-based name label & HP bar ──
+  const GUI = window.BABYLON.GUI;
+  const adt = getGuiTexture();
 
-  // Health bar BG (shared material)
-  const hpBg = B.MeshBuilder.CreatePlane(`hpbg-${id}`, {
-    width: HP_BAR_W, height: HP_BAR_H
-  }, scene);
-  hpBg.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
-  hpBg.position.y = BODY_H + HEAD_R * 2 + 2;
-  hpBg.parent = root;
-  hpBg.material = _getHpBgMat(scene);
-  hpBg.isPickable = false;
-  hpBg.alwaysSelectAsActiveMesh = true;
+  // Name label (TextBlock linked to root mesh)
+  const nameLabel = new GUI.TextBlock(`lbl-${id}`);
+  const displayName = (bot.name || '???');
+  nameLabel.text = displayName.length > 12 ? displayName.slice(0, 11) + '\u2026' : displayName;
+  nameLabel.color = 'white';
+  nameLabel.fontSize = 14;
+  nameLabel.fontFamily = 'monospace';
+  nameLabel.fontWeight = 'bold';
+  nameLabel.resizeToFit = true;
+  adt.addControl(nameLabel);
+  nameLabel.linkWithMesh(root);
+  nameLabel.linkOffsetY = -50;
 
-  // Health bar fill (needs unique mat for per-bot color changes)
-  const hpBar = B.MeshBuilder.CreatePlane(`hp-${id}`, {
-    width: HP_BAR_W, height: HP_BAR_H
-  }, scene);
-  hpBar.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
-  hpBar.position.y = BODY_H + HEAD_R * 2 + 2.2;
-  hpBar.parent = root;
-  hpBar.isPickable = false;
-  hpBar.alwaysSelectAsActiveMesh = true;
-  const hpMat = makeMat(`hpm-${id}`, scene, new B.Color3(0, 1, 0), {
-    noLight: true, emissiveFactor: 1
-  });
-  hpBar.material = hpMat;
+  // HP bar background container
+  const hpContainer = new GUI.Rectangle(`hpbg-${id}`);
+  hpContainer.width = '60px';
+  hpContainer.height = '8px';
+  hpContainer.background = '#1a1a1a';
+  hpContainer.thickness = 0;
+  hpContainer.alpha = 0.85;
+  adt.addControl(hpContainer);
+  hpContainer.linkWithMesh(root);
+  hpContainer.linkOffsetY = -38;
+
+  // HP bar fill
+  const hpFill = new GUI.Rectangle(`hp-${id}`);
+  hpFill.width = 1;
+  hpFill.height = 1;
+  hpFill.background = '#00ff00';
+  hpFill.thickness = 0;
+  hpFill.horizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+  hpContainer.addControl(hpFill);
 
   return {
     root, body, bodyMat, head, headMat, lArm, rArm, armMat,
-    shadow, weapon, hpBar, hpMat, hpBg,
-    label, anim: new BotAnimState(),
+    shadow, weapon, hpContainer, hpFill, nameLabel,
+    anim: new BotAnimState(),
     isAlive: true, _wasAlive: true, _lastHp: -1,
   };
 }
@@ -181,28 +183,28 @@ export function disposeBotEntry(entry) {
     disposeSwordsmanEntry(entry);
     return;
   }
-  if (entry.label) {
-    entry.label.plane.dispose();
-    entry.label.mat.dispose();
-    entry.label.tex.dispose();
-  }
+  // Remove GUI controls from the fullscreen texture
+  if (entry.nameLabel) entry.nameLabel.dispose();
+  if (entry.hpContainer) entry.hpContainer.dispose();
   // Only dispose per-bot materials (not shared ones)
-  for (const k of ['bodyMat', 'headMat', 'armMat', 'hpMat']) {
+  for (const k of ['bodyMat', 'headMat', 'armMat']) {
     if (entry[k]) entry[k].dispose();
   }
   if (entry.weapon) disposeWeapon(entry.weapon);
   entry.root.dispose();
 }
 
-export function setHpColor(mat, ratio) {
+/**
+ * Set HP bar color based on health ratio.
+ * @param {BABYLON.GUI.Rectangle} fill - The GUI fill rectangle
+ * @param {number} ratio - HP ratio 0..1
+ */
+export function setHpColor(fill, ratio) {
   if (ratio > 0.6) {
-    mat.diffuseColor.r = 0; mat.diffuseColor.g = 1; mat.diffuseColor.b = 0;
+    fill.background = '#00ff00';
   } else if (ratio > 0.3) {
-    mat.diffuseColor.r = 1; mat.diffuseColor.g = 1; mat.diffuseColor.b = 0;
+    fill.background = '#ffff00';
   } else {
-    mat.diffuseColor.r = 1; mat.diffuseColor.g = 0; mat.diffuseColor.b = 0;
+    fill.background = '#ff0000';
   }
-  mat.emissiveColor.r = mat.diffuseColor.r;
-  mat.emissiveColor.g = mat.diffuseColor.g;
-  mat.emissiveColor.b = mat.diffuseColor.b;
 }

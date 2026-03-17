@@ -32,6 +32,7 @@ type Config struct {
 	BotRadius      float64 `envconfig:"ARENA_BOT_RADIUS" default:"5.0"`
 	SpatialCellSize float64 `envconfig:"ARENA_SPATIAL_CELL_SIZE" default:"100"`
 	PathfindingCellSize float64 `envconfig:"ARENA_PATHFINDING_CELL_SIZE" default:"20"`
+	FogRadius           int     `envconfig:"ARENA_FOG_RADIUS" default:"7"`
 
 	// Combat
 	StatBudget        int     `envconfig:"ARENA_STAT_BUDGET" default:"20"`
@@ -116,6 +117,10 @@ type Config struct {
 	AdminToken          string `envconfig:"ARENA_ADMIN_TOKEN" default:""`
 	AdminLocalhostBypass bool   `envconfig:"ARENA_ADMIN_LOCALHOST_BYPASS" default:"true"`
 	AdminRateLimitRPM   int    `envconfig:"ARENA_ADMIN_RATE_LIMIT_RPM" default:"120"`
+
+	// Cloudflare (optional — for IP ban push)
+	CloudflareAPIToken string `envconfig:"ARENA_CF_API_TOKEN" default:""`
+	CloudflareZoneID   string `envconfig:"ARENA_CF_ZONE_ID" default:""`
 
 	// CORS
 	CORSOrigins string `envconfig:"ARENA_CORS_ORIGINS" default:"*"`
