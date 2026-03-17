@@ -214,6 +214,36 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Movement.
 	ProcessMovement(e.Bots, e.Arena.Obstacles, e.Grid, e.NavGrid, dt)
 
+	// Anti-stuck: if a bot hasn't moved for 10+ ticks, nudge it to a
+	// random adjacent passable cell so it doesn't stay glued to a wall.
+	if ActiveTerrain != nil {
+		for _, bot := range e.Bots {
+			if !bot.IsAlive {
+				continue
+			}
+			cell := ActiveTerrain.WorldToGrid(bot.Position)
+			prevCell := ActiveTerrain.WorldToGrid(bot.LastValidPosition)
+			if cell == prevCell {
+				bot.StuckTicks++
+			} else {
+				bot.StuckTicks = 0
+			}
+			if bot.StuckTicks >= 10 {
+				// Try each direction randomly until we find a passable cell
+				for _, d := range directions {
+					if !ActiveTerrain.IsMoveBlocked(cell[0], cell[1], d.dx, d.dy) {
+						nc := [2]int{cell[0] + d.dx, cell[1] + d.dy}
+						bot.Position = ActiveTerrain.GridToWorld(nc)
+						bot.LastValidPosition = bot.Position
+						bot.StuckTicks = 0
+						e.Grid.Update(bot.BotID, bot.Position)
+						break
+					}
+				}
+			}
+		}
+	}
+
 	// Shoves (before combat so shoved bots can't attack this tick).
 	ProcessShoves(e.Bots, e.Arena.Obstacles)
 
@@ -250,7 +280,9 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Bot separation.
 	SeparateBots(e.Bots, e.Arena.Obstacles, e.Grid)
 
-	// Enforce obstacle bounds — safety net: snap to nearest unblocked cell.
+	// HARD WALL ENFORCEMENT: Every tick, validate every bot's position.
+	// If a bot is in a blocked cell, revert to LastValidPosition.
+	// Then update LastValidPosition for next tick.
 	if ActiveTerrain != nil {
 		for _, bot := range e.Bots {
 			if !bot.IsAlive {
@@ -258,16 +290,35 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 			}
 			cell := ActiveTerrain.WorldToGrid(bot.Position)
 			if ActiveTerrain.IsBlocked(cell[0], cell[1]) {
-				// Push to nearest unblocked cell.
-				for _, d := range directions {
-					nc := [2]int{cell[0] + d.dx, cell[1] + d.dy}
-					if !ActiveTerrain.IsBlocked(nc[0], nc[1]) {
-						bot.Position = ActiveTerrain.GridToWorld(nc)
+				// Revert to last known valid position.
+				prevCell := ActiveTerrain.WorldToGrid(bot.LastValidPosition)
+				if !ActiveTerrain.IsBlocked(prevCell[0], prevCell[1]) {
+					bot.Position = bot.LastValidPosition
+				} else {
+					// Last valid position is also blocked (shouldn't happen).
+					// Spiral outward toward arena center to find an open cell.
+					found := false
+					for radius := 1; radius <= 15 && !found; radius++ {
+						for _, d := range directions {
+							nc := [2]int{cell[0] + d.dx*radius, cell[1] + d.dy*radius}
+							if !ActiveTerrain.IsBlocked(nc[0], nc[1]) {
+								bot.Position = ActiveTerrain.GridToWorld(nc)
+								found = true
+								break
+							}
+						}
+					}
+					// If spiral failed, don't update LastValidPosition so next
+					// tick retries rather than locking in a blocked cell.
+					if !found {
 						e.Grid.Update(bot.BotID, bot.Position)
-						break
+						continue
 					}
 				}
+				e.Grid.Update(bot.BotID, bot.Position)
 			}
+			// Record this tick's valid position for next tick's enforcement.
+			bot.LastValidPosition = bot.Position
 		}
 	} else {
 		for _, bot := range e.Bots {
@@ -367,13 +418,9 @@ func (e *GameEngine) startRound() {
 	e.KillFeed.Clear()
 	e.AntiTeam.Clear()
 
-	// Reset tick counter so each round starts fresh.
-	e.TickCount = 0
-	e.lastPersistTick = 0
-
 	// Set round state.
 	e.Round.Phase = PhaseActive
-	e.Round.StartTick = 0
+	e.Round.StartTick = e.TickCount
 	e.Round.RoundID = uuid.New().String()
 
 	// Spawn bots evenly around the zone perimeter.
@@ -590,7 +637,7 @@ func (e *GameEngine) GetState() SpectatorState {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	return BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount)
+	return BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.WaitingBots)
 }
 
 // ArenaSnapshot holds read-only arena state for the REST API.
@@ -949,7 +996,7 @@ func (e *GameEngine) sendLobbyStateUpdate() {
 
 // sendSpectatorUpdate broadcasts the full arena state to all spectators.
 func (e *GameEngine) sendSpectatorUpdate() {
-	state := BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount)
+	state := BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.WaitingBots)
 	data, err := marshalJSON(state)
 	if err != nil {
 		slog.Error("failed to marshal spectator state", "error", err)
@@ -1315,8 +1362,19 @@ func (e *GameEngine) TeleportBot(botID string, x, y float64) bool {
 		return false
 	}
 
+	newPos := NewVec2(x, y)
+	// Validate destination is not inside a wall.
+	if ActiveTerrain != nil {
+		cell := ActiveTerrain.WorldToGrid(newPos)
+		if ActiveTerrain.IsBlocked(cell[0], cell[1]) {
+			slog.Warn("admin teleport blocked: destination is a wall cell", "bot_id", botID, "x", x, "y", y)
+			return false
+		}
+	}
+
 	e.Grid.Remove(botID)
-	bot.Position = NewVec2(x, y)
+	bot.Position = newPos
+	bot.LastValidPosition = newPos
 	e.Grid.Insert(botID, bot.Position)
 	slog.Info("admin teleported bot", "bot_id", botID, "name", bot.Name, "x", x, "y", y)
 	return true
@@ -1604,12 +1662,27 @@ type BotStatsSnapshot struct {
 	PersistedPickups     int
 }
 
-// copyBotsForPersist returns a shallow map copy safe for goroutine use.
-// BotState fields read are value types so no deep copy needed.
+// copyBotsForPersist returns a deep copy of bots safe for goroutine use.
+// BotState contains slices (ActiveEffects, HitsReceived, etc.) that would
+// race if only the pointer were copied.
 func (e *GameEngine) copyBotsForPersist() map[string]*BotState {
 	cp := make(map[string]*BotState, len(e.Bots))
 	for id, bot := range e.Bots {
-		cp[id] = bot
+		b := *bot // value copy of the struct
+		// Deep-copy slices to avoid data races.
+		if bot.ActiveEffects != nil {
+			b.ActiveEffects = make([]Effect, len(bot.ActiveEffects))
+			copy(b.ActiveEffects, bot.ActiveEffects)
+		}
+		if bot.HitsReceived != nil {
+			b.HitsReceived = make([]HitRecord, len(bot.HitsReceived))
+			copy(b.HitsReceived, bot.HitsReceived)
+		}
+		if bot.CurrentPath != nil {
+			b.CurrentPath = make([]Vec2, len(bot.CurrentPath))
+			copy(b.CurrentPath, bot.CurrentPath)
+		}
+		cp[id] = &b
 	}
 	return cp
 }

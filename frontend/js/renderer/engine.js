@@ -118,6 +118,9 @@ export class ArenaEngine {
       if (self.botRenderer) {
         self.botRenderer.interpolate();
       }
+      if (self.trailRenderer) {
+        self.trailRenderer.render(self.botRenderer ? self.botRenderer.entries : null, dt);
+      }
       if (self.projectileRenderer) {
         self.projectileRenderer.update(dt);
       }
@@ -154,7 +157,6 @@ export class ArenaEngine {
     this.obstacleRenderer.update(state.obstacles);
     this.envRenderer.update(state.safe_zone);
     this.botRenderer.update(state.bots);
-    this.trailRenderer.update(state.bots);
     this.pickupRenderer.update(state.pickups || []);
     this.effectRenderer.update(state.bots);
     this.camera.updateBotPositions(state.bots);

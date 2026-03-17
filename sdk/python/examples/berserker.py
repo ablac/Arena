@@ -10,6 +10,7 @@ import asyncio
 import sys
 
 from arena_sdk import ArenaBot
+from arena_sdk.helpers import distance
 
 
 class BerserkerBot(ArenaBot):
@@ -26,17 +27,17 @@ class BerserkerBot(ArenaBot):
     async def on_tick(
         self, state: dict, nearby: list, safe_zone: dict
     ) -> dict:
-        my_pos: list[float] = state["position"]
+        my_pos: list[int] = state["position"]  # [col, row]
 
         enemy: dict | None = self.closest_enemy(nearby)
         if enemy is None:
-            # No enemies visible — move toward safe zone center.
+            # No enemies visible - move toward safe zone center.
             return self.move_toward(my_pos, safe_zone["center"])
 
-        distance: float = _dist(my_pos, enemy["position"])
+        dist: int = distance(my_pos, enemy["position"])
 
-        # Close enough to swing — attack.
-        if distance < 3.0:
+        # Within 1 tile (adjacent) - attack.
+        if dist < 2:
             return self.attack(enemy["id"])
 
         # Otherwise charge straight at them.
@@ -50,10 +51,6 @@ class BerserkerBot(ArenaBot):
 
     async def on_round_end(self, round_info: dict) -> None:
         pass
-
-
-def _dist(a: list[float], b: list[float]) -> float:
-    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
 if __name__ == "__main__":

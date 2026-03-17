@@ -20,15 +20,13 @@ func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles 
 			continue
 		}
 
-		// Option 1: Block attacking during invulnerability (dodge exploit fix).
+		// Block attacking during invulnerability (dodge exploit fix).
 		if bot.InvulnTicks > 0 {
 			bot.LastActionResult = &ActionResult{
 				Action:  "attack",
 				Success: false,
 				Message: "cannot attack while dodging",
 			}
-			// Option 2: Cancel invulnerability if bot attempts to attack.
-			bot.InvulnTicks = 0
 			continue
 		}
 
@@ -91,7 +89,7 @@ func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles 
 
 // processProjectileAttack handles bow attacks by spawning a projectile.
 func processProjectileAttack(bot, target *BotState, wc *WeaponConfig, obstacles []Obstacle, projectiles *[]Projectile, tickCount int) {
-	// Check line of sight.
+	// Check line of sight against actual obstacle geometry.
 	if LineIntersectsObstacle(bot.Position.X(), bot.Position.Y(), target.Position.X(), target.Position.Y(), obstacles) {
 		bot.LastActionResult = &ActionResult{
 			Action:  "attack",
@@ -140,8 +138,8 @@ func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig,
 		targetPos = target.Position
 	}
 
-	// Check range.
-	if !IsInRange(bot.Position, targetPos, wc.Range) {
+	// Check range (grid-based).
+	if !IsInRange(bot.Position, targetPos, wc.GridRange) {
 		bot.LastActionResult = &ActionResult{
 			Action:  "attack",
 			Success: false,
@@ -151,7 +149,7 @@ func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig,
 		return
 	}
 
-	// Check line of sight.
+	// Check line of sight against actual obstacle geometry.
 	if LineIntersectsObstacle(bot.Position.X(), bot.Position.Y(), targetPos.X(), targetPos.Y(), obstacles) {
 		bot.LastActionResult = &ActionResult{
 			Action:  "attack",
@@ -165,7 +163,7 @@ func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig,
 	impact := StaffImpact{
 		OwnerID:    bot.BotID,
 		Position:   targetPos,
-		Radius:     wc.Param, // 3.0
+		Radius:     float64(wc.GridParam), // grid tiles for detonation radius
 		Damage:     float64(wc.Damage),
 		TicksLeft:  config.C.StaffDelayTicks,
 		AttackMult: bot.AttackMultiplier,
@@ -184,8 +182,8 @@ func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig,
 
 // processMeleeAttack handles sword, daggers, shield, and spear attacks.
 func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string]*BotState, obstacles []Obstacle, grid *SpatialGrid, tickCount int) {
-	// Check range.
-	if !IsInRange(bot.Position, target.Position, wc.Range) {
+	// Check range (grid-based).
+	if !IsInRange(bot.Position, target.Position, wc.GridRange) {
 		bot.LastActionResult = &ActionResult{
 			Action:  "attack",
 			Success: false,
@@ -195,7 +193,7 @@ func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string
 		return
 	}
 
-	// Check line of sight.
+	// Check line of sight against actual obstacle geometry.
 	if LineIntersectsObstacle(bot.Position.X(), bot.Position.Y(), target.Position.X(), target.Position.Y(), obstacles) {
 		bot.LastActionResult = &ActionResult{
 			Action:  "attack",
@@ -210,8 +208,8 @@ func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string
 	rawDmg := CalculateDamage(float64(wc.Damage), bot.AttackMultiplier, target.DefenseReduction)
 	dealt := ApplyDamage(target, bot, rawDmg, wc.Name, tickCount)
 
-	// Apply standard knockback (2.5 units).
-	ApplyHitKnockback(target, bot.Position, 2.5, obstacles)
+	// Apply standard knockback (1 grid tile).
+	ApplyGridKnockback(target, bot.Position, 1, obstacles)
 
 	bot.CooldownRemaining = wc.Cooldown
 	bot.RoundShotsFired++
@@ -245,8 +243,10 @@ func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string
 
 // processCleave deals 50% splash damage to up to 2 nearby enemies.
 func processCleave(bot, primaryTarget *BotState, wc *WeaponConfig, bots map[string]*BotState, obstacles []Obstacle, grid *SpatialGrid, tickCount int) {
-	cleaveRange := wc.Range * 1.5
-	nearby := grid.QueryRadius(bot.Position, cleaveRange)
+	// Cleave hits up to 2 additional targets within GridRange+1 tiles.
+	cleaveGridRange := wc.GridRange + 1
+	cleaveFloatRange := float64(cleaveGridRange) * config.C.PathfindingCellSize
+	nearby := grid.QueryRadius(bot.Position, cleaveFloatRange)
 
 	cleaveCount := 0
 	for _, id := range nearby {
@@ -260,13 +260,13 @@ func processCleave(bot, primaryTarget *BotState, wc *WeaponConfig, bots map[stri
 		if !ok || !other.IsAlive {
 			continue
 		}
-		if !IsInRange(bot.Position, other.Position, cleaveRange) {
+		if !IsInRange(bot.Position, other.Position, cleaveGridRange) {
 			continue
 		}
 
 		cleaveDmg := CalculateDamage(float64(wc.Damage), bot.AttackMultiplier, other.DefenseReduction) * 0.5
 		ApplyDamage(other, bot, cleaveDmg, wc.Name, tickCount)
-		ApplyHitKnockback(other, bot.Position, 2.5, obstacles)
+		ApplyGridKnockback(other, bot.Position, 1, obstacles)
 		cleaveCount++
 	}
 }
@@ -286,7 +286,8 @@ func processBlock(target *BotState) {
 
 // processExtraKnockback applies additional knockback from spear hits.
 func processExtraKnockback(target *BotState, attackerPos Vec2, wc *WeaponConfig, obstacles []Obstacle) {
-	ApplyHitKnockback(target, attackerPos, wc.Param, obstacles) // Param = 2.0 extra
+	// Spear knockback: push 1 additional tile.
+	ApplyGridKnockback(target, attackerPos, 1, obstacles)
 }
 
 // ProcessStaffImpacts ticks down staff impacts and applies damage when they detonate.
@@ -298,14 +299,14 @@ func ProcessStaffImpacts(staffImpacts *[]StaffImpact, bots map[string]*BotState,
 		impact.TicksLeft--
 
 		if impact.TicksLeft <= 0 {
-			// Detonate: damage all bots in radius except the owner.
+			// Detonate: damage all bots within grid radius except the owner.
+			impactGridRadius := int(impact.Radius) // Radius stores grid tiles
 			for _, bot := range bots {
 				if !bot.IsAlive || bot.BotID == impact.OwnerID {
 					continue
 				}
 
-				dist := bot.Position.DistanceTo(impact.Position)
-				if dist > impact.Radius {
+				if !IsInRange(bot.Position, impact.Position, impactGridRadius) {
 					continue
 				}
 
@@ -330,9 +331,6 @@ func ProcessStaffImpacts(staffImpacts *[]StaffImpact, bots map[string]*BotState,
 // ProcessShoves handles all SHOVE actions for the current tick.
 // Shoves deal no damage but knock the target back far and apply a short stun.
 func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle) {
-	c := &config.C
-	shoveRange := c.ShoveRange + c.BotRadius*2
-	shoveKB := c.ShoveKnockback
 
 	for _, bot := range bots {
 		if !bot.IsAlive || bot.PendingAction == nil {
@@ -341,7 +339,7 @@ func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle) {
 		if bot.PendingAction.Type != ActionShove {
 			continue
 		}
-		if bot.StunTicks > 0 {
+		if bot.StunTicks > 0 || bot.Frozen {
 			bot.LastActionResult = &ActionResult{
 				Action:  "shove",
 				Success: false,
@@ -369,9 +367,8 @@ func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle) {
 			continue
 		}
 
-		// Range check.
-		dist := bot.Position.DistanceTo(target.Position)
-		if dist > shoveRange {
+		// Range check (grid-based: must be adjacent, 1 tile).
+		if !IsInRange(bot.Position, target.Position, 1) {
 			bot.LastActionResult = &ActionResult{
 				Action:  "shove",
 				Success: false,
@@ -392,15 +389,15 @@ func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle) {
 			continue
 		}
 
-		// Apply knockback.
-		ApplyHitKnockback(target, bot.Position, shoveKB, obstacles)
+		// Apply knockback (2 grid tiles for shove).
+		ApplyGridKnockback(target, bot.Position, 2, obstacles)
 
 		// Apply stun.
-		if c.ShoveStunTicks > target.StunTicks {
-			target.StunTicks = c.ShoveStunTicks
+		if config.C.ShoveStunTicks > target.StunTicks {
+			target.StunTicks = config.C.ShoveStunTicks
 		}
 
-		bot.ShoveCooldown = c.ShoveCooldown
+		bot.ShoveCooldown = config.C.ShoveCooldown
 
 		bot.LastActionResult = &ActionResult{
 			Action:  "shove",

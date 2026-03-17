@@ -10,8 +10,6 @@ import { createBotEntry, disposeBotEntry, setHpColor } from './bot-body.js';
 import { updateBotAnim, triggerAttack, triggerDodge, triggerShove } from './animations.js';
 import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance } from './swordsman-anims.js';
 
-const HP_BAR_W = 40;
-
 export class BotRenderer {
   /** @param {BABYLON.Scene} scene */
   constructor(scene) {
@@ -71,14 +69,15 @@ export class BotRenderer {
 
       // Visibility
       entry.root.setEnabled(bot.is_alive);
+      if (entry.nameLabel) entry.nameLabel.isVisible = bot.is_alive;
+      if (entry.hpContainer) entry.hpContainer.isVisible = bot.is_alive;
 
       // HP bar — only update when HP changes
       if (bot.hp !== entry._lastHp) {
         entry._lastHp = bot.hp;
         const hpRatio = bot.hp / bot.max_hp;
-        entry.hpBar.scaling.x = Math.max(0.01, hpRatio);
-        entry.hpBar.position.x = -HP_BAR_W * (1 - hpRatio) / 2;
-        setHpColor(entry.hpMat, hpRatio);
+        entry.hpFill.width = Math.max(0.01, hpRatio);
+        setHpColor(entry.hpFill, hpRatio);
       }
 
       // Status effect visuals (dodge transparency, stun tint)
@@ -173,11 +172,20 @@ export class BotRenderer {
     for (const [, entry] of this.entries) {
       if (!entry._interpReady) continue;
       if (entry.isAlive) {
-        // Linear interpolation at constant speed between prevPos → currPos.
-        // t = 0..1 maps to prevPos..currPos; clamp at 1 so bot holds until next update.
-        const t = Math.min((now - entry._interpStart) / entry._interpDur, 1);
-        entry.root.position.x = entry.prevPos[0] + (entry.currPos[0] - entry.prevPos[0]) * t;
-        entry.root.position.z = entry.prevPos[1] + (entry.currPos[1] - entry.prevPos[1]) * t;
+        // Exponential smoothing toward current server position.
+        const smoothing = 6;
+        const factor = 1 - Math.exp(-smoothing * dt);
+        const prevX = entry.root.position.x;
+        const prevZ = entry.root.position.z;
+        entry.root.position.x += (entry.currPos[0] - prevX) * factor;
+        entry.root.position.z += (entry.currPos[1] - prevZ) * factor;
+
+        // Face movement direction (only when actually moving, don't override attack facing)
+        const vx = entry.root.position.x - prevX;
+        const vz = entry.root.position.z - prevZ;
+        if (vx * vx + vz * vz > 0.01 && entry.anim.attackTimer < 0) {
+          entry.anim.targetRotY = Math.atan2(vx, vz);
+        }
       }
       // Tick animations every frame for smooth playback
       if (entry.isSwordsman) {
@@ -217,22 +225,26 @@ export class BotRenderer {
     entry._stunActive = !!bot.is_stunned;
   }
 
-  /** @private Flash body white on death — minimal allocations. */
+  /** @private Flash body white on death using Babylon.js Animation API. */
   _deathFlash(entry) {
-    const origR = entry.bodyMat.emissiveColor.r;
-    const origG = entry.bodyMat.emissiveColor.g;
-    const origB = entry.bodyMat.emissiveColor.b;
-    entry.bodyMat.emissiveColor.set(1, 1, 1);
-    entry.headMat.emissiveColor.set(1, 1, 1);
-    const start = performance.now();
-    const obs = this.scene.onBeforeRenderObservable.add(() => {
-      const t = Math.min((performance.now() - start) / 300, 1);
-      const r = origR + (1 - origR) * (1 - t);
-      const g = origG + (1 - origG) * (1 - t);
-      const b = origB + (1 - origB) * (1 - t);
-      entry.bodyMat.emissiveColor.set(r, g, b);
-      entry.headMat.emissiveColor.set(r, g, b);
-      if (t >= 1) this.scene.onBeforeRenderObservable.remove(obs);
-    });
+    const B = window.BABYLON;
+    const origColor = entry.bodyMat.emissiveColor.clone();
+
+    const bodyAnim = new B.Animation('deathFlashBody', 'emissiveColor', 100,
+      B.Animation.ANIMATIONTYPE_COLOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
+    bodyAnim.setKeys([
+      { frame: 0, value: new B.Color3(1, 1, 1) },
+      { frame: 30, value: origColor.clone() }
+    ]);
+
+    const headAnim = new B.Animation('deathFlashHead', 'emissiveColor', 100,
+      B.Animation.ANIMATIONTYPE_COLOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
+    headAnim.setKeys([
+      { frame: 0, value: new B.Color3(1, 1, 1) },
+      { frame: 30, value: origColor.clone() }
+    ]);
+
+    this.scene.beginDirectAnimation(entry.bodyMat, [bodyAnim], 0, 30, false);
+    this.scene.beginDirectAnimation(entry.headMat, [headAnim], 0, 30, false);
   }
 }

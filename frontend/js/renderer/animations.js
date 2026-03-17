@@ -132,7 +132,11 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat) {
   // Smooth rotation toward target when set
   if (anim.targetRotY !== null) {
     body.rotation.y = lerp(body.rotation.y, anim.targetRotY, 8, dt);
-    anim.targetRotY = null;
+    // Clear once close enough to prevent jitter
+    const diff = Math.abs(body.rotation.y - anim.targetRotY);
+    if (diff < 0.05) {
+      anim.targetRotY = null;
+    }
   }
 
   // --- Priority 3: Dodge dash (only interrupted by death) ---

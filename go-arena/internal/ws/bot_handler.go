@@ -27,7 +27,7 @@ var WSMessageHook func(botID, botName, action string, data map[string]interface{
 // upgrader is the shared WebSocket upgrader for bot connections.
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
-	WriteBufferSize: 4096,
+	WriteBufferSize: 65536,
 	CheckOrigin: func(r *http.Request) bool {
 		return true // allow all origins for now
 	},
@@ -511,6 +511,7 @@ func botWriter(ctx context.Context, conn *websocket.Conn, sendChan <-chan []byte
 				return
 			}
 
+			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 				slog.Warn("bot write error", "error", err)
 				return

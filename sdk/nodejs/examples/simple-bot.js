@@ -10,19 +10,27 @@
  */
 
 import ArenaBot from '../src/ArenaBot.js';
+import { distance } from '../src/helpers.js';
 
 class SimpleBot extends ArenaBot {
   /**
-   * Attack the nearest enemy, or idle if none are visible.
-   * @param {object} state - Our bot's current state.
+   * Attack the nearest enemy if adjacent, move toward it otherwise, or idle.
+   * @param {object} state - Our bot's current state (positions are [col, row] integers).
    * @param {object[]} nearby - Nearby entities.
    * @param {object} safeZone - Safe zone boundaries.
    * @returns {Promise<object>} Action to perform.
    */
   async onTick(state, nearby, safeZone) {
     const enemy = this.closestEnemy(nearby);
-    if (enemy) return this.attack(enemy.id);
-    return this.idle();
+    if (!enemy) return this.idle();
+
+    // Attack if within melee range (adjacent tile)
+    if (distance(state.position, enemy.position) <= 1) {
+      return this.attack(enemy.id);
+    }
+
+    // Otherwise move toward the enemy
+    return this.moveToward(state.position, enemy.position);
   }
 }
 

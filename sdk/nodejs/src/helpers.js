@@ -4,9 +4,9 @@
  */
 
 /**
- * Extract x and y from a position (supports arrays and {x, y} objects).
+ * Extract col and row from a position (supports arrays and {x, y} objects).
  * @param {number[]|{x: number, y: number}} pos
- * @returns {[number, number]}
+ * @returns {[number, number]}  [col, row]
  */
 export function posXY(pos) {
   if (Array.isArray(pos)) return [pos[0], pos[1]];
@@ -14,52 +14,39 @@ export function posXY(pos) {
 }
 
 /**
- * Euclidean distance between two positions.
+ * Chebyshev distance between two grid positions.
  * @param {number[]|{x: number, y: number}} a
  * @param {number[]|{x: number, y: number}} b
  * @returns {number}
  */
 export function distance(a, b) {
-  const [ax, ay] = posXY(a);
-  const [bx, by] = posXY(b);
-  const dx = bx - ax;
-  const dy = by - ay;
-  return Math.sqrt(dx * dx + dy * dy);
+  const [ac, ar] = posXY(a);
+  const [bc, br] = posXY(b);
+  return Math.max(Math.abs(bc - ac), Math.abs(br - ar));
 }
 
 /**
- * Normalize a direction vector to unit length.
- * Returns [0, 0] for zero-length vectors.
- * @param {number} dx
- * @param {number} dy
- * @returns {[number, number]}
- */
-export function normalize(dx, dy) {
-  const len = Math.sqrt(dx * dx + dy * dy);
-  if (len === 0) return [0, 0];
-  return [dx / len, dy / len];
-}
-
-/**
- * Normalized direction vector from one position toward another.
+ * Grid direction from one position toward another.
+ * Each component is -1, 0, or 1.
  * @param {number[]|{x: number, y: number}} from
  * @param {number[]|{x: number, y: number}} to
- * @returns {[number, number]}
+ * @returns {[number, number]}  [dcol, drow]
  */
 export function directionToward(from, to) {
-  const [fx, fy] = posXY(from);
-  const [tx, ty] = posXY(to);
-  return normalize(tx - fx, ty - fy);
+  const [fc, fr] = posXY(from);
+  const [tc, tr] = posXY(to);
+  return [Math.sign(tc - fc), Math.sign(tr - fr)];
 }
 
 /**
- * Normalized direction vector away from a position.
+ * Grid direction away from a threat position.
+ * Each component is -1, 0, or 1.
  * @param {number[]|{x: number, y: number}} from
  * @param {number[]|{x: number, y: number}} threat
- * @returns {[number, number]}
+ * @returns {[number, number]}  [dcol, drow]
  */
 export function directionAway(from, threat) {
-  const [fx, fy] = posXY(from);
-  const [tx, ty] = posXY(threat);
-  return normalize(fx - tx, fy - ty);
+  const [fc, fr] = posXY(from);
+  const [tc, tr] = posXY(threat);
+  return [Math.sign(fc - tc), Math.sign(fr - tr)];
 }

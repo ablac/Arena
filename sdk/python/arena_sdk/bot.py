@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import heapq
 import json
 import logging
 from typing import Any
@@ -30,8 +31,14 @@ class ArenaBot:
         self._bot_id: str | None = None
         self._running = False
         self._tick_number = 0
-        self._last_pos: dict | tuple = {"x": 0, "y": 0}
+        self._last_pos: list[int] = [0, 0]
         self._last_action_result: dict | None = None
+
+        # Terrain cache (populated by map_init)
+        self._terrain: list[list[str]] | None = None
+        self._map_width: int = 0
+        self._map_height: int = 0
+        self._cell_size: int = 1
 
     def set_loadout(self, weapon: str, stats: dict[str, int], fallback: str = "aggressive",
                     stat_budget: int | None = None) -> None:
@@ -72,6 +79,23 @@ class ArenaBot:
         """Override this! Called every tick. Return an action dict."""
         raise NotImplementedError("Implement on_tick() in your bot!")
 
+    async def on_map_init(self, terrain: list, width: int, height: int) -> None:
+        """Called once at round start with the grid terrain data.
+
+        Terrain may be compact (list of row strings) or legacy (list of lists
+        of single-char strings). Both are normalised to ``list[list[str]]``.
+
+        Default implementation stores the terrain for use by helpers like
+        ``get_local_map()`` and ``find_path()``. Override to add custom
+        pre-processing (call ``super().on_map_init(...)`` to keep caching).
+        """
+        # Normalise compact row-string format to 2D char array
+        if terrain and isinstance(terrain[0], str):
+            terrain = [list(row) for row in terrain]
+        self._terrain = terrain
+        self._map_width = width
+        self._map_height = height
+
     async def on_death(self, death_info: dict) -> None:
         """Called when bot dies. Override to customize."""
 
@@ -83,20 +107,24 @@ class ArenaBot:
 
     # -- Action helpers --
 
-    def move_toward(self, my_pos: dict | tuple, target_pos: dict | tuple) -> dict:
-        """Returns a move action toward target_pos."""
+    def move_toward(self, my_pos: list | tuple, target_pos: list | tuple) -> dict:
+        """Returns a move action toward target_pos (grid direction -1/0/1)."""
         d = helpers.direction_toward(my_pos, target_pos)
         return {"action": "move", "direction": [d["x"], d["y"]]}
 
-    def move_away(self, my_pos: dict | tuple, threat_pos: dict | tuple) -> dict:
-        """Returns a move action away from threat_pos."""
+    def move_away(self, my_pos: list | tuple, threat_pos: list | tuple) -> dict:
+        """Returns a move action away from threat_pos (grid direction -1/0/1)."""
         d = helpers.direction_away(my_pos, threat_pos)
         return {"action": "move", "direction": [d["x"], d["y"]]}
+
+    def move_to(self, target_pos: list | tuple) -> dict:
+        """Returns a move_to action toward an absolute grid position [col, row]."""
+        return {"action": "move_to", "target_position": [target_pos[0], target_pos[1]]}
 
     def attack(self, target_id: str, target_position: tuple | list | None = None) -> dict:
         """Returns an attack action targeting target_id.
 
-        For staff weapons, pass target_position=[x, y] for the area attack location.
+        For staff weapons, pass target_position=[col, row] for the area attack location.
         """
         action: dict = {"action": "attack", "target": target_id}
         if target_position is not None:
@@ -104,10 +132,10 @@ class ArenaBot:
         return action
 
     def staff_attack(self, target_position: tuple | list) -> dict:
-        """Returns a staff area attack at the given position [x, y]."""
+        """Returns a staff area attack at the given position [col, row]."""
         return {"action": "attack", "direction": [target_position[0], target_position[1]]}
 
-    def dodge(self, direction: dict | tuple) -> dict:
+    def dodge(self, direction: dict | tuple | list) -> dict:
         """Returns a dodge action in the given direction."""
         if isinstance(direction, dict):
             return {"action": "dodge", "direction": [direction["x"], direction["y"]]}
@@ -124,6 +152,133 @@ class ArenaBot:
     def idle(self) -> dict:
         """Returns an idle action."""
         return {"action": "idle"}
+
+    # -- Map / pathfinding helpers --
+
+    def get_local_map(self, state: dict, nearby: list, radius: int = 5) -> list[str]:
+        """Return an ASCII grid showing the area around the bot.
+
+        Characters:
+            @ = self
+            B = other bot
+            P = pickup
+            terrain chars (., #, ~, V, etc.) from the cached map
+
+        Returns a list of strings, one per row, of size ``(2*radius+1)`` square.
+        If terrain is not cached yet, unknown cells show as ``?``.
+        """
+        pos = state.get("position", self._last_pos)
+        cx, cy = int(pos[0]), int(pos[1])  # col, row
+
+        size = 2 * radius + 1
+        grid = [["?" for _ in range(size)] for _ in range(size)]
+
+        # Fill terrain
+        for dr in range(-radius, radius + 1):
+            for dc in range(-radius, radius + 1):
+                r, c = cy + dr, cx + dc
+                gr, gc = dr + radius, dc + radius  # grid indices
+                if self._terrain and 0 <= r < self._map_height and 0 <= c < self._map_width:
+                    grid[gr][gc] = self._terrain[r][c]
+                elif self._terrain:
+                    grid[gr][gc] = "V"  # out of bounds = void
+
+        # Place entities
+        for entity in nearby:
+            ep = entity.get("position")
+            if ep is None:
+                continue
+            ec, er = int(ep[0]), int(ep[1])
+            gc, gr = ec - cx + radius, er - cy + radius
+            if 0 <= gc < size and 0 <= gr < size:
+                etype = entity.get("type", "")
+                if etype == "bot":
+                    grid[gr][gc] = "B"
+                elif etype == "pickup":
+                    grid[gr][gc] = "P"
+
+        # Place self
+        grid[radius][radius] = "@"
+
+        return ["".join(row) for row in grid]
+
+    def find_path(self, start: list | tuple, goal: list | tuple) -> list[list[int]]:
+        """A* pathfinding on the cached terrain grid.
+
+        Parameters:
+            start: [col, row] starting position
+            goal:  [col, row] target position
+
+        Returns:
+            List of [col, row] waypoints from start to goal (inclusive of goal,
+            exclusive of start). Returns empty list if no path found or terrain
+            not cached.
+
+        Walls (``#``) and void (``V``) are impassable. All other terrain is passable.
+        Uses Chebyshev distance as the heuristic (diagonal moves cost 1).
+        """
+        if self._terrain is None:
+            return []
+
+        sc, sr = int(start[0]), int(start[1])
+        gc, gr = int(goal[0]), int(goal[1])
+
+        if not (0 <= gr < self._map_height and 0 <= gc < self._map_width):
+            return []
+
+        impassable = {"#", "V"}
+
+        # Check goal is passable
+        if self._terrain[gr][gc] in impassable:
+            return []
+
+        # A* with Chebyshev heuristic
+        # Node: (col, row)
+        def h(c: int, r: int) -> int:
+            return max(abs(c - gc), abs(r - gr))
+
+        # priority queue entries: (f, counter, col, row)
+        counter = 0
+        open_set: list[tuple[int, int, int, int]] = [(h(sc, sr), counter, sc, sr)]
+        came_from: dict[tuple[int, int], tuple[int, int] | None] = {(sc, sr): None}
+        g_score: dict[tuple[int, int], int] = {(sc, sr): 0}
+
+        directions = [
+            (-1, -1), (0, -1), (1, -1),
+            (-1, 0),           (1, 0),
+            (-1, 1),  (0, 1),  (1, 1),
+        ]
+
+        while open_set:
+            _, _, cc, cr = heapq.heappop(open_set)
+
+            if cc == gc and cr == gr:
+                # Reconstruct path (exclude start)
+                path: list[list[int]] = []
+                node: tuple[int, int] | None = (gc, gr)
+                while node is not None and node != (sc, sr):
+                    path.append([node[0], node[1]])
+                    node = came_from.get(node)
+                path.reverse()
+                return path
+
+            current_g = g_score.get((cc, cr), 0)
+
+            for dc, dr in directions:
+                nc, nr = cc + dc, cr + dr
+                if not (0 <= nr < self._map_height and 0 <= nc < self._map_width):
+                    continue
+                if self._terrain[nr][nc] in impassable:
+                    continue
+                new_g = current_g + 1
+                if new_g < g_score.get((nc, nr), float("inf")):
+                    g_score[(nc, nr)] = new_g
+                    f = new_g + h(nc, nr)
+                    counter += 1
+                    heapq.heappush(open_set, (f, counter, nc, nr))
+                    came_from[(nc, nr)] = (cc, cr)
+
+        return []  # No path found
 
     # -- Entity helpers --
 
@@ -168,10 +323,19 @@ class ArenaBot:
                 logger.warning("Invalid JSON received")
                 continue
             msg_type = msg.get("type")
-            if msg_type == "tick":
-                self._tick_number = msg.get("tick_number", 0)
+            if msg_type == "map_init":
+                terrain = msg.get("terrain", [])
+                width = msg.get("width", 0)
+                height = msg.get("height", 0)
+                self._cell_size = msg.get("cell_size", 1)
+                try:
+                    await self.on_map_init(terrain, width, height)
+                except Exception:
+                    logger.exception("on_map_init error")
+            elif msg_type == "tick":
+                self._tick_number = msg.get("tick_number", msg.get("tick", 0))
                 state = msg.get("your_state", {})
-                self._last_pos = state.get("position", {"x": 0, "y": 0})
+                self._last_pos = state.get("position", [0, 0])
                 self._last_action_result = state.get("last_action_result")
                 nearby = msg.get("nearby_entities", [])
                 safe_zone = {
@@ -179,6 +343,7 @@ class ArenaBot:
                     "radius": state.get("zone_radius", 100),
                     "in_safe_zone": state.get("in_safe_zone", True),
                     "distance_to_edge": state.get("distance_to_zone_edge", 0),
+                    "fog_radius": state.get("fog_radius", 0),
                 }
                 try:
                     action = await self.on_tick(state, nearby, safe_zone)
@@ -191,7 +356,7 @@ class ArenaBot:
             elif msg_type == "death":
                 await self.on_death(msg)
             elif msg_type == "respawn":
-                self._last_pos = msg.get("position", {"x": 0, "y": 0})
+                self._last_pos = msg.get("position", [0, 0])
                 await self.on_respawn(msg)
             elif msg_type == "round_end":
                 await self.on_round_end(msg)
