@@ -491,19 +491,28 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 // WebSocket connection. It returns when the context is cancelled or the
 // send channel is closed.
 func botWriter(ctx context.Context, conn *websocket.Conn, sendChan <-chan []byte) {
+	// Ping every 20 seconds to keep the connection alive through proxies.
+	pingTicker := time.NewTicker(20 * time.Second)
+	defer pingTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
-			// Write a close message before returning.
 			conn.WriteMessage(
 				websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 			)
 			return
 
+		case <-pingTicker.C:
+			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				slog.Warn("bot ping error", "error", err)
+				return
+			}
+
 		case msg, ok := <-sendChan:
 			if !ok {
-				// Channel closed.
 				conn.WriteMessage(
 					websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
