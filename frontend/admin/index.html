@@ -757,7 +757,8 @@ button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--g
     <div class="panel" id="panel-leaderboard">
       <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
         <button onclick="refreshLeaderboard()">Refresh</button>
-        <select id="lbSort" onchange="refreshLeaderboard()" style="font-size:12px"><option value="kills">Kills</option><option value="elo">Elo</option><option value="kd_ratio">K/D Ratio</option><option value="best_streak">Best Streak</option></select>
+        <select id="lbSort" onchange="refreshLeaderboard()" style="font-size:12px"><option value="kills">Kills</option><option value="elo">Elo</option><option value="kd_ratio">K/D Ratio</option><option value="best_streak">Best Streak</option><option value="wins">Wins</option><option value="damage">Damage</option></select>
+        <select id="lbPeriod" onchange="refreshLeaderboard()" style="font-size:12px"><option value="1h">Last Hour</option><option value="24h">Last 24 Hours</option><option value="7d">Last 7 Days</option><option value="30d">Last 30 Days</option><option value="all_time">All Time</option></select>
         <span id="lbCount" style="color:var(--text2);font-size:11px;margin-left:auto">--</span>
       </div>
       <table><thead><tr><th>#</th><th>Name</th><th>Kills</th><th>Deaths</th><th>K/D</th><th>Elo</th><th>Best Streak</th><th>Dmg Dealt</th><th>Rounds</th><th>Wins</th></tr></thead><tbody id="lbBody"></tbody></table>
@@ -781,7 +782,8 @@ button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--g
           <button class="btn-warn" onclick="gameAction('pause')">Pause Game</button>
           <button class="btn-success" onclick="gameAction('resume')">Resume Game</button>
           <button class="btn-danger" onclick="gameAction('restart-round')">Restart Round</button>
-          <button class="btn-danger" onclick="serverRestart()">Kick All + Restart</button>
+          <button class="btn-danger" onclick="serverRestart()">Kick All + Restart Round</button>
+          <button class="btn-danger" onclick="dockerRestart()" style="border-color:var(--red);background:rgba(248,81,73,0.1)">Restart Docker Container</button>
         </div>
         <div class="ctrl-result" id="gameCtrlResult"></div>
       </div>
@@ -904,7 +906,7 @@ button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--g
 
 <script>
 // ========== State ==========
-let token = sessionStorage.getItem('arena_admin_token') || '';
+let token = localStorage.getItem('arena_admin_token') || '';
 let sseSource = null;
 const paused = {conn:false,http:false,ws:false,ge:false,kf:false};
 const logs = {conn:[],http:[],ws:[],ge:[],kf:[]};
@@ -947,7 +949,7 @@ function doLogin() {
   const t = document.getElementById('tokenInput').value.trim();
   if (!t) return;
   token = t;
-  sessionStorage.setItem('arena_admin_token', token);
+  localStorage.setItem('arena_admin_token', token);
   testAuth();
 }
 
@@ -957,14 +959,14 @@ async function testAuth() {
     showApp();
   } catch(e) {
     document.getElementById('loginError').textContent = 'Invalid token';
-    sessionStorage.removeItem('arena_admin_token');
+    localStorage.removeItem('arena_admin_token');
     token = '';
   }
 }
 
 function logout() {
   token = '';
-  sessionStorage.removeItem('arena_admin_token');
+  localStorage.removeItem('arena_admin_token');
   if (sseSource) sseSource.close();
   if (overviewInterval) clearInterval(overviewInterval);
   stopMinimap();
@@ -2942,7 +2944,8 @@ async function addIPBan() {
   if (!confirm('Ban IP ' + ip + '? All bots from this IP will be kicked.')) return;
   try {
     const data = await api('/ip-bans', {method:'POST', body:JSON.stringify({ip})});
-    toast('IP banned: ' + ip + ' (' + (data.bots_kicked||0) + ' kicked)', 'success');
+    const cfMsg = data.cloudflare ? ' | CF: ' + data.cloudflare : '';
+    toast('IP banned: ' + ip + ' (' + (data.bots_kicked||0) + ' kicked)' + cfMsg, 'success');
     logAudit('IP_BAN', ip + ' (' + (data.bots_kicked||0) + ' bots kicked)');
     document.getElementById('ipBanInput').value = '';
     refreshIPBans();
@@ -3293,16 +3296,30 @@ async function kickSpectator(index) {
 async function serverRestart() {
   if (!confirm('This will kick ALL bots and restart the round. Continue?')) return;
   try {
-    // Kick all bots
     const data = await api('/dashboard/bots');
     const bots = data.bots || [];
     for (const b of bots) {
       try { await api('/bots/' + b.bot_id + '/kick', {method:'POST', body:JSON.stringify({reason:'Server restart'})}); } catch(e) {}
     }
-    // Restart round
     await api('/game/restart-round', {method:'POST'});
     toast('All bots kicked + round restarted', 'success');
     logAudit('SERVER_RESTART', bots.length + ' bots kicked');
+  } catch(e) { toast('Restart failed', 'error'); }
+}
+
+async function dockerRestart() {
+  if (!confirm('This will RESTART the entire Docker container. The server will go down for a few seconds. Continue?')) return;
+  if (!confirm('FINAL CONFIRM: All connections will be dropped. Docker will auto-restart the container.')) return;
+  try {
+    await api('/server/restart', {method:'POST'});
+    logAudit('DOCKER_RESTART', 'Container restart triggered');
+    toast('Server restarting — page will reconnect shortly...', 'info');
+    // Poll until server comes back
+    setTimeout(function poll() {
+      fetch(API_BASE + '/dashboard/overview', {headers:{'X-Admin-Token':token}})
+        .then(r => { if(r.ok) { toast('Server is back!', 'success'); location.reload(); } else { setTimeout(poll, 2000); } })
+        .catch(() => setTimeout(poll, 2000));
+    }, 3000);
   } catch(e) { toast('Restart failed', 'error'); }
 }
 
@@ -3386,14 +3403,15 @@ document.addEventListener('keydown', (e) => {
 async function refreshLeaderboard() {
   try {
     const sort = document.getElementById('lbSort').value || 'kills';
-    // Use public leaderboard endpoint (no admin prefix)
+    const period = document.getElementById('lbPeriod').value || 'all_time';
     const base = API_BASE.replace('/admin', '');
-    const res = await fetch(base + '/leaderboard?sort=' + sort + '&limit=50', {
+    const res = await fetch(base + '/leaderboard?sort=' + sort + '&limit=50&period=' + period, {
       headers: {'Content-Type':'application/json'}
     });
     const data = await res.json();
     const entries = data.leaderboard || [];
-    document.getElementById('lbCount').textContent = entries.length + ' bots (sorted by ' + sort + ')';
+    const periodLabel = {all_time:'All Time','30d':'30 Days','7d':'7 Days','24h':'24 Hours','1h':'1 Hour'}[period]||period;
+    document.getElementById('lbCount').textContent = entries.length + ' bots | ' + periodLabel + ' | sorted by ' + sort;
     document.getElementById('lbBody').innerHTML = entries.map(e => {
       const kd = e.deaths > 0 ? (e.kills/e.deaths).toFixed(1) : e.kills+'.0';
       return `<tr>

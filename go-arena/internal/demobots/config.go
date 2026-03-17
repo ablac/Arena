@@ -9,38 +9,39 @@ type BotConfig struct {
 	Color    string         // avatar hex color
 }
 
-// WeaponRanges maps weapon names to their effective range for AI decisions.
+// WeaponRanges maps weapon names to their GridRange (Chebyshev tiles).
+// These are fallbacks — the bot uses attack_range from loadout_confirmed when available.
 var WeaponRanges = map[string]float64{
-	"sword":   2.5,
-	"bow":     15.0,
-	"daggers": 1.5,
-	"shield":  1.8,
-	"spear":   3.5,
-	"staff":   12.0,
+	"sword":   1,
+	"bow":     7,
+	"daggers": 1,
+	"shield":  1,
+	"spear":   2,
+	"staff":   5,
 }
 
-// DemoConfigs — 15 demo bots with weapon-optimized stat builds and smart strategies.
+// DemoConfigs — 15 demo bots with aggressive stat builds and combat-focused strategies.
 //
-// Design philosophy:
-//   - Sword: needs speed to close gap + attack for burst → aggressive/berserker
-//   - Bow: needs speed to kite + attack for damage → kite
-//   - Daggers: needs speed (mandatory for melee) + attack → assassin
-//   - Shield: needs HP + defense for survivability → defensive/territorial
-//   - Spear: balanced range, needs attack + some speed → aggressive/territorial
-//   - Staff: long range AoE, needs attack + some HP → kite/defensive
+// Design philosophy: all bots should fight. No passive idling. Shove constantly.
+//   - Sword: high attack, berserker/aggressive
+//   - Bow: attack-focused kite that prioritizes shooting over retreating
+//   - Daggers: assassin that hunts and shoves
+//   - Shield: territorial aggressor, shoves everything
+//   - Spear: aggressive with knockback + shove combo
+//   - Staff: aggressive kite, attacks > retreats
 var DemoConfigs = []BotConfig{
 	// === SWORD USERS (melee cleave, 0.5s cd) ===
 	{
 		Name:     "Demo-Berserker",
 		Weapon:   "sword",
-		Stats:    map[string]int{"hp": 4, "speed": 6, "attack": 8, "defense": 2},
+		Stats:    map[string]int{"hp": 4, "speed": 5, "attack": 9, "defense": 2},
 		Strategy: "berserker",
 		Color:    "#e94560",
 	},
 	{
 		Name:     "Demo-Brawler",
 		Weapon:   "sword",
-		Stats:    map[string]int{"hp": 5, "speed": 5, "attack": 7, "defense": 3},
+		Stats:    map[string]int{"hp": 5, "speed": 5, "attack": 8, "defense": 2},
 		Strategy: "aggressive",
 		Color:    "#cf6a87",
 	},
@@ -49,21 +50,21 @@ var DemoConfigs = []BotConfig{
 	{
 		Name:     "Demo-Sniper",
 		Weapon:   "bow",
-		Stats:    map[string]int{"hp": 2, "speed": 7, "attack": 9, "defense": 2},
+		Stats:    map[string]int{"hp": 3, "speed": 5, "attack": 10, "defense": 2},
 		Strategy: "kite",
 		Color:    "#4ecdc4",
 	},
 	{
 		Name:     "Demo-Ranger",
 		Weapon:   "bow",
-		Stats:    map[string]int{"hp": 4, "speed": 6, "attack": 7, "defense": 3},
-		Strategy: "kite",
+		Stats:    map[string]int{"hp": 4, "speed": 5, "attack": 8, "defense": 3},
+		Strategy: "aggressive",
 		Color:    "#e77f67",
 	},
 	{
 		Name:     "Demo-Marksman",
 		Weapon:   "bow",
-		Stats:    map[string]int{"hp": 3, "speed": 8, "attack": 7, "defense": 2},
+		Stats:    map[string]int{"hp": 3, "speed": 6, "attack": 9, "defense": 2},
 		Strategy: "kite",
 		Color:    "#1e90ff",
 	},
@@ -72,21 +73,21 @@ var DemoConfigs = []BotConfig{
 	{
 		Name:     "Demo-Assassin",
 		Weapon:   "daggers",
-		Stats:    map[string]int{"hp": 2, "speed": 9, "attack": 7, "defense": 2},
+		Stats:    map[string]int{"hp": 3, "speed": 7, "attack": 8, "defense": 2},
 		Strategy: "assassin",
 		Color:    "#c44569",
 	},
 	{
 		Name:     "Demo-Phantom",
 		Weapon:   "daggers",
-		Stats:    map[string]int{"hp": 3, "speed": 8, "attack": 6, "defense": 3},
-		Strategy: "assassin",
+		Stats:    map[string]int{"hp": 3, "speed": 7, "attack": 8, "defense": 2},
+		Strategy: "berserker",
 		Color:    "#574b90",
 	},
 	{
 		Name:     "Demo-Duelist",
 		Weapon:   "daggers",
-		Stats:    map[string]int{"hp": 4, "speed": 7, "attack": 6, "defense": 3},
+		Stats:    map[string]int{"hp": 4, "speed": 6, "attack": 7, "defense": 3},
 		Strategy: "aggressive",
 		Color:    "#fa983a",
 	},
@@ -95,22 +96,22 @@ var DemoConfigs = []BotConfig{
 	{
 		Name:     "Demo-Tank",
 		Weapon:   "shield",
-		Stats:    map[string]int{"hp": 8, "speed": 2, "attack": 3, "defense": 7},
+		Stats:    map[string]int{"hp": 7, "speed": 3, "attack": 5, "defense": 5},
 		Strategy: "territorial",
 		Color:    "#556270",
 	},
 	{
 		Name:     "Demo-Guardian",
 		Weapon:   "shield",
-		Stats:    map[string]int{"hp": 7, "speed": 3, "attack": 4, "defense": 6},
-		Strategy: "defensive",
+		Stats:    map[string]int{"hp": 6, "speed": 4, "attack": 6, "defense": 4},
+		Strategy: "aggressive",
 		Color:    "#3dc1d3",
 	},
 	{
 		Name:     "Demo-Sentinel",
 		Weapon:   "shield",
-		Stats:    map[string]int{"hp": 9, "speed": 2, "attack": 2, "defense": 7},
-		Strategy: "defensive",
+		Stats:    map[string]int{"hp": 7, "speed": 3, "attack": 5, "defense": 5},
+		Strategy: "berserker",
 		Color:    "#60a3bc",
 	},
 
@@ -118,14 +119,14 @@ var DemoConfigs = []BotConfig{
 	{
 		Name:     "Demo-Lancer",
 		Weapon:   "spear",
-		Stats:    map[string]int{"hp": 4, "speed": 5, "attack": 7, "defense": 4},
+		Stats:    map[string]int{"hp": 4, "speed": 5, "attack": 8, "defense": 3},
 		Strategy: "aggressive",
 		Color:    "#f5cd79",
 	},
 	{
 		Name:     "Demo-Warden",
 		Weapon:   "spear",
-		Stats:    map[string]int{"hp": 6, "speed": 4, "attack": 5, "defense": 5},
+		Stats:    map[string]int{"hp": 5, "speed": 4, "attack": 7, "defense": 4},
 		Strategy: "territorial",
 		Color:    "#78e08f",
 	},
@@ -134,15 +135,15 @@ var DemoConfigs = []BotConfig{
 	{
 		Name:     "Demo-Mage",
 		Weapon:   "staff",
-		Stats:    map[string]int{"hp": 3, "speed": 6, "attack": 8, "defense": 3},
+		Stats:    map[string]int{"hp": 3, "speed": 5, "attack": 9, "defense": 3},
 		Strategy: "kite",
 		Color:    "#6c5ce7",
 	},
 	{
 		Name:     "Demo-Warlock",
 		Weapon:   "staff",
-		Stats:    map[string]int{"hp": 5, "speed": 4, "attack": 7, "defense": 4},
-		Strategy: "defensive",
+		Stats:    map[string]int{"hp": 4, "speed": 5, "attack": 8, "defense": 3},
+		Strategy: "aggressive",
 		Color:    "#e55039",
 	},
 }

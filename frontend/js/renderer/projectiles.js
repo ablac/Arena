@@ -2,7 +2,7 @@
 
 /**
  * Visual projectile system — arrows (bow) and energy bolts (staff).
- * Projectiles lerp from attacker to target with weapon-specific visuals.
+ * Uses Babylon.js Animation API for self-managed projectile motion.
  * @module renderer/projectiles
  */
 
@@ -17,8 +17,8 @@ export class ProjectileRenderer {
   /** @param {BABYLON.Scene} scene */
   constructor(scene) {
     this.scene = scene;
-    /** @type {Array<Object>} */
-    this.active = [];
+    /** @type {Array<BABYLON.Animatable>} */
+    this.activeAnimatables = [];
   }
 
   /**
@@ -62,44 +62,59 @@ export class ProjectileRenderer {
     mesh.rotation.y = Math.atan2(dx, dz);
     if (cfg.meshType === 'arrow') mesh.rotation.x = Math.PI / 2;
 
-    this.active.push({
-      mesh, mat, fromX, fromZ, toX, toZ,
-      progress: 0,
-      travelTime: cfg.travelTime,
-      arc: cfg.arc,
-      onImpact: onImpact || null,
-    });
+    // Build position animation with arc via 3 keyframes
+    const totalFrames = Math.round(cfg.travelTime * 60);
+    const midFrame = Math.round(totalFrames / 2);
+    const midX = (fromX + toX) / 2;
+    const midZ = (fromZ + toZ) / 2;
+
+    const posAnim = new B.Animation(
+      `projAnim-${id}`,
+      'position',
+      60,
+      B.Animation.ANIMATIONTYPE_VECTOR3,
+      B.Animation.ANIMATIONLOOPMODE_CONSTANT
+    );
+
+    posAnim.setKeys([
+      { frame: 0,          value: new B.Vector3(fromX, 12, fromZ) },
+      { frame: midFrame,   value: new B.Vector3(midX, 12 + cfg.arc, midZ) },
+      { frame: totalFrames, value: new B.Vector3(toX, 12, toZ) },
+    ]);
+
+    const animatable = this.scene.beginDirectAnimation(
+      mesh, [posAnim], 0, totalFrames, false, 1
+    );
+
+    this.activeAnimatables.push(animatable);
+
+    animatable.onAnimationEnd = () => {
+      if (onImpact) onImpact();
+      mesh.dispose();
+      mat.dispose();
+      const idx = this.activeAnimatables.indexOf(animatable);
+      if (idx !== -1) this.activeAnimatables.splice(idx, 1);
+    };
   }
 
   /**
-   * Tick all active projectiles. Called every render frame.
+   * Retained for interface compatibility.
+   * Animations are self-managed by the Babylon.js Animation API.
    * @param {number} dt - frame delta in seconds
    */
   update(dt) {
-    for (let i = this.active.length - 1; i >= 0; i--) {
-      const p = this.active[i];
-      p.progress += dt / p.travelTime;
-
-      if (p.progress >= 1) {
-        if (p.onImpact) p.onImpact();
-        p.mesh.dispose();
-        p.mat.dispose();
-        this.active.splice(i, 1);
-        continue;
-      }
-
-      // Linear interpolation with vertical arc
-      p.mesh.position.x = p.fromX + (p.toX - p.fromX) * p.progress;
-      p.mesh.position.z = p.fromZ + (p.toZ - p.fromZ) * p.progress;
-      p.mesh.position.y = 12 + Math.sin(p.progress * Math.PI) * p.arc;
-    }
+    // No-op: projectile motion is handled by Babylon.js animations
   }
 
   dispose() {
-    for (const p of this.active) {
-      p.mesh.dispose();
-      p.mat.dispose();
+    for (const anim of this.activeAnimatables) {
+      anim.stop();
+      const target = anim.target;
+      if (target && typeof target.dispose === 'function') target.dispose();
+      if (target && target.material && typeof target.material.dispose === 'function') {
+        target.material.dispose();
+      }
     }
-    this.active = [];
+    this.activeAnimatables = [];
   }
 }

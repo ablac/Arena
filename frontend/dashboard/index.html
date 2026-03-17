@@ -118,10 +118,18 @@ tr:hover td{background:var(--bg3)}
 
   <div class="tpanel active" id="tab-overview">
     <div style="display:flex;gap:12px;flex-wrap:wrap">
-      <div class="section" style="flex:1;min-width:280px"><h2>Performance</h2><div id="perfBars"></div></div>
+      <div class="section" style="flex:1;min-width:280px">
+        <h2>Live Radar <button class="sm" id="radarToggle" onclick="toggleRadar()" style="margin-left:8px">Start</button></h2>
+        <div style="text-align:center"><svg id="radarSvg" width="260" height="260" viewBox="-130 -130 260 260" style="background:var(--bg);border:1px solid var(--border);border-radius:6px"></svg></div>
+        <div id="radarStatus" style="font-size:10px;color:var(--text2);text-align:center;margin-top:4px"></div>
+        <div id="radarStats" style="font-size:11px;margin-top:8px"></div>
+      </div>
       <div class="section" style="flex:1;min-width:280px"><h2>Elo History</h2><div id="eloHistory"></div></div>
     </div>
-    <div class="section"><h2>Analysis</h2><div id="analysis"></div></div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div class="section" style="flex:1;min-width:280px"><h2>Performance</h2><div id="perfBars"></div></div>
+      <div class="section" style="flex:1;min-width:280px"><h2>Analysis</h2><div id="analysis"></div></div>
+    </div>
   </div>
 
   <div class="tpanel" id="tab-config">
@@ -164,7 +172,10 @@ tr:hover td{background:var(--bg3)}
 
   <div class="tpanel" id="tab-leaderboard">
     <div class="section">
-      <h2>Leaderboard <select id="lbSort" onchange="loadLB()" style="font-size:11px;margin-left:8px"><option value="elo">Elo</option><option value="kills">Kills</option><option value="kd_ratio">K/D</option><option value="best_streak">Streak</option></select></h2>
+      <h2>Leaderboard
+        <select id="lbSort" onchange="loadLB()" style="font-size:11px;margin-left:8px"><option value="elo">Elo</option><option value="kills">Kills</option><option value="kd_ratio">K/D</option><option value="best_streak">Streak</option><option value="wins">Wins</option><option value="damage">Damage</option></select>
+        <select id="lbPeriod" onchange="loadLB()" style="font-size:11px"><option value="1h">Last Hour</option><option value="24h">24 Hours</option><option value="7d">7 Days</option><option value="30d">30 Days</option><option value="all_time">All Time</option></select>
+      </h2>
       <table><thead><tr><th>#</th><th>Name</th><th>Kills</th><th>Deaths</th><th>K/D</th><th>Elo</th><th>Streak</th><th>Rounds</th><th>Wins</th></tr></thead><tbody id="lbBody"></tbody></table>
     </div>
   </div>
@@ -471,7 +482,8 @@ function renderWeapons() {
 // ========== Leaderboard ==========
 async function loadLB() {
   try{
-    const d=await pub('/leaderboard?sort='+document.getElementById('lbSort').value+'&limit=50');
+    const period=document.getElementById('lbPeriod').value||'all_time';
+    const d=await pub('/leaderboard?sort='+document.getElementById('lbSort').value+'&limit=50&period='+period);
     const e=d.leaderboard||d.entries||[];
     const me=stats?.name||'';
     document.getElementById('lbBody').innerHTML=e.map(r=>{
@@ -607,6 +619,107 @@ ${Object.entries(WEAPONS).map(([k,w])=>`<div class="tip"><b>${w.icon} ${w.name}:
 }
 
 function esc(s){if(s==null)return'';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
+
+// ========== Live Action Radar ==========
+let radarInterval = null;
+const ACTION_KEYS = ['attack','move','move_to','dodge','shove','use_item','idle'];
+const ACTION_LABELS = ['Attack','Move','Move To','Dodge','Shove','Use Item','Idle'];
+const ACTION_COLORS = ['#f85149','#58a6ff','#39d353','#d29922','#bc8cff','#3fb950','#8b949e'];
+
+function toggleRadar() {
+  if (radarInterval) { clearInterval(radarInterval); radarInterval=null; document.getElementById('radarToggle').textContent='Start'; document.getElementById('radarStatus').textContent='Stopped'; return; }
+  document.getElementById('radarToggle').textContent='Stop';
+  fetchRadar();
+  radarInterval = setInterval(fetchRadar, 1500);
+}
+
+async function fetchRadar() {
+  try {
+    const d = await api('/bot/live');
+    if (!d.online) {
+      document.getElementById('radarStatus').innerHTML='<span style="color:var(--text2)">Bot is offline — connect your bot to see live actions</span>';
+      drawRadar({});
+      document.getElementById('radarStats').innerHTML='';
+      return;
+    }
+    drawRadar(d.action_counts || {});
+    const alive = d.is_alive;
+    document.getElementById('radarStatus').innerHTML=`<span class="online-dot" style="background:${alive?'var(--green)':'var(--red)'}"></span> ${alive?'Alive':'Dead'} | ${d.phase||'--'} | HP: ${Math.round(d.hp||0)}/${Math.round(d.max_hp||0)}`;
+    document.getElementById('radarStats').innerHTML=`
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:10px">
+        <div>K/D: <b>${d.round_kills||0}/${d.round_deaths||0}</b></div>
+        <div>Dmg: <b style="color:var(--green)">${Math.round(d.round_damage_dealt||0)}</b>/<b style="color:var(--red)">${Math.round(d.round_damage_taken||0)}</b></div>
+        <div>Acc: <b>${(d.accuracy||0).toFixed(0)}%</b></div>
+        <div>Streak: <b style="color:var(--orange)">${d.kill_streak||0}</b></div>
+        <div>Pickups: <b>${d.round_pickups||0}</b></div>
+        <div>Dist: <b>${Math.round(d.round_distance||0)}</b></div>
+      </div>
+    `;
+  } catch(e) {
+    document.getElementById('radarStatus').innerHTML='<span style="color:var(--red)">Error fetching live data</span>';
+  }
+}
+
+function drawRadar(counts) {
+  const svg = document.getElementById('radarSvg');
+  // Filter to only actions that have been used (or show all for shape)
+  const axes = ACTION_KEYS;
+  const labels = ACTION_LABELS;
+  const colors = ACTION_COLORS;
+  const n = axes.length;
+  const R = 95;
+
+  // Find max count for scaling
+  let maxCount = 1;
+  axes.forEach(a => { if ((counts[a]||0) > maxCount) maxCount = counts[a]; });
+  const total = axes.reduce((s,a) => s + (counts[a]||0), 0) || 1;
+
+  function pt(i, r) {
+    const angle = (Math.PI * 2 * i / n) - Math.PI / 2;
+    return [r * Math.cos(angle), r * Math.sin(angle)];
+  }
+
+  let html = '';
+
+  // Grid rings with % labels
+  [25, 50, 75, 100].forEach(pct => {
+    const r = pct / 100 * R;
+    const pts = Array.from({length:n}, (_,i) => pt(i,r).join(',')).join(' ');
+    html += `<polygon points="${pts}" fill="none" stroke="var(--border)" stroke-width="0.5"/>`;
+  });
+
+  // Axis lines + labels
+  for (let i = 0; i < n; i++) {
+    const [x,y] = pt(i, R);
+    html += `<line x1="0" y1="0" x2="${x}" y2="${y}" stroke="var(--border)" stroke-width="0.5"/>`;
+    const [lx,ly] = pt(i, R + 20);
+    const count = counts[axes[i]] || 0;
+    const pct = (count / total * 100).toFixed(0);
+    html += `<text x="${lx}" y="${ly}" fill="${colors[i]}" font-size="8" font-weight="bold" text-anchor="middle" dominant-baseline="middle">${labels[i]}</text>`;
+    html += `<text x="${lx}" y="${ly+10}" fill="var(--text2)" font-size="7" text-anchor="middle">${count} (${pct}%)</text>`;
+  }
+
+  // Data polygon
+  const dataPts = axes.map((a,i) => {
+    const v = maxCount > 0 ? (counts[a]||0) / maxCount * R : 0;
+    return pt(i, v).join(',');
+  }).join(' ');
+  html += `<polygon points="${dataPts}" fill="rgba(88,166,255,0.12)" stroke="var(--accent)" stroke-width="2"/>`;
+
+  // Data dots
+  axes.forEach((a,i) => {
+    const v = maxCount > 0 ? (counts[a]||0) / maxCount * R : 0;
+    const [x,y] = pt(i, v);
+    html += `<circle cx="${x}" cy="${y}" r="3.5" fill="${colors[i]}"><title>${labels[i]}: ${counts[a]||0} (${(((counts[a]||0)/total)*100).toFixed(1)}%)</title></circle>`;
+  });
+
+  // Center label — total actions
+  html += `<text x="0" y="0" fill="var(--text2)" font-size="9" text-anchor="middle" dominant-baseline="middle">${total} actions</text>`;
+
+  svg.innerHTML = html;
+}
+
+drawRadar({});
 </script>
 </body>
 </html>

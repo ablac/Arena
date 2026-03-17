@@ -18,10 +18,13 @@ import (
 // demoBot represents a single demo bot client that connects to the arena
 // server via REST + WebSocket, exactly like a real SDK bot.
 type demoBot struct {
-	config    BotConfig
-	serverURL string // e.g. "http://localhost:8000"
-	apiKey    string
-	logger    *slog.Logger
+	config      BotConfig
+	serverURL   string // e.g. "http://localhost:8000"
+	apiKey      string
+	logger      *slog.Logger
+	attackRange int     // Chebyshev grid range from loadout_confirmed
+	maxHP       float64 // max HP from loadout_confirmed
+	botID       string  // bot ID from connected message
 }
 
 // newDemoBot creates a demoBot from a config and server URL.
@@ -155,6 +158,9 @@ func (b *demoBot) run(ctx context.Context) {
 				return
 			}
 			b.logger.Warn("session ended", "error", err, "reconnect_in", fmt.Sprintf("%.0fs", backoff))
+		} else {
+			// Successful session — reset backoff.
+			backoff = 1.0
 		}
 
 		select {
@@ -181,6 +187,36 @@ func (b *demoBot) session(ctx context.Context) error {
 	}
 	defer conn.Close()
 
+	// Set read deadline and keep it fresh — reconnect if no data for 45s.
+	conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+		return nil
+	})
+
+	// Start a ping goroutine to keep the connection alive.
+	pingDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := conn.WriteControl(
+					websocket.PingMessage, nil,
+					time.Now().Add(5*time.Second),
+				); err != nil {
+					return
+				}
+			case <-pingDone:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	defer close(pingDone)
+
 	// 1. Read "connected" message.
 	msg, err := readJSON(conn)
 	if err != nil {
@@ -188,6 +224,9 @@ func (b *demoBot) session(ctx context.Context) error {
 	}
 	if msgType, _ := msg["type"].(string); msgType != "connected" {
 		return fmt.Errorf("expected 'connected', got %q", msgType)
+	}
+	if id, ok := msg["bot_id"].(string); ok {
+		b.botID = id
 	}
 
 	// 2. Send "select_loadout".
@@ -217,8 +256,18 @@ func (b *demoBot) session(ctx context.Context) error {
 	if msgType, _ := msg["type"].(string); msgType != "loadout_confirmed" {
 		b.logger.Warn("expected 'loadout_confirmed'", "got", msgType)
 	}
+	// Extract computed attack_range and max_hp from server.
+	if comp, ok := msg["computed"].(map[string]interface{}); ok {
+		if ar, ok := comp["attack_range"].(float64); ok {
+			b.attackRange = int(ar)
+		}
+		if mhp, ok := comp["max_hp"].(float64); ok {
+			b.maxHP = mhp
+		}
+	}
 
-	b.logger.Info("entered arena", "weapon", b.config.Weapon, "strategy", b.config.Strategy)
+	b.logger.Info("entered arena", "weapon", b.config.Weapon, "strategy", b.config.Strategy,
+		"attack_range", b.attackRange, "max_hp", b.maxHP)
 
 	// 4. Main message loop.
 	for {
@@ -236,11 +285,13 @@ func (b *demoBot) session(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read message: %w", err)
 		}
+		// Refresh read deadline on every message.
+		conn.SetReadDeadline(time.Now().Add(45 * time.Second))
 
 		msgType, _ := msg["type"].(string)
 		switch msgType {
 		case "tick":
-			action := PickAction(b.config.Strategy, msg, b.config.Weapon)
+			action := PickAction(b.config.Strategy, msg, b.config.Weapon, b.attackRange)
 			payload := map[string]interface{}{
 				"type": "action",
 				"tick": msg["tick"],
@@ -270,6 +321,9 @@ func (b *demoBot) session(ctx context.Context) error {
 
 		case "round_end":
 			// Wait for next round.
+
+		case "map_init":
+			parseTerrain(msg)
 
 		case "round_start":
 			// New round started.

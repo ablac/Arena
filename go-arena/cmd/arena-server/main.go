@@ -31,10 +31,20 @@ func main() {
 	}
 	defer db.Close()
 
+	// Ensure time-based leaderboard table.
+	if db.Pool != nil {
+		if err := db.EnsureRoundBotStatsTable(ctx); err != nil {
+			slog.Warn("failed to ensure round_bot_stats table", "error", err)
+		}
+	}
+
 	// Initialise Redis for rate limiting (optional).
 	if err := security.InitRedis(); err != nil {
 		slog.Warn("redis not available, rate limiting disabled", "error", err)
 	}
+
+	// Initialise grid-based weapon ranges from config cell size.
+	game.InitWeaponRanges(config.C.PathfindingCellSize)
 
 	// Create and start the game engine.
 	engine := game.NewGameEngine()

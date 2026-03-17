@@ -42,7 +42,7 @@ export class EffectRenderer {
       if (bot.is_alive) {
         alive.add(bot.bot_id);
       } else if (this.prevAlive.has(bot.bot_id)) {
-        this._deathBurst(bot.position[0], bot.position[1], bot.avatar_color, now);
+        this._deathBurst(bot.position[0], bot.position[1], bot.avatar_color);
       }
     }
 
@@ -170,22 +170,32 @@ export class EffectRenderer {
     mat.useAlphaFromDiffuseTexture = true; mat.hasAlpha = true;
     plane.material = mat;
 
-    const created = Date.now();
     const startY = 25;
-    const obs = this.scene.onBeforeRenderObservable.add(() => {
-      const age = (Date.now() - created) / 1000;
-      plane.position.y = startY + age * 20;
-      mat.alpha = Math.max(0, 1 - age * 2);
-      if (age > 0.5) {
-        this.scene.onBeforeRenderObservable.remove(obs);
-        plane.dispose(); mat.dispose(); tex.dispose();
-        this._dmgCount--;
-      }
-    });
+
+    const posAnim = new B.Animation('dmgPosY', 'position.y', 100,
+      B.Animation.ANIMATIONTYPE_FLOAT, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
+    posAnim.setKeys([
+      { frame: 0, value: startY },
+      { frame: 50, value: startY + 10 }
+    ]);
+
+    const alphaAnim = new B.Animation('dmgAlpha', 'alpha', 100,
+      B.Animation.ANIMATIONTYPE_FLOAT, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
+    alphaAnim.setKeys([
+      { frame: 0, value: 1 },
+      { frame: 50, value: 0 }
+    ]);
+
+    const animatable = this.scene.beginDirectAnimation(plane, [posAnim], 0, 50, false);
+    this.scene.beginDirectAnimation(mat, [alphaAnim], 0, 50, false);
+    animatable.onAnimationEnd = () => {
+      plane.dispose(); mat.dispose(); tex.dispose();
+      this._dmgCount--;
+    };
   }
 
   /** @private */
-  _deathBurst(x, z, hexColor, now) {
+  _deathBurst(x, z, hexColor) {
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     const ps = new B.ParticleSystem(`death-${++_psCounter}`, 20, this.scene);

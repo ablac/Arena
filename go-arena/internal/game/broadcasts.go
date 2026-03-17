@@ -3,6 +3,7 @@ package game
 import (
 	"encoding/json"
 	"log/slog"
+	"math"
 	"sort"
 
 	"arena-server/internal/config"
@@ -28,23 +29,46 @@ func SendToBot(bot *BotState, msg interface{}) {
 	safeSend(bot.SendChan, data)
 }
 
+// SendMapInit sends the static terrain grid to a bot at the start of a round.
+// This is sent once; bots cache it and receive only entity deltas in ticks.
+func SendMapInit(bot *BotState, terrain *TerrainGrid) {
+	msg := map[string]interface{}{
+		"type":      "map_init",
+		"width":     terrain.Width,
+		"height":    terrain.Height,
+		"cell_size": terrain.CellSize,
+		"terrain":   terrain.ToCompactJSON(),
+		"legend": map[string]string{
+			"V": "void",
+			".": "ground",
+			"#": "wall",
+			"~": "water",
+		},
+	}
+	SendToBot(bot, msg)
+}
+
 // SendTickUpdate sends the per-tick game state update to a bot.
 // hints is optional — when non-nil it provides directional hints to far-away
 // bots and pickups (only sent when no bots are within view radius).
-func SendTickUpdate(bot *BotState, yourState map[string]interface{}, nearbyEntities []map[string]interface{}, tickCount int, arena *ArenaMap, hints []map[string]interface{}) {
+func SendTickUpdate(bot *BotState, yourState map[string]interface{}, nearbyEntities []map[string]interface{}, tickCount int, arena *ArenaMap, hints []map[string]interface{}, fogRadius int) {
+	var cellSize float64 = config.C.PathfindingCellSize
+	zoneCenter := posToGrid(arena.ZoneCenter)
+	zoneTargetCenter := posToGrid(arena.ZoneTargetCenter)
+
 	msg := map[string]interface{}{
-		"type":            "tick",
-		"tick":            tickCount,
-		"your_state":      yourState,
-		"nearby_entities": nearbyEntities,
-		"view_radius":     config.C.ViewRadius,
+		"type":             "tick",
+		"tick":             tickCount,
+		"tick_number":      tickCount,
+		"your_state":       yourState,
+		"nearby_entities":  nearbyEntities,
+		"fog_radius":       fogRadius,
 		"safe_zone": map[string]interface{}{
-			"center":        arena.ZoneCenter,
-			"radius":        round1(arena.ZoneRadius),
-			"target_center": arena.ZoneTargetCenter,
-			"target_radius": round1(arena.ZoneTargetRadius),
+			"center":        [2]int{zoneCenter[0], zoneCenter[1]},
+			"radius":        int(math.Round(arena.ZoneRadius / cellSize)),
+			"target_center": [2]int{zoneTargetCenter[0], zoneTargetCenter[1]},
+			"target_radius": int(math.Round(arena.ZoneTargetRadius / cellSize)),
 		},
-		"arena_size": [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
 	}
 	if hints != nil {
 		msg["hints"] = hints
@@ -96,36 +120,29 @@ func SendRoundEnd(bot *BotState, info RoundEndInfo, nextRoundIn float64) {
 }
 
 // SendRoundStart notifies a bot that a new round has begun.
-func SendRoundStart(bot *BotState, round RoundState, bots map[string]*BotState, obstacles []Obstacle, arena *ArenaMap) {
+// Terrain is sent separately via SendMapInit.
+func SendRoundStart(bot *BotState, round RoundState, bots map[string]*BotState, arena *ArenaMap) {
 	allPositions := make(map[string]interface{}, len(bots))
 	for id, b := range bots {
-		allPositions[id] = b.Position
+		allPositions[id] = posToGrid(b.Position)
 	}
 
-	// Build obstacle list for serialisation.
-	obsList := make([]map[string]interface{}, 0, len(obstacles))
-	for _, obs := range obstacles {
-		obsList = append(obsList, map[string]interface{}{
-			"x":      obs.X,
-			"y":      obs.Y,
-			"width":  obs.Width,
-			"height": obs.Height,
-		})
-	}
+	gridPos := posToGrid(bot.Position)
+	cellSize := config.C.PathfindingCellSize
+	zoneCenter := posToGrid(arena.ZoneCenter)
+	zoneTargetCenter := posToGrid(arena.ZoneTargetCenter)
 
 	msg := map[string]interface{}{
 		"type":           "round_start",
 		"round_number":   round.RoundNumber,
-		"position":       bot.Position,
+		"position":       [2]int{gridPos[0], gridPos[1]},
 		"bots_in_round":  len(bots),
-		"obstacles":      obsList,
 		"all_positions":  allPositions,
-		"arena_size":     [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
 		"safe_zone": map[string]interface{}{
-			"center":        arena.ZoneCenter,
-			"radius":        arena.ZoneRadius,
-			"target_center": arena.ZoneTargetCenter,
-			"target_radius": arena.ZoneTargetRadius,
+			"center":        [2]int{zoneCenter[0], zoneCenter[1]},
+			"radius":        int(math.Round(arena.ZoneRadius / cellSize)),
+			"target_center": [2]int{zoneTargetCenter[0], zoneTargetCenter[1]},
+			"target_radius": int(math.Round(arena.ZoneTargetRadius / cellSize)),
 		},
 	}
 	SendToBot(bot, msg)
@@ -168,10 +185,16 @@ func BuildConnectedMessage(bot *BotState, lastLoadout map[string]interface{}) ma
 		loadout = lastLoadout
 	}
 
+	gridW := int(config.C.ArenaWidth / config.C.PathfindingCellSize)
+	gridH := int(config.C.ArenaHeight / config.C.PathfindingCellSize)
+
 	return map[string]interface{}{
 		"type":              "connected",
 		"bot_id":            bot.BotID,
 		"arena_size":        [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
+		"grid_size":         [2]int{gridW, gridH},
+		"cell_size":         config.C.PathfindingCellSize,
+		"fog_radius":        config.C.FogRadius,
 		"available_weapons": GetAvailableWeapons(),
 		"stat_budget":       config.C.StatBudget,
 		"stat_min":          config.C.StatMin,

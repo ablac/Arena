@@ -42,7 +42,7 @@ export class HudRenderer {
     this._updateRoundInfo(state);
     this._updateKillFeed(state.kill_feed || []);
     this._updatePlayers(state.bots || []);
-    this._clearLobby();
+    this._updateWaitingBots(state.waiting_bots || []);
   }
 
   /** @private */
@@ -164,11 +164,26 @@ export class HudRenderer {
     }, { once: true });
   }
 
-  /** @private - Clear lobby list during active rounds */
-  _clearLobby() {
-    if (this._lastLobbyHtml !== '') {
-      this.lobbyEl.innerHTML = '';
-      this._lastLobbyHtml = '';
+  /** @private - Show bots waiting to join next round */
+  _updateWaitingBots(waitingBots) {
+    if (!waitingBots || waitingBots.length === 0) {
+      if (this._lastLobbyHtml !== '') {
+        this.lobbyEl.innerHTML = '<div style="color:var(--text-muted);padding:8px">No bots waiting</div>';
+        this._lastLobbyHtml = '';
+      }
+      return;
+    }
+    const html = `<div style="color:var(--text-muted);padding:4px 0;font-size:0.8rem">Joining next round (${waitingBots.length})</div>` +
+      waitingBots.map(p =>
+        `<div class="player-entry">` +
+          `<span style="color:${this._esc(p.avatar_color || '#fff')}">\u25CF</span> ` +
+          `${this._esc(p.name)} ` +
+          `<span style="color:var(--text-muted)">[${this._esc(p.weapon)}]</span>` +
+        `</div>`
+      ).join('');
+    if (html !== this._lastLobbyHtml) {
+      this.lobbyEl.innerHTML = html;
+      this._lastLobbyHtml = html;
     }
   }
 

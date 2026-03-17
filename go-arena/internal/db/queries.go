@@ -8,6 +8,111 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ---------- round_bot_stats (per-round per-bot performance for time-based leaderboards) ----------
+
+func EnsureRoundBotStatsTable(ctx context.Context) error {
+	_, err := Pool.Exec(ctx,
+		`CREATE TABLE IF NOT EXISTS round_bot_stats (
+			id SERIAL PRIMARY KEY,
+			round_number INT NOT NULL,
+			bot_id TEXT NOT NULL,
+			bot_name TEXT NOT NULL DEFAULT '',
+			kills INT NOT NULL DEFAULT 0,
+			deaths INT NOT NULL DEFAULT 0,
+			damage_dealt BIGINT NOT NULL DEFAULT 0,
+			damage_taken BIGINT NOT NULL DEFAULT 0,
+			pickups INT NOT NULL DEFAULT 0,
+			distance DOUBLE PRECISION NOT NULL DEFAULT 0,
+			elo INT NOT NULL DEFAULT 1000,
+			won BOOLEAN NOT NULL DEFAULT false,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`)
+	if err != nil {
+		return err
+	}
+	// Index for time-based queries
+	Pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_rbs_created ON round_bot_stats (created_at)`)
+	Pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_rbs_bot ON round_bot_stats (bot_id)`)
+	return nil
+}
+
+func InsertRoundBotStats(ctx context.Context, roundNumber int, botID, botName string,
+	kills, deaths int, dmgDealt, dmgTaken int64, pickups int, distance float64, elo int, won bool) error {
+	_, err := Pool.Exec(ctx,
+		`INSERT INTO round_bot_stats (round_number, bot_id, bot_name, kills, deaths, damage_dealt, damage_taken, pickups, distance, elo, won)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		roundNumber, botID, botName, kills, deaths, dmgDealt, dmgTaken, pickups, distance, elo, won)
+	return err
+}
+
+// GetTimeBasedLeaderboard returns aggregated stats for bots within a time window.
+func GetTimeBasedLeaderboard(ctx context.Context, since time.Time, sortBy string, limit int) ([]map[string]interface{}, error) {
+	validSorts := map[string]string{
+		"kills":      "SUM(r.kills) DESC",
+		"elo":        "MAX(r.elo) DESC",
+		"kd_ratio":   "CASE WHEN SUM(r.deaths)=0 THEN SUM(r.kills) ELSE SUM(r.kills)::float/SUM(r.deaths) END DESC",
+		"best_streak": "SUM(r.kills) DESC", // approx — no per-round streak tracking
+		"wins":       "SUM(CASE WHEN r.won THEN 1 ELSE 0 END) DESC",
+		"damage":     "SUM(r.damage_dealt) DESC",
+	}
+	order, ok := validSorts[sortBy]
+	if !ok {
+		order = validSorts["elo"]
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			r.bot_id,
+			MAX(r.bot_name) AS name,
+			COALESCE(MAX(b.avatar_color), '#888') AS avatar_color,
+			SUM(r.kills) AS kills,
+			SUM(r.deaths) AS deaths,
+			MAX(r.elo) AS elo,
+			SUM(r.damage_dealt) AS damage_dealt,
+			COUNT(*) AS rounds_played,
+			SUM(CASE WHEN r.won THEN 1 ELSE 0 END) AS round_wins
+		FROM round_bot_stats r
+		LEFT JOIN bots b ON b.id = r.bot_id
+		WHERE r.created_at >= $1
+		GROUP BY r.bot_id
+		HAVING COUNT(*) > 0
+		ORDER BY %s
+		LIMIT $2
+	`, order)
+
+	rows, err := Pool.Query(ctx, query, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("GetTimeBasedLeaderboard: %w", err)
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	rank := 0
+	for rows.Next() {
+		rank++
+		var botID, name, color string
+		var kills, deaths, elo int
+		var dmgDealt int64
+		var roundsPlayed, roundWins int
+		if err := rows.Scan(&botID, &name, &color, &kills, &deaths, &elo, &dmgDealt, &roundsPlayed, &roundWins); err != nil {
+			return nil, fmt.Errorf("GetTimeBasedLeaderboard scan: %w", err)
+		}
+		results = append(results, map[string]interface{}{
+			"rank":          rank,
+			"bot_id":        botID,
+			"name":          name,
+			"avatar_color":  color,
+			"kills":         kills,
+			"deaths":        deaths,
+			"elo":           elo,
+			"damage_dealt":  dmgDealt,
+			"rounds_played": roundsPlayed,
+			"round_wins":    roundWins,
+		})
+	}
+	return results, rows.Err()
+}
+
 // ---------- demo_bot_keys ----------
 
 // EnsureDemoBotKeysTable creates the demo_bot_keys table if it doesn't exist.
