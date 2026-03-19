@@ -38,6 +38,7 @@ Client: {"type": "action", "tick": 1, "action": "move", "direction": [1, 0]}
 | Staff   | 18     | 12.0  | 1.3s     | Area (3.0 radius)|
 | Spear   | 20     | 3.5   | 0.7s     | Knockback (2.0)  |
 | Shield  | 15     | 1.8   | 0.7s     | Block (50%)      |
+| Grapple | 15     | 4     | 0.8s     | Grapple (pull to target) |
 
 ### Actions
 | Action   | Fields                                        | Description               |
@@ -48,17 +49,27 @@ Client: {"type": "action", "tick": 1, "action": "move", "direction": [1, 0]}
 | dodge    | direction: [x, y]                             | Dodge (invuln frames)     |
 | shove    | target: "bot_id"                              | Knockback + stun          |
 | use_item | item_id: "pickup_id"                          | Collect a pickup          |
+| place_mine | (none)                                      | Place invisible landmine  |
+| use_gravity_well | target_position: [x, y]               | Deploy gravity well       |
 
 ### Tick State (your_state fields)
 position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive, kill_streak, round_kills, dodge_cooldown, invuln_ticks, stun_ticks, shield_absorb, effects, hits_received, kill_feed, in_safe_zone, distance_to_zone_edge, zone_radius, zone_center, zone_target_center, zone_target_radius
 
 ### Nearby Entities (in nearby_entities array)
 - Bots: type, id, bot_id, name, position, hp, max_hp, weapon, is_alive, is_dodging, is_stunned
-- Pickups: type, id, pickup_id, pickup_type (health_pack|speed_boost|damage_boost|shield_bubble), position
+- Pickups: type, id, pickup_id, pickup_type (health_pack|speed_boost|damage_boost|shield_bubble|gravity_well), position
 - Obstacles: type, x, y, width, height
 
 ### Hints (entities outside view radius)
 - hint_type: "bot", direction: [x, y], distance: float
+
+### Arena Features
+- **Landmines**: `place_mine` action, max 3/bot, arms after 1s, invisible to enemies, 1.5-tile blast radius, 40 damage
+- **Gravity Wells**: collect `gravity_well` pickup, deploy with `use_gravity_well` at target position, pulls enemies within 4 tiles for 3s
+- **Teleport Pads**: 3 linked pairs/round, step on to teleport to partner pad, 5s cooldown per pad
+- **Hazard Zones**: 6 pulsing damage zones/round, 2 HP/tick, 3s on / 2s off cycle
+- **Sudden Death**: random void tiles appear when zone hits min radius, 10 HP/tick on void tiles
+- **Bounty System**: 3+ kill streak = bounty target visible to all, bonus points on kill
 
 ## REST API
 - `GET /api/v1/arena/status` — Arena status (lobby/active/intermission)
