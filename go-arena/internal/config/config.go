@@ -162,6 +162,36 @@ type Config struct {
 	AntiTeamRadius         float64 `envconfig:"ARENA_ANTI_TEAM_RADIUS" default:"30.0"`
 	AntiTeamThresholdTicks int     `envconfig:"ARENA_ANTI_TEAM_THRESHOLD_TICKS" default:"50"`
 	AntiTeamDamagePerTick  float64 `envconfig:"ARENA_ANTI_TEAM_DAMAGE_PER_TICK" default:"2.0"`
+
+	// Landmines
+	MineMaxPerBot     int     `envconfig:"ARENA_MINE_MAX_PER_BOT" default:"3"`
+	MineDamage        float64 `envconfig:"ARENA_MINE_DAMAGE" default:"40"`
+	MineArmDelayTicks int     `envconfig:"ARENA_MINE_ARM_DELAY_TICKS" default:"10"`
+	MineBlastRadius   int     `envconfig:"ARENA_MINE_BLAST_RADIUS" default:"1"`
+
+	// Hazard Zones
+	HazardMinWidth      int     `envconfig:"ARENA_HAZARD_MIN_WIDTH" default:"3"`
+	HazardMaxWidth      int     `envconfig:"ARENA_HAZARD_MAX_WIDTH" default:"6"`
+	HazardDamagePerTick float64 `envconfig:"ARENA_HAZARD_DAMAGE_PER_TICK" default:"2"`
+	HazardPulseOnTicks  int     `envconfig:"ARENA_HAZARD_PULSE_ON_TICKS" default:"30"`
+	HazardPulseOffTicks int     `envconfig:"ARENA_HAZARD_PULSE_OFF_TICKS" default:"20"`
+
+	// Teleport Pads
+	TeleportCollectRadius int `envconfig:"ARENA_TELEPORT_COLLECT_RADIUS" default:"1"`
+	TeleportCooldownTicks int `envconfig:"ARENA_TELEPORT_COOLDOWN_TICKS" default:"50"`
+
+	// Bounty System
+	BountyKillStreakThreshold int     `envconfig:"ARENA_BOUNTY_KILL_STREAK_THRESHOLD" default:"3"`
+	BountyBonusPoints         float64 `envconfig:"ARENA_BOUNTY_BONUS_POINTS" default:"50"`
+
+	// Gravity Well
+	GravityWellDurationTicks int     `envconfig:"ARENA_GRAVITY_WELL_DURATION_TICKS" default:"30"`
+	GravityWellPullRadius    int     `envconfig:"ARENA_GRAVITY_WELL_PULL_RADIUS" default:"4"`
+	GravityWellPullForce     float64 `envconfig:"ARENA_GRAVITY_WELL_PULL_FORCE" default:"1.0"`
+
+	// Sudden Death
+	SuddenDeathTilesPerTick int     `envconfig:"ARENA_SUDDEN_DEATH_TILES_PER_TICK" default:"2"`
+	SuddenDeathDamage       float64 `envconfig:"ARENA_SUDDEN_DEATH_DAMAGE" default:"10"`
 }
 
 var C Config

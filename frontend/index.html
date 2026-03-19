@@ -358,7 +358,7 @@
   "grid_size": [100, 100],
   "cell_size": 20,
   "fog_radius": 7,
-  "available_weapons": ["sword", "bow", "daggers", "shield", "spear", "staff"],
+  "available_weapons": ["sword", "bow", "daggers", "shield", "spear", "staff", "grapple"],
   "stat_budget": 20,
   "stat_min": 1,
   "stat_max": 10,
@@ -664,6 +664,12 @@
           <h4>Shove</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "shove", "target": "enemy_bot_id"}</pre>
           <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Knocks the target back 2 tiles and stuns for 2 ticks. No damage. 1.5s cooldown (separate from weapon). Range: 1 tile (adjacent).</p>
+          <h4>Place Mine</h4>
+          <pre class="code-block">{"type": "action", "tick": 342, "action": "place_mine"}</pre>
+          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Places an invisible landmine at your position. Max 3 per bot. Arms after 1 second (~10 ticks). Invisible to enemies. 1.5-tile blast radius. 40 damage to all enemies in radius.</p>
+          <h4>Use Gravity Well</h4>
+          <pre class="code-block">{"type": "action", "tick": 342, "action": "use_gravity_well", "target_position": [55, 48]}</pre>
+          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Deploys a gravity well at target position that pulls nearby enemies toward its center for 3 seconds. Requires a <code>gravity_well</code> pickup. 4-tile pull radius.</p>
           <h4>Idle</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "idle"}</pre>
         </div>
@@ -685,6 +691,7 @@
             <tr><td><code>shield</code></td><td>15</td><td>1</td><td>0.7s</td><td>Block &mdash; passive 50% damage reduction from incoming attacks</td></tr>
             <tr><td><code>spear</code></td><td>20</td><td>2</td><td>0.7s</td><td>Knockback &mdash; pushes target 2 tiles on hit</td></tr>
             <tr><td><code>staff</code></td><td>18</td><td>5</td><td>1.3s</td><td>Area damage &mdash; 2-tile radius AoE at target position (2-tick delay)</td></tr>
+            <tr><td><code>grapple</code></td><td>15</td><td>4</td><td>0.8s</td><td>Grapple &mdash; pulls you to the target on hit</td></tr>
           </tbody>
         </table>
       </div>
@@ -723,6 +730,7 @@
             <tr><td><code>speed_boost</code></td><td>2x movement speed</td><td>50 ticks (~5s)</td></tr>
             <tr><td><code>damage_boost</code></td><td>1.5x attack damage</td><td>50 ticks (~5s)</td></tr>
             <tr><td><code>shield_bubble</code></td><td>50 HP damage shield</td><td>Until depleted</td></tr>
+            <tr><td><code>gravity_well</code></td><td>Deployable vortex that pulls enemies</td><td>3s after deployment</td></tr>
           </tbody>
         </table>
         <p style="margin-top:12px">Pickups in the same tile are auto-collected. Use <code>use_item</code> to collect from 1 tile away.</p>
@@ -756,6 +764,21 @@
             <tr><td>ELO starting</td><td>1000</td></tr>
             <tr><td>AFK timeout</td><td>30 ticks (~3s)</td></tr>
             <tr><td>Max message rate</td><td>25/second</td></tr>
+          </tbody>
+        </table>
+
+        <h4 style="margin-top:20px">Arena Features</h4>
+        <table class="api-table api-table-full">
+          <thead>
+            <tr><th>Feature</th><th>Details</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Landmines</td><td>Place up to 3 invisible mines per bot. Arms after 1s. 1.5-tile blast radius, 40 damage. Invisible to enemies.</td></tr>
+            <tr><td>Gravity Wells</td><td>Collect <code>gravity_well</code> pickup, then deploy with <code>use_gravity_well</code>. Pulls enemies within 4 tiles toward center for 3 seconds.</td></tr>
+            <tr><td>Teleport Pads</td><td>3 linked pairs per round. Step on a pad to teleport to its partner. 5-second cooldown per pad per bot.</td></tr>
+            <tr><td>Hazard Zones</td><td>6 pulsing damage zones per round. 2 HP/tick damage. 3 seconds on, 2 seconds off cycle. Visible in <code>nearby_entities</code>.</td></tr>
+            <tr><td>Sudden Death</td><td>When the safe zone reaches minimum radius, random floor tiles become void. Standing on void tiles deals 10 HP/tick.</td></tr>
+            <tr><td>Bounty System</td><td>3+ kill streak marks a bot as the bounty target, visible to all players. Killing the bounty target awards bonus points.</td></tr>
           </tbody>
         </table>
       </div>
@@ -993,7 +1016,7 @@ wss://arena.angel-serv.com/ws/spectator
 
 # Select Loadout (send after "connected", within 10 seconds)
 {"type": "select_loadout", "weapon": "sword", "stats": {"hp": 6, "speed": 6, "attack": 5, "defense": 3}, "fallback_behavior": "aggressive"}
-# Weapons: sword | bow | daggers | shield | spear | staff
+# Weapons: sword | bow | daggers | shield | spear | staff | grapple
 # Stats: hp + speed + attack + defense = 20 (each 1-10)
 # Fallback: aggressive | defensive | opportunistic | territorial | hunter
 
@@ -1019,6 +1042,12 @@ wss://arena.angel-serv.com/ws/spectator
 
 # Use Item (collect pickup within 1 tile)
 {"type": "action", "tick": 342, "action": "use_item", "item_id": "pickup_123"}
+
+# Place Mine (max 3/bot, arms after 1s, invisible to enemies)
+{"type": "action", "tick": 342, "action": "place_mine"}
+
+# Use Gravity Well (deploy collected gravity_well pickup)
+{"type": "action", "tick": 342, "action": "use_gravity_well", "target_position": [55, 48]}
 
 # Idle (do nothing — still counts as an action, prevents AFK kick)
 {"type": "action", "tick": 342, "action": "idle"}
@@ -1048,6 +1077,7 @@ wss://arena.angel-serv.com/ws/spectator
 # shield     15      1      0.7s      Block (passive 50% damage reduction)
 # spear      20      2      0.7s      Knockback (pushes target 2 tiles)
 # staff      18      5      1.3s      Area damage (2-tile radius, 2-tick delay)
+# grapple    15      4      0.8s      Grapple (pulls you to target)
 
 
 # ─── STATS & FORMULAS ───────────────────────────────────────
@@ -1066,6 +1096,7 @@ wss://arena.angel-serv.com/ws/spectator
 # speed_boost    — 2x move speed (50 ticks / ~5s)
 # damage_boost   — 1.5x attack damage (50 ticks / ~5s)
 # shield_bubble  — 50 HP damage shield (until depleted)
+# gravity_well   — Deployable vortex, use with "use_gravity_well" action
 # Auto-collected when in same cell. Use "use_item" from 1 tile away.
 
 
@@ -1101,7 +1132,19 @@ wss://arena.angel-serv.com/ws/spectator
 # "V" = void (impassable, out of bounds)
 # "~" = water (walkable, cosmetic)
 # Walls are hardened — no bot can enter a "#" cell, ever.
-# Diagonal movement past wall corners is also blocked.`;
+# Diagonal movement past wall corners is also blocked.
+
+
+# ─── ARENA FEATURES ────────────────────────────────────────
+
+# Landmines:     place_mine action, max 3/bot, arms after 1s, invisible to enemies
+#                1.5-tile blast radius, 40 damage
+# Gravity Wells: collect gravity_well pickup, deploy with use_gravity_well
+#                Pulls enemies within 4 tiles toward center for 3s
+# Teleport Pads: 3 linked pairs/round, step on to teleport, 5s cooldown
+# Hazard Zones:  6 pulsing damage zones, 2 HP/tick, 3s on / 2s off cycle
+# Sudden Death:  random void tiles when zone hits min radius, 10 HP/tick on void
+# Bounty System: 3+ kill streak = bounty target, visible to all, bonus on kill`;
   </script>
 
   <!-- Dynamic URL replacement for beta/prod -->

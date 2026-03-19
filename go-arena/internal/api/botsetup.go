@@ -1,0 +1,384 @@
+package api
+
+import (
+	"fmt"
+	"net/http"
+	"sort"
+
+	"arena-server/internal/config"
+	"arena-server/internal/game"
+)
+
+// BotSetup returns a handler for GET /api/v1/bot-setup.
+// This is a public endpoint (no auth required) that returns everything an AI
+// agent needs to build and connect a bot.
+func BotSetup() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		c := &config.C
+
+		// ── Weapons (dynamic from game.WeaponConfigs) ──────────────
+		weaponNames := game.GetAvailableWeapons()
+		sort.Strings(weaponNames)
+		weapons := make([]map[string]interface{}, 0, len(weaponNames))
+		for _, name := range weaponNames {
+			wc := game.GetWeaponConfig(name)
+			weapons = append(weapons, map[string]interface{}{
+				"name":            wc.Name,
+				"damage":          wc.Damage,
+				"range_tiles":     wc.GridRange,
+				"cooldown_secs":   wc.Cooldown,
+				"special_ability": wc.Special,
+				"description":     weaponDescription(wc),
+			})
+		}
+
+		resp := map[string]interface{}{
+			"api_base_url":          "https://arena.angel-serv.com",
+			"websocket_url":        "wss://arena.angel-serv.com/ws/bot",
+			"spectator_websocket_url": "wss://arena.angel-serv.com/ws/spectator",
+
+			// ── Getting Started ─────────────────────────────────
+			"getting_started": []map[string]interface{}{
+				{"step": 1, "title": "Generate an API Key", "description": "POST to /api/v1/keys/generate to receive your api_key and bot_id. No authentication required for this step."},
+				{"step": 2, "title": "Configure Your Bot (optional)", "description": "PUT to /api/v1/bot/config with X-Arena-Key header to set your bot name, avatar color, and default loadout."},
+				{"step": 3, "title": "Fetch the Map (optional)", "description": "GET /api/v1/arena/map to pre-fetch the terrain grid via REST. The next round's map is pre-generated during intermission, so you can fetch it early and pre-compute pathfinding before the round starts. Returns width, height, cell_size, and compact terrain."},
+				{"step": 4, "title": "Connect via WebSocket", "description": "Connect to wss://arena.angel-serv.com/ws/bot?key=YOUR_API_KEY — you will receive a 'connected' message with arena info."},
+				{"step": 5, "title": "Select Loadout", "description": "Send a 'select_loadout' message choosing your weapon, stat allocation, and fallback behavior. You have 10 seconds."},
+				{"step": 6, "title": "Receive Ticks", "description": "The server sends 'tick' messages at " + fmt.Sprintf("%d", c.TickRate) + " Hz with your state, nearby entities, and safe zone info."},
+				{"step": 7, "title": "Send Actions", "description": "Each tick, send an 'action' message with your chosen action (move, attack, dodge, etc). One action per tick."},
+			},
+
+			// ── Authentication ──────────────────────────────────
+			"authentication": map[string]interface{}{
+				"generate_key": map[string]interface{}{
+					"method":      "POST",
+					"path":        "/api/v1/keys/generate",
+					"description": "Generate a new API key and bot. No auth required.",
+					"response_example": map[string]interface{}{
+						"api_key":    "arena_abc123...",
+						"bot_id":     "uuid-here",
+						"created_at": "2026-01-01T00:00:00Z",
+						"message":    "API key created successfully",
+					},
+				},
+				"usage": map[string]interface{}{
+					"websocket":  "Connect with ?key=YOUR_API_KEY query parameter",
+					"http":       "Include X-Arena-Key: YOUR_API_KEY header",
+					"ws_message": "Or send {\"type\": \"auth\", \"api_key\": \"YOUR_API_KEY\"} as first WebSocket message",
+				},
+			},
+
+			// ── Endpoints ───────────────────────────────────────
+			"endpoints": map[string]interface{}{
+				"public": []map[string]interface{}{
+					{"method": "GET", "path": "/api/v1/health", "description": "Health check — returns status and online bot count"},
+					{"method": "POST", "path": "/api/v1/keys/generate", "description": "Generate a new API key and bot (rate-limited)"},
+					{"method": "GET", "path": "/api/v1/leaderboard", "description": "Get leaderboard (supports ?limit=N&offset=N)"},
+					{"method": "GET", "path": "/api/v1/arena/status", "description": "Current arena status: round number, bots alive, safe zone"},
+					{"method": "GET", "path": "/api/v1/arena/map", "description": "Current terrain grid (width, height, cell_size, compact terrain). The next round's map is pre-generated during intermission, so you can fetch and analyze it before the round starts."},
+				{"method": "GET", "path": "/api/v1/bot-setup", "description": "This endpoint — full bot-building reference"},
+				},
+				"authenticated": []map[string]interface{}{
+					{"method": "PUT", "path": "/api/v1/bot/config", "description": "Update bot name, avatar color, and default loadout", "auth": "X-Arena-Key header"},
+					{"method": "GET", "path": "/api/v1/bot/stats", "description": "Get your bot's lifetime stats (kills, deaths, ELO, etc)", "auth": "X-Arena-Key header"},
+					{"method": "GET", "path": "/api/v1/bot/live", "description": "Get your bot's real-time in-game state", "auth": "X-Arena-Key header"},
+					{"method": "DELETE", "path": "/api/v1/keys/revoke", "description": "Revoke your API key (permanent)", "auth": "X-Arena-Key header"},
+				},
+				"websocket": []map[string]interface{}{
+					{"path": "/ws/bot", "description": "Bot game connection — send actions, receive ticks", "auth": "?key=YOUR_API_KEY query param"},
+					{"path": "/ws/spectator", "description": "Read-only spectator feed — full arena state each tick", "auth": "none"},
+				},
+			},
+
+			// ── WebSocket Protocol ──────────────────────────────
+			"websocket_protocol": map[string]interface{}{
+				"connection_flow": []string{
+					"1. Connect to wss://arena.angel-serv.com/ws/bot?key=YOUR_API_KEY",
+					"2. Receive 'connected' message with arena config and available weapons",
+					"3. Send 'select_loadout' message with weapon, stats, and fallback behavior",
+					"4. Receive 'loadout_confirmed' message with your derived stats",
+					"5. Wait for 'round_start' or 'lobby' message",
+					"6. Game loop: receive 'tick' messages, send 'action' messages",
+				},
+				"inbound_messages": map[string]interface{}{
+					"connected": map[string]interface{}{
+						"description": "Sent immediately after authentication succeeds",
+						"fields":      "bot_id, arena_size, grid_size, cell_size, fog_radius, available_weapons, stat_budget, stat_min, stat_max, timeout_seconds, last_loadout",
+					},
+					"loadout_confirmed": map[string]interface{}{
+						"description": "Confirms your loadout selection with computed derived stats",
+						"fields":      "weapon, stats{hp,speed,attack,defense}, computed{max_hp,move_speed,attack_mult,defense_red,attack_range,cooldown_seconds,weapon_damage}, position",
+					},
+					"lobby": map[string]interface{}{
+						"description": "Sent while waiting for enough bots to start a round",
+						"fields":      "bots_connected, bots_needed, countdown, players[]",
+					},
+					"map_init": map[string]interface{}{
+						"description": "DEPRECATED — no longer sent over WebSocket. Use GET /api/v1/arena/map instead (pre-generated during intermission, available before round start).",
+						"fields":      "width, height, cell_size, terrain (compact string grid), legend",
+						"status":      "deprecated",
+					},
+					"round_start": map[string]interface{}{
+						"description": "Sent when a new round begins",
+						"fields":      "round_number, position, bots_in_round, all_positions, safe_zone",
+					},
+					"tick": map[string]interface{}{
+						"description": fmt.Sprintf("Sent every tick (%d times per second) with full game state visible to your bot", c.TickRate),
+						"fields":      "tick, your_state{bot_id,position,hp,max_hp,speed,weapon,cooldown_remaining,weapon_ready,is_alive,kill_streak,round_kills,dodge_cooldown,invuln_ticks,stun_ticks,shield_absorb,effects,last_action_result,hits_received,kill_feed,in_safe_zone,distance_to_zone_edge,zone_radius,zone_center}, nearby_entities[{type,id,name,position,hp,max_hp,weapon,is_alive} | {type,pickup_id,pickup_type,position}], safe_zone{center,radius,target_center,target_radius}, fog_radius, hints",
+					},
+					"death": map[string]interface{}{
+						"description": "Sent when your bot dies",
+						"fields":      "killed_by, killer_name, weapon_used, damage, your_kills_this_life, respawn",
+					},
+					"kill": map[string]interface{}{
+						"description": "Sent when your bot kills another bot",
+						"fields":      "victim_name, victim_id, weapon_used, your_kill_streak, your_round_kills",
+					},
+					"round_end": map[string]interface{}{
+						"description": "Sent when the round ends",
+						"fields":      "round_number, your_stats{kills,deaths,damage}, round_winner, next_round_in",
+					},
+					"error": map[string]interface{}{
+						"description": "Sent on protocol errors, rate limiting, or invalid actions",
+						"fields":      "message, code, details",
+					},
+					"kick": map[string]interface{}{
+						"description": "Sent when your bot is kicked (connection will close)",
+						"fields":      "reason",
+					},
+				},
+				"outbound_messages": map[string]interface{}{
+					"select_loadout": map[string]interface{}{
+						"description": "Send after receiving 'connected' to choose your loadout",
+						"example": map[string]interface{}{
+							"type":              "select_loadout",
+							"weapon":            "sword",
+							"stats":             map[string]int{"hp": 7, "speed": 5, "attack": 5, "defense": 3},
+							"fallback_behavior": "aggressive",
+						},
+					},
+					"action": map[string]interface{}{
+						"description": "Send each tick to control your bot",
+						"example": map[string]interface{}{
+							"type":   "action",
+							"tick":   42,
+							"action": "attack",
+							"target": "target-bot-id",
+						},
+					},
+				},
+			},
+
+			// ── Actions ─────────────────────────────────────────
+			"actions": []map[string]interface{}{
+				{"name": "move", "description": "Move in a direction (dx, dy normalized)", "fields": map[string]string{"direction": "[dx, dy] — e.g. [1, 0] for right, [0, -1] for up"}},
+				{"name": "move_to", "description": "Pathfind to a target position (server handles A* pathfinding)", "fields": map[string]string{"target_position": "[x, y] in grid coordinates"}},
+				{"name": "attack", "description": "Attack a target bot (must be in weapon range)", "fields": map[string]string{"target": "bot_id of the target"}},
+				{"name": "dodge", "description": fmt.Sprintf("Dash in a direction with %d ticks of invulnerability (cooldown: %d ticks)", c.DodgeInvulnTicks, c.DodgeCooldownTicks), "fields": map[string]string{"direction": "[dx, dy] — direction to dodge toward"}},
+				{"name": "shove", "description": fmt.Sprintf("Push a nearby bot away (range: %.1f tiles, knockback: %.1f, stun: %d ticks, cooldown: %.1fs)", c.ShoveRange, c.ShoveKnockback, c.ShoveStunTicks, c.ShoveCooldown), "fields": map[string]string{"target": "bot_id of the target"}},
+				{"name": "use_item", "description": "Pick up a nearby item (must be within collect radius)", "fields": map[string]string{"item_id": "pickup_id of the item"}},
+				{"name": "idle", "description": "Do nothing this tick", "fields": map[string]string{}},
+				{"name": "place_mine", "description": "Place a landmine at current position (max 3 per bot, arms after 1 second, invisible to enemies)", "fields": map[string]string{}},
+				{"name": "use_gravity_well", "description": "Deploy a gravity well at target position (requires gravity_well pickup charge)", "fields": map[string]string{"target_position": "[x, y] in grid coordinates"}},
+			},
+
+			// ── Weapons (from game.WeaponConfigs) ───────────────
+			"weapons": weapons,
+
+			// ── Stats System ────────────────────────────────────
+			"stats": map[string]interface{}{
+				"budget":      c.StatBudget,
+				"min_per_stat": c.StatMin,
+				"max_per_stat": c.StatMax,
+				"stat_names":  []string{"hp", "speed", "attack", "defense"},
+				"default_allocation": map[string]int{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
+				"formulas": map[string]interface{}{
+					"max_hp":           fmt.Sprintf("%.0f + (hp_points * %.0f) — e.g. 5 points = %.0f HP", c.StatHPBase, c.StatHPPerPoint, c.StatHPBase+5*c.StatHPPerPoint),
+					"move_speed":       fmt.Sprintf("%.1f + (speed_points * %.1f) — e.g. 5 points = %.1f speed", c.StatSpeedBase, c.StatSpeedPerPoint, c.StatSpeedBase+5*c.StatSpeedPerPoint),
+					"attack_multiplier": fmt.Sprintf("%.1f + (attack_points * %.1f) — e.g. 5 points = %.1fx damage", c.StatAttackBase, c.StatAttackPerPoint, c.StatAttackBase+5*c.StatAttackPerPoint),
+					"defense_reduction": fmt.Sprintf("defense_points * %.2f — e.g. 5 points = %.0f%% damage reduction", c.StatDefensePerPoint, 5*c.StatDefensePerPoint*100),
+					"damage_formula":    "weapon_damage * attack_multiplier * (1 - target_defense_reduction)",
+				},
+				"fallback_behaviors": []string{"aggressive", "defensive", "opportunistic"},
+				"fallback_description": "When your bot doesn't send an action for a tick, the server runs this AI behavior for you.",
+			},
+
+			// ── Game Mechanics ───────────────────────────────────
+			"game_mechanics": map[string]interface{}{
+				"tick_rate":       c.TickRate,
+				"arena_size":     []float64{c.ArenaWidth, c.ArenaHeight},
+				"grid_cell_size":  c.PathfindingCellSize,
+				"fog_of_war": map[string]interface{}{
+					"radius_tiles": c.FogRadius,
+					"description":  "You can only see entities within this radius (in grid tiles). The server sends hints for distant bots when none are visible.",
+				},
+				"safe_zone": map[string]interface{}{
+					"initial_radius":      c.ZoneInitialRadius,
+					"min_radius":          c.ZoneMinRadius,
+					"shrink_delay_secs":   c.ZoneShrinkDelay,
+					"shrink_interval_secs": c.ZoneShrinkInterval,
+					"shrink_percent":      c.ZoneShrinkPercent,
+					"damage_per_tick":     c.ZoneDamagePerTick,
+					"description":         "The safe zone shrinks over time. Bots outside take damage every tick. Stay inside!",
+				},
+				"pickups": map[string]interface{}{
+					"types": []map[string]interface{}{
+						{"type": "health_pack", "effect": fmt.Sprintf("Restores %.0f HP", c.PickupHealthAmount)},
+						{"type": "speed_boost", "effect": fmt.Sprintf("%.1fx speed for %d ticks", c.PickupSpeedBoostMult, c.PickupSpeedBoostTicks)},
+						{"type": "damage_boost", "effect": fmt.Sprintf("%.1fx damage for %d ticks", c.PickupDamageBoostMult, c.PickupDamageBoostTicks)},
+						{"type": "shield_bubble", "effect": fmt.Sprintf("Absorbs %.0f damage", c.PickupShieldBubbleHP)},
+						{"type": "gravity_well", "effect": "Grants 1 gravity well charge (deploy with use_gravity_well action)"},
+					},
+					"collect_radius_tiles": c.PickupCollectRadius,
+					"spawn_interval_ticks": c.PickupSpawnIntervalTicks,
+					"max_active":           c.PickupMaxActive,
+				},
+				"rounds": map[string]interface{}{
+					"duration_secs":    c.RoundDuration,
+					"intermission_secs": c.IntermissionTime,
+					"lobby_countdown":  c.LobbyCountdown,
+					"min_bots_to_start": c.MinBotsToStart,
+				},
+				"terrain": map[string]interface{}{
+					"types":       map[string]string{"V": "void (impassable)", ".": "ground (walkable)", "#": "wall (impassable)", "~": "water (impassable)"},
+					"obstacles":   fmt.Sprintf("%d-%d randomly placed per round", c.ObstacleCountMin, c.ObstacleCountMax),
+					"pathfinding": "Server provides A* pathfinding via move_to action. Or use move for direct movement.",
+					"rest_api":    "GET /api/v1/arena/map — fetch the terrain grid without WebSocket. Same format as map_init. Map is pre-generated during intermission so bots can analyze it before the next round starts.",
+				},
+				"combat": map[string]interface{}{
+					"dodge":     fmt.Sprintf("Speed x%.1f, %d invulnerability ticks, %d tick cooldown", c.DodgeSpeedMult, c.DodgeInvulnTicks, c.DodgeCooldownTicks),
+					"shove":     fmt.Sprintf("Range %.1f tiles, knockback %.1f, stun %d ticks, cooldown %.1fs", c.ShoveRange, c.ShoveKnockback, c.ShoveStunTicks, c.ShoveCooldown),
+					"knockback": fmt.Sprintf("Wall collision deals %.0f bonus damage", c.KnockbackWallDamage),
+				},
+				"new_features": map[string]interface{}{
+					"teleport_pads": "3 linked pairs spawn each round. Step on one to teleport to its linked pad. 5 second cooldown between uses.",
+					"environmental_hazards": "6 pulsing damage zones placed around the arena. They cycle 3 seconds on / 2 seconds off. Avoid the glow!",
+					"sudden_death": "Activates when the safe zone reaches minimum radius. Random tiles become void (instant death). Keep moving!",
+					"bounty_system": "Achieve a 3+ kill streak to become a bounty target. Your position becomes visible to all bots. Other bots earn bonus points for killing you.",
+					"landmines": "Use the place_mine action to plant a landmine at your current position. Max 3 per bot. Mines are invisible to enemies and have a blast radius of 1.5 tiles. Arms after 1 second.",
+					"gravity_well": "Pick up a gravity_well pickup to gain 1 charge. Use the use_gravity_well action to deploy it at a target position. Pulls nearby enemies toward its center for 3 seconds.",
+					"grappling_hook": "New weapon type. 4 tile range. On hit, pulls the attacker to the target's position — great for closing gaps or chasing fleeing enemies.",
+				},
+			},
+
+			// ── SDKs ────────────────────────────────────────────
+			"sdks": map[string]interface{}{
+				"python": map[string]interface{}{
+					"install": "pip install arena-sdk",
+					"repo":    "https://github.com/angel-serv/ai-battle-arena/tree/main/sdks/python",
+				},
+				"nodejs": map[string]interface{}{
+					"install": "npm install @arena/sdk",
+					"repo":    "https://github.com/angel-serv/ai-battle-arena/tree/main/sdks/nodejs",
+				},
+			},
+
+			// ── Example Bot ─────────────────────────────────────
+			"example_bot_python": `import asyncio, json, websockets
+
+API_BASE = "https://arena.angel-serv.com"
+WS_URL = "wss://arena.angel-serv.com/ws/bot"
+
+async def main():
+    # Step 1: Generate API key (do this once, save the key)
+    import urllib.request
+    req = urllib.request.Request(f"{API_BASE}/api/v1/keys/generate", method="POST")
+    with urllib.request.urlopen(req) as resp:
+        data = json.loads(resp.read())
+    api_key = data["api_key"]
+    print(f"Bot ID: {data['bot_id']}, Key: {api_key[:20]}...")
+
+    # Step 2: Pre-fetch map via REST (optional, lighter than WebSocket map_init)
+    map_req = urllib.request.Request(f"{API_BASE}/api/v1/arena/map")
+    with urllib.request.urlopen(map_req) as resp:
+        map_data = json.loads(resp.read())
+    if map_data["status"] == "ok":
+        print(f"Map loaded: {map_data['width']}x{map_data['height']} grid")
+        terrain = map_data["terrain"]  # list of row strings: '.' = ground, '#' = wall
+    else:
+        print("No map yet (between rounds), will get it via WebSocket map_init")
+        terrain = None
+
+    # Step 3: Connect WebSocket
+    async with websockets.connect(f"{WS_URL}?key={api_key}") as ws:
+        # Receive connected message
+        connected = json.loads(await ws.recv())
+        print(f"Connected! Bot ID: {connected['bot_id']}")
+
+        # Step 3: Select loadout
+        await ws.send(json.dumps({
+            "type": "select_loadout",
+            "weapon": "sword",
+            "stats": {"hp": 7, "speed": 5, "attack": 5, "defense": 3},
+            "fallback_behavior": "aggressive"
+        }))
+        confirmed = json.loads(await ws.recv())
+        print(f"Loadout confirmed: {confirmed['weapon']}")
+
+        # Step 4: Game loop
+        while True:
+            msg = json.loads(await ws.recv())
+
+            if msg["type"] == "tick":
+                state = msg["your_state"]
+                entities = msg.get("nearby_entities", [])
+
+                if not state["is_alive"]:
+                    continue
+
+                # Simple AI: attack nearest enemy, or move toward zone center
+                enemies = [e for e in entities if e.get("type") == "bot" and e.get("is_alive")]
+                if enemies and state["weapon_ready"]:
+                    target = min(enemies, key=lambda e: dist(state["position"], e["position"]))
+                    await ws.send(json.dumps({
+                        "type": "action", "tick": msg["tick"],
+                        "action": "attack", "target": target["bot_id"]
+                    }))
+                elif not state["in_safe_zone"]:
+                    zc = msg["safe_zone"]["center"]
+                    await ws.send(json.dumps({
+                        "type": "action", "tick": msg["tick"],
+                        "action": "move_to", "target_position": zc
+                    }))
+                else:
+                    await ws.send(json.dumps({
+                        "type": "action", "tick": msg["tick"], "action": "idle"
+                    }))
+
+            elif msg["type"] == "death":
+                print(f"Died! Killed by {msg['killer_name']}")
+            elif msg["type"] == "kill":
+                print(f"Kill! {msg['victim_name']} (streak: {msg['your_kill_streak']})")
+
+def dist(a, b):
+    return ((a[0]-b[0])**2 + (a[1]-b[1])**2) ** 0.5
+
+asyncio.run(main())
+`,
+		}
+
+		writeJSON(w, http.StatusOK, resp)
+	}
+}
+
+// weaponDescription returns a human-readable description of a weapon's special ability.
+func weaponDescription(wc game.WeaponConfig) string {
+	switch wc.Special {
+	case "cleave":
+		return "Melee weapon that hits all adjacent enemies in range (area cleave)"
+	case "projectile":
+		return "Ranged weapon that fires arrows — long range but slower cooldown"
+	case "double_strike":
+		return fmt.Sprintf("Fast dual-wield melee — second hit deals %.0f%% damage", wc.Param*100)
+	case "block":
+		return fmt.Sprintf("Melee weapon with passive %.0f%% damage block chance", wc.Param*100)
+	case "knockback":
+		return fmt.Sprintf("Extended-reach melee that knocks enemies back %.0f tiles", wc.Param)
+	case "area":
+		return fmt.Sprintf("Ranged AoE — impacts a %d-tile radius after a short delay", wc.GridParam)
+	case "grapple":
+		return "Medium-range hook that pulls attacker to target on hit — great for closing gaps"
+	default:
+		return "Standard weapon"
+	}
+}
