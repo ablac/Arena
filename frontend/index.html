@@ -1147,6 +1147,14 @@ wss://arena.angel-serv.com/ws/spectator
     }
   </script>
 
+  <!-- QR Code Section (for presentations) -->
+  <section class="section" id="join" style="text-align:center;padding:80px 20px 60px">
+    <h2 class="section-title" style="margin-bottom:8px">Join the Arena</h2>
+    <p class="subtitle" style="margin-bottom:32px">Scan to get started</p>
+    <div id="qr-code" style="display:inline-block;padding:24px;background:#fff;border-radius:16px"></div>
+    <p style="margin-top:20px;font-family:var(--font-mono);font-size:1rem;color:var(--text-secondary);word-break:break-all" id="qr-url"></p>
+  </section>
+
   <!-- Footer -->
   <footer class="footer">
     <p>Built on arena.angel-serv.com</p>
@@ -1159,5 +1167,19 @@ wss://arena.angel-serv.com/ws/spectator
   </footer>
 
 
+  <!-- QR Code Generator -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <script>
+    (function() {
+      var url = window.location.origin + window.location.pathname;
+      var qr = qrcode(0, 'M');
+      qr.addData(url);
+      qr.make();
+      var el = document.getElementById('qr-code');
+      if (el) el.innerHTML = qr.createSvgTag({ cellSize: 8, margin: 0 });
+      var urlEl = document.getElementById('qr-url');
+      if (urlEl) urlEl.textContent = url;
+    })();
+  </script>
 </body>
 </html>
