@@ -215,6 +215,121 @@ export class EffectRenderer {
     ps.start();
   }
 
+  /**
+   * Spawn a grapple chain animation from grappler to target.
+   * Draws a glowing cyan chain with segments, pulls tight, then fades.
+   * @param {number} ax - grappler x
+   * @param {number} az - grappler z
+   * @param {number} tx - target x
+   * @param {number} tz - target z
+   */
+  spawnGrappleEffect(ax, az, tx, tz) {
+    const B = window.BABYLON;
+    const scene = this.scene;
+    const CHAIN_COLOR = new B.Color3(0, 1, 1); // electric cyan
+    const SEGMENTS = 10;
+    const CHAIN_Y = 12;
+
+    // Create chain segment meshes
+    const dx = tx - ax;
+    const dz = tz - az;
+    const dist = Math.sqrt(dx * dx + dz * dz) || 1;
+    const segLen = dist / SEGMENTS;
+
+    const chainMat = new B.StandardMaterial(`grapple-chain-mat-${++_psCounter}`, scene);
+    chainMat.diffuseColor = CHAIN_COLOR;
+    chainMat.emissiveColor = CHAIN_COLOR.scale(0.8);
+    chainMat.disableLighting = true;
+
+    const root = new B.TransformNode(`grapple-root-${_psCounter}`, scene);
+    const segments = [];
+
+    for (let i = 0; i < SEGMENTS; i++) {
+      const t = (i + 0.5) / SEGMENTS;
+      const sx = ax + dx * t;
+      const sz = az + dz * t;
+
+      const seg = B.MeshBuilder.CreateBox(`gseg-${_psCounter}-${i}`, {
+        width: segLen * 0.8, height: 1.5, depth: 1.5
+      }, scene);
+      seg.position.set(sx, CHAIN_Y, sz);
+      seg.rotation.y = Math.atan2(dx, dz);
+      seg.material = chainMat;
+      seg.parent = root;
+      segments.push(seg);
+    }
+
+    // Spark particles at both ends
+    const spawnSparks = (x, z) => {
+      const ps = new B.ParticleSystem(`gspark-${++_psCounter}`, 15, scene);
+      ps.emitter = new B.Vector3(x, CHAIN_Y, z);
+      ps.createPointEmitter(new B.Vector3(-1, 1, -1), new B.Vector3(1, 2, 1));
+      ps.color1 = new B.Color4(0, 1, 1, 1);
+      ps.color2 = new B.Color4(0.5, 0.8, 1, 1);
+      ps.colorDead = new B.Color4(0, 0.3, 0.5, 0);
+      ps.minSize = 0.5; ps.maxSize = 2;
+      ps.minLifeTime = 0.05; ps.maxLifeTime = 0.15;
+      ps.emitRate = 200;
+      ps.minEmitPower = 15; ps.maxEmitPower = 40;
+      ps.gravity = new B.Vector3(0, -30, 0);
+      ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
+      ps.targetStopDuration = 0.4;
+      ps.disposeOnStop = true;
+      ps.start();
+      return ps;
+    };
+
+    spawnSparks(ax, az);
+    spawnSparks(tx, tz);
+
+    // Phase 1 (0-500ms): chain appears with wave animation
+    // Phase 2 (500-800ms): segments converge toward grappler (pull)
+    // Phase 3 (800ms+): fade out and dispose
+    const startTime = performance.now();
+    const APPEAR_MS = 500;
+    const PULL_MS = 300;
+    const FADE_MS = 200;
+    const TOTAL_MS = APPEAR_MS + PULL_MS + FADE_MS;
+
+    const observer = scene.onBeforeRenderObservable.add(() => {
+      const elapsed = performance.now() - startTime;
+
+      if (elapsed < APPEAR_MS) {
+        // Wave animation: segments ripple vertically
+        const progress = elapsed / APPEAR_MS;
+        for (let i = 0; i < segments.length; i++) {
+          const wave = Math.sin((i / SEGMENTS) * Math.PI * 4 - elapsed * 0.01) * 3 * (1 - progress);
+          segments[i].position.y = CHAIN_Y + wave;
+          segments[i].scaling.set(progress, 1, 1);
+        }
+      } else if (elapsed < APPEAR_MS + PULL_MS) {
+        // Pull phase: segments slide toward grappler position
+        const pullT = (elapsed - APPEAR_MS) / PULL_MS;
+        for (let i = 0; i < segments.length; i++) {
+          const origT = (i + 0.5) / SEGMENTS;
+          const newT = origT * (1 - pullT * 0.8); // converge toward 0 (grappler)
+          segments[i].position.x = ax + dx * newT;
+          segments[i].position.z = az + dz * newT;
+          segments[i].position.y = CHAIN_Y;
+          segments[i].scaling.set(1, 1, 1);
+        }
+      } else if (elapsed < TOTAL_MS) {
+        // Fade out
+        const fadeT = (elapsed - APPEAR_MS - PULL_MS) / FADE_MS;
+        chainMat.alpha = 1 - fadeT;
+        for (const seg of segments) {
+          seg.visibility = 1 - fadeT;
+        }
+      } else {
+        // Cleanup
+        scene.onBeforeRenderObservable.remove(observer);
+        for (const seg of segments) seg.dispose();
+        root.dispose();
+        chainMat.dispose();
+      }
+    });
+  }
+
   /** @private */
   _cleanup(now) {
     this.active = this.active.filter(e => {

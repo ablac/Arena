@@ -510,14 +510,18 @@
     "zone_radius": 40,
     "zone_center": [50, 50],
     "zone_target_center": [45, 55],
-    "zone_target_radius": 9
+    "zone_target_radius": 9,
+    "grapple_charges": 2,
+    "grapple_cooldown": 0.0
   },
+  "nearby_mines": 0,
   "nearby_entities": [
     {
       "type": "bot", "bot_id": "enemy_id", "name": "EnemyBot",
       "position": [53, 52], "hp": 85, "max_hp": 120,
       "weapon": "bow", "is_alive": true, "avatar_color": "#0000ff",
-      "last_action": "attack", "is_dodging": false, "is_stunned": false
+      "last_action": "attack", "is_dodging": false, "is_stunned": false,
+      "has_los": true, "attack_range": 7, "can_attack": true, "threat_score": 85.4
     },
     {
       "type": "pickup", "pickup_id": "p_123",
@@ -691,9 +695,18 @@
             <tr><td><code>shield</code></td><td>15</td><td>1</td><td>0.7s</td><td>Block &mdash; passive 50% damage reduction from incoming attacks</td></tr>
             <tr><td><code>spear</code></td><td>20</td><td>2</td><td>0.7s</td><td>Knockback &mdash; pushes target 2 tiles on hit</td></tr>
             <tr><td><code>staff</code></td><td>18</td><td>5</td><td>1.3s</td><td>Area damage &mdash; 2-tile radius AoE at target position (2-tick delay)</td></tr>
-            <tr><td><code>grapple</code></td><td>15</td><td>4</td><td>0.8s</td><td>Grapple &mdash; pulls you to the target on hit</td></tr>
+            <tr><td><code>grapple</code></td><td>15</td><td>4</td><td>0.8s</td><td>Grapple weapon &mdash; pulls you to the target on hit</td></tr>
           </tbody>
         </table>
+        <h4 style="margin-top:16px">Universal Grapple Ability</h4>
+        <p>ALL bots get <strong>2 grapple charges</strong> per round (separate from the grapple weapon). Use the <code>grapple</code> action with a target bot_id.</p>
+        <ul>
+          <li><strong>Range:</strong> Map-wide (no range limit)</li>
+          <li><strong>Damage:</strong> 15</li>
+          <li><strong>Cooldown:</strong> 3 seconds</li>
+          <li><strong>Effect:</strong> Pulls target to 1 cell from you, stuns for 5 ticks</li>
+          <li><strong>Charges:</strong> 2 per round (shown in <code>your_state.grapple_charges</code>)</li>
+        </ul>
       </div>
     </details>
 
@@ -1077,7 +1090,11 @@ wss://arena.angel-serv.com/ws/spectator
 # shield     15      1      0.7s      Block (passive 50% damage reduction)
 # spear      20      2      0.7s      Knockback (pushes target 2 tiles)
 # staff      18      5      1.3s      Area damage (2-tile radius, 2-tick delay)
-# grapple    15      4      0.8s      Grapple (pulls you to target)
+# grapple    15      4      0.8s      Grapple weapon (pulls you to target)
+#
+# UNIVERSAL GRAPPLE ABILITY: All bots get 2 charges/round, map-wide range,
+# 3s cooldown, 15 dmg, pulls target to 1 cell, stuns 5 ticks.
+# Use action: {"action": "grapple", "target": "bot_id"}
 
 
 # ─── STATS & FORMULAS ───────────────────────────────────────

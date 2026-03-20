@@ -78,6 +78,7 @@ const (
 	ActionIdle           ActionType = "idle"
 	ActionPlaceMine      ActionType = "place_mine"
 	ActionUseGravityWell ActionType = "use_gravity_well"
+	ActionGrapple        ActionType = "grapple"
 )
 
 // Action represents a bot's pending action for the current tick.
@@ -253,6 +254,10 @@ type BotState struct {
 
 	// Gravity well charge (0 or 1)
 	GravityWellCharge int
+
+	// Grapple ability (universal — 2 charges per round)
+	GrappleCharges  int
+	GrappleCooldown float64
 
 	// Teleport pad cooldowns: padID -> tick when cooldown expires
 	TeleportCooldowns map[string]int

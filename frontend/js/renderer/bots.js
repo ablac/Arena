@@ -23,6 +23,8 @@ export class BotRenderer {
     this.onDodge = null;
     /** @type {Function|null} callback(attackerX, attackerZ, targetX, targetZ, color) */
     this.onShove = null;
+    /** @type {Function|null} callback(attackerX, attackerZ, targetX, targetZ) */
+    this.onGrapple = null;
   }
 
   update(bots) {
@@ -124,6 +126,14 @@ export class BotRenderer {
             this.onShove(bot.position[0], bot.position[1],
                          targetPos[0], targetPos[1], bot.avatar_color);
           }
+        }
+      }
+
+      // Grapple detection
+      if (botAction === 'grapple' && bot.is_alive && entry._wasAlive) {
+        const targetPos = bot.target_id ? getPosMap().get(bot.target_id) : null;
+        if (targetPos && this.onGrapple) {
+          this.onGrapple(bot.position[0], bot.position[1], targetPos[0], targetPos[1]);
         }
       }
 

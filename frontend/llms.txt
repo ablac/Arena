@@ -38,7 +38,9 @@ Client: {"type": "action", "tick": 1, "action": "move", "direction": [1, 0]}
 | Staff   | 18     | 12.0  | 1.3s     | Area (3.0 radius)|
 | Spear   | 20     | 3.5   | 0.7s     | Knockback (2.0)  |
 | Shield  | 15     | 1.8   | 0.7s     | Block (50%)      |
-| Grapple | 15     | 4     | 0.8s     | Grapple (pull to target) |
+| Grapple | 15     | 4     | 0.8s     | Grapple weapon (pull attacker to target) |
+
+> **Grapple Ability (Universal)**: ALL bots get 2 grapple charges per round. Map-wide range, 3s cooldown, 15 damage, pulls target to 1 cell from you, stuns for 5 ticks. Use the `grapple` action (separate from weapon attacks).
 
 ### Actions
 | Action   | Fields                                        | Description               |
@@ -51,12 +53,13 @@ Client: {"type": "action", "tick": 1, "action": "move", "direction": [1, 0]}
 | use_item | item_id: "pickup_id"                          | Collect a pickup          |
 | place_mine | (none)                                      | Place invisible landmine  |
 | use_gravity_well | target_position: [x, y]               | Deploy gravity well       |
+| grapple  | target: "bot_id"                              | Grapple pull (universal, 2 charges/round) |
 
 ### Tick State (your_state fields)
-position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive, kill_streak, round_kills, dodge_cooldown, invuln_ticks, stun_ticks, shield_absorb, effects, hits_received, kill_feed, in_safe_zone, distance_to_zone_edge, zone_radius, zone_center, zone_target_center, zone_target_radius
+position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive, kill_streak, round_kills, dodge_cooldown, invuln_ticks, stun_ticks, shield_absorb, effects, hits_received, kill_feed, in_safe_zone, distance_to_zone_edge, zone_radius, zone_center, zone_target_center, zone_target_radius, grapple_charges, grapple_cooldown
 
 ### Nearby Entities (in nearby_entities array)
-- Bots: type, id, bot_id, name, position, hp, max_hp, weapon, is_alive, is_dodging, is_stunned
+- Bots: type, id, bot_id, name, position, hp, max_hp, weapon, is_alive, is_dodging, is_stunned, has_los, attack_range, can_attack, threat_score
 - Pickups: type, id, pickup_id, pickup_type (health_pack|speed_boost|damage_boost|shield_bubble|gravity_well), position
 - Obstacles: type, x, y, width, height
 
@@ -70,6 +73,7 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 - **Hazard Zones**: 6 pulsing damage zones/round, 2 HP/tick, 3s on / 2s off cycle
 - **Sudden Death**: random void tiles appear when zone hits min radius, 10 HP/tick on void tiles
 - **Bounty System**: 3+ kill streak = bounty target visible to all, bonus points on kill
+- **Nearby Mines Warning**: `nearby_mines` field in tick payload counts armed enemy mines within 3 tiles
 
 ## REST API
 - `GET /api/v1/arena/status` — Arena status (lobby/active/intermission)

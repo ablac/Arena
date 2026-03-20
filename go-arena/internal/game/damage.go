@@ -202,6 +202,12 @@ func TickTimers(bot *BotState, dt float64) {
 	if bot.ShoveCooldown < 0 {
 		bot.ShoveCooldown = 0
 	}
+
+	// Grapple cooldown.
+	bot.GrappleCooldown -= dt
+	if bot.GrappleCooldown < 0 {
+		bot.GrappleCooldown = 0
+	}
 }
 
 // TickEffects decrements effect timers and removes expired effects.

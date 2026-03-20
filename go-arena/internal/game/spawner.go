@@ -41,6 +41,9 @@ func SpawnBotAt(bot *BotState, pos Vec2, grid *SpatialGrid, tickCount int) {
 	bot.CurrentPath = nil
 	bot.PathTarget = nil
 
+	bot.GrappleCharges = 2
+	bot.GrappleCooldown = 0
+
 	bot.RoundLifeStartTick = tickCount
 
 	grid.Insert(bot.BotID, bot.Position)

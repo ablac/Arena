@@ -124,7 +124,7 @@ func BotSetup() http.HandlerFunc {
 					},
 					"tick": map[string]interface{}{
 						"description": fmt.Sprintf("Sent every tick (%d times per second) with full game state visible to your bot", c.TickRate),
-						"fields":      "tick, your_state{bot_id,position,hp,max_hp,speed,weapon,cooldown_remaining,weapon_ready,is_alive,kill_streak,round_kills,dodge_cooldown,invuln_ticks,stun_ticks,shield_absorb,effects,last_action_result,hits_received,kill_feed,in_safe_zone,distance_to_zone_edge,zone_radius,zone_center}, nearby_entities[{type,id,name,position,hp,max_hp,weapon,is_alive} | {type,pickup_id,pickup_type,position}], safe_zone{center,radius,target_center,target_radius}, fog_radius, hints",
+						"fields":      "tick, your_state{bot_id,position,hp,max_hp,speed,weapon,cooldown_remaining,weapon_ready,is_alive,kill_streak,round_kills,dodge_cooldown,invuln_ticks,stun_ticks,shield_absorb,effects,last_action_result,hits_received,kill_feed,in_safe_zone,distance_to_zone_edge,zone_radius,zone_center,grapple_charges,grapple_cooldown}, nearby_entities[{type,id,name,position,hp,max_hp,weapon,is_alive,has_los,attack_range,can_attack,threat_score} | {type,pickup_id,pickup_type,position}], safe_zone{center,radius,target_center,target_radius}, fog_radius, hints, nearby_mines",
 					},
 					"death": map[string]interface{}{
 						"description": "Sent when your bot dies",
@@ -180,6 +180,7 @@ func BotSetup() http.HandlerFunc {
 				{"name": "idle", "description": "Do nothing this tick", "fields": map[string]string{}},
 				{"name": "place_mine", "description": "Place a landmine at current position (max 3 per bot, arms after 1 second, invisible to enemies)", "fields": map[string]string{}},
 				{"name": "use_gravity_well", "description": "Deploy a gravity well at target position (requires gravity_well pickup charge)", "fields": map[string]string{"target_position": "[x, y] in grid coordinates"}},
+				{"name": "grapple", "description": "Universal ability: grapple a target bot (map-wide range, 2 charges per round, 3s cooldown). Pulls target to 1 cell from you, deals 15 damage, stuns for 5 ticks.", "fields": map[string]string{"target": "bot_id of the target"}},
 			},
 
 			// ── Weapons (from game.WeaponConfigs) ───────────────
@@ -257,7 +258,7 @@ func BotSetup() http.HandlerFunc {
 					"bounty_system": "Achieve a 3+ kill streak to become a bounty target. Your position becomes visible to all bots. Other bots earn bonus points for killing you.",
 					"landmines": "Use the place_mine action to plant a landmine at your current position. Max 3 per bot. Mines are invisible to enemies and have a blast radius of 1.5 tiles. Arms after 1 second.",
 					"gravity_well": "Pick up a gravity_well pickup to gain 1 charge. Use the use_gravity_well action to deploy it at a target position. Pulls nearby enemies toward its center for 3 seconds.",
-					"grappling_hook": "New weapon type. 4 tile range. On hit, pulls the attacker to the target's position — great for closing gaps or chasing fleeing enemies.",
+					"grappling_hook": "Grapple is now a universal ability ALL bots get (not just a weapon). Every bot starts with 2 grapple charges per round, map-wide range, 3s cooldown. Pulls the target to 1 cell from you, deals 15 damage, and stuns for 5 ticks. Use the 'grapple' action with a target bot_id. The grapple weapon still exists for backward compatibility.",
 				},
 			},
 

@@ -110,6 +110,11 @@ export class ArenaEngine {
       this.effectRenderer.spawnShoveEffect(ax, az, tx, tz, color);
     };
 
+    // Wire up grapple → chain pull animation
+    this.botRenderer.onGrapple = (ax, az, tx, tz) => {
+      this.effectRenderer.spawnGrappleEffect(ax, az, tx, tz);
+    };
+
     this._addLights();
     this.envRenderer.setupShadows(this.sunLight);
 
