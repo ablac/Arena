@@ -242,6 +242,11 @@ type BotState struct {
 	ActionHistory []ActionType
 	ActionHistoryMax int
 
+	// New features
+	MineCount         int              // active mines placed by this bot
+	TeleportCooldowns map[string]int   // pad ID → tick when cooldown expires
+	IsBountyTarget    bool             // whether this bot is the bounty target
+
 	// Per-tick feedback (cleared each tick)
 	HitsReceived    []HitRecord
 	LastActionResult *ActionResult

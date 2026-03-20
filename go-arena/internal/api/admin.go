@@ -1963,7 +1963,7 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// --- 12. Invalid weapon ---
-		validWeapons := map[string]bool{"sword": true, "bow": true, "daggers": true, "shield": true, "spear": true, "staff": true}
+		validWeapons := map[string]bool{"sword": true, "bow": true, "daggers": true, "shield": true, "spear": true, "staff": true, "grapple": true}
 		if weapon != "" && !validWeapons[weapon] {
 			flags = append(flags, acFlag{
 				Severity: "critical", Category: "stats",
