@@ -13,6 +13,7 @@ import { PickupRenderer } from './pickups.js';
 import { EffectRenderer } from './effects.js';
 import { TrailRenderer } from './trails.js';
 import { ProjectileRenderer } from './projectiles.js';
+import { GameplayRenderer } from './gameplay.js';
 
 // Bot positions are smoothed via exponential lerp each frame,
 // so no tick-interval-based alpha is needed.
@@ -33,6 +34,7 @@ export class ArenaEngine {
     this.effectRenderer = null;
     this.trailRenderer = null;
     this.projectileRenderer = null;
+    this.gameplayRenderer = null;
     this.state = null;
     this.ready = false;
   }
@@ -42,22 +44,28 @@ export class ArenaEngine {
     const B = window.BABYLON;
     let engine;
     try {
-      engine = new B.WebGPUEngine(this.canvas, { antialias: false, powerPreference: 'high-performance' });
-      await engine.initAsync();
-      console.log('[Arena] WebGPU');
+      const webGPUSupported = await B.WebGPUEngine.IsSupportedAsync;
+      if (webGPUSupported) {
+        engine = new B.WebGPUEngine(this.canvas, { antialias: false, powerPreference: 'high-performance' });
+        await engine.initAsync();
+        console.log('[Arena] WebGPU');
+      } else {
+        throw new Error('WebGPU not supported');
+      }
     } catch {
       engine = new B.Engine(this.canvas, false, {
         preserveDrawingBuffer: false,
         stencil: false,
         powerPreference: 'high-performance',
       });
+      console.log('[Arena] WebGL');
     }
     // Cap at 1x device pixel ratio to prevent supersampling on HiDPI
     engine.setHardwareScalingLevel(1.0 / Math.min(window.devicePixelRatio, 1));
     this.engine = engine;
     const scene = new B.Scene(engine);
     this.scene = scene;
-    scene.clearColor = new B.Color4(0.03, 0.03, 0.05, 1);
+    scene.clearColor = new B.Color4(0, 0, 0.02, 1); // near-black to match starfield skybox
     scene.fogMode = B.Scene.FOGMODE_EXP2;
     scene.fogDensity = 0.00008;
     scene.fogColor = new B.Color3(0.03, 0.03, 0.03);
@@ -70,13 +78,14 @@ export class ArenaEngine {
 
     this.camera = new CameraController(scene, this.canvas, this.arenaWidth, this.arenaHeight);
     this.envRenderer = new EnvironmentRenderer(scene, this.arenaWidth, this.arenaHeight);
-    this.obstacleRenderer = new ObstacleRenderer(scene);
+    this.obstacleRenderer = new ObstacleRenderer(scene, this.envRenderer);
     this.botRenderer = new BotRenderer(scene);
     this.pickupRenderer = new PickupRenderer(scene);
     this.effectRenderer = new EffectRenderer(scene);
     this.effectRenderer.camera = this.camera;
     this.trailRenderer = new TrailRenderer(scene);
     this.projectileRenderer = new ProjectileRenderer(scene);
+    this.gameplayRenderer = new GameplayRenderer(scene);
 
     // Wire up attack → per-weapon hit effects + projectiles for ranged
     this.botRenderer.onAttack = (ax, az, tx, tz, color, weapon) => {
@@ -102,12 +111,24 @@ export class ArenaEngine {
     };
 
     this._addLights();
+    this.envRenderer.setupShadows(this.sunLight);
 
-    // Subtle glow on emissive surfaces (low-res for performance)
-    const gl = new B.GlowLayer('glow', this.scene, {
-      mainTextureFixedSize: 128,
-    });
-    gl.intensity = 0.2;
+    // DefaultRenderingPipeline: FXAA, sharpen, tone mapping (no bloom/glow)
+    const pipeline = new B.DefaultRenderingPipeline('defaultPipeline', true, this.scene, [this.camera.camera]);
+    if (pipeline.isSupported) {
+      // FXAA anti-aliasing
+      pipeline.fxaaEnabled = true;
+      // Sharpen to counteract FXAA softening
+      pipeline.sharpenEnabled = true;
+      pipeline.sharpen.edgeAmount = 0.15;
+      pipeline.sharpen.colorAmount = 1.0;
+      // ACES filmic tone mapping
+      pipeline.imageProcessingEnabled = true;
+      pipeline.imageProcessing.toneMappingEnabled = true;
+      pipeline.imageProcessing.toneMappingType = B.ImageProcessingConfiguration.TONEMAPPING_ACES;
+      pipeline.imageProcessing.exposure = 1.0;
+      pipeline.imageProcessing.contrast = 1.1;
+    }
 
     const self = this;
     let _lastFrame = performance.now();
@@ -126,7 +147,8 @@ export class ArenaEngine {
       }
       scene.render();
     });
-    window.addEventListener('resize', () => engine.resize());
+    this._resizeHandler = () => engine.resize();
+    window.addEventListener('resize', this._resizeHandler);
     this.ready = true;
   }
 
@@ -159,6 +181,7 @@ export class ArenaEngine {
     this.botRenderer.update(state.bots);
     this.pickupRenderer.update(state.pickups || []);
     this.effectRenderer.update(state.bots);
+    this.gameplayRenderer.update(state);
     this.camera.updateBotPositions(state.bots);
   }
 
@@ -168,8 +191,12 @@ export class ArenaEngine {
   getState() { return this.state; }
 
   dispose() {
+    if (this._resizeHandler) {
+      window.removeEventListener('resize', this._resizeHandler);
+    }
     if (this.projectileRenderer) this.projectileRenderer.dispose();
     if (this.trailRenderer) this.trailRenderer.dispose();
+    if (this.envRenderer && this.envRenderer.dispose) this.envRenderer.dispose();
     if (this.engine) {
       this.engine.stopRenderLoop();
       this.scene.dispose();

@@ -163,6 +163,10 @@ func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCoun
 		"zone_center":           [2]int{zoneCenter[0], zoneCenter[1]},
 		"zone_target_center":    [2]int{zoneTargetCenter[0], zoneTargetCenter[1]},
 		"zone_target_radius":    zoneTargetRadiusTiles,
+		// New gameplay state.
+		"is_bounty_target":    bot.IsBountyTarget,
+		"mine_count":          bot.MineCount,
+		"gravity_well_charge": bot.GravityWellCharge,
 	}
 
 	return state

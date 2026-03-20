@@ -10,9 +10,10 @@ import { makeMat } from './utils.js';
 const PILLAR_HEIGHT = 30;
 
 export class ObstacleRenderer {
-  /** @param {BABYLON.Scene} scene */
-  constructor(scene) {
+  /** @param {BABYLON.Scene} scene @param {EnvironmentRenderer} [envRenderer] */
+  constructor(scene, envRenderer) {
     this.scene = scene;
+    this._env = envRenderer || null;
     /** @type {Map<number, {mesh: BABYLON.Mesh, edge: BABYLON.Mesh}>} */
     this.meshes = new Map();
     this._mat = null;
@@ -23,13 +24,21 @@ export class ObstacleRenderer {
   /** @private Create shared materials. */
   _initMaterials() {
     const B = window.BABYLON;
-    this._mat = makeMat('obsMat', this.scene, new B.Color3(0.3, 0.28, 0.24), {
-      emissiveFactor: 0.1, specular: new B.Color3(0.08, 0.08, 0.08), backFace: true
-    });
+    // Dark metallic body with subtle blue emissive
+    this._mat = new B.StandardMaterial('obsMat', this.scene);
+    this._mat.diffuseColor = new B.Color3(0.08, 0.08, 0.12);
+    this._mat.emissiveColor = new B.Color3(0.02, 0.05, 0.1);
+    this._mat.specularColor = new B.Color3(0.15, 0.2, 0.35);
+    this._mat.specularPower = 64;
+    this._mat.backFaceCulling = false;
     this._mat.freeze();
-    this._edgeMat = makeMat('obsEdgeMat', this.scene, new B.Color3(0.4, 0.55, 0.7), {
-      noLight: true, alpha: 0.4, emissiveFactor: 1
-    });
+
+    // Bright cyan edge glow
+    this._edgeMat = new B.StandardMaterial('obsEdgeMat', this.scene);
+    this._edgeMat.diffuseColor = B.Color3.Black();
+    this._edgeMat.emissiveColor = new B.Color3(0.15, 0.5, 0.9);
+    this._edgeMat.disableLighting = true;
+    this._edgeMat.alpha = 0.7;
     this._edgeMat.freeze();
   }
 
@@ -67,17 +76,27 @@ export class ObstacleRenderer {
       mesh.material = this._mat;
       mesh.isPickable = false;
       mesh.freezeWorldMatrix();
+      if (this._env) this._env.addShadowCaster(mesh);
 
       // Glowing edge wireframe on top
       const edge = B.MeshBuilder.CreateBox(`obsEdge-${i}`, {
-        width: obs.width + 1, height: 1.5, depth: obs.height + 1
+        width: obs.width + 1.5, height: 2, depth: obs.height + 1.5
       }, this.scene);
-      edge.position.set(obs.x + obs.width / 2, PILLAR_HEIGHT + 0.5, obs.y + obs.height / 2);
+      edge.position.set(obs.x + obs.width / 2, PILLAR_HEIGHT + 0.8, obs.y + obs.height / 2);
       edge.material = this._edgeMat;
       edge.isPickable = false;
       edge.freezeWorldMatrix();
 
-      this.meshes.set(i, { mesh, edge });
+      // Bottom glow ring
+      const base = B.MeshBuilder.CreateBox(`obsBase-${i}`, {
+        width: obs.width + 1.5, height: 1.5, depth: obs.height + 1.5
+      }, this.scene);
+      base.position.set(obs.x + obs.width / 2, 0.75, obs.y + obs.height / 2);
+      base.material = this._edgeMat;
+      base.isPickable = false;
+      base.freezeWorldMatrix();
+
+      this.meshes.set(i, { mesh, edge, base });
     });
 
     // Remove stale
@@ -85,6 +104,7 @@ export class ObstacleRenderer {
       if (!seen.has(k)) {
         entry.mesh.dispose();
         entry.edge.dispose();
+        if (entry.base) entry.base.dispose();
         this.meshes.delete(k);
       }
     }
@@ -95,6 +115,7 @@ export class ObstacleRenderer {
     for (const [, entry] of this.meshes) {
       entry.mesh.dispose();
       entry.edge.dispose();
+      if (entry.base) entry.base.dispose();
     }
     this.meshes.clear();
   }

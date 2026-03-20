@@ -30,7 +30,9 @@ func SendToBot(bot *BotState, msg interface{}) {
 }
 
 // SendMapInit sends the static terrain grid to a bot at the start of a round.
-// This is sent once; bots cache it and receive only entity deltas in ticks.
+// DEPRECATED: No longer called — bots should use GET /api/v1/arena/map instead.
+// The next round's terrain is pre-generated during intermission.
+// Kept for reference / potential future use.
 func SendMapInit(bot *BotState, terrain *TerrainGrid) {
 	msg := map[string]interface{}{
 		"type":      "map_init",
@@ -51,7 +53,7 @@ func SendMapInit(bot *BotState, terrain *TerrainGrid) {
 // SendTickUpdate sends the per-tick game state update to a bot.
 // hints is optional — when non-nil it provides directional hints to far-away
 // bots and pickups (only sent when no bots are within view radius).
-func SendTickUpdate(bot *BotState, yourState map[string]interface{}, nearbyEntities []map[string]interface{}, tickCount int, arena *ArenaMap, hints []map[string]interface{}, fogRadius int) {
+func SendTickUpdate(bot *BotState, yourState map[string]interface{}, nearbyEntities []map[string]interface{}, tickCount int, arena *ArenaMap, hints []map[string]interface{}, fogRadius int, extra ...map[string]interface{}) {
 	var cellSize float64 = config.C.PathfindingCellSize
 	zoneCenter := posToGrid(arena.ZoneCenter)
 	zoneTargetCenter := posToGrid(arena.ZoneTargetCenter)
@@ -72,6 +74,12 @@ func SendTickUpdate(bot *BotState, yourState map[string]interface{}, nearbyEntit
 	}
 	if hints != nil {
 		msg["hints"] = hints
+	}
+	// Merge extra data into the tick message.
+	for _, ext := range extra {
+		for k, v := range ext {
+			msg[k] = v
+		}
 	}
 	SendToBot(bot, msg)
 }
@@ -120,7 +128,7 @@ func SendRoundEnd(bot *BotState, info RoundEndInfo, nextRoundIn float64) {
 }
 
 // SendRoundStart notifies a bot that a new round has begun.
-// Terrain is sent separately via SendMapInit.
+// Terrain is available via GET /api/v1/arena/map (pre-generated during intermission).
 func SendRoundStart(bot *BotState, round RoundState, bots map[string]*BotState, arena *ArenaMap) {
 	allPositions := make(map[string]interface{}, len(bots))
 	for id, b := range bots {

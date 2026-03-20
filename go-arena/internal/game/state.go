@@ -69,13 +69,15 @@ func (v *Vec2) UnmarshalJSON(data []byte) error {
 type ActionType string
 
 const (
-	ActionMove    ActionType = "move"
-	ActionMoveTo  ActionType = "move_to"
-	ActionAttack  ActionType = "attack"
-	ActionDodge   ActionType = "dodge"
-	ActionShove   ActionType = "shove"
-	ActionUseItem ActionType = "use_item"
-	ActionIdle    ActionType = "idle"
+	ActionMove           ActionType = "move"
+	ActionMoveTo         ActionType = "move_to"
+	ActionAttack         ActionType = "attack"
+	ActionDodge          ActionType = "dodge"
+	ActionShove          ActionType = "shove"
+	ActionUseItem        ActionType = "use_item"
+	ActionIdle           ActionType = "idle"
+	ActionPlaceMine      ActionType = "place_mine"
+	ActionUseGravityWell ActionType = "use_gravity_well"
 )
 
 // Action represents a bot's pending action for the current tick.
@@ -98,10 +100,11 @@ type Effect struct {
 type PickupType string
 
 const (
-	PickupHealthPack  PickupType = "health_pack"
-	PickupSpeedBoost  PickupType = "speed_boost"
-	PickupDamageBoost PickupType = "damage_boost"
+	PickupHealthPack   PickupType = "health_pack"
+	PickupSpeedBoost   PickupType = "speed_boost"
+	PickupDamageBoost  PickupType = "damage_boost"
 	PickupShieldBubble PickupType = "shield_bubble"
+	PickupGravityWell  PickupType = "gravity_well"
 )
 
 // Pickup represents a collectible item on the map.
@@ -242,6 +245,18 @@ type BotState struct {
 	ActionHistory []ActionType
 	ActionHistoryMax int
 
+	// Bounty
+	IsBountyTarget bool
+
+	// Landmines: active mines placed by this bot
+	MineCount int
+
+	// Gravity well charge (0 or 1)
+	GravityWellCharge int
+
+	// Teleport pad cooldowns: padID -> tick when cooldown expires
+	TeleportCooldowns map[string]int
+
 	// Per-tick feedback (cleared each tick)
 	HitsReceived    []HitRecord
 	LastActionResult *ActionResult
@@ -305,15 +320,22 @@ type RoundEndInfo struct {
 
 // SpectatorState is the serialized arena state for spectators.
 type SpectatorState struct {
-	Type       string                   `json:"type"`
-	Tick       int                      `json:"tick"`
-	RoundTick  int                      `json:"round_tick"`
-	Bots       []map[string]interface{} `json:"bots"`
-	SafeZone   map[string]interface{}   `json:"safe_zone"`
-	Pickups    []map[string]interface{} `json:"pickups"`
-	KillFeed   []map[string]interface{} `json:"kill_feed"`
-	Obstacles  []Obstacle               `json:"obstacles"`
-	WaitingBots []map[string]interface{} `json:"waiting_bots,omitempty"`
+	Type         string                   `json:"type"`
+	Tick         int                      `json:"tick"`
+	RoundTick    int                      `json:"round_tick"`
+	Bots         []map[string]interface{} `json:"bots"`
+	SafeZone     map[string]interface{}   `json:"safe_zone"`
+	Pickups      []map[string]interface{} `json:"pickups"`
+	KillFeed     []map[string]interface{} `json:"kill_feed"`
+	Obstacles    []Obstacle               `json:"obstacles"`
+	WaitingBots  []map[string]interface{} `json:"waiting_bots,omitempty"`
+	TeleportPads []map[string]interface{} `json:"teleport_pads,omitempty"`
+	HazardZones  []map[string]interface{} `json:"hazard_zones,omitempty"`
+	Landmines    []map[string]interface{} `json:"landmines,omitempty"`
+	GravityWells []map[string]interface{} `json:"gravity_wells,omitempty"`
+	VoidTiles    [][2]int                 `json:"void_tiles,omitempty"`
+	SuddenDeath  bool                     `json:"sudden_death"`
+	BountyTarget string                   `json:"bounty_target,omitempty"`
 }
 
 // DerivedStats are computed from stat allocations.

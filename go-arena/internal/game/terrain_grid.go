@@ -134,6 +134,51 @@ func (g *TerrainGrid) ToCompactJSON() []string {
 	return result
 }
 
+// ToCompactJSONWithFeatures returns the terrain with teleport pads and hazard
+// zones stamped directly onto the grid: 'T' for teleport pads, 'H' for hazard zones.
+// Overlays are drawn on top of ground cells only (walls are preserved).
+func (g *TerrainGrid) ToCompactJSONWithFeatures(pads []TeleportPad, zones []HazardZone) []string {
+	// Start with a mutable copy
+	grid := make([][]byte, g.Height)
+	for y := 0; y < g.Height; y++ {
+		row := make([]byte, g.Width)
+		for x := 0; x < g.Width; x++ {
+			row[x] = g.Cells[x][y]
+		}
+		grid[y] = row
+	}
+
+	// Stamp teleport pads (single cell at pad position)
+	for _, pad := range pads {
+		cell := g.WorldToGrid(pad.Position)
+		x, y := cell[0], cell[1]
+		if x >= 0 && x < g.Width && y >= 0 && y < g.Height && grid[y][x] == '.' {
+			grid[y][x] = 'T'
+		}
+	}
+
+	// Stamp hazard zones (rectangular area)
+	for _, zone := range zones {
+		cell := g.WorldToGrid(zone.Position)
+		cx, cy := cell[0], cell[1]
+		hw, hh := zone.Width/2, zone.Height/2
+		for dy := -hh; dy <= hh; dy++ {
+			for dx := -hw; dx <= hw; dx++ {
+				x, y := cx+dx, cy+dy
+				if x >= 0 && x < g.Width && y >= 0 && y < g.Height && grid[y][x] == '.' {
+					grid[y][x] = 'H'
+				}
+			}
+		}
+	}
+
+	result := make([]string, g.Height)
+	for y := 0; y < g.Height; y++ {
+		result[y] = string(grid[y])
+	}
+	return result
+}
+
 // GridDistance returns the Chebyshev distance (king distance) between two
 // grid cells. This is the natural distance metric for 8-directional movement.
 func GridDistance(a, b [2]int) int {

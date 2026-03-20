@@ -69,6 +69,13 @@ func init() {
 			Special:   "area",
 			GridParam: 2,
 		},
+		"grapple": {
+			Name:      "grapple",
+			Damage:    15,
+			GridRange: 4,
+			Cooldown:  1.5,
+			Special:   "grapple",
+		},
 	}
 }
 
@@ -93,7 +100,7 @@ func GetWeaponConfig(name string) WeaponConfig {
 
 // GetAvailableWeapons returns the list of all weapon names.
 func GetAvailableWeapons() []string {
-	return []string{"sword", "bow", "daggers", "shield", "spear", "staff"}
+	return []string{"sword", "bow", "daggers", "shield", "spear", "staff", "grapple"}
 }
 
 // CalculateDamage computes effective damage from a weapon hit.

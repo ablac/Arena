@@ -34,6 +34,7 @@ var validWeapons = map[string]bool{
 	"shield":  true,
 	"spear":   true,
 	"staff":   true,
+	"grapple": true,
 }
 
 // SanitizeBotName cleans a bot name by stripping HTML tags, removing
