@@ -59,10 +59,10 @@ func aiDefensive(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 
 // aiOpportunistic targets weak enemies (<= 70% HP), flees from strong ones.
 func aiOpportunistic(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
-	// Collect weak enemies.
+	// Collect weak enemies with LOS.
 	var weak []*BotState
 	for _, b := range nearby {
-		if b.HP <= b.MaxHP*0.7 {
+		if b.HP <= b.MaxHP*0.7 && hasLOS(bot.Position, b.Position) {
 			weak = append(weak, b)
 		}
 	}
@@ -77,10 +77,10 @@ func aiOpportunistic(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action
 		}
 	}
 
-	// Flee from strong enemies.
+	// Flee from strong enemies with LOS.
 	var strong []*BotState
 	for _, b := range nearby {
-		if b.HP > b.MaxHP*0.7 {
+		if b.HP > b.MaxHP*0.7 && hasLOS(bot.Position, b.Position) {
 			strong = append(strong, b)
 		}
 	}
@@ -145,12 +145,20 @@ func aiHunter(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 // Helper functions
 // ---------------------------------------------------------------------------
 
-// findNearest returns the nearest alive bot from others, or nil.
+// hasLOS returns true if the observer has line of sight to the target.
+func hasLOS(from, to Vec2) bool {
+	return ActiveTerrain == nil || !ActiveTerrain.GridLineBlocked(from, to)
+}
+
+// findNearest returns the nearest alive bot from others with line of sight, or nil.
 func findNearest(bot *BotState, others []*BotState) *BotState {
 	var best *BotState
 	bestDist := 1e18
 	for _, o := range others {
 		if !o.IsAlive {
+			continue
+		}
+		if !hasLOS(bot.Position, o.Position) {
 			continue
 		}
 		d := bot.Position.DistanceTo(o.Position)
@@ -162,12 +170,15 @@ func findNearest(bot *BotState, others []*BotState) *BotState {
 	return best
 }
 
-// findLowestHP returns the alive bot with the lowest HP from others, or nil.
-func findLowestHP(_ *BotState, others []*BotState) *BotState {
+// findLowestHP returns the alive bot with the lowest HP and LOS from others, or nil.
+func findLowestHP(bot *BotState, others []*BotState) *BotState {
 	var best *BotState
 	bestHP := 1e18
 	for _, o := range others {
 		if !o.IsAlive {
+			continue
+		}
+		if !hasLOS(bot.Position, o.Position) {
 			continue
 		}
 		if o.HP < bestHP {
@@ -178,12 +189,15 @@ func findLowestHP(_ *BotState, others []*BotState) *BotState {
 	return best
 }
 
-// findHighestStreak returns the alive bot with the highest kill streak, or nil.
-func findHighestStreak(_ *BotState, others []*BotState) *BotState {
+// findHighestStreak returns the alive bot with the highest kill streak and LOS, or nil.
+func findHighestStreak(bot *BotState, others []*BotState) *BotState {
 	var best *BotState
 	bestStreak := -1
 	for _, o := range others {
 		if !o.IsAlive {
+			continue
+		}
+		if !hasLOS(bot.Position, o.Position) {
 			continue
 		}
 		if o.KillStreak > bestStreak {

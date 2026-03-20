@@ -880,7 +880,92 @@ func (e *GameEngine) processUseItems() {
 					Message: "gravity well deployed",
 				}
 			}
+
+		case ActionGrapple:
+			e.processGrappleAbility(bot)
 		}
+	}
+}
+
+// processGrappleAbility handles the universal grapple ability (separate from grapple weapon).
+// Pulls the target to 1 cell from the grappler, deals 15 damage, stuns for 5 ticks.
+func (e *GameEngine) processGrappleAbility(bot *BotState) {
+	if bot.GrappleCharges <= 0 {
+		bot.LastActionResult = &ActionResult{
+			Action:  "grapple",
+			Success: false,
+			Message: "no grapple charges remaining",
+		}
+		return
+	}
+	if bot.GrappleCooldown > 0 {
+		bot.LastActionResult = &ActionResult{
+			Action:  "grapple",
+			Success: false,
+			Message: "grapple on cooldown",
+		}
+		return
+	}
+	targetID := bot.PendingAction.TargetID
+	target, ok := e.Bots[targetID]
+	if !ok || !target.IsAlive {
+		bot.LastActionResult = &ActionResult{
+			Action:  "grapple",
+			Success: false,
+			Target:  targetID,
+			Message: "target not found or dead",
+		}
+		return
+	}
+
+	// Map-wide range: no range limit check.
+	// Deal 15 damage.
+	const grappleDamage = 15.0
+	rawDmg := CalculateDamage(grappleDamage, bot.AttackMultiplier, target.DefenseReduction)
+	dealt := ApplyDamage(target, bot, rawDmg, "grapple", e.TickCount)
+
+	// Pull target to 1 cell from grappler.
+	if ActiveTerrain != nil {
+		grapCell := ActiveTerrain.WorldToGrid(bot.Position)
+		targetCell := ActiveTerrain.WorldToGrid(target.Position)
+		bestCell := targetCell
+		bestDist := 999
+		for dx := -1; dx <= 1; dx++ {
+			for dy := -1; dy <= 1; dy++ {
+				if dx == 0 && dy == 0 {
+					continue
+				}
+				nc := [2]int{grapCell[0] + dx, grapCell[1] + dy}
+				if ActiveTerrain.IsBlocked(nc[0], nc[1]) {
+					continue
+				}
+				d := GridDistance(targetCell, nc)
+				if d < bestDist {
+					bestDist = d
+					bestCell = nc
+				}
+			}
+		}
+		if bestCell != targetCell {
+			target.Position = ActiveTerrain.GridToWorld(bestCell)
+			target.LastValidPosition = target.Position
+			e.Grid.Update(target.BotID, target.Position)
+		}
+	}
+
+	// Stun target for 5 ticks.
+	target.StunTicks = 5
+
+	// Consume charge and set cooldown (3 seconds).
+	bot.GrappleCharges--
+	bot.GrappleCooldown = 3.0
+
+	bot.LastActionResult = &ActionResult{
+		Action:  "grapple",
+		Success: true,
+		Target:  target.BotID,
+		Damage:  dealt,
+		Message: "grapple pull",
 	}
 }
 
@@ -1044,7 +1129,7 @@ func (e *GameEngine) sendBotTickUpdates() {
 				continue
 			}
 			if other, ok := e.Bots[id]; ok {
-				nearby = append(nearby, BuildBotNearbyView(other))
+				nearby = append(nearby, BuildBotNearbyView(other, bot.Position))
 				nearbyBotCount++
 			}
 		}
@@ -1128,10 +1213,25 @@ func (e *GameEngine) sendBotTickUpdates() {
 			hints = buildHints(bot, e.Bots, e.Pickups)
 		}
 
+		// Count armed mines within 3 grid cells of the bot.
+		nearbyMineCount := 0
+		for _, mine := range e.Landmines {
+			if mine.Armed && mine.OwnerID != bot.BotID {
+				if ActiveTerrain != nil {
+					botCell := ActiveTerrain.WorldToGrid(bot.Position)
+					mineCell := ActiveTerrain.WorldToGrid(mine.Position)
+					if GridDistance(botCell, mineCell) <= 3 {
+						nearbyMineCount++
+					}
+				}
+			}
+		}
+
 		// Add sudden death and bounty info to tick.
 		tickExtra := map[string]interface{}{
 			"sudden_death":  e.SuddenDeath.Active,
 			"bounty_target": e.Bounty.TargetID,
+			"nearby_mines":  nearbyMineCount,
 		}
 
 		SendTickUpdate(bot, yourState, nearby, e.TickCount, e.Arena, hints, fogRadius, tickExtra)

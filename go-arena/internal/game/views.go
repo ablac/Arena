@@ -31,13 +31,23 @@ func posToGrid(pos Vec2) [2]int {
 
 // BuildBotNearbyView builds the protocol-compatible map for a bot as seen by
 // a nearby observer. Position is reported as grid coordinates.
-func BuildBotNearbyView(bot *BotState) map[string]interface{} {
+// observerPos is the world-space position of the observing bot (for LOS checks).
+func BuildBotNearbyView(bot *BotState, observerPos Vec2) map[string]interface{} {
 	var lastAction interface{}
 	if bot.LastActionResult != nil {
 		lastAction = bot.LastActionResult.Action
 	}
 
 	gridPos := posToGrid(bot.Position)
+
+	// Line of sight check.
+	hasLOS := ActiveTerrain != nil && !ActiveTerrain.GridLineBlocked(observerPos, bot.Position)
+
+	// Weapon attack range.
+	wc := GetWeaponConfig(bot.Weapon)
+
+	// Threat score: (kills * 10 + hp_percent * 5)
+	threatScore := round1(float64(bot.RoundKills)*10 + (bot.HP/bot.MaxHP)*500)
 
 	return map[string]interface{}{
 		"type":         "bot",
@@ -55,6 +65,10 @@ func BuildBotNearbyView(bot *BotState) map[string]interface{} {
 		"target_id":    botTargetID(bot),
 		"is_dodging":   bot.InvulnTicks > 0,
 		"is_stunned":   bot.StunTicks > 0,
+		"has_los":      hasLOS,
+		"attack_range": wc.GridRange,
+		"can_attack":   bot.CooldownRemaining <= 0,
+		"threat_score": threatScore,
 	}
 }
 
@@ -167,6 +181,8 @@ func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCoun
 		"is_bounty_target":    bot.IsBountyTarget,
 		"mine_count":          bot.MineCount,
 		"gravity_well_charge": bot.GravityWellCharge,
+		"grapple_charges":     bot.GrappleCharges,
+		"grapple_cooldown":    round1(bot.GrappleCooldown),
 	}
 
 	return state

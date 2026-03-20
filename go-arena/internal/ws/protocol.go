@@ -48,6 +48,7 @@ var actionStringToType = map[string]game.ActionType{
 	"idle":             game.ActionIdle,
 	"place_mine":       game.ActionPlaceMine,
 	"use_gravity_well": game.ActionUseGravityWell,
+	"grapple":          game.ActionGrapple,
 }
 
 // ParseBotMessage unmarshals raw JSON data from a bot into the appropriate
