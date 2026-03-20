@@ -39,13 +39,15 @@ type AuthMessage struct {
 
 // actionStringToType maps action name strings to game.ActionType constants.
 var actionStringToType = map[string]game.ActionType{
-	"move":     game.ActionMove,
-	"move_to":  game.ActionMoveTo,
-	"attack":   game.ActionAttack,
-	"dodge":    game.ActionDodge,
-	"shove":    game.ActionShove,
-	"use_item": game.ActionUseItem,
-	"idle":     game.ActionIdle,
+	"move":             game.ActionMove,
+	"move_to":          game.ActionMoveTo,
+	"attack":           game.ActionAttack,
+	"dodge":            game.ActionDodge,
+	"shove":            game.ActionShove,
+	"use_item":         game.ActionUseItem,
+	"idle":             game.ActionIdle,
+	"place_mine":       game.ActionPlaceMine,
+	"use_gravity_well": game.ActionUseGravityWell,
 }
 
 // ParseBotMessage unmarshals raw JSON data from a bot into the appropriate

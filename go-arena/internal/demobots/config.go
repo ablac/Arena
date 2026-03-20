@@ -18,6 +18,7 @@ var WeaponRanges = map[string]float64{
 	"shield":  1,
 	"spear":   2,
 	"staff":   5,
+	"grapple": 4,
 }
 
 // DemoConfigs — 15 demo bots with aggressive stat builds and combat-focused strategies.
@@ -145,5 +146,14 @@ var DemoConfigs = []BotConfig{
 		Stats:    map[string]int{"hp": 4, "speed": 5, "attack": 8, "defense": 3},
 		Strategy: "aggressive",
 		Color:    "#e55039",
+	},
+
+	// === GRAPPLE USERS (mid-range pull, 1.5s cd) ===
+	{
+		Name:     "Demo-Hookshot",
+		Weapon:   "grapple",
+		Stats:    map[string]int{"hp": 4, "speed": 5, "attack": 8, "defense": 3},
+		Strategy: "assassin",
+		Color:    "#2ecc71",
 	},
 }

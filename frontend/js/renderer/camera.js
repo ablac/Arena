@@ -9,8 +9,8 @@
 const DEFAULT_ALPHA = -Math.PI / 2;
 const DEFAULT_BETA = 1.0;
 const BASE_RADIUS = 800;
-const MIN_BETA = 0.3;
-const MAX_BETA = 1.4;
+const MIN_BETA = 0.01;   // nearly straight up from below
+const MAX_BETA = Math.PI; // full orbit — can go under the arena
 const PAN_SPEED = 8;
 
 export class CameraController {
@@ -35,7 +35,8 @@ export class CameraController {
       new B.Vector3(w / 2, 0, h / 2), scene
     );
     this.camera.lowerRadiusLimit = 80;
-    this.camera.upperRadiusLimit = 3000;
+    this.camera.upperRadiusLimit = 1800; // limit zoom-out to prevent flying into void
+    this.camera.maxZ = 60000; // far clip — must see skybox (50k) and space objects
     this.camera.lowerBetaLimit = MIN_BETA;
     this.camera.upperBetaLimit = MAX_BETA;
     this.camera.panningSensibility = 0;
@@ -138,6 +139,11 @@ export class CameraController {
     } else if (this.autoPan && this.bots.length > 0) {
       this._autoPanToAction();
     }
+
+    // Clamp target to stay near the arena (with some margin)
+    const margin = 400;
+    this.targetX = Math.max(-margin, Math.min(this.arenaWidth + margin, this.targetX));
+    this.targetZ = Math.max(-margin, Math.min(this.arenaHeight + margin, this.targetZ));
 
     const lerp = 0.08;
     const t = this.camera.target;

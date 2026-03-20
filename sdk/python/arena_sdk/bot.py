@@ -6,6 +6,7 @@ import asyncio
 import heapq
 import json
 import logging
+import urllib.request
 from typing import Any
 
 import websockets
@@ -75,12 +76,50 @@ class ArenaBot:
         if msg.get("type") != "loadout_confirmed":
             logger.warning("Expected 'loadout_confirmed', got '%s'", msg.get("type"))
 
+        # Fetch terrain via REST API (pre-generated during intermission)
+        self.fetch_map()
+
     async def on_tick(self, state: dict, nearby: list, safe_zone: dict) -> dict:
         """Override this! Called every tick. Return an action dict."""
         raise NotImplementedError("Implement on_tick() in your bot!")
 
+    def fetch_map(self) -> bool:
+        """Fetch the current terrain via REST API (GET /api/v1/arena/map).
+
+        The server pre-generates the next round's map during intermission,
+        so this can be called before the round starts. Returns True if
+        terrain was loaded, False if no map is available yet.
+        """
+        # Derive REST base from WebSocket URL
+        base = self.server_url.replace("wss://", "https://").replace("ws://", "http://")
+        base = base.split("/ws/")[0]  # strip /ws/bot path
+        url = f"{base}/api/v1/arena/map"
+        try:
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+            if data.get("status") == "ok":
+                terrain = data.get("terrain", [])
+                self._cell_size = data.get("cell_size", 1)
+                width = data.get("width", 0)
+                height = data.get("height", 0)
+                # Normalise compact row-string format to 2D char array
+                if terrain and isinstance(terrain[0], str):
+                    terrain = [list(row) for row in terrain]
+                self._terrain = terrain
+                self._map_width = width
+                self._map_height = height
+                logger.info("Map loaded via REST: %dx%d", width, height)
+                return True
+            else:
+                logger.info("No map available yet (between rounds)")
+                return False
+        except Exception:
+            logger.warning("Failed to fetch map via REST, will retry at round_start")
+            return False
+
     async def on_map_init(self, terrain: list, width: int, height: int) -> None:
-        """Called once at round start with the grid terrain data.
+        """Called when terrain is loaded (via REST API or legacy map_init).
 
         Terrain may be compact (list of row strings) or legacy (list of lists
         of single-char strings). Both are normalised to ``list[list[str]]``.
@@ -88,6 +127,9 @@ class ArenaBot:
         Default implementation stores the terrain for use by helpers like
         ``get_local_map()`` and ``find_path()``. Override to add custom
         pre-processing (call ``super().on_map_init(...)`` to keep caching).
+
+        Note: The server no longer sends map_init over WebSocket. The SDK
+        fetches terrain via GET /api/v1/arena/map at connect and on round_start.
         """
         # Normalise compact row-string format to 2D char array
         if terrain and isinstance(terrain[0], str):
@@ -152,6 +194,14 @@ class ArenaBot:
     def idle(self) -> dict:
         """Returns an idle action."""
         return {"action": "idle"}
+
+    def place_mine(self) -> dict:
+        """Place a landmine at your current position (max 3 active mines)."""
+        return {"action": "place_mine"}
+
+    def use_gravity_well(self, target_position: tuple | list) -> dict:
+        """Deploy a gravity well at target position (requires gravity_well pickup charge)."""
+        return {"action": "use_gravity_well", "target_position": [target_position[0], target_position[1]]}
 
     # -- Map / pathfinding helpers --
 
@@ -324,6 +374,7 @@ class ArenaBot:
                 continue
             msg_type = msg.get("type")
             if msg_type == "map_init":
+                # Legacy: server no longer sends this, but handle if it does
                 terrain = msg.get("terrain", [])
                 width = msg.get("width", 0)
                 height = msg.get("height", 0)
@@ -332,6 +383,13 @@ class ArenaBot:
                     await self.on_map_init(terrain, width, height)
                 except Exception:
                     logger.exception("on_map_init error")
+            elif msg_type == "round_start":
+                # Fetch fresh terrain via REST API
+                if self.fetch_map():
+                    try:
+                        await self.on_map_init(self._terrain, self._map_width, self._map_height)
+                    except Exception:
+                        logger.exception("on_map_init error after REST fetch")
             elif msg_type == "tick":
                 self._tick_number = msg.get("tick_number", msg.get("tick", 0))
                 state = msg.get("your_state", {})

@@ -8,14 +8,27 @@
 
 import { makeMat } from './utils.js';
 
+let _highlightLayer = null;
+
+function _getHighlightLayer(scene) {
+  if (!_highlightLayer || _highlightLayer.isDisposed) {
+    _highlightLayer = new window.BABYLON.HighlightLayer('pickupHL', scene, {
+      blurHorizontalSize: 0.5,
+      blurVerticalSize: 0.5,
+    });
+  }
+  return _highlightLayer;
+}
+
 const COLORS = {
   health_pack:    [0.1, 1.0, 0.3],
   speed_boost:    [1.0, 1.0, 0.1],
   damage_boost:   [1.0, 0.25, 0.2],
   shield_bubble:  [0.25, 0.5, 1.0],
+  gravity_well:   [0.5, 0.0, 1.0],
 };
 
-/** @type {Map<string, {shapeMat: BABYLON.StandardMaterial, glowMat: BABYLON.StandardMaterial}>} */
+/** @type {Map<string, {shapeMat: BABYLON.StandardMaterial}>} */
 const _typeMats = new Map();
 
 function _getMats(type, scene) {
@@ -25,8 +38,7 @@ function _getMats(type, scene) {
   const c = COLORS[type] || COLORS.health_pack;
   const color = new B.Color3(c[0], c[1], c[2]);
   const shapeMat = makeMat(`pumat-${type}`, scene, color, { emissiveFactor: 0.8, noLight: true });
-  const glowMat = makeMat(`pugm-${type}`, scene, color, { noLight: true, alpha: 0.2, emissiveFactor: 1 });
-  mats = { shapeMat, glowMat };
+  mats = { shapeMat };
   _typeMats.set(type, mats);
   return mats;
 }
@@ -37,12 +49,10 @@ export class PickupRenderer {
     this.scene = scene;
     /** @type {Map<string, Object>} */
     this.meshes = new Map();
-    this._time = 0;
   }
 
   update(pickups) {
     const seen = new Set();
-    this._time += 0.04;
 
     for (const p of pickups) {
       seen.add(p.pickup_id);
@@ -53,8 +63,8 @@ export class PickupRenderer {
       }
 
       const x = p.position[0], z = p.position[1];
-      entry.root.position.set(x, 8 + Math.sin(this._time * 2 + x * 0.01) * 3, z);
-      entry.root.rotation.y = this._time * 1.5 + x * 0.1;
+      entry.root.position.x = x;
+      entry.root.position.z = z;
     }
 
     for (const [id, entry] of this.meshes) {
@@ -96,19 +106,44 @@ export class PickupRenderer {
       mesh.material = mats.shapeMat;
     }
 
-    const glow = B.MeshBuilder.CreateDisc(`pug-${id}`, { radius: 12, tessellation: 8 }, this.scene);
-    glow.rotation.x = Math.PI / 2;
-    glow.position.y = -2;
-    glow.parent = root;
-    glow.material = mats.glowMat;
+    const hl = _getHighlightLayer(this.scene);
+    const c = COLORS[type] || COLORS.health_pack;
+    const hlColor = new B.Color3(c[0], c[1], c[2]);
+    hl.addMesh(mesh, hlColor);
+    // For health_pack with sibling, add both
+    if (mesh._sibling) hl.addMesh(mesh._sibling, hlColor);
 
-    return { root, mesh, glow };
+    // Floating bob animation (Babylon Animation API — runs automatically)
+    const bobAnim = new B.Animation('pickupBob', 'position.y', 30,
+      B.Animation.ANIMATIONTYPE_FLOAT, B.Animation.ANIMATIONLOOPMODE_CYCLE);
+    bobAnim.setKeys([
+      { frame: 0, value: 5 },
+      { frame: 15, value: 11 },
+      { frame: 30, value: 5 },
+    ]);
+    this.scene.beginDirectAnimation(root, [bobAnim], 0, 30, true, 1.0 + Math.random() * 0.3);
+
+    // Continuous rotation animation
+    const rotAnim = new B.Animation('pickupRot', 'rotation.y', 30,
+      B.Animation.ANIMATIONTYPE_FLOAT, B.Animation.ANIMATIONLOOPMODE_CYCLE);
+    rotAnim.setKeys([
+      { frame: 0, value: 0 },
+      { frame: 30, value: Math.PI * 2 },
+    ]);
+    this.scene.beginDirectAnimation(root, [rotAnim], 0, 30, true, 0.8 + Math.random() * 0.4);
+
+    return { root, mesh };
   }
 
   _dispose(entry) {
+    const hl = _getHighlightLayer(this.scene);
+    if (hl) {
+      hl.removeMesh(entry.mesh);
+      if (entry.mesh._sibling) hl.removeMesh(entry.mesh._sibling);
+    }
+    this.scene.stopAnimation(entry.root);
     if (entry.mesh._sibling) entry.mesh._sibling.dispose();
     entry.mesh.dispose();
-    entry.glow.dispose();
     entry.root.dispose();
     // Don't dispose shared materials
   }

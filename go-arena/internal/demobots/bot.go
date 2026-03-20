@@ -323,10 +323,11 @@ func (b *demoBot) session(ctx context.Context) error {
 			// Wait for next round.
 
 		case "map_init":
-			parseTerrain(msg)
+			// Deprecated — no longer sent. Terrain synced at round_start.
 
 		case "round_start":
-			// New round started.
+			// Sync terrain directly from game.ActiveTerrain (no WebSocket needed).
+			syncTerrain()
 
 		case "lobby":
 			// Waiting for more players.

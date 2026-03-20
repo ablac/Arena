@@ -34,7 +34,7 @@
  */
 
 import { parseColor, makeMat } from './utils.js';
-import { getGuiTexture } from './bot-body.js';
+import { getGuiTexture, _getTplShadow } from './bot-body.js';
 import { SwordsmanAnimState } from './swordsman-anims.js';
 
 // ─── Scale ───────────────────────────────────────────────────────────────────
@@ -87,26 +87,13 @@ const GRIP_D   = 0.03 * S;
 const POMMEL_R = 0.025 * S;
 
 // ─── Shared materials ───────────────────────────────────────────────────────
-let _shdMat = null;
 let _swordBladeMat = null;
 let _swordGuardMat = null;
 let _swordGripMat = null;
 let _swordPommelMat = null;
 
-function _getShadowMat(scene) {
-  if (!_shdMat || _shdMat.isDisposed) {
-    const B = window.BABYLON;
-    _shdMat = new B.StandardMaterial('smat-sw-shared', scene);
-    _shdMat.diffuseColor = new B.Color3(0, 0, 0);
-    _shdMat.specularColor = B.Color3.Black();
-    _shdMat.emissiveColor = B.Color3.Black();
-    _shdMat.disableLighting = true;
-    _shdMat.alpha = 0.3;
-    _shdMat.backFaceCulling = false;
-    _shdMat.freeze();
-  }
-  return _shdMat;
-}
+// Shadow disc scale relative to bot-body template (BODY_R * 1.3 = 6.5)
+const _SW_SHADOW_SCALE = (TORSO_W * 0.9) / (5 * 1.3);  // 5.85 / 6.5 ≈ 0.9
 
 function _getSwordMats(scene) {
   const B = window.BABYLON;
@@ -314,14 +301,11 @@ export function createSwordsmanEntry(bot, scene) {
   const rightShin = _box(`swRS-${id}`, SHIN_W, SHIN_H, SHIN_D, scene, rightLowerLeg, legMat);
   rightShin.position.y = -SHIN_H / 2;
 
-  // ── Shadow disc ──
-  const shadow = B.MeshBuilder.CreateDisc(`swShd-${id}`, {
-    radius: TORSO_W * 0.9, tessellation: 6
-  }, scene);
-  shadow.rotation.x = Math.PI / 2;
+  // ── Shadow disc (instanced from shared template in bot-body.js) ──
+  const shadow = _getTplShadow(scene).createInstance(`swShd-${id}`);
+  shadow.scaling.setAll(_SW_SHADOW_SCALE);
   shadow.position.y = 0.1;
   shadow.parent = root;
-  shadow.material = _getShadowMat(scene);
   shadow.isPickable = false;
   shadow.alwaysSelectAsActiveMesh = true;
 
@@ -412,9 +396,12 @@ export function createSwordsmanEntry(bot, scene) {
  * Shared weapon materials are NOT disposed (they persist across bots).
  */
 export function disposeSwordsmanEntry(entry) {
-  // Remove GUI controls from the fullscreen texture
-  if (entry.nameLabel) entry.nameLabel.dispose();
+  // Remove GUI controls — dispose children before parent
+  if (entry.hpFill) entry.hpFill.dispose();
   if (entry.hpContainer) entry.hpContainer.dispose();
+  if (entry.nameLabel) entry.nameLabel.dispose();
+  // Dispose shadow instance
+  if (entry.shadow && !entry.shadow.isDisposed()) entry.shadow.dispose();
   for (const mat of entry._swMats) {
     if (mat && !mat.isDisposed) mat.dispose();
   }

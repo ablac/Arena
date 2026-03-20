@@ -82,6 +82,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		// Health check (public).
 		api.Get("/health", healthHandler(engine))
 
+		// Bot setup reference (public — no auth).
+		api.Get("/bot-setup", BotSetup())
+
 		// Key generation (public, rate-limited per IP for registration).
 		api.With(
 			security.RateLimitMiddleware(config.C.RateLimitRegisterPerHour),
@@ -104,6 +107,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 		// Arena status (public).
 		api.Get("/arena/status", GetArenaStatus(engine))
+
+		// Arena map/terrain (public).
+		api.Get("/arena/map", GetArenaMap(engine))
 
 		// Admin routes (token-authenticated, rate-limited).
 		api.Route("/admin", func(admin chi.Router) {
@@ -130,6 +136,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 		ar.Route("/api/v1", func(api chi.Router) {
 			api.Get("/health", healthHandler(engine))
+			api.Get("/bot-setup", BotSetup())
 			api.With(
 				security.RateLimitMiddleware(config.C.RateLimitRegisterPerHour),
 			).Post("/keys/generate", GenerateKey)
@@ -144,6 +151,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			})
 			api.Get("/leaderboard", GetLeaderboard)
 			api.Get("/arena/status", GetArenaStatus(engine))
+			api.Get("/arena/map", GetArenaMap(engine))
 
 			// Admin routes (mirrored under /arena prefix).
 			api.Route("/admin", func(admin chi.Router) {

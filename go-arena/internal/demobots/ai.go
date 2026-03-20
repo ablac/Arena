@@ -4,6 +4,8 @@ import (
 	"math"
 	"math/rand"
 	"sync"
+
+	"arena-server/internal/game"
 )
 
 // === Types ===
@@ -32,9 +34,17 @@ type tickState struct {
 	LastActionOK     bool
 	HasSpeedBoost    bool
 	HasDmgBoost      bool
+	IsBountyTarget   bool
+	SuddenDeath      bool
+	BountyTargetID   string
+	MineCount        int
+	GravityWellCharge int
 	Enemies          []entity
 	Pickups          []entity
 	Hints            []hint
+	TeleportPads     []entity
+	HazardZones      []entity
+	GravityWells     []entity
 }
 
 type entity struct {
@@ -58,7 +68,9 @@ type hint struct {
 	PickupType string
 }
 
-// botTerrain caches the map_init terrain grid for AI decisions.
+// botTerrain wraps game.ActiveTerrain for AI decisions.
+// Previously parsed from map_init WebSocket messages; now reads directly
+// from the engine's shared ActiveTerrain pointer (zero-copy, always in sync).
 type botTerrain struct {
 	Width    int
 	Height   int
@@ -71,56 +83,27 @@ var (
 	terrainMu     sync.RWMutex
 )
 
-// parseTerrain extracts and caches terrain from a map_init message.
-func parseTerrain(msg map[string]interface{}) {
-	w, _ := msg["width"].(float64)
-	h, _ := msg["height"].(float64)
-	cs, _ := msg["cell_size"].(float64)
-	width := int(w)
-	height := int(h)
-	if width <= 0 || height <= 0 {
+// syncTerrain reads game.ActiveTerrain and caches a local copy for AI use.
+// Called at round_start instead of parsing map_init messages.
+func syncTerrain() {
+	t := game.ActiveTerrain
+	if t == nil {
 		return
 	}
-
-	cells := make([][]byte, width)
-	for x := range cells {
-		cells[x] = make([]byte, height)
-		for y := range cells[x] {
-			cells[x][y] = '.'
-		}
-	}
-
-	if rows, ok := msg["terrain"].([]interface{}); ok {
-		for row, rowData := range rows {
-			if row >= height {
-				break
-			}
-			// Compact format: each row is a single string like "..##.."
-			if rowStr, ok := rowData.(string); ok {
-				for col := 0; col < len(rowStr) && col < width; col++ {
-					cells[col][row] = rowStr[col]
-				}
-				continue
-			}
-			// Legacy format: each row is an array of single-char strings
-			cols, ok := rowData.([]interface{})
-			if !ok {
-				continue
-			}
-			for col, cell := range cols {
-				if col >= width {
-					break
-				}
-				if s, ok := cell.(string); ok && len(s) > 0 {
-					cells[col][row] = s[0]
-				}
-			}
-		}
-	}
-
 	terrainMu.Lock()
-	cachedTerrain = &botTerrain{Width: width, Height: height, CellSize: cs, Cells: cells}
+	cachedTerrain = &botTerrain{
+		Width:    t.Width,
+		Height:   t.Height,
+		CellSize: t.CellSize,
+		Cells:    t.Cells, // shared read-only slice — engine doesn't mutate mid-round
+	}
 	terrainMu.Unlock()
+}
+
+// parseTerrain is kept for backward compatibility but now just calls syncTerrain.
+// The msg parameter is ignored.
+func parseTerrain(_ map[string]interface{}) {
+	syncTerrain()
 }
 
 func getTerrain() *botTerrain {
@@ -337,6 +320,14 @@ func idle() actionResult {
 	return actionResult{Action: "idle"}
 }
 
+func placeMine() actionResult {
+	return actionResult{Action: "place_mine"}
+}
+
+func useGravityWell(pos [2]float64) actionResult {
+	return actionResult{Action: "use_gravity_well", TargetPosition: &pos}
+}
+
 // === Tick Parsing ===
 
 func parseTick(msg map[string]interface{}) tickState {
@@ -485,9 +476,36 @@ func parseTick(msg map[string]interface{}) tickState {
 				}
 			case "pickup":
 				ts.Pickups = append(ts.Pickups, ent)
+			case "teleport_pad":
+				ts.TeleportPads = append(ts.TeleportPads, ent)
+			case "hazard_zone":
+				ts.HazardZones = append(ts.HazardZones, ent)
+			case "gravity_well":
+				ts.GravityWells = append(ts.GravityWells, ent)
+			case "bounty_target":
+				ts.Enemies = append(ts.Enemies, ent)
 			}
 		}
 	}
+	// Parse new gameplay fields.
+	if v, ok := msg["sudden_death"].(bool); ok {
+		ts.SuddenDeath = v
+	}
+	if v, ok := msg["bounty_target"].(string); ok {
+		ts.BountyTargetID = v
+	}
+	if ys, ok := msg["your_state"].(map[string]interface{}); ok {
+		if v, ok := ys["is_bounty_target"].(bool); ok {
+			ts.IsBountyTarget = v
+		}
+		if v, ok := ys["mine_count"].(float64); ok {
+			ts.MineCount = int(v)
+		}
+		if v, ok := ys["gravity_well_charge"].(float64); ok {
+			ts.GravityWellCharge = int(v)
+		}
+	}
+
 	if h, ok := msg["hints"].([]interface{}); ok {
 		for _, raw := range h {
 			if hm, ok := raw.(map[string]interface{}); ok {
@@ -592,7 +610,36 @@ func weakest(pos [2]float64, enemies []entity) (*entity, float64) {
 
 // isMelee returns true if the weapon is short range.
 func isMelee(weapon string) bool {
-	return weapon == "sword" || weapon == "daggers" || weapon == "shield" || weapon == "spear"
+	return weapon == "sword" || weapon == "daggers" || weapon == "shield" || weapon == "spear" || weapon == "grapple"
+}
+
+// isInActiveHazard checks if a position is inside any active hazard zone.
+func isInActiveHazard(pos [2]float64, hazards []entity) bool {
+	for _, h := range hazards {
+		if h.SubType != "" { // SubType could be used, but check "active" field
+			continue
+		}
+		// Hazard zones have position — check if we're nearby (within ~2 tiles)
+		d := chebyshev(pos, h.Position)
+		if d <= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+// nearestTeleportPad returns the nearest teleport pad.
+func nearestTeleportPad(pos [2]float64, pads []entity) (*entity, float64) {
+	var best *entity
+	bestD := math.Inf(1)
+	for i := range pads {
+		d := chebyshev(pos, pads[i].Position)
+		if d < bestD {
+			bestD = d
+			best = &pads[i]
+		}
+	}
+	return best, bestD
 }
 
 // === Pickup Logic ===
@@ -660,6 +707,99 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		// Aggressive bots: shove the attacker instead of dodging
 		if canShv && nearD <= 1 {
 			return shove(near.ID)
+		}
+	}
+
+	// === HAZARD AVOIDANCE: Move away from active hazard zones ===
+	if isInActiveHazard(pos, ts.HazardZones) {
+		// Try to move toward zone center (away from hazard)
+		if near != nil && nearD <= wrange && canAtk {
+			return atk(near, weapon) // attack on the way out
+		}
+		return moveTo(pos, ts.ZoneCenter)
+	}
+
+	// === TELEPORT: Use teleport pads when fleeing at low HP ===
+	if strategy != "berserker" && hpRatio < 0.25 && near != nil && nearD <= 2 {
+		tp, tpD := nearestTeleportPad(pos, ts.TeleportPads)
+		if tp != nil && tpD <= 1 {
+			return moveTo(pos, tp.Position) // step onto pad to escape
+		}
+	}
+
+	// === BOUNTY DEFENSE: If we ARE the bounty, play more carefully ===
+	if ts.IsBountyTarget && near != nil && nearD <= 2 && hpRatio < 0.4 && canDodge {
+		return dodge(gridDirAway(pos, near.Position))
+	}
+
+	// === SUDDEN DEATH: Avoid void tiles by moving toward zone center ===
+	if ts.SuddenDeath {
+		t := getTerrain()
+		if t != nil {
+			col, row := int(pos[0]), int(pos[1])
+			if col >= 0 && row >= 0 && col < t.Width && row < t.Height && t.Cells[col][row] == 'V' {
+				// Standing on void — move to zone center immediately
+				return moveTo(pos, ts.ZoneCenter)
+			}
+			// Check adjacent cells for void and prefer moving away
+			voidCount := 0
+			for dc := -1; dc <= 1; dc++ {
+				for dr := -1; dr <= 1; dr++ {
+					nc, nr := col+dc, row+dr
+					if nc >= 0 && nr >= 0 && nc < t.Width && nr < t.Height && t.Cells[nc][nr] == 'V' {
+						voidCount++
+					}
+				}
+			}
+			if voidCount >= 3 {
+				return moveTo(pos, ts.ZoneCenter)
+			}
+		}
+	}
+
+	// === GRAVITY WELL: Deploy in enemy clusters (2+ enemies within 3 tiles) ===
+	if ts.GravityWellCharge > 0 && len(ts.Enemies) >= 2 {
+		// Find cluster center of nearby enemies
+		clusterCount := 0
+		var cx, cy float64
+		for _, e := range ts.Enemies {
+			if chebyshev(pos, e.Position) <= 5 {
+				cx += e.Position[0]
+				cy += e.Position[1]
+				clusterCount++
+			}
+		}
+		if clusterCount >= 2 {
+			cx /= float64(clusterCount)
+			cy /= float64(clusterCount)
+			target := [2]float64{math.Round(cx), math.Round(cy)}
+			return useGravityWell(target)
+		}
+	}
+
+	// === LANDMINES: Place near teleport exits, health packs, or choke points ===
+	if ts.MineCount < 3 && len(ts.Enemies) > 0 {
+		// Place mine if near a teleport pad exit (enemies will teleport here)
+		tp, tpD := nearestTeleportPad(pos, ts.TeleportPads)
+		if tp != nil && tpD <= 1 {
+			return placeMine()
+		}
+		// Place mine near health packs (enemies will come for them)
+		hp, hpD := nearestHealthPickup(pos, ts.Pickups)
+		if hp != nil && hpD <= 1 && hpRatio > 0.6 {
+			return placeMine()
+		}
+	}
+
+	// === GRAPPLE GAP-CLOSE: Pull self to ranged enemies ===
+	if weapon == "grapple" && canAtk && near != nil && nearD > 1 && nearD <= wrange {
+		// Prioritize ranged enemies to close the gap
+		for i := range ts.Enemies {
+			e := &ts.Enemies[i]
+			d := chebyshev(pos, e.Position)
+			if d > 1 && d <= wrange && (e.Weapon == "bow" || e.Weapon == "staff") {
+				return atk(e, weapon)
+			}
 		}
 	}
 
