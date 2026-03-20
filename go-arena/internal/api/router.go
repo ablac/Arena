@@ -105,6 +105,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		// Arena status (public).
 		api.Get("/arena/status", GetArenaStatus(engine))
 
+		// Arena map (public) — returns current terrain grid.
+		api.Get("/arena/map", GetArenaMap(engine))
+
 		// Admin routes (token-authenticated, rate-limited).
 		api.Route("/admin", func(admin chi.Router) {
 			admin.Use(MakeAdminAuthMiddleware(adminHandler))
@@ -144,6 +147,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			})
 			api.Get("/leaderboard", GetLeaderboard)
 			api.Get("/arena/status", GetArenaStatus(engine))
+			api.Get("/arena/map", GetArenaMap(engine))
 
 			// Admin routes (mirrored under /arena prefix).
 			api.Route("/admin", func(admin chi.Router) {
