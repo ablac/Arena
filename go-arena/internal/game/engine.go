@@ -29,10 +29,21 @@ type GameEngine struct {
 	Grid         *SpatialGrid
 	NavGrid      *NavGrid
 	Terrain      *TerrainGrid
+	NextTerrain  *TerrainGrid   // Pre-generated terrain for next round (available during intermission)
+	NextObstacles []Obstacle    // Pre-generated obstacles for next round
+	NextNavGrid  *NavGrid       // Pre-generated nav grid for next round
 	KillFeed     *KillFeed
 
 	// Anti-teaming
 	AntiTeam *AntiTeamTracker
+
+	// New gameplay systems
+	TeleportPads []TeleportPad
+	HazardZones  []HazardZone
+	SuddenDeath  *SuddenDeathSystem
+	Bounty       *BountySystem
+	Landmines    []Landmine
+	GravityWells []GravityWell
 
 	// Spectators
 	Spectators   []*SpectatorConn
@@ -83,6 +94,8 @@ func NewGameEngine() *GameEngine {
 		Grid:        NewSpatialGrid(config.C.SpatialCellSize),
 		KillFeed:    NewKillFeed(config.C.KillFeedSize),
 		AntiTeam:    NewAntiTeamTracker(),
+		SuddenDeath: NewSuddenDeathSystem(),
+		Bounty:      NewBountySystem(),
 		StartTime:   time.Now(),
 		bannedKeys:  make(map[string]bool),
 		bannedIPs:   make(map[string]bool),
@@ -269,6 +282,25 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Zone damage.
 	e.applyZoneDamage()
 
+	// Teleport pads.
+	ProcessTeleports(e.Bots, e.TeleportPads, e.Grid, e.TickCount)
+
+	// Environmental hazards.
+	UpdateHazards(e.HazardZones, e.Bots, e.TickCount)
+
+	// Landmines.
+	UpdateMines(&e.Landmines, e.Bots, e.TickCount)
+
+	// Gravity wells.
+	UpdateGravityWells(&e.GravityWells, e.Bots, e.Grid)
+
+	// Sudden death: activate when zone reaches minimum, remove floor tiles.
+	e.SuddenDeath.CheckActivation(e.Arena)
+	e.SuddenDeath.Update(e.Bots, e.Arena)
+
+	// Bounty system: update bounty target based on kill streaks.
+	e.Bounty.Update(e.Bots)
+
 	// Anti-teaming: penalise bots that stay near each other without fighting.
 	penalised := e.AntiTeam.Update(e.Bots, e.Grid)
 	for _, botID := range penalised {
@@ -337,7 +369,26 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 
 	// No respawns — dead bots stay dead until next round.
 
-	// Pickups.
+	// Teleport pads.
+	ProcessTeleports(e.Bots, e.TeleportPads, e.Grid, e.TickCount)
+
+	// Environmental hazards.
+	UpdateHazards(e.HazardZones, e.Bots, e.TickCount)
+
+	// Gravity wells.
+	UpdateGravityWells(&e.GravityWells, e.Bots, e.Grid)
+
+	// Landmines.
+	UpdateMines(&e.Landmines, e.Bots, e.TickCount)
+
+	// Sudden death (activates when zone reaches minimum).
+	e.SuddenDeath.CheckActivation(e.Arena)
+	e.SuddenDeath.Update(e.Bots, e.Arena)
+
+	// Bounty system.
+	e.Bounty.Update(e.Bots)
+
+	// Pickups (include gravity_well type).
 	MaybeSpawnPickup(&e.Pickups, e.Arena, e.TickCount)
 	CheckAutoCollect(e.Bots, &e.Pickups)
 
@@ -397,16 +448,25 @@ func (e *GameEngine) startRound() {
 	c := &config.C
 	e.Round.RoundNumber++
 
-	// Generate new obstacles.
-	obstacles := GenerateObstacles(c.ArenaWidth, c.ArenaHeight, c.ObstacleCountMin, c.ObstacleCountMax)
+	// Use pre-generated terrain from intermission if available, otherwise generate fresh.
+	var obstacles []Obstacle
+	if e.NextTerrain != nil {
+		obstacles = e.NextObstacles
+		e.NavGrid = e.NextNavGrid
+		e.Terrain = e.NextTerrain
+		ActiveTerrain = e.Terrain
+		// Clear pre-gen fields.
+		e.NextTerrain = nil
+		e.NextObstacles = nil
+		e.NextNavGrid = nil
+	} else {
+		// First round or no pre-gen available — generate fresh.
+		obstacles = GenerateObstacles(c.ArenaWidth, c.ArenaHeight, c.ObstacleCountMin, c.ObstacleCountMax)
+		e.NavGrid = NewNavGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.BotRadius)
+		e.Terrain = NewTerrainGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.PathfindingCellSize, c.BotRadius)
+		ActiveTerrain = e.Terrain
+	}
 	e.Arena.Reset(obstacles)
-
-	// Build navigation grid.
-	e.NavGrid = NewNavGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.BotRadius)
-
-	// Build terrain grid for the grid-based map system.
-	e.Terrain = NewTerrainGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.PathfindingCellSize, c.BotRadius)
-	ActiveTerrain = e.Terrain
 
 	// Clear transient state.
 	e.Pickups = nil
@@ -414,9 +474,25 @@ func (e *GameEngine) startRound() {
 	e.StaffImpacts = nil
 	e.DeathEvents = nil
 	e.KillEvents = nil
+	e.Landmines = nil
+	e.GravityWells = nil
 	e.Grid.Clear()
 	e.KillFeed.Clear()
 	e.AntiTeam.Clear()
+	e.SuddenDeath.Clear()
+	e.Bounty.Clear()
+
+	// Spawn new gameplay features.
+	e.TeleportPads = SpawnTeleportPads(e.Arena, c.TeleportPadPairs)
+	e.HazardZones = SpawnHazardZones(e.Arena, c.HazardZoneCount)
+
+	// Clear and spawn new gameplay systems.
+	e.Landmines = nil
+	e.GravityWells = nil
+	e.SuddenDeath.Clear()
+	e.Bounty.Clear()
+	e.TeleportPads = SpawnTeleportPads(e.Arena, config.C.TeleportPadPairs)
+	e.HazardZones = SpawnHazardZones(e.Arena, config.C.HazardZoneCount)
 
 	// Set round state.
 	e.Round.Phase = PhaseActive
@@ -436,10 +512,12 @@ func (e *GameEngine) startRound() {
 		bot.LastActionTick = 0 // Reset AFK timer so bots aren't kicked at round start
 	}
 
-	// Send round_start and map_init messages to every bot.
+	// Send round_start to every bot.
+	// Note: map_init is no longer sent over WebSocket — bots should use
+	// GET /api/v1/arena/map instead (available during intermission with
+	// next round's pre-generated terrain).
 	for _, bot := range e.Bots {
 		SendRoundStart(bot, e.Round, e.Bots, e.Arena)
-		SendMapInit(bot, e.Terrain)
 	}
 
 	slog.Info("round started",
@@ -493,9 +571,17 @@ func (e *GameEngine) endRound() {
 		}
 	}(e.copyBotsForPersist(), winnerID)
 
+	// Pre-generate next round's terrain so bots can GET /api/v1/arena/map during intermission.
+	nextC := &config.C
+	e.NextObstacles = GenerateObstacles(nextC.ArenaWidth, nextC.ArenaHeight, nextC.ObstacleCountMin, nextC.ObstacleCountMax)
+	e.NextNavGrid = NewNavGrid(nextC.ArenaWidth, nextC.ArenaHeight, e.NextObstacles, nextC.BotRadius)
+	e.NextTerrain = NewTerrainGrid(nextC.ArenaWidth, nextC.ArenaHeight, e.NextObstacles, nextC.PathfindingCellSize, nextC.BotRadius)
+	ActiveTerrain = e.NextTerrain
+
 	slog.Info("round ended",
 		"round", e.Round.RoundNumber,
 		"winner", winnerName,
+		"next_map_pregenerated", true,
 	)
 
 	if GameEventHook != nil {
@@ -679,6 +765,18 @@ func (e *GameEngine) GetArenaSnapshot() ArenaSnapshot {
 	return snap
 }
 
+// GetMapFeatures returns a copy of the current teleport pads and hazard zones
+// under the read lock. Used by the /api/v1/arena/map endpoint.
+func (e *GameEngine) GetMapFeatures() ([]TeleportPad, []HazardZone) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	pads := make([]TeleportPad, len(e.TeleportPads))
+	copy(pads, e.TeleportPads)
+	zones := make([]HazardZone, len(e.HazardZones))
+	copy(zones, e.HazardZones)
+	return pads, zones
+}
+
 // ConnectedBotCount returns the number of connected bots (active + waiting)
 // under the read lock.
 func (e *GameEngine) ConnectedBotCount() int {
@@ -722,24 +820,65 @@ func (e *GameEngine) applyFallbacks() {
 // specified pickup.
 func (e *GameEngine) processUseItems() {
 	for _, bot := range e.Bots {
-		if bot.PendingAction == nil || bot.PendingAction.Type != ActionUseItem {
+		if bot.PendingAction == nil || !bot.IsAlive {
 			continue
 		}
-		if !bot.IsAlive {
-			continue
-		}
-		ok := CollectByAction(bot, bot.PendingAction.ItemID, &e.Pickups)
-		if ok {
-			bot.LastActionResult = &ActionResult{
-				Action:  "use_item",
-				Success: true,
-				Message: "item collected",
+
+		switch bot.PendingAction.Type {
+		case ActionUseItem:
+			ok := CollectByAction(bot, bot.PendingAction.ItemID, &e.Pickups)
+			if ok {
+				bot.LastActionResult = &ActionResult{
+					Action:  "use_item",
+					Success: true,
+					Message: "item collected",
+				}
+			} else {
+				bot.LastActionResult = &ActionResult{
+					Action:  "use_item",
+					Success: false,
+					Message: "item not found or out of range",
+				}
 			}
-		} else {
-			bot.LastActionResult = &ActionResult{
-				Action:  "use_item",
-				Success: false,
-				Message: "item not found or out of range",
+
+		case ActionPlaceMine:
+			mine := PlaceMine(bot, &e.Landmines, e.TickCount)
+			if mine != nil {
+				bot.LastActionResult = &ActionResult{
+					Action:  "place_mine",
+					Success: true,
+					Message: "mine placed",
+				}
+			} else {
+				bot.LastActionResult = &ActionResult{
+					Action:  "place_mine",
+					Success: false,
+					Message: "max mines reached",
+				}
+			}
+
+		case ActionUseGravityWell:
+			if bot.GravityWellCharge <= 0 {
+				bot.LastActionResult = &ActionResult{
+					Action:  "use_gravity_well",
+					Success: false,
+					Message: "no gravity well charge",
+				}
+			} else if bot.PendingAction.TargetPosition == nil {
+				bot.LastActionResult = &ActionResult{
+					Action:  "use_gravity_well",
+					Success: false,
+					Message: "target_position required",
+				}
+			} else {
+				well := CreateGravityWell(bot.BotID, *bot.PendingAction.TargetPosition)
+				e.GravityWells = append(e.GravityWells, *well)
+				bot.GravityWellCharge--
+				bot.LastActionResult = &ActionResult{
+					Action:  "use_gravity_well",
+					Success: true,
+					Message: "gravity well deployed",
+				}
 			}
 		}
 	}
@@ -783,6 +922,8 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 
 			if victimOk {
 				ApplyEloChange(killer, victim)
+				// Bounty bonus for killing the bounty target.
+				e.Bounty.OnKill(killer, victim)
 			}
 		}
 
@@ -921,7 +1062,65 @@ func (e *GameEngine) sendBotTickUpdates() {
 			}
 		}
 
-		// No obstacle views in ticks — terrain was sent via map_init.
+		// Include teleport pads within fog radius.
+		for _, pad := range e.TeleportPads {
+			if ActiveTerrain != nil {
+				botCell := ActiveTerrain.WorldToGrid(bot.Position)
+				padCell := ActiveTerrain.WorldToGrid(pad.Position)
+				if GridDistance(botCell, padCell) <= fogRadius {
+					nearby = append(nearby, BuildTeleportPadView(pad, true))
+				}
+			} else if bot.Position.DistanceTo(pad.Position) <= viewRadius {
+				nearby = append(nearby, BuildTeleportPadView(pad, true))
+			}
+		}
+
+		// Include hazard zones within fog radius.
+		for _, zone := range e.HazardZones {
+			if ActiveTerrain != nil {
+				botCell := ActiveTerrain.WorldToGrid(bot.Position)
+				zoneCell := ActiveTerrain.WorldToGrid(zone.Position)
+				if GridDistance(botCell, zoneCell) <= fogRadius+4 {
+					nearby = append(nearby, BuildHazardZoneView(zone, true))
+				}
+			} else if bot.Position.DistanceTo(zone.Position) <= viewRadius {
+				nearby = append(nearby, BuildHazardZoneView(zone, true))
+			}
+		}
+
+		// Include gravity wells within fog radius.
+		for _, well := range e.GravityWells {
+			if ActiveTerrain != nil {
+				botCell := ActiveTerrain.WorldToGrid(bot.Position)
+				wellCell := ActiveTerrain.WorldToGrid(well.Position)
+				if GridDistance(botCell, wellCell) <= fogRadius {
+					nearby = append(nearby, BuildGravityWellView(well, true))
+				}
+			} else if bot.Position.DistanceTo(well.Position) <= viewRadius {
+				nearby = append(nearby, BuildGravityWellView(well, true))
+			}
+		}
+
+		// Include own landmines (only visible to owner).
+		for _, mine := range e.Landmines {
+			if mine.OwnerID == bot.BotID {
+				nearby = append(nearby, BuildMineView(mine, true))
+			}
+		}
+
+		// Include bounty target position (visible to all bots regardless of fog).
+		if e.Bounty.TargetID != "" && e.Bounty.TargetID != bot.BotID {
+			if bountyBot, ok := e.Bots[e.Bounty.TargetID]; ok && bountyBot.IsAlive {
+				gridPos := posToGrid(bountyBot.Position)
+				nearby = append(nearby, map[string]interface{}{
+					"type":     "bounty_target",
+					"id":       bountyBot.BotID,
+					"bot_id":   bountyBot.BotID,
+					"name":     bountyBot.Name,
+					"position": [2]int{gridPos[0], gridPos[1]},
+				})
+			}
+		}
 
 		// Build directional hints when no bots are within fog radius.
 		var hints []map[string]interface{}
@@ -929,7 +1128,13 @@ func (e *GameEngine) sendBotTickUpdates() {
 			hints = buildHints(bot, e.Bots, e.Pickups)
 		}
 
-		SendTickUpdate(bot, yourState, nearby, e.TickCount, e.Arena, hints, fogRadius)
+		// Add sudden death and bounty info to tick.
+		tickExtra := map[string]interface{}{
+			"sudden_death":  e.SuddenDeath.Active,
+			"bounty_target": e.Bounty.TargetID,
+		}
+
+		SendTickUpdate(bot, yourState, nearby, e.TickCount, e.Arena, hints, fogRadius, tickExtra)
 	}
 }
 
@@ -997,6 +1202,24 @@ func (e *GameEngine) sendLobbyStateUpdate() {
 // sendSpectatorUpdate broadcasts the full arena state to all spectators.
 func (e *GameEngine) sendSpectatorUpdate() {
 	state := BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.WaitingBots)
+
+	// Add new gameplay entities to spectator state.
+	for _, pad := range e.TeleportPads {
+		state.TeleportPads = append(state.TeleportPads, BuildTeleportPadView(pad, false))
+	}
+	for _, zone := range e.HazardZones {
+		state.HazardZones = append(state.HazardZones, BuildHazardZoneView(zone, false))
+	}
+	for _, mine := range e.Landmines {
+		state.Landmines = append(state.Landmines, BuildMineView(mine, false))
+	}
+	for _, well := range e.GravityWells {
+		state.GravityWells = append(state.GravityWells, BuildGravityWellView(well, false))
+	}
+	state.VoidTiles = e.SuddenDeath.GetAllVoidTiles()
+	state.SuddenDeath = e.SuddenDeath.Active
+	state.BountyTarget = e.Bounty.TargetID
+
 	data, err := marshalJSON(state)
 	if err != nil {
 		slog.Error("failed to marshal spectator state", "error", err)

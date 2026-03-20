@@ -24,7 +24,7 @@ function _mat(key, scene, color, opts) {
 }
 
 export function createWeaponMesh(weaponType, botId, scene, parent) {
-  const builders = { sword, bow, spear, daggers, staff, shield };
+  const builders = { sword, bow, spear, daggers, staff, shield, grapple };
   const builder = builders[weaponType] || sword;
   const mesh = builder(botId, scene);
   mesh.parent = parent;
@@ -44,15 +44,43 @@ function sword(id, scene) {
 }
 
 function bow(id, scene) {
-  const arc = B().MeshBuilder.CreateTorus(`wpn-${id}`, {
-    diameter: 14, thickness: 0.8, tessellation: 10, arc: 0.5
-  }, scene);
-  arc.position.set(8, 4, 0);
-  arc.rotation.y = Math.PI / 2;
-  arc.material = _mat('w-bow', scene, new (B().Color3)(0.6, 0.35, 0.1), {
+  const root = new (B().TransformNode)(`wpn-${id}`, scene);
+  const woodMat = _mat('w-bow', scene, new (B().Color3)(0.6, 0.35, 0.1), {
     emissiveFactor: 0.3
   });
-  return arc;
+  const stringMat = _mat('w-bowstring', scene, new (B().Color3)(0.8, 0.8, 0.75), {
+    emissiveFactor: 0.2
+  });
+
+  // Bow limb — curved arc using a tube path
+  const points = [];
+  for (let i = 0; i <= 12; i++) {
+    const t = (i / 12) * Math.PI; // 0 to PI (half circle)
+    const x = Math.cos(t) * 7;   // curve outward
+    const y = Math.sin(t) * 7;   // arc height
+    points.push(new (B().Vector3)(x * 0.35, y, 0));
+  }
+  const limb = B().MeshBuilder.CreateTube(`bow-limb-${id}`, {
+    path: points, radius: 0.5, tessellation: 6, cap: B().Mesh.CAP_ALL
+  }, scene);
+  limb.parent = root;
+  limb.position.set(8, 4, 0);
+  limb.material = woodMat;
+
+  // Bowstring — straight line between the two limb tips
+  const stringPath = [
+    points[0].clone(),
+    points[points.length - 1].clone()
+  ];
+  const string = B().MeshBuilder.CreateTube(`bow-str-${id}`, {
+    path: stringPath, radius: 0.15, tessellation: 4, cap: B().Mesh.CAP_ALL
+  }, scene);
+  string.parent = root;
+  string.position.set(8, 4, 0);
+  string.material = stringMat;
+
+  root._children = [limb, string];
+  return root;
 }
 
 function spear(id, scene) {
@@ -118,6 +146,33 @@ function shield(id, scene) {
     emissiveFactor: 0.4, specular: new (B().Color3)(0.3, 0.3, 0.4)
   });
   return disc;
+}
+
+function grapple(id, scene) {
+  const root = new (B().TransformNode)(`wpn-${id}`, scene);
+  // Chain/rope handle
+  const handle = B().MeshBuilder.CreateCylinder(`ghandle-${id}`, {
+    height: 8, diameter: 1.5, tessellation: 8
+  }, scene);
+  handle.position.set(8, 2, 0);
+  handle.rotation.z = -0.4;
+  handle.parent = root;
+  handle.material = _mat('w-grapple-handle', scene, new (B().Color3)(0.4, 0.4, 0.45), {
+    emissiveFactor: 0.3
+  });
+
+  // Hook
+  const hook = B().MeshBuilder.CreateTorus(`ghook-${id}`, {
+    diameter: 5, thickness: 1.2, tessellation: 8
+  }, scene);
+  hook.position.set(10, 8, 0);
+  hook.parent = root;
+  hook.material = _mat('w-grapple-hook', scene, new (B().Color3)(0.2, 0.8, 0.4), {
+    emissiveFactor: 0.7, noLight: true
+  });
+
+  root._children = [handle, hook];
+  return root;
 }
 
 export function disposeWeapon(weapon) {

@@ -21,7 +21,7 @@ func MaybeSpawnPickup(pickups *[]Pickup, arena *ArenaMap, tickCount int) {
 	}
 
 	// Choose a random pickup type.
-	types := []PickupType{PickupHealthPack, PickupSpeedBoost, PickupDamageBoost, PickupShieldBubble}
+	types := []PickupType{PickupHealthPack, PickupSpeedBoost, PickupDamageBoost, PickupShieldBubble, PickupGravityWell}
 	pType := types[rand.Intn(len(types))]
 
 	pos := arena.GetSpawnPoint()
@@ -48,6 +48,8 @@ func MaybeSpawnPickup(pickups *[]Pickup, arena *ArenaMap, tickCount int) {
 		value = c.PickupDamageBoostMult
 	case PickupShieldBubble:
 		value = c.PickupShieldBubbleHP
+	case PickupGravityWell:
+		value = 1 // 1 charge
 	}
 
 	*pickups = append(*pickups, Pickup{
@@ -124,6 +126,8 @@ func applyPickupEffect(bot *BotState, pickup Pickup) {
 		})
 	case PickupShieldBubble:
 		bot.ShieldAbsorb += pickup.Value
+	case PickupGravityWell:
+		bot.GravityWellCharge++
 	}
 
 	bot.RoundPickups++

@@ -81,6 +81,9 @@ func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles 
 		case "area":
 			processStaffAttack(bot, target, action, &wc, obstacles, staffImpacts, tickCount)
 
+		case "grapple":
+			processGrappleAttack(bot, target, &wc, obstacles, grid, tickCount)
+
 		default:
 			processMeleeAttack(bot, target, &wc, bots, obstacles, grid, tickCount)
 		}
@@ -288,6 +291,77 @@ func processBlock(target *BotState) {
 func processExtraKnockback(target *BotState, attackerPos Vec2, wc *WeaponConfig, obstacles []Obstacle) {
 	// Spear knockback: push 1 additional tile.
 	ApplyGridKnockback(target, attackerPos, 1, obstacles)
+}
+
+// processGrappleAttack handles grapple weapon: ranged hit that pulls attacker to target.
+func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []Obstacle, grid *SpatialGrid, tickCount int) {
+	if !IsInRange(bot.Position, target.Position, wc.GridRange) {
+		bot.LastActionResult = &ActionResult{
+			Action:  "attack",
+			Success: false,
+			Target:  target.BotID,
+			Message: "out of range",
+		}
+		return
+	}
+
+	if LineIntersectsObstacle(bot.Position.X(), bot.Position.Y(), target.Position.X(), target.Position.Y(), obstacles) {
+		bot.LastActionResult = &ActionResult{
+			Action:  "attack",
+			Success: false,
+			Target:  target.BotID,
+			Message: "no line of sight",
+		}
+		return
+	}
+
+	// Deal damage
+	rawDmg := CalculateDamage(float64(wc.Damage), bot.AttackMultiplier, target.DefenseReduction)
+	dealt := ApplyDamage(target, bot, rawDmg, wc.Name, tickCount)
+
+	// Pull attacker to within 1 tile of target
+	if ActiveTerrain != nil {
+		targetCell := ActiveTerrain.WorldToGrid(target.Position)
+		botCell := ActiveTerrain.WorldToGrid(bot.Position)
+		// Find the cell adjacent to target that's closest to bot
+		bestCell := botCell
+		bestDist := 999
+		for dx := -1; dx <= 1; dx++ {
+			for dy := -1; dy <= 1; dy++ {
+				if dx == 0 && dy == 0 {
+					continue
+				}
+				nc := [2]int{targetCell[0] + dx, targetCell[1] + dy}
+				if ActiveTerrain.IsBlocked(nc[0], nc[1]) {
+					continue
+				}
+				d := GridDistance(botCell, nc)
+				if d < bestDist {
+					bestDist = d
+					bestCell = nc
+				}
+			}
+		}
+		if bestCell != botCell {
+			bot.Position = ActiveTerrain.GridToWorld(bestCell)
+			bot.LastValidPosition = bot.Position
+			grid.Update(bot.BotID, bot.Position)
+		}
+	}
+
+	bot.CooldownRemaining = wc.Cooldown
+	bot.RoundShotsFired++
+	if dealt > 0 {
+		bot.RoundShotsHit++
+	}
+
+	bot.LastActionResult = &ActionResult{
+		Action:  "attack",
+		Success: true,
+		Target:  target.BotID,
+		Damage:  dealt,
+		Message: "grappled target",
+	}
 }
 
 // ProcessStaffImpacts ticks down staff impacts and applies damage when they detonate.
