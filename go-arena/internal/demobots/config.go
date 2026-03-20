@@ -18,132 +18,131 @@ var WeaponRanges = map[string]float64{
 	"shield":  1,
 	"spear":   2,
 	"staff":   5,
+	"grapple": 4,
 }
 
-// DemoConfigs — 15 demo bots with aggressive stat builds and combat-focused strategies.
+// DemoConfigs — 15 demo bots built around 5 dominant archetypes (×3 each).
 //
-// Design philosophy: all bots should fight. No passive idling. Shove constantly.
-//   - Sword: high attack, berserker/aggressive
-//   - Bow: attack-focused kite that prioritizes shooting over retreating
-//   - Daggers: assassin that hunts and shoves
-//   - Shield: territorial aggressor, shoves everything
-//   - Spear: aggressive with knockback + shove combo
-//   - Staff: aggressive kite, attacks > retreats
+// Design philosophy: exploit weapon math. Staff AoE, Shield block, Spear knockback,
+// Grapple anti-kite, Daggers burst. No swords, no bows — they lose.
 var DemoConfigs = []BotConfig{
-	// === SWORD USERS (melee cleave, 0.5s cd) ===
+	// === REAPERS ×3 (Staff) — AoE destruction machines ===
+	// Staff: 18 × (1+10×0.1) / 1.3s = 27.7 DPS per target, AoE hits multiple
 	{
-		Name:     "Demo-Berserker",
-		Weapon:   "sword",
-		Stats:    map[string]int{"hp": 4, "speed": 5, "attack": 9, "defense": 2},
-		Strategy: "berserker",
-		Color:    "#e94560",
-	},
-	{
-		Name:     "Demo-Brawler",
-		Weapon:   "sword",
-		Stats:    map[string]int{"hp": 5, "speed": 5, "attack": 8, "defense": 2},
-		Strategy: "aggressive",
-		Color:    "#cf6a87",
-	},
-
-	// === BOW USERS (ranged projectile, 1.4s cd) ===
-	{
-		Name:     "Demo-Sniper",
-		Weapon:   "bow",
-		Stats:    map[string]int{"hp": 3, "speed": 5, "attack": 10, "defense": 2},
-		Strategy: "kite",
-		Color:    "#4ecdc4",
-	},
-	{
-		Name:     "Demo-Ranger",
-		Weapon:   "bow",
-		Stats:    map[string]int{"hp": 4, "speed": 5, "attack": 8, "defense": 3},
-		Strategy: "aggressive",
-		Color:    "#e77f67",
-	},
-	{
-		Name:     "Demo-Marksman",
-		Weapon:   "bow",
-		Stats:    map[string]int{"hp": 3, "speed": 6, "attack": 9, "defense": 2},
-		Strategy: "kite",
-		Color:    "#1e90ff",
-	},
-
-	// === DAGGER USERS (fast melee, double strike, 0.3s cd) ===
-	{
-		Name:     "Demo-Assassin",
-		Weapon:   "daggers",
-		Stats:    map[string]int{"hp": 3, "speed": 7, "attack": 8, "defense": 2},
-		Strategy: "assassin",
-		Color:    "#c44569",
-	},
-	{
-		Name:     "Demo-Phantom",
-		Weapon:   "daggers",
-		Stats:    map[string]int{"hp": 3, "speed": 7, "attack": 8, "defense": 2},
-		Strategy: "berserker",
-		Color:    "#574b90",
-	},
-	{
-		Name:     "Demo-Duelist",
-		Weapon:   "daggers",
-		Stats:    map[string]int{"hp": 4, "speed": 6, "attack": 7, "defense": 3},
-		Strategy: "aggressive",
-		Color:    "#fa983a",
-	},
-
-	// === SHIELD USERS (tanky melee, block passive, 0.7s cd) ===
-	{
-		Name:     "Demo-Tank",
-		Weapon:   "shield",
-		Stats:    map[string]int{"hp": 7, "speed": 3, "attack": 5, "defense": 5},
-		Strategy: "territorial",
-		Color:    "#556270",
-	},
-	{
-		Name:     "Demo-Guardian",
-		Weapon:   "shield",
-		Stats:    map[string]int{"hp": 6, "speed": 4, "attack": 6, "defense": 4},
-		Strategy: "aggressive",
-		Color:    "#3dc1d3",
-	},
-	{
-		Name:     "Demo-Sentinel",
-		Weapon:   "shield",
-		Stats:    map[string]int{"hp": 7, "speed": 3, "attack": 5, "defense": 5},
-		Strategy: "berserker",
-		Color:    "#60a3bc",
-	},
-
-	// === SPEAR USERS (mid-range melee, knockback, 0.7s cd) ===
-	{
-		Name:     "Demo-Lancer",
-		Weapon:   "spear",
-		Stats:    map[string]int{"hp": 4, "speed": 5, "attack": 8, "defense": 3},
-		Strategy: "aggressive",
-		Color:    "#f5cd79",
-	},
-	{
-		Name:     "Demo-Warden",
-		Weapon:   "spear",
-		Stats:    map[string]int{"hp": 5, "speed": 4, "attack": 7, "defense": 4},
-		Strategy: "territorial",
-		Color:    "#78e08f",
-	},
-
-	// === STAFF USERS (long range AoE, delayed, 1.3s cd) ===
-	{
-		Name:     "Demo-Mage",
+		Name:     "Demo-Reaper",
 		Weapon:   "staff",
-		Stats:    map[string]int{"hp": 3, "speed": 5, "attack": 9, "defense": 3},
+		Stats:    map[string]int{"hp": 4, "speed": 4, "attack": 10, "defense": 2},
 		Strategy: "kite",
 		Color:    "#6c5ce7",
 	},
 	{
-		Name:     "Demo-Warlock",
+		Name:     "Demo-Archmage",
 		Weapon:   "staff",
-		Stats:    map[string]int{"hp": 4, "speed": 5, "attack": 8, "defense": 3},
-		Strategy: "aggressive",
+		Stats:    map[string]int{"hp": 4, "speed": 4, "attack": 10, "defense": 2},
+		Strategy: "kite",
 		Color:    "#e55039",
+	},
+	{
+		Name:     "Demo-Hellfire",
+		Weapon:   "staff",
+		Stats:    map[string]int{"hp": 4, "speed": 4, "attack": 10, "defense": 2},
+		Strategy: "kite",
+		Color:    "#ff6348",
+	},
+
+	// === JUGGERNAUTS ×3 (Shield) — Unkillable zone holders ===
+	// Shield: 15 × (1+6×0.1) / 0.7s = 34.3 DPS + 50% passive block + 180 HP
+	{
+		Name:     "Demo-Juggernaut",
+		Weapon:   "shield",
+		Stats:    map[string]int{"hp": 8, "speed": 3, "attack": 6, "defense": 3},
+		Strategy: "territorial",
+		Color:    "#556270",
+	},
+	{
+		Name:     "Demo-Fortress",
+		Weapon:   "shield",
+		Stats:    map[string]int{"hp": 8, "speed": 3, "attack": 6, "defense": 3},
+		Strategy: "territorial",
+		Color:    "#3dc1d3",
+	},
+	{
+		Name:     "Demo-Bulwark",
+		Weapon:   "shield",
+		Stats:    map[string]int{"hp": 8, "speed": 3, "attack": 6, "defense": 3},
+		Strategy: "territorial",
+		Color:    "#60a3bc",
+	},
+
+	// === LANCERS ×3 (Spear) — Knockback combo specialists ===
+	// Spear: 20 × (1+8×0.1) / 0.7s = 51.4 DPS + knockback (wall splat = +5dmg)
+	{
+		Name:     "Demo-Lancer",
+		Weapon:   "spear",
+		Stats:    map[string]int{"hp": 5, "speed": 5, "attack": 8, "defense": 2},
+		Strategy: "aggressive",
+		Color:    "#f5cd79",
+	},
+	{
+		Name:     "Demo-Valkyrie",
+		Weapon:   "spear",
+		Stats:    map[string]int{"hp": 5, "speed": 5, "attack": 8, "defense": 2},
+		Strategy: "aggressive",
+		Color:    "#78e08f",
+	},
+	{
+		Name:     "Demo-Dragoon",
+		Weapon:   "spear",
+		Stats:    map[string]int{"hp": 5, "speed": 5, "attack": 8, "defense": 2},
+		Strategy: "aggressive",
+		Color:    "#e77f67",
+	},
+
+	// === HOOKS ×3 (Grapple) — Anti-kite assassins ===
+	// Grapple: 15 × (1+8×0.1) / 0.8s = 33.75 DPS + pulls you TO target
+	{
+		Name:     "Demo-Hook",
+		Weapon:   "grapple",
+		Stats:    map[string]int{"hp": 4, "speed": 6, "attack": 8, "defense": 2},
+		Strategy: "assassin",
+		Color:    "#c44569",
+	},
+	{
+		Name:     "Demo-Scorpion",
+		Weapon:   "grapple",
+		Stats:    map[string]int{"hp": 4, "speed": 6, "attack": 8, "defense": 2},
+		Strategy: "assassin",
+		Color:    "#574b90",
+	},
+	{
+		Name:     "Demo-Harpoon",
+		Weapon:   "grapple",
+		Stats:    map[string]int{"hp": 4, "speed": 6, "attack": 8, "defense": 2},
+		Strategy: "assassin",
+		Color:    "#fa983a",
+	},
+
+	// === SHREDDERS ×3 (Daggers) — Burst DPS hunters ===
+	// Daggers: 12 × (1+8×0.1) × 1.25 / 0.3s = 90 DPS (double strike)
+	{
+		Name:     "Demo-Shredder",
+		Weapon:   "daggers",
+		Stats:    map[string]int{"hp": 3, "speed": 7, "attack": 8, "defense": 2},
+		Strategy: "assassin",
+		Color:    "#e94560",
+	},
+	{
+		Name:     "Demo-Viper",
+		Weapon:   "daggers",
+		Stats:    map[string]int{"hp": 3, "speed": 7, "attack": 8, "defense": 2},
+		Strategy: "assassin",
+		Color:    "#cf6a87",
+	},
+	{
+		Name:     "Demo-Blitz",
+		Weapon:   "daggers",
+		Stats:    map[string]int{"hp": 3, "speed": 7, "attack": 8, "defense": 2},
+		Strategy: "assassin",
+		Color:    "#fc5c65",
 	},
 }

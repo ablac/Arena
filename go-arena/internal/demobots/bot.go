@@ -291,7 +291,19 @@ func (b *demoBot) session(ctx context.Context) error {
 		msgType, _ := msg["type"].(string)
 		switch msgType {
 		case "tick":
-			action := PickAction(b.config.Strategy, msg, b.config.Weapon, b.attackRange)
+			// Track gravity well pickup from nearby_entities
+			if ys, ok := msg["your_state"].(map[string]interface{}); ok {
+				if effs, ok := ys["effects"].([]interface{}); ok {
+					for _, raw := range effs {
+						if e, ok := raw.(map[string]interface{}); ok {
+							if name, _ := e["name"].(string); name == "gravity_well" {
+								setHasGravWell(b.botID, true)
+							}
+						}
+					}
+				}
+			}
+			action := PickAction(b.config.Strategy, msg, b.config.Weapon, b.attackRange, b.botID)
 			payload := map[string]interface{}{
 				"type": "action",
 				"tick": msg["tick"],
@@ -314,7 +326,8 @@ func (b *demoBot) session(ctx context.Context) error {
 			}
 
 		case "death":
-			// Nothing to do; server handles respawn.
+			resetMineCount(b.botID)
+			resetGravWell(b.botID)
 
 		case "respawn":
 			// Bot is alive again.
@@ -326,7 +339,8 @@ func (b *demoBot) session(ctx context.Context) error {
 			parseTerrain(msg)
 
 		case "round_start":
-			// New round started.
+			resetMineCount(b.botID)
+			resetGravWell(b.botID)
 
 		case "lobby":
 			// Waiting for more players.
