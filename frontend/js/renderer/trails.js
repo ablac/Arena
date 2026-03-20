@@ -2,34 +2,28 @@
 
 /**
  * Movement trail system — smooth fading ribbons behind moving bots.
- * Samples bot visual positions every render frame and builds a flat ribbon
- * mesh with vertex alpha fading from bot (opaque) to tail (transparent).
+ * Samples bot visual positions and updates reusable ribbon meshes in place.
+ * Uses updatable ribbons to avoid per-frame mesh allocation (memory leak fix).
  * @module renderer/trails
  */
 
-import { parseColor } from './utils.js';
-
-const MAX_HISTORY = 20;        // number of position samples kept
-const SAMPLE_INTERVAL = 0.03;  // seconds between samples (~33fps sampling)
-const TRAIL_WIDTH = 6;         // half-width of ribbon perpendicular to direction
-const TRAIL_Y = 0.4;           // height above ground
+const MAX_HISTORY = 20;
+const SAMPLE_INTERVAL = 0.03;
+const TRAIL_WIDTH = 6;
+const TRAIL_Y = 0.4;
 
 export class TrailRenderer {
   /** @param {BABYLON.Scene} scene */
   constructor(scene) {
     this.scene = scene;
-    /**
-     * Per-bot trail state.
-     * @type {Map<string, {history: Array<{x:number,z:number}>, mesh: BABYLON.Mesh|null, mat: BABYLON.StandardMaterial, timer: number}>}
-     */
+    /** @type {Map<string, Object>} */
     this.trails = new Map();
   }
 
   /**
    * Called every render frame with the bot renderer's entries map.
-   * Samples visual positions and rebuilds ribbon meshes.
    * @param {Map<string, Object>|null} botEntries
-   * @param {number} dt - frame delta in seconds
+   * @param {number} dt
    */
   render(botEntries, dt) {
     if (!botEntries) return;
@@ -52,7 +46,26 @@ export class TrailRenderer {
         mat.disableLighting = true;
         mat.backFaceCulling = false;
         mat.alpha = 1;
-        trail = { history: [{ x, z }], mesh: null, mat, timer: 0 };
+        mat.useVertexAlpha = true;
+
+        // Pre-allocate reusable path arrays (2 sides × MAX_HISTORY points)
+        const left = [];
+        const right = [];
+        for (let i = 0; i < MAX_HISTORY; i++) {
+          left.push(new B.Vector3(x, TRAIL_Y, z));
+          right.push(new B.Vector3(x, TRAIL_Y, z));
+        }
+
+        trail = {
+          history: [{ x, z }],
+          mesh: null,
+          mat,
+          timer: 0,
+          left,
+          right,
+          colors: null, // allocated once when mesh is created
+          dirty: false,
+        };
         this.trails.set(botId, trail);
       }
 
@@ -63,27 +76,26 @@ export class TrailRenderer {
         const last = trail.history[trail.history.length - 1];
         const dx = x - last.x;
         const dz = z - last.z;
-        // Only add if bot actually moved
         if (dx * dx + dz * dz > 0.5) {
           trail.history.push({ x, z });
           if (trail.history.length > MAX_HISTORY) {
             trail.history.shift();
           }
+          trail.dirty = true;
         }
       }
 
-      // Need at least 2 points for a ribbon
       if (trail.history.length < 2) continue;
+      if (!trail.dirty && trail.mesh) continue; // no change, skip update
+      trail.dirty = false;
 
-      // Build ribbon paths: two parallel paths offset perpendicular to direction
-      const left = [];
-      const right = [];
       const hist = trail.history;
+      const n = hist.length;
 
-      for (let i = 0; i < hist.length; i++) {
-        // Compute direction at this point
+      // Update pre-allocated path arrays in place (no new Vector3 allocations)
+      for (let i = 0; i < n; i++) {
         let nx, nz;
-        if (i < hist.length - 1) {
+        if (i < n - 1) {
           nx = hist[i + 1].x - hist[i].x;
           nz = hist[i + 1].z - hist[i].z;
         } else {
@@ -91,62 +103,64 @@ export class TrailRenderer {
           nz = hist[i].z - hist[i - 1].z;
         }
         const len = Math.sqrt(nx * nx + nz * nz) || 1;
-        // Perpendicular direction (rotate 90°)
         const px = -nz / len;
         const pz = nx / len;
+        const alpha = i / (n - 1);
+        const w = TRAIL_WIDTH * alpha;
 
-        // Alpha: 0 at tail (index 0), 1 at head (last index)
-        const alpha = i / (hist.length - 1);
-        const w = TRAIL_WIDTH * alpha; // taper from nothing to full width
-
-        left.push(new B.Vector3(hist[i].x + px * w, TRAIL_Y, hist[i].z + pz * w));
-        right.push(new B.Vector3(hist[i].x - px * w, TRAIL_Y, hist[i].z - pz * w));
+        trail.left[i].set(hist[i].x + px * w, TRAIL_Y, hist[i].z + pz * w);
+        trail.right[i].set(hist[i].x - px * w, TRAIL_Y, hist[i].z - pz * w);
       }
-
-      // Dispose old mesh and create new ribbon
-      if (trail.mesh) {
-        trail.mesh.dispose();
-        trail.mesh = null;
+      // Collapse unused tail points to the last used position (avoids stale geometry)
+      for (let i = n; i < MAX_HISTORY; i++) {
+        trail.left[i].copyFrom(trail.left[n - 1]);
+        trail.right[i].copyFrom(trail.right[n - 1]);
       }
 
       try {
-        const ribbon = B.MeshBuilder.CreateRibbon(`trail-${botId}`, {
-          pathArray: [left, right],
-          updatable: false,
-          sideOrientation: B.Mesh.DOUBLESIDE,
-        }, this.scene);
-        ribbon.material = trail.mat;
-        ribbon.isPickable = false;
-        ribbon.alwaysSelectAsActiveMesh = true;
+        if (!trail.mesh) {
+          // First creation — updatable ribbon
+          const ribbon = B.MeshBuilder.CreateRibbon(`trail-${botId}`, {
+            pathArray: [trail.left, trail.right],
+            updatable: true,
+            sideOrientation: B.Mesh.DOUBLESIDE,
+          }, this.scene);
+          ribbon.material = trail.mat;
+          ribbon.isPickable = false;
+          ribbon.alwaysSelectAsActiveMesh = true;
+          ribbon.hasVertexAlpha = true;
+          trail.mesh = ribbon;
 
-        // Apply vertex alpha: fade from transparent (tail) to semi-opaque (head)
-        const vertexCount = ribbon.getTotalVertices();
-        const colors = new Float32Array(vertexCount * 4);
-        const c = trail.mat.emissiveColor;
-        const pointsPerSide = hist.length;
-
-        for (let v = 0; v < vertexCount; v++) {
-          // Each side has pointsPerSide vertices; vertex order is left[0..n-1], right[0..n-1]
-          const idx = v % pointsPerSide;
-          const alpha = idx / (pointsPerSide - 1);
-          colors[v * 4 + 0] = c.r;
-          colors[v * 4 + 1] = c.g;
-          colors[v * 4 + 2] = c.b;
-          colors[v * 4 + 3] = alpha * 0.3; // max 30% opacity at head
+          // Allocate vertex color buffer once
+          const vc = ribbon.getTotalVertices();
+          trail.colors = new Float32Array(vc * 4);
+        } else {
+          // Update in place — no new mesh allocation
+          B.MeshBuilder.CreateRibbon(null, {
+            pathArray: [trail.left, trail.right],
+            instance: trail.mesh,
+          });
         }
-        ribbon.setVerticesData(B.VertexBuffer.ColorKind, colors);
-        ribbon.hasVertexAlpha = true;
-        // Override material alpha since we use vertex alpha
-        trail.mat.alpha = 1;
-        trail.mat.useVertexAlpha = true;
 
-        trail.mesh = ribbon;
+        // Update vertex colors in the pre-allocated buffer
+        const c = trail.mat.emissiveColor;
+        const vc = trail.mesh.getTotalVertices();
+        const pps = MAX_HISTORY; // points per side
+        for (let v = 0; v < vc; v++) {
+          const idx = v % pps;
+          const a = idx < n ? (idx / (n - 1)) * 0.3 : 0;
+          trail.colors[v * 4] = c.r;
+          trail.colors[v * 4 + 1] = c.g;
+          trail.colors[v * 4 + 2] = c.b;
+          trail.colors[v * 4 + 3] = a;
+        }
+        trail.mesh.setVerticesData(B.VertexBuffer.ColorKind, trail.colors, true);
       } catch {
-        // CreateRibbon can fail with degenerate geometry — ignore
+        // degenerate geometry — ignore
       }
     }
 
-    // Cleanup trails for bots that are gone
+    // Cleanup trails for disconnected bots
     for (const [botId, trail] of this.trails) {
       if (!seen.has(botId)) {
         if (trail.mesh) trail.mesh.dispose();

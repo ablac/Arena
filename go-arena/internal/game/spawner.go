@@ -52,7 +52,7 @@ func CheckDeaths(bots map[string]*BotState, grid *SpatialGrid) []DeathEvent {
 	var events []DeathEvent
 
 	for _, bot := range bots {
-		if !bot.IsAlive || bot.HP >= 1 {
+		if !bot.IsAlive || bot.HP > 0 {
 			continue
 		}
 

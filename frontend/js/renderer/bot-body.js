@@ -20,6 +20,11 @@ const ARM_R = 1.5;
 /** Shared materials (created once, reused across all bots). */
 let _shdMat = null;
 
+/** Template meshes for instancing (lazy-initialized singletons). */
+let _tplArm = null;
+let _tplArmMat = null;
+let _tplShadow = null;
+
 /** Singleton fullscreen GUI texture for all bot HUD elements. */
 let _guiTexture = null;
 
@@ -48,6 +53,48 @@ function _getShadowMat(scene) {
     _shdMat.freeze();
   }
   return _shdMat;
+}
+
+/**
+ * Get or create the singleton arm template mesh for instancing.
+ * Hidden source mesh; each bot arm is an InstancedMesh created from this.
+ */
+function _getTplArm(scene) {
+  if (!_tplArm || _tplArm.isDisposed()) {
+    const B = window.BABYLON;
+    _tplArm = B.MeshBuilder.CreateCylinder('tpl-arm', {
+      height: ARM_H, diameter: ARM_R * 2, tessellation: 4
+    }, scene);
+    _tplArm.setEnabled(false);
+    _tplArm.isPickable = false;
+    _tplArm.registerInstancedBuffer('color', 4);
+    _tplArm.instancedBuffers.color = new B.Color4(0.5, 0.5, 0.5, 1);
+
+    _tplArmMat = new B.StandardMaterial('tpl-arm-mat', scene);
+    _tplArmMat.specularColor = B.Color3.Black();
+    _tplArmMat.emissiveColor = new B.Color3(0.15, 0.15, 0.15);
+    _tplArmMat.backFaceCulling = false;
+    _tplArm.material = _tplArmMat;
+  }
+  return _tplArm;
+}
+
+/**
+ * Get or create the singleton shadow disc template mesh for instancing.
+ * All shadows share the same black semi-transparent material.
+ */
+export function _getTplShadow(scene) {
+  if (!_tplShadow || _tplShadow.isDisposed()) {
+    const B = window.BABYLON;
+    _tplShadow = B.MeshBuilder.CreateDisc('tpl-shadow', {
+      radius: BODY_R * 1.3, tessellation: 6
+    }, scene);
+    _tplShadow.rotation.x = Math.PI / 2;
+    _tplShadow.setEnabled(false);
+    _tplShadow.isPickable = false;
+    _tplShadow.material = _getShadowMat(scene);
+  }
+  return _tplShadow;
 }
 
 export function createBotEntry(bot, scene) {
@@ -99,34 +146,26 @@ export function createBotEntry(bot, scene) {
   });
   head.material = headMat;
 
-  // Arms — share one material
-  const armMat = makeMat(`amat-${id}`, scene, color.scale(0.8), { emissiveFactor: 0.3 });
-  const lArm = B.MeshBuilder.CreateCylinder(`larm-${id}`, {
-    height: ARM_H, diameter: ARM_R * 2, tessellation: 4
-  }, scene);
+  // Arms — instanced from shared template (per-instance color)
+  const armColor = new B.Color4(color.r * 0.8, color.g * 0.8, color.b * 0.8, 1);
+  const lArm = _getTplArm(scene).createInstance(`larm-${id}`);
+  lArm.instancedBuffers.color = armColor;
   lArm.position.set(-BODY_R - ARM_R, BODY_H * 0.6, 0);
   lArm.parent = root;
-  lArm.material = armMat;
   lArm.isPickable = false;
   lArm.alwaysSelectAsActiveMesh = true;
 
-  const rArm = B.MeshBuilder.CreateCylinder(`rarm-${id}`, {
-    height: ARM_H, diameter: ARM_R * 2, tessellation: 4
-  }, scene);
+  const rArm = _getTplArm(scene).createInstance(`rarm-${id}`);
+  rArm.instancedBuffers.color = armColor;
   rArm.position.set(BODY_R + ARM_R, BODY_H * 0.6, 0);
   rArm.parent = root;
-  rArm.material = armMat;
   rArm.isPickable = false;
   rArm.alwaysSelectAsActiveMesh = true;
 
-  // Shadow disc (shared material)
-  const shadow = B.MeshBuilder.CreateDisc(`shd-${id}`, {
-    radius: BODY_R * 1.3, tessellation: 6
-  }, scene);
-  shadow.rotation.x = Math.PI / 2;
+  // Shadow disc — instanced from shared template (all shadows identical)
+  const shadow = _getTplShadow(scene).createInstance(`shd-${id}`);
   shadow.position.y = 0.1;
   shadow.parent = root;
-  shadow.material = _getShadowMat(scene);
   shadow.isPickable = false;
   shadow.alwaysSelectAsActiveMesh = true;
 
@@ -171,7 +210,7 @@ export function createBotEntry(bot, scene) {
   hpContainer.addControl(hpFill);
 
   return {
-    root, body, bodyMat, head, headMat, lArm, rArm, armMat,
+    root, body, bodyMat, head, headMat, lArm, rArm,
     shadow, weapon, hpContainer, hpFill, nameLabel,
     anim: new BotAnimState(),
     isAlive: true, _wasAlive: true, _lastHp: -1,
@@ -184,12 +223,17 @@ export function disposeBotEntry(entry) {
     return;
   }
   // Remove GUI controls from the fullscreen texture
-  if (entry.nameLabel) entry.nameLabel.dispose();
+  if (entry.hpFill) entry.hpFill.dispose();
   if (entry.hpContainer) entry.hpContainer.dispose();
-  // Only dispose per-bot materials (not shared ones)
-  for (const k of ['bodyMat', 'headMat', 'armMat']) {
-    if (entry[k]) entry[k].dispose();
+  if (entry.nameLabel) entry.nameLabel.dispose();
+  // Only dispose per-bot materials (not shared/instanced ones)
+  for (const k of ['bodyMat', 'headMat']) {
+    if (entry[k] && !entry[k].isDisposed) entry[k].dispose();
   }
+  // Arms and shadow are InstancedMeshes — dispose instances (not the template)
+  if (entry.lArm && !entry.lArm.isDisposed()) entry.lArm.dispose();
+  if (entry.rArm && !entry.rArm.isDisposed()) entry.rArm.dispose();
+  if (entry.shadow && !entry.shadow.isDisposed()) entry.shadow.dispose();
   if (entry.weapon) disposeWeapon(entry.weapon);
   entry.root.dispose();
 }

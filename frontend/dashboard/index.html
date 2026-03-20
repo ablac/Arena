@@ -106,9 +106,11 @@ tr:hover td{background:var(--bg3)}
 
   <div class="tabs">
     <div class="tbtn active" data-tab="overview">Overview</div>
-    <div class="tbtn" data-tab="config">Configure</div>
     <div class="tbtn" data-tab="simulator">Stat Simulator</div>
     <div class="tbtn" data-tab="weapons">Weapons</div>
+    <div class="tbtn" data-tab="builds">Build Templates</div>
+    <div class="tbtn" data-tab="mapviewer">Map Viewer</div>
+    <div class="tbtn" data-tab="metareport">Meta Report</div>
     <div class="tbtn" data-tab="leaderboard">Leaderboard</div>
     <div class="tbtn" data-tab="compare">Compare Bots</div>
     <div class="tbtn" data-tab="allbots">All My Bots</div>
@@ -132,22 +134,17 @@ tr:hover td{background:var(--bg3)}
     </div>
   </div>
 
-  <div class="tpanel" id="tab-config">
+  <div class="tpanel" id="tab-builds"><div class="section"><h2>Build Templates</h2><p style="font-size:11px;color:var(--text2);margin-bottom:12px">Pre-made loadouts. Click "Copy Code" for a ready-to-paste Python snippet.</p><div id="buildTemplates"></div></div></div>
+
+  <div class="tpanel" id="tab-mapviewer">
     <div class="section">
-      <h2>Bot Configuration</h2>
-      <div class="config-grid">
-        <div class="config-field"><label>Bot Name</label><input id="cfgName"></div>
-        <div class="config-field"><label>Avatar Color</label><input id="cfgColor" type="color" value="#58a6ff"></div>
-        <div class="config-field"><label>Default Weapon</label><select id="cfgWeapon"><option value="sword">Sword</option><option value="bow">Bow</option><option value="daggers">Daggers</option><option value="shield">Shield</option><option value="spear">Spear</option><option value="staff">Staff</option></select></div>
-        <div class="config-field"><label>Fallback Behavior</label><select id="cfgFallback"><option value="aggressive">Aggressive</option><option value="defensive">Defensive</option><option value="kite">Kite</option><option value="territorial">Territorial</option><option value="opportunistic">Opportunistic</option><option value="hunter">Hunter</option></select></div>
-      </div>
-      <h3>Default Stats (20 points, 1-10 each)</h3>
-      <div id="cfgStats"></div>
-      <div id="cfgBudget" style="margin-top:6px;font-size:11px"></div>
-      <button onclick="saveConfig()" style="margin-top:10px">Save Configuration</button>
-      <span id="cfgResult" style="margin-left:10px;font-size:11px"></span>
+      <h2>Map Viewer <button class="sm" onclick="loadMapViewer()" style="margin-left:8px">Refresh</button> <button class="sm" onclick="mapZoom(1)" style="margin-left:4px">Zoom +</button> <button class="sm" onclick="mapZoom(-1)">Zoom −</button> <button class="sm" onclick="mapZoom(0)">Reset</button></h2>
+      <div id="mapStatus" style="font-size:11px;color:var(--text2);margin-bottom:8px"></div>
+      <div style="overflow:auto;max-height:600px;border:1px solid var(--border);border-radius:4px;background:var(--bg)"><canvas id="mapCanvas" style="display:block"></canvas></div>
     </div>
   </div>
+
+  <div class="tpanel" id="tab-metareport"><div class="section"><h2>Meta Report</h2><div id="metaReport"><span style="color:var(--text2)">Loading...</span></div></div></div>
 
   <div class="tpanel" id="tab-simulator">
     <div style="display:flex;gap:12px;flex-wrap:wrap">
@@ -205,7 +202,11 @@ tr:hover td{background:var(--bg3)}
     <div class="section"><h2>Code Snippets (Python)</h2><div id="codeSnippets"></div></div>
   </div>
 
-  <div class="tpanel" id="tab-strategy"><div class="section"><h2>Strategy Guide</h2><div id="strategyTips"></div></div></div>
+  <div class="tpanel" id="tab-strategy">
+    <div class="section"><h2>Strategy Guide</h2><div id="strategyTips"></div></div>
+    <div class="section"><h2>Weapon Matchup Matrix</h2><p style="font-size:10px;color:var(--text2);margin-bottom:8px">Click a cell for matchup details.</p><div id="matchupMatrix"></div><div id="matchupDetail" style="margin-top:8px"></div></div>
+    <div class="section"><h2>Decision Tree — Bot Logic Loop</h2><div id="decisionTree"></div></div>
+  </div>
 </div>
 
 <script>
@@ -292,6 +293,9 @@ document.querySelectorAll('.tbtn').forEach(b => b.addEventListener('click', () =
   if (b.dataset.tab==='allbots') loadAllBots();
   if (b.dataset.tab==='codebook') renderCodebook();
   if (b.dataset.tab==='strategy') renderStrategy();
+  if (b.dataset.tab==='builds') renderBuilds();
+  if (b.dataset.tab==='mapviewer') loadMapViewer();
+  if (b.dataset.tab==='metareport') loadMetaReport();
 }));
 
 // ========== Refresh ==========
@@ -311,7 +315,6 @@ async function refreshAll() {
     renderPerf(s);
     renderEloHistory(s.name);
     renderAnalysis(s);
-    loadConfigEditor(s);
   } catch(e) {}
 }
 
@@ -396,26 +399,11 @@ function renderAnalysis(s) {
   document.getElementById('analysis').innerHTML=tips.map(t=>`<div class="tip ${t.t==='warn'?'warn':t.t==='good'?'good':''}">${t.m}</div>`).join('');
 }
 
-// ========== Config Editor ==========
-function loadConfigEditor(s) {
-  if (s.name) document.getElementById('cfgName').value=s.name;
-  const sts=['hp','speed','attack','defense'];
-  document.getElementById('cfgStats').innerHTML=sts.map(st=>`<div class="srow"><span class="lbl">${st}</span><input type="range" min="1" max="10" value="5" id="cfg_${st}" oninput="updBudget('cfg')" style="flex:1;accent-color:var(--accent)"><span class="val" id="cfgV_${st}">5</span></div>`).join('');
-  updBudget('cfg');
-}
+// ========== Budget Helper (shared by simulator) ==========
 function updBudget(pfx) {
   let t=0;['hp','speed','attack','defense'].forEach(s=>{const v=parseInt(document.getElementById(pfx+'_'+s).value);document.getElementById(pfx+'V_'+s).textContent=v;t+=v;});
   document.getElementById(pfx+'Budget').innerHTML=`<b style="color:${t===20?'var(--green)':'var(--red)'}"> ${t}/20</b>${t===20?'':' — must equal 20'}`;
   return t;
-}
-async function saveConfig() {
-  const body={};
-  const n=document.getElementById('cfgName').value.trim();if(n)body.name=n;
-  body.avatar_color=document.getElementById('cfgColor').value;
-  const sts={};let t=0;['hp','speed','attack','defense'].forEach(s=>{sts[s]=parseInt(document.getElementById('cfg_'+s).value);t+=sts[s];});
-  if(t!==20){document.getElementById('cfgResult').innerHTML='<span style="color:var(--red)">Must total 20</span>';return;}
-  body.default_loadout={weapon:document.getElementById('cfgWeapon').value,stats:sts,fallback_behavior:document.getElementById('cfgFallback').value};
-  try{await api('/bot/config',{method:'PUT',body:JSON.stringify(body)});document.getElementById('cfgResult').innerHTML='<span style="color:var(--green)">Saved!</span>';refreshAll();}catch(e){document.getElementById('cfgResult').innerHTML='<span style="color:var(--red)">Failed</span>';}
 }
 
 // ========== Stat Simulator ==========
@@ -720,6 +708,389 @@ function drawRadar(counts) {
 }
 
 drawRadar({});
+
+// ========== Build Templates ==========
+const BUILD_TEMPLATES = [
+  {name:'Glass Cannon Staff',weapon:'staff',stats:{hp:4,speed:6,attack:9,defense:1},
+   style:'AoE kiter — max damage, place area attacks on groups, dodge to survive',
+   strong:'Shield, Sword (AoE bypasses melee range)',counter:'Daggers (burst before detonation), fast bots',
+   code:`await ws.send(json.dumps({
+    "type": "select_loadout",
+    "weapon": "staff",
+    "stats": {"hp": 4, "speed": 6, "attack": 9, "defense": 1},
+    "fallback_behavior": "aggressive"
+}))
+
+# Strategy: Keep distance, drop AoE on clusters
+if enemies and state["weapon_ready"]:
+    # Target the enemy with most nearby allies for splash
+    target = min(enemies, key=lambda e: dist(my_pos, e["position"]))
+    send_action("attack", target=target["bot_id"])
+elif enemies:
+    # Kite away while on cooldown
+    nearest = min(enemies, key=lambda e: dist(my_pos, e["position"]))
+    dx, dy = my_pos[0]-nearest["position"][0], my_pos[1]-nearest["position"][1]
+    send_action("move", direction=[dx, dy])`},
+  {name:'Tank Shield',weapon:'shield',stats:{hp:8,speed:2,attack:3,defense:7},
+   style:'Unkillable wall — 50% block + high defense + massive HP pool = outlast everyone',
+   strong:'Daggers (halves their DPS), Sword (block reduces cleave)',counter:'Staff (AoE ignores positioning), Spear (knockback)',
+   code:`await ws.send(json.dumps({
+    "type": "select_loadout",
+    "weapon": "shield",
+    "stats": {"hp": 8, "speed": 2, "attack": 3, "defense": 7},
+    "fallback_behavior": "defensive"
+}))
+
+# Strategy: Stay in zone center, let enemies come to you
+if not state["in_safe_zone"]:
+    send_action("move_to", target_position=safe_zone["center"])
+elif enemies and state["weapon_ready"]:
+    nearest = min(enemies, key=lambda e: dist(my_pos, e["position"]))
+    if dist(my_pos, nearest["position"]) <= 2:
+        send_action("attack", target=nearest["bot_id"])
+    else:
+        send_action("idle")  # Let them come to you`},
+  {name:'Speed Assassin',weapon:'daggers',stats:{hp:3,speed:9,attack:7,defense:1},
+   style:'Close gap fast, burst down with double strike — fastest attack speed in the game',
+   strong:'Bow, Staff (close gap before they react)',counter:'Sword (cleave AoE), Spear (knockback keeps distance)',
+   code:`await ws.send(json.dumps({
+    "type": "select_loadout",
+    "weapon": "daggers",
+    "stats": {"hp": 3, "speed": 9, "attack": 7, "defense": 1},
+    "fallback_behavior": "aggressive"
+}))
+
+# Strategy: Rush lowest HP enemy, dodge if taking hits
+low_hp = sorted(enemies, key=lambda e: e["hp"])
+if low_hp and state["weapon_ready"]:
+    target = low_hp[0]
+    if dist(my_pos, target["position"]) <= 2:
+        send_action("attack", target=target["bot_id"])
+    else:
+        send_action("move_to", target_position=target["position"])
+elif state["hits_received"] and state["dodge_cooldown"] == 0:
+    send_action("dodge", direction=[random.choice([-1,1]), random.choice([-1,1])])`},
+  {name:'Sniper Bow',weapon:'bow',stats:{hp:4,speed:6,attack:9,defense:1},
+   style:'Long range poke — stay at max range, kite melee bots, high damage arrows',
+   strong:'Shield, Spear (outranges both by miles)',counter:'Daggers (too fast, closes gap)',
+   code:`await ws.send(json.dumps({
+    "type": "select_loadout",
+    "weapon": "bow",
+    "stats": {"hp": 4, "speed": 6, "attack": 9, "defense": 1},
+    "fallback_behavior": "opportunistic"
+}))
+
+# Strategy: Keep 5-7 tile distance, fire arrows
+optimal_range = 5
+if enemies and state["weapon_ready"]:
+    target = min(enemies, key=lambda e: e["hp"])  # Focus weak
+    d = dist(my_pos, target["position"])
+    if d <= 7:
+        send_action("attack", target=target["bot_id"])
+    else:
+        send_action("move_to", target_position=target["position"])
+elif enemies:
+    nearest = min(enemies, key=lambda e: dist(my_pos, e["position"]))
+    if dist(my_pos, nearest["position"]) < 3:
+        # Too close — retreat
+        dx, dy = my_pos[0]-nearest["position"][0], my_pos[1]-nearest["position"][1]
+        send_action("move", direction=[dx, dy])`},
+  {name:'Balanced Sword',weapon:'sword',stats:{hp:5,speed:5,attack:6,defense:4},
+   style:'Jack of all trades — cleave hits multiple enemies, solid in all situations',
+   strong:'Daggers, Shield (cleave bypasses block range)',counter:'Bow, Staff (outranged)',
+   code:`await ws.send(json.dumps({
+    "type": "select_loadout",
+    "weapon": "sword",
+    "stats": {"hp": 5, "speed": 5, "attack": 6, "defense": 4},
+    "fallback_behavior": "aggressive"
+}))
+
+# Strategy: Engage groups for cleave value, collect pickups
+if enemies and state["weapon_ready"]:
+    # Prefer clusters (cleave hits multiple)
+    nearest = min(enemies, key=lambda e: dist(my_pos, e["position"]))
+    send_action("attack", target=nearest["bot_id"])
+elif pickups:
+    nearest_p = min(pickups, key=lambda p: dist(my_pos, p["position"]))
+    if dist(my_pos, nearest_p["position"]) <= 2:
+        send_action("use_item", item_id=nearest_p["pickup_id"])
+    else:
+        send_action("move_to", target_position=nearest_p["position"])`},
+  {name:'Knockback Spear',weapon:'spear',stats:{hp:5,speed:5,attack:7,defense:3},
+   style:'Mid-range control — 2-tile reach + knockback keeps enemies at bay, push into walls for bonus damage',
+   strong:'Daggers, Shield (knockback prevents close-in)',counter:'Bow (outranged)',
+   code:`await ws.send(json.dumps({
+    "type": "select_loadout",
+    "weapon": "spear",
+    "stats": {"hp": 5, "speed": 5, "attack": 7, "defense": 3},
+    "fallback_behavior": "aggressive"
+}))
+
+# Strategy: Use knockback to push enemies out of zone or into walls
+if enemies and state["weapon_ready"]:
+    nearest = min(enemies, key=lambda e: dist(my_pos, e["position"]))
+    if dist(my_pos, nearest["position"]) <= 3:
+        send_action("attack", target=nearest["bot_id"])
+    else:
+        send_action("move_to", target_position=nearest["position"])
+elif enemies and state.get("shove_cooldown", 1) <= 0:
+    nearest = min(enemies, key=lambda e: dist(my_pos, e["position"]))
+    if dist(my_pos, nearest["position"]) <= 2:
+        send_action("shove", target=nearest["bot_id"])`},
+];
+
+function renderBuilds() {
+  document.getElementById('buildTemplates').innerHTML = BUILD_TEMPLATES.map((b,i) => {
+    const statsStr = Object.entries(b.stats).map(([k,v])=>`${k}:${v}`).join(' ');
+    return `<div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="color:var(--orange);font-weight:bold;font-size:14px">${esc(b.name)}</span>
+        <span style="font-size:11px;color:var(--text2)">${esc(b.weapon.toUpperCase())} | ${statsStr}</span>
+      </div>
+      <div style="font-size:11px;margin-bottom:6px">${esc(b.style)}</div>
+      <div style="font-size:10px;margin-bottom:4px"><span style="color:var(--green)">Strong vs:</span> ${esc(b.strong)}</div>
+      <div style="font-size:10px;margin-bottom:8px"><span style="color:var(--red)">Countered by:</span> ${esc(b.counter)}</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span style="font-size:10px;color:var(--text2)">Python Loadout + Strategy:</span>
+        <button class="sm" onclick="copyBuildCode(${i})">Copy Code</button>
+        <span id="buildCopy${i}" style="font-size:10px;color:var(--green)"></span>
+      </div>
+      <div class="code-block" id="buildCode${i}" style="font-size:10px;max-height:200px;overflow-y:auto">${esc(b.code)}</div>
+    </div>`;
+  }).join('');
+}
+function copyBuildCode(i) {
+  const code = BUILD_TEMPLATES[i].code;
+  navigator.clipboard.writeText(code).then(() => {
+    document.getElementById('buildCopy'+i).textContent = 'Copied!';
+    setTimeout(() => { document.getElementById('buildCopy'+i).textContent = ''; }, 2000);
+  });
+}
+
+// ========== Map Viewer ==========
+let mapZoomLevel = 4;
+let mapData = null;
+async function loadMapViewer() {
+  const status = document.getElementById('mapStatus');
+  status.textContent = 'Fetching map...';
+  try {
+    const d = await pub('/arena/map');
+    if (d.status === 'no_map' || !d.terrain) {
+      status.innerHTML = '<span style="color:var(--orange)">No map available — the arena may be between rounds. Try again in a few seconds.</span>';
+      const c = document.getElementById('mapCanvas');
+      c.width = 300; c.height = 40;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#161b22';
+      ctx.fillRect(0,0,300,40);
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '12px monospace';
+      ctx.fillText('No map data', 100, 24);
+      return;
+    }
+    mapData = d;
+    status.textContent = `Grid: ${d.width}x${d.height} cells | Cell size: ${d.cell_size}px | Arena: ${d.width*d.cell_size}x${d.height*d.cell_size} world units`;
+    drawMap();
+  } catch(e) {
+    status.innerHTML = '<span style="color:var(--red)">Failed to load map</span>';
+  }
+}
+function mapZoom(dir) {
+  if (dir === 0) mapZoomLevel = 4;
+  else mapZoomLevel = Math.max(1, Math.min(12, mapZoomLevel + dir));
+  if (mapData) drawMap();
+}
+function drawMap() {
+  if (!mapData || !mapData.terrain) return;
+  const terrain = mapData.terrain;
+  const rows = terrain.length;
+  const cols = terrain[0] ? terrain[0].length : 0;
+  const cs = mapZoomLevel;
+  const canvas = document.getElementById('mapCanvas');
+  canvas.width = cols * cs;
+  canvas.height = rows * cs;
+  const ctx = canvas.getContext('2d');
+  const COLORS = { '.': '#1a2332', '#': '#3d4f5f', '~': '#1a3a5c', 'V': '#0a0a0a' };
+  for (let r = 0; r < rows; r++) {
+    const row = terrain[r];
+    for (let c = 0; c < cols; c++) {
+      const ch = row[c] || '.';
+      ctx.fillStyle = COLORS[ch] || '#1a2332';
+      ctx.fillRect(c * cs, r * cs, cs, cs);
+    }
+  }
+  // Grid lines at larger zoom
+  if (cs >= 4) {
+    ctx.strokeStyle = 'rgba(48,54,61,0.4)';
+    ctx.lineWidth = 0.5;
+    for (let r = 0; r <= rows; r++) { ctx.beginPath(); ctx.moveTo(0, r*cs); ctx.lineTo(cols*cs, r*cs); ctx.stroke(); }
+    for (let c = 0; c <= cols; c++) { ctx.beginPath(); ctx.moveTo(c*cs, 0); ctx.lineTo(c*cs, rows*cs); ctx.stroke(); }
+  }
+}
+
+// ========== Meta Report ==========
+async function loadMetaReport() {
+  const el = document.getElementById('metaReport');
+  el.innerHTML = '<span style="color:var(--text2)">Loading leaderboard data...</span>';
+  try {
+    const d = await pub('/leaderboard?limit=50&sort=elo&period=all_time');
+    const entries = d.leaderboard || d.entries || [];
+    if (!entries.length) { el.innerHTML = '<span style="color:var(--text2)">No leaderboard data yet</span>'; return; }
+
+    // --- Weapon distribution ---
+    // We don't have weapon data in leaderboard, so we use bot/live or show kills/elo analysis
+    const top20 = entries.slice(0, 20);
+    const top5 = entries.slice(0, 5);
+
+    // Kills distribution as bar chart
+    const maxKills = Math.max(...top20.map(e => e.kills)) || 1;
+    const maxElo = Math.max(...top20.map(e => e.elo)) || 1;
+
+    let html = '';
+
+    // Top 5 spotlight
+    html += '<h3 style="color:var(--accent);margin-bottom:8px">Top 5 Bots</h3>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:16px">';
+    top5.forEach((e,i) => {
+      const kd = e.deaths > 0 ? (e.kills/e.deaths).toFixed(1) : e.kills+'.0';
+      html += `<div style="background:var(--bg);border:1px solid ${i===0?'var(--gold)':'var(--border)'};border-radius:6px;padding:10px">
+        <div style="color:${i===0?'var(--gold)':'var(--accent)'};font-weight:bold;font-size:13px">#${e.rank} ${esc(e.name)}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:4px">Elo: <b style="color:var(--gold)">${e.elo}</b> | K/D: <b>${kd}</b></div>
+        <div style="font-size:10px;color:var(--text2)">Kills: ${e.kills} | Wins: ${e.round_wins||0} | Streak: ${e.best_streak}</div>
+      </div>`;
+    });
+    html += '</div>';
+
+    // Elo distribution bar chart
+    html += '<h3 style="color:var(--accent);margin-bottom:8px">Elo Distribution (Top 20)</h3>';
+    html += '<div style="margin-bottom:16px">';
+    top20.forEach(e => {
+      const pct = ((e.elo - 800) / (maxElo - 800 || 1) * 100);
+      html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+        <span style="min-width:100px;font-size:10px;color:var(--text2);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.name)}</span>
+        <div class="bar-w" style="height:10px"><div class="bar-f" style="width:${Math.max(2,pct).toFixed(0)}%;background:var(--gold)"></div></div>
+        <span style="font-size:10px;min-width:35px">${e.elo}</span>
+      </div>`;
+    });
+    html += '</div>';
+
+    // Kill efficiency chart
+    html += '<h3 style="color:var(--accent);margin-bottom:8px">Kill Efficiency (Top 20)</h3>';
+    html += '<div style="margin-bottom:16px">';
+    top20.forEach(e => {
+      const kd = e.deaths > 0 ? e.kills/e.deaths : e.kills;
+      const pct = Math.min(100, kd / 5 * 100);
+      const color = kd >= 2 ? 'var(--green)' : kd >= 1 ? 'var(--accent)' : 'var(--red)';
+      html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+        <span style="min-width:100px;font-size:10px;color:var(--text2);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.name)}</span>
+        <div class="bar-w" style="height:10px"><div class="bar-f" style="width:${Math.max(2,pct).toFixed(0)}%;background:${color}"></div></div>
+        <span style="font-size:10px;min-width:35px">${kd.toFixed(1)}</span>
+      </div>`;
+    });
+    html += '</div>';
+
+    // Meta tips
+    html += '<h3 style="color:var(--accent);margin-bottom:8px">Meta Snapshot</h3>';
+    const avgElo = Math.round(top20.reduce((s,e)=>s+e.elo,0)/top20.length);
+    const avgKills = Math.round(top20.reduce((s,e)=>s+e.kills,0)/top20.length);
+    const bestStreaker = top20.reduce((a,b) => a.best_streak > b.best_streak ? a : b);
+    const mostWins = top20.reduce((a,b) => (a.round_wins||0) > (b.round_wins||0) ? a : b);
+    html += `<div class="tip"><b>Average top-20 Elo:</b> ${avgElo} | Average kills: ${avgKills}</div>`;
+    html += `<div class="tip"><b>Streak king:</b> ${esc(bestStreaker.name)} with ${bestStreaker.best_streak}-kill streak</div>`;
+    html += `<div class="tip"><b>Most wins:</b> ${esc(mostWins.name)} with ${mostWins.round_wins||0} round wins</div>`;
+
+    // Tips based on meta
+    if (avgKills > 50) html += '<div class="tip warn"><b>High-kill meta:</b> Damage builds are thriving. Consider a tank Shield build to counter.</div>';
+    if (avgElo > 1100) html += '<div class="tip"><b>Competitive lobby:</b> Average Elo above 1100 — expect skilled opponents.</div>';
+    html += '<div class="tip good"><b>Pro tip:</b> Check the Matchup Matrix in the Strategy tab to find counter-picks for the top bots\' weapons.</div>';
+
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = '<span style="color:var(--red)">Failed to load meta data</span>';
+  }
+}
+
+// ========== Enhanced Strategy — Matchup Matrix ==========
+const MATCHUPS = {
+  // [attacker][defender] = {rating: -2 to +2, reason}
+  // +2 = strong advantage, +1 = slight advantage, 0 = even, -1 = slight disadvantage, -2 = hard counter
+  sword: {sword:{r:0,d:'Mirror — cleave vs cleave, comes down to stats'},bow:{r:-1,d:'Bow outranges sword. Must close gap to fight.'},daggers:{r:1,d:'Cleave hits dagger user + nearby allies. AoE advantage.'},shield:{r:1,d:'Cleave bypasses shield positioning, hits from sides.'},spear:{r:0,d:'Similar range. Spear knockback can disrupt, but sword has more DPS.'},staff:{r:-1,d:'Staff outranges and AoE zones sword out. Close gap fast or lose.'}},
+  bow: {sword:{r:1,d:'Kite at range, sword can\'t touch you if you stay back.'},bow:{r:0,d:'Mirror — whoever has better aim and positioning wins.'},daggers:{r:-2,d:'Daggers close gap too fast, burst before bow can get shots off.'},shield:{r:1,d:'Outranges shield. Safe free damage from distance.'},spear:{r:1,d:'Outranges spear by 5 tiles. Easy kiting.'},staff:{r:0,d:'Both ranged. Staff has AoE, bow has faster projectiles. Even.'}},
+  daggers:{sword:{r:-1,d:'Sword cleave hits daggers hard in group fights.'},bow:{r:2,d:'Close gap with speed, burst before bow can react. Hard counter.'},daggers:{r:0,d:'Mirror — pure speed and reflex contest.'},shield:{r:-1,d:'Shield blocks 50% of dagger hits. Tank outlasts assassin.'},spear:{r:-1,d:'Spear knockback keeps daggers at bay. Hard to stick on target.'},staff:{r:2,d:'Rush into melee range before AoE detonates. Staff is helpless up close.'}},
+  shield:{sword:{r:-1,d:'Sword cleave from sides bypasses frontal block positioning.'},bow:{r:-1,d:'Bow kites and chips from range. Shield can\'t close gap.'},daggers:{r:1,d:'Block halves dagger DPS. Tank wins attrition.'},shield:{r:0,d:'Mirror — extremely long, boring fight. Lowest DPS vs lowest damage taken.'},spear:{r:-1,d:'Spear knockback disrupts shield and pushes out of position.'},staff:{r:-2,d:'Staff AoE ignores positioning entirely. Shield\'s block is useless vs area damage.'}},
+  spear: {sword:{r:0,d:'Similar melee range. Knockback helps, but sword has cleave DPS.'},bow:{r:-1,d:'Bow outranges by 5 tiles. Spear can\'t reach.'},daggers:{r:1,d:'Knockback prevents daggers from sticking. Range advantage.'},shield:{r:1,d:'Knockback disrupts shield positioning. Push into zone damage.'},spear:{r:0,d:'Mirror — both knockback each other. Stalemately.'},staff:{r:-1,d:'Staff outranges spear. AoE zones out spear user.'}},
+  staff: {sword:{r:1,d:'AoE zones out sword. Place impacts between you and them.'},bow:{r:0,d:'Both ranged. Bow has speed, staff has area control. Even matchup.'},daggers:{r:-2,d:'Daggers rush in and burst. AoE has 2-tick delay — too slow vs speed.'},shield:{r:2,d:'AoE bypasses block entirely. Shield has no answer to area damage.'},spear:{r:1,d:'Outranges spear. AoE denies spear\'s mid-range zone.'},staff:{r:0,d:'Mirror — area control contest. Positioning is everything.'}},
+};
+const WEAPON_ORDER = ['sword','bow','daggers','shield','spear','staff'];
+const WEAPON_ICONS = {sword:'⚔️',bow:'🏹',daggers:'🗡️',shield:'🛡️',spear:'🔱',staff:'🪄'};
+
+function renderMatchupMatrix() {
+  const ratingColor = r => r >= 2 ? '#3fb950' : r >= 1 ? '#2ea043' : r === 0 ? '#d29922' : r >= -1 ? '#da3633' : '#f85149';
+  const ratingText = r => r >= 2 ? '++' : r >= 1 ? '+' : r === 0 ? '=' : r >= -1 ? '−' : '−−';
+
+  let html = '<div style="overflow-x:auto"><table style="border-collapse:collapse;text-align:center;font-size:11px">';
+  html += '<thead><tr><th style="padding:6px;border:1px solid var(--border)">ATK \\ DEF</th>';
+  WEAPON_ORDER.forEach(w => html += `<th style="padding:6px;border:1px solid var(--border)">${WEAPON_ICONS[w]} ${w}</th>`);
+  html += '</tr></thead><tbody>';
+
+  WEAPON_ORDER.forEach(atk => {
+    html += `<tr><td style="padding:6px;border:1px solid var(--border);font-weight:bold;text-align:left">${WEAPON_ICONS[atk]} ${atk}</td>`;
+    WEAPON_ORDER.forEach(def => {
+      const m = MATCHUPS[atk][def];
+      const bg = ratingColor(m.r);
+      html += `<td style="padding:6px;border:1px solid var(--border);background:${bg}22;color:${bg};font-weight:bold;cursor:pointer" onclick="showMatchup('${atk}','${def}')">${ratingText(m.r)}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  html += '<div style="font-size:10px;color:var(--text2);margin-top:6px"><span style="color:#3fb950">++</span> strong win &nbsp; <span style="color:#2ea043">+</span> slight edge &nbsp; <span style="color:#d29922">=</span> even &nbsp; <span style="color:#da3633">−</span> slight loss &nbsp; <span style="color:#f85149">−−</span> hard counter</div>';
+  document.getElementById('matchupMatrix').innerHTML = html;
+}
+function showMatchup(atk, def) {
+  const m = MATCHUPS[atk][def];
+  const ratingColor = m.r >= 1 ? 'var(--green)' : m.r <= -1 ? 'var(--red)' : 'var(--orange)';
+  document.getElementById('matchupDetail').innerHTML = `<div class="tip" style="border-color:${ratingColor}"><b>${WEAPON_ICONS[atk]} ${atk} vs ${WEAPON_ICONS[def]} ${def}:</b> ${m.d}</div>`;
+}
+
+// ========== Decision Tree ==========
+function renderDecisionTree() {
+  const node = (q, yes, no, indent=0) => {
+    const pad = indent * 20;
+    return `<div style="margin-left:${pad}px;margin-bottom:2px">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="color:var(--accent);font-weight:bold;font-size:12px">${indent > 0 ? (indent % 2 === 0 ? '└─' : '├─') : '▶'}</span>
+        <span style="font-size:12px">${q}</span>
+      </div>
+      ${yes ? `<div style="margin-left:${pad+20}px;font-size:11px;color:var(--green);margin:2px 0">✓ YES → ${yes}</div>` : ''}
+      ${no ? `<div style="margin-left:${pad+20}px;font-size:11px;color:var(--red);margin:2px 0">✗ NO → ${no}</div>` : ''}
+    </div>`;
+  };
+
+  document.getElementById('decisionTree').innerHTML = `
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:14px;font-family:monospace">
+      ${node('Am I alive?', '', '<b>Wait for respawn / next round</b>')}
+      ${node('Am I stunned?', '<b style="color:var(--orange)">IDLE</b> (can\'t act while stunned)', 'Continue...', 1)}
+      ${node('Am I outside the safe zone?', '<code>move_to</code> zone center (priority!)', 'Continue...', 1)}
+      ${node('Am I taking hits AND low HP (&lt;30%) AND dodge off cooldown?', '<code>dodge</code> away from attacker', 'Continue...', 1)}
+      ${node('Any health packs nearby AND HP &lt; 50%?', '<code>use_item</code> or <code>move_to</code> health pack', 'Continue...', 1)}
+      ${node('Any enemies visible?', 'Check weapon status...', 'Check for pickups...', 1)}
+      ${node('Is weapon ready (cooldown = 0)?', '', '', 2)}
+      ${node('Is nearest enemy in weapon range?', '<code>attack</code> lowest HP enemy', '<code>move_to</code> nearest enemy', 3)}
+      ${node('Weapon on cooldown — shove available?', '<code>shove</code> nearest enemy (free stun)', 'Strafe/dodge perpendicular', 2)}
+      ${node('No enemies — any pickups nearby?', '<code>use_item</code> or <code>move_to</code> pickup', '', 1)}
+      ${node('Nothing to do?', '<code>idle</code> or patrol toward zone center', '', 1)}
+    </div>
+    <div style="font-size:10px;color:var(--text2);margin-top:8px">This is a basic priority loop. Advanced bots add: target selection (focus low HP), kiting at optimal range, dodge timing, pickup priority (damage boost &gt; health &gt; shield &gt; speed), zone prediction, and retreat logic.</div>
+  `;
+}
+
+// Update renderStrategy to also render matrix and tree
+const _origRenderStrategy = renderStrategy;
+renderStrategy = function() {
+  _origRenderStrategy();
+  renderMatchupMatrix();
+  renderDecisionTree();
+};
+
 </script>
 </body>
 </html>

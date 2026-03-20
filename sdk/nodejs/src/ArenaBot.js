@@ -86,6 +86,12 @@ export default class ArenaBot {
   dodge(direction) { return { action: 'dodge', direction }; }
   /** Use an item by ID. */
   useItem(itemId) { return { action: 'use_item', item_id: itemId }; }
+  /** Place a landmine at current position (max 3 per bot, arms after delay). */
+  placeMine() { return { action: 'place_mine' }; }
+  /** Deploy a gravity well at a target position [col, row]. Requires a charge from pickup. */
+  useGravityWell(targetPosition) {
+    return { action: 'use_gravity_well', target_position: [targetPosition[0], targetPosition[1]] };
+  }
   /** Do nothing this tick. */
   idle() { return { action: 'idle' }; }
 

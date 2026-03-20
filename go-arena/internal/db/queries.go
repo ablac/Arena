@@ -72,7 +72,7 @@ func GetTimeBasedLeaderboard(ctx context.Context, since time.Time, sortBy string
 			COUNT(*) AS rounds_played,
 			SUM(CASE WHEN r.won THEN 1 ELSE 0 END) AS round_wins
 		FROM round_bot_stats r
-		LEFT JOIN bots b ON b.id = r.bot_id
+		LEFT JOIN bots b ON b.id::text = r.bot_id
 		WHERE r.created_at >= $1
 		GROUP BY r.bot_id
 		HAVING COUNT(*) > 0
