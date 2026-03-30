@@ -204,6 +204,7 @@ export function createSwordsmanEntry(bot, scene) {
     rightColor: B.Color3.Black()
   });
   const torso = _box(`swTorso-${id}`, TORSO_W, TORSO_H, TORSO_D, scene, body, bodyMat);
+  torso.isPickable = true; // override _box default for click-to-follow
 
   // ── Head ──
   const headColor = new B.Color3(
@@ -221,7 +222,7 @@ export function createSwordsmanEntry(bot, scene) {
   head.parent = body;
   head.position.y = TORSO_H / 2 + HEAD_R * 0.8;
   head.material = headMat;
-  head.isPickable = false;
+  head.isPickable = true; // enable click-to-follow
   head.alwaysSelectAsActiveMesh = true;
 
   // ── Arm material (shared per bot, slightly darker) ──

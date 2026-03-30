@@ -115,7 +115,7 @@ export function createBotEntry(bot, scene) {
   }, scene);
   body.position.y = BODY_H / 2;
   body.parent = root;
-  body.isPickable = false;
+  body.isPickable = true; // enable click-to-follow
   body.alwaysSelectAsActiveMesh = true;
   const bodyMat = makeMat(`bmat-${id}`, scene, color, { emissiveFactor: 0.35 });
   bodyMat.emissiveFresnelParameters = new B.FresnelParameters({
@@ -130,7 +130,7 @@ export function createBotEntry(bot, scene) {
   const head = B.MeshBuilder.CreateSphere(`head-${id}`, {
     diameter: HEAD_R * 2, segments: 4
   }, scene);
-  head.isPickable = false;
+  head.isPickable = true; // enable click-to-follow
   head.alwaysSelectAsActiveMesh = true;
   head.position.y = BODY_H + HEAD_R * 0.7;
   head.parent = root;

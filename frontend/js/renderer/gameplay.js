@@ -457,23 +457,37 @@ export class GameplayRenderer {
       mat.disableLighting = true;
       ring.material = mat;
       ring.isPickable = false;
-      this.bountyGroup = { ring, curX: 0, curZ: 0, initialized: false };
+      this.bountyGroup = { ring, targetX: 0, targetZ: 0, curX: 0, curZ: 0, initialized: false };
+
+      // Register per-frame smooth interpolation (like the zone ring)
+      this.scene.registerBeforeRender(() => {
+        const g = this.bountyGroup;
+        if (!g || !g.initialized || g.ring.visibility === 0) return;
+        // Exponential smoothing — same technique as bot interpolation
+        const dt = this.scene.getEngine().getDeltaTime() / 1000;
+        const smoothing = 8; // higher = faster catch-up
+        const factor = 1 - Math.exp(-smoothing * dt);
+        g.curX += (g.targetX - g.curX) * factor;
+        g.curZ += (g.targetZ - g.curZ) * factor;
+        g.ring.position.x = g.curX;
+        g.ring.position.z = g.curZ;
+        // Smooth float bob using real time
+        g.ring.position.y = 25 + Math.sin(performance.now() * 0.002) * 3;
+        // Smooth constant rotation
+        g.ring.rotation.y += 2.5 * dt;
+      });
     }
 
+    // Just update the target position — per-frame lerp handles the rest
     const pos = target.position;
-    const tx = pos[0], tz = pos[1];
     const g = this.bountyGroup;
+    g.targetX = pos[0];
+    g.targetZ = pos[1];
     if (!g.initialized) {
-      g.curX = tx;
-      g.curZ = tz;
+      g.curX = pos[0];
+      g.curZ = pos[1];
       g.initialized = true;
     }
-    // Smooth lerp to target position (high factor = nearly instant, no trailing)
-    const lerp = 0.5;
-    g.curX += (tx - g.curX) * lerp;
-    g.curZ += (tz - g.curZ) * lerp;
-    g.ring.position.set(g.curX, 25 + Math.sin(this._tick * 0.06) * 3, g.curZ);
-    g.ring.rotation.y += 0.04;
     g.ring.visibility = 1;
   }
 

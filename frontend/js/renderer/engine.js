@@ -115,6 +115,9 @@ export class ArenaEngine {
       this.effectRenderer.spawnGrappleEffect(ax, az, tx, tz);
     };
 
+    // Click-to-follow: click a bot in the 3D scene to follow it
+    this._setupClickToFollow(canvas);
+
     this._addLights();
     this.envRenderer.setupShadows(this.sunLight);
 
@@ -188,6 +191,51 @@ export class ArenaEngine {
     this.effectRenderer.update(state.bots);
     this.gameplayRenderer.update(state);
     this.camera.updateBotPositions(state.bots);
+  }
+
+  /**
+   * Click-to-follow: pick bot meshes on left-click and follow them.
+   * Matches clicked mesh back to bot_id via the BotRenderer entries.
+   * @private
+   */
+  _setupClickToFollow(canvas) {
+    let pointerDownPos = null;
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.button === 0) pointerDownPos = { x: e.clientX, y: e.clientY };
+    });
+    canvas.addEventListener('pointerup', (e) => {
+      if (e.button !== 0 || !pointerDownPos) return;
+      // Only count as a click if pointer didn't move much (not a drag/orbit)
+      const dx = e.clientX - pointerDownPos.x;
+      const dy = e.clientY - pointerDownPos.y;
+      pointerDownPos = null;
+      if (dx * dx + dy * dy > 25) return; // moved > 5px = drag, not click
+
+      const pick = this.scene.pick(e.offsetX, e.offsetY);
+      if (!pick.hit || !pick.pickedMesh) return;
+
+      // Walk up the mesh hierarchy to find a bot root TransformNode
+      let node = pick.pickedMesh;
+      while (node) {
+        if (node.name && node.name.startsWith('botRoot-')) {
+          const botId = node.name.replace('botRoot-', '');
+          this.camera.followBot(botId);
+          // Sync the follow dropdown if it exists
+          const select = document.getElementById('follow-bot');
+          if (select) select.value = botId;
+          return;
+        }
+        // Also check swordsman roots (swRoot-{id})
+        if (node.name && node.name.startsWith('swRoot-')) {
+          const botId = node.name.replace('swRoot-', '');
+          this.camera.followBot(botId);
+          const select = document.getElementById('follow-bot');
+          if (select) select.value = botId;
+          return;
+        }
+        node = node.parent;
+      }
+    });
   }
 
   setZoom(z) { if (this.camera) this.camera.setZoom(z); }
