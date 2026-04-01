@@ -78,6 +78,22 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	// Create dashboard handler.
 	dashboardHandler := NewDashboardHandler(bus, adminHandler)
 
+	// Initialise OIDC handler (nil if disabled/misconfigured).
+	oidcHandler := NewOIDCHandler()
+
+	// --- OIDC routes (mounted OUTSIDE admin auth — these handle pre-auth flow) ---
+	if oidcHandler != nil {
+		r.Get("/admin/login", oidcHandler.LoginHandler)
+		r.Get("/admin/callback", oidcHandler.CallbackHandler)
+		r.Get("/admin/logout", oidcHandler.LogoutHandler)
+		r.Get("/api/v1/admin/session", oidcHandler.SessionInfoHandler)
+		// Mirror under /arena prefix
+		r.Get("/arena/admin/login", oidcHandler.LoginHandler)
+		r.Get("/arena/admin/callback", oidcHandler.CallbackHandler)
+		r.Get("/arena/admin/logout", oidcHandler.LogoutHandler)
+		r.Get("/arena/api/v1/admin/session", oidcHandler.SessionInfoHandler)
+	}
+
 	r.Route("/api/v1", func(api chi.Router) {
 		// Health check (public).
 		api.Get("/health", healthHandler(engine))
@@ -111,9 +127,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		// Arena map (public) — returns current terrain grid.
 		api.Get("/arena/map", GetArenaMap(engine))
 
-		// Admin routes (token-authenticated, rate-limited).
+		// Admin routes (token-authenticated or OIDC session, rate-limited).
 		api.Route("/admin", func(admin chi.Router) {
-			admin.Use(MakeAdminAuthMiddleware(adminHandler))
+			admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
 			admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
 			adminHandler.Routes(admin)
 
@@ -155,7 +171,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 			// Admin routes (mirrored under /arena prefix).
 			api.Route("/admin", func(admin chi.Router) {
-				admin.Use(MakeAdminAuthMiddleware(adminHandler))
+				admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
 				admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
 				adminHandler.Routes(admin)
 
