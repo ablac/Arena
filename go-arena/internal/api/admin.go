@@ -97,7 +97,15 @@ var AdminAuthMiddleware = MakeAdminAuthMiddleware(nil)
 
 // MakeAdminAuthMiddleware creates an admin auth middleware that checks both the
 // env var token and any dynamically created tokens via the handler.
+// If an OIDCHandler is provided and OIDC is enabled, valid session cookies are
+// also accepted.
 func MakeAdminAuthMiddleware(handler *AdminHandler) func(http.Handler) http.Handler {
+	return MakeAdminAuthMiddlewareWithOIDC(handler, nil)
+}
+
+// MakeAdminAuthMiddlewareWithOIDC is like MakeAdminAuthMiddleware but also
+// accepts OIDC session cookies when oidcHandler is non-nil.
+func MakeAdminAuthMiddlewareWithOIDC(handler *AdminHandler, oidcHandler *OIDCHandler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			cfg := &config.C
@@ -108,8 +116,20 @@ func MakeAdminAuthMiddleware(handler *AdminHandler) func(http.Handler) http.Hand
 				return
 			}
 
+			// Check OIDC session cookie.
+			if oidcHandler != nil && oidcHandler.IsAuthenticated(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			token := r.Header.Get("X-Admin-Token")
 			if token == "" {
+				// If OIDC is enabled but no token and no session, return 401
+				// with a hint to use SSO login.
+				if oidcHandler != nil {
+					writeError(w, http.StatusUnauthorized, "not authenticated — use SSO login or provide X-Admin-Token")
+					return
+				}
 				writeError(w, http.StatusUnauthorized, "missing X-Admin-Token header")
 				return
 			}

@@ -194,6 +194,14 @@ type Config struct {
 	GravityWellDurationTicks int     `envconfig:"ARENA_GRAVITY_WELL_DURATION_TICKS" default:"30"`
 	GravityWellPullRadius    int     `envconfig:"ARENA_GRAVITY_WELL_PULL_RADIUS" default:"3"`
 	GravityWellPullForce     float64 `envconfig:"ARENA_GRAVITY_WELL_PULL_FORCE" default:"0.5"`
+
+	// OIDC / SSO (opt-in)
+	OIDCEnabled      bool   `envconfig:"ARENA_OIDC_ENABLED" default:"false"`
+	OIDCIssuer       string `envconfig:"ARENA_OIDC_ISSUER" default:""`
+	OIDCClientID     string `envconfig:"ARENA_OIDC_CLIENT_ID" default:""`
+	OIDCClientSecret string `envconfig:"ARENA_OIDC_CLIENT_SECRET" default:""`
+	OIDCRedirectURI  string `envconfig:"ARENA_OIDC_REDIRECT_URI" default:""`
+	OIDCSessionTTL   int    `envconfig:"ARENA_OIDC_SESSION_TTL_HOURS" default:"8"`
 }
 
 var C Config
