@@ -265,6 +265,10 @@ button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--g
   <h1>// ARENA ADMIN</h1>
   <input type="password" id="tokenInput" placeholder="Admin Token" autofocus>
   <button onclick="doLogin()">Authenticate</button>
+  <div id="ssoSection" style="display:none;margin-top:8px">
+    <div style="color:var(--text2);font-size:11px;margin-bottom:6px">— or —</div>
+    <button onclick="window.location.href=ssoLoginUrl()" style="background:var(--accent);color:#fff;border-color:var(--accent);padding:8px 24px">SSO Login</button>
+  </div>
   <div class="error" id="loginError"></div>
 </div>
 
@@ -277,6 +281,8 @@ button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--g
       <span id="uptimeDisplay">--</span>
       <span id="botsCount">0 bots</span>
       <span id="sessionTimer" style="font-size:10px">0:00</span>
+      <span id="ssoUser" style="display:none;color:var(--green);font-size:11px"></span>
+      <button id="ssoLogoutBtn" onclick="window.location.href=ssoLogoutUrl()" style="display:none;font-size:10px;padding:2px 8px">Logout</button>
       <button onclick="shareTab()" style="font-size:11px;padding:2px 8px" title="Copy link to current tab">Share</button>
       <button onclick="toggleFullscreen()" style="font-size:11px;padding:2px 8px" id="fsBtn" title="Toggle fullscreen (F11)">Full</button>
       <button onclick="toggleTheme()" style="font-size:11px;padding:2px 8px" id="themeBtn">Light</button>
@@ -926,6 +932,9 @@ const kfWeapons = {};
 const kfKillers = {};
 const kfDeaths = {};
 
+let ssoEnabled = false;
+let ssoSession = null;
+
 // ========== API ==========
 const API_BASE = getAPIBase();
 
@@ -933,6 +942,24 @@ function getAPIBase() {
   const p = location.pathname;
   if (p.startsWith('/arena/')) return '/arena/api/v1/admin';
   return '/api/v1/admin';
+}
+
+function ssoLoginUrl() {
+  const p = location.pathname;
+  if (p.startsWith('/arena/')) return '/arena/admin/login';
+  return '/admin/login';
+}
+
+function ssoLogoutUrl() {
+  const p = location.pathname;
+  if (p.startsWith('/arena/')) return '/arena/admin/logout';
+  return '/admin/logout';
+}
+
+function getSessionUrl() {
+  const p = location.pathname;
+  if (p.startsWith('/arena/')) return '/arena/api/v1/admin/session';
+  return '/api/v1/admin/session';
 }
 
 async function api(path, opts={}) {
@@ -981,6 +1008,12 @@ function logout() {
 function showApp() {
   document.getElementById('login').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
+  // Show SSO user info if logged in via OIDC
+  if (ssoSession && ssoSession.authenticated) {
+    document.getElementById('ssoUser').textContent = '🔑 ' + (ssoSession.name || ssoSession.email);
+    document.getElementById('ssoUser').style.display = '';
+    document.getElementById('ssoLogoutBtn').style.display = '';
+  }
   startSSE();
   refreshOverview();
   // Load tab from URL if present
@@ -3474,9 +3507,31 @@ async function banSpectatorIP(ip, index) {
 // Load tab from URL parameter
 const urlTab = new URLSearchParams(window.location.search).get('tab');
 
-if (token) {
-  testAuth();
-}
+// Check SSO session first, then fall back to token auth
+(async function init() {
+  try {
+    const res = await fetch(getSessionUrl());
+    if (res.ok) {
+      const data = await res.json();
+      if (data.authenticated) {
+        ssoEnabled = true;
+        ssoSession = data;
+        showApp();
+        return;
+      }
+      // SSO endpoint exists but not authenticated — show SSO button
+      ssoEnabled = true;
+      document.getElementById('ssoSection').style.display = '';
+    }
+  } catch(e) {
+    // SSO endpoint not available (OIDC disabled) — hide SSO button
+  }
+
+  // Fall back to token auth
+  if (token) {
+    testAuth();
+  }
+})();
 </script>
 </body>
 </html>
