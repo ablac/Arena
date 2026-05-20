@@ -10,6 +10,7 @@ import (
 
 type tickState struct {
 	Tick             int
+	RoundTick        int
 	Position         [2]float64
 	HP               float64
 	MaxHP            float64
@@ -32,6 +33,12 @@ type tickState struct {
 	LastActionOK     bool
 	HasSpeedBoost    bool
 	HasDmgBoost      bool
+	MineCount         int
+	NearbyMines       int
+	GravityWellCharge int
+	GrappleCharges    int
+	GrappleCooldown   float64
+	IsBountyTarget    bool
 	Enemies          []entity
 	Pickups          []entity
 	Teleporters      []entity
@@ -52,6 +59,13 @@ type entity struct {
 	Dodging  bool
 	TargetID string
 	Radius   float64
+	LinkedID string
+	Color    string
+	Ready    bool
+	Cooldown int
+	HasLOS   bool
+	CanAttack bool
+	Active   bool
 }
 
 type hint struct {
@@ -79,6 +93,7 @@ var (
 var (
 	mineCount   = make(map[string]int) // botID -> mines placed this life
 	mineCountMu sync.Mutex
+	currentHazards []entity
 )
 
 func getMineCount(botID string) int {
@@ -396,8 +411,20 @@ func placeMine() actionResult {
 	return actionResult{Action: "place_mine"}
 }
 
+func useItem(id string) actionResult {
+	return actionResult{Action: "use_item", ItemID: id}
+}
+
 func useGravityWell(pos [2]float64) actionResult {
 	return actionResult{Action: "use_gravity_well", TargetPosition: &pos}
+}
+
+func grapple(id string) actionResult {
+	return actionResult{Action: "grapple", Target: id}
+}
+
+func grapplePos(pos [2]float64) actionResult {
+	return actionResult{Action: "grapple", TargetPosition: &pos}
 }
 
 // === Tick Parsing ===
@@ -410,6 +437,9 @@ func parseTick(msg map[string]interface{}) tickState {
 	}
 	if v, ok := msg["tick"].(float64); ok {
 		ts.Tick = int(v)
+	}
+	if v, ok := msg["round_tick"].(float64); ok {
+		ts.RoundTick = int(v)
 	}
 	if ys, ok := msg["your_state"].(map[string]interface{}); ok {
 		ts.Position = parsePos(ys["position"])
@@ -486,6 +516,24 @@ func parseTick(msg map[string]interface{}) tickState {
 				}
 			}
 		}
+		if v, ok := ys["gravity_well_charge"].(float64); ok {
+			ts.GravityWellCharge = int(v)
+		}
+		if v, ok := ys["grapple_charges"].(float64); ok {
+			ts.GrappleCharges = int(v)
+		}
+		if v, ok := ys["grapple_cooldown"].(float64); ok {
+			ts.GrappleCooldown = v
+		}
+		if v, ok := ys["is_bounty_target"].(bool); ok {
+			ts.IsBountyTarget = v
+		}
+		if v, ok := ys["mine_count"].(float64); ok {
+			ts.MineCount = int(v)
+		}
+	}
+	if v, ok := msg["nearby_mines"].(float64); ok {
+		ts.NearbyMines = int(v)
 	}
 	if sz, ok := msg["safe_zone"].(map[string]interface{}); ok {
 		if v, ok := sz["center"]; ok {
@@ -512,6 +560,9 @@ func parseTick(msg map[string]interface{}) tickState {
 				ent.Type = v
 			}
 			if v, ok := e["id"].(string); ok {
+				ent.ID = v
+			}
+			if v, ok := e["pickup_id"].(string); ok && ent.ID == "" {
 				ent.ID = v
 			}
 			if v, ok := e["bot_id"].(string); ok && ent.ID == "" {
@@ -544,14 +595,41 @@ func parseTick(msg map[string]interface{}) tickState {
 			if v, ok := e["radius"].(float64); ok {
 				ent.Radius = v
 			}
+			if v, ok := e["linked_pad_id"].(string); ok {
+				ent.LinkedID = v
+			}
+			if v, ok := e["color"].(string); ok {
+				ent.Color = v
+			}
+			if v, ok := e["is_ready"].(bool); ok {
+				ent.Ready = v
+			} else {
+				ent.Ready = true
+			}
+			if v, ok := e["cooldown_remaining_ticks"].(float64); ok {
+				ent.Cooldown = int(v)
+			}
+			if v, ok := e["has_los"].(bool); ok {
+				ent.HasLOS = v
+			} else {
+				ent.HasLOS = true
+			}
+			if v, ok := e["can_attack"].(bool); ok {
+				ent.CanAttack = v
+			}
+			if v, ok := e["active"].(bool); ok {
+				ent.Active = v
+			}
 			switch ent.Type {
 			case "bot":
 				if ent.IsAlive {
 					ts.Enemies = append(ts.Enemies, ent)
 				}
+			case "bounty_target":
+				ts.Enemies = append(ts.Enemies, ent)
 			case "pickup":
 				ts.Pickups = append(ts.Pickups, ent)
-			case "teleporter":
+			case "teleport_pad", "teleporter":
 				ts.Teleporters = append(ts.Teleporters, ent)
 			case "hazard_zone":
 				ts.HazardZones = append(ts.HazardZones, ent)
@@ -610,6 +688,44 @@ func closest(pos [2]float64, enemies []entity) (*entity, float64) {
 	return b, bd
 }
 
+func closestVisible(pos [2]float64, enemies []entity) (*entity, float64) {
+	var b *entity
+	bd := math.Inf(1)
+	for i := range enemies {
+		if !enemies[i].HasLOS {
+			continue
+		}
+		d := chebyshev(pos, enemies[i].Position)
+		if d < bd {
+			bd = d
+			b = &enemies[i]
+		}
+	}
+	return b, bd
+}
+
+func countVisibleEnemies(enemies []entity) int {
+	count := 0
+	for _, e := range enemies {
+		if e.HasLOS {
+			count++
+		}
+	}
+	return count
+}
+
+func hasVisibleRangedThreat(enemies []entity) bool {
+	for _, e := range enemies {
+		if !e.HasLOS {
+			continue
+		}
+		if e.Weapon == "bow" || e.Weapon == "staff" {
+			return true
+		}
+	}
+	return false
+}
+
 // bestTarget picks the optimal attack target in weapon range.
 func bestTarget(pos [2]float64, enemies []entity, wrange float64) *entity {
 	var best *entity
@@ -617,6 +733,9 @@ func bestTarget(pos [2]float64, enemies []entity, wrange float64) *entity {
 	for i := range enemies {
 		e := &enemies[i]
 		if e.Dodging {
+			continue
+		}
+		if !e.HasLOS {
 			continue
 		}
 		d := chebyshev(pos, e.Position)
@@ -645,6 +764,9 @@ func weakest(pos [2]float64, enemies []entity) (*entity, float64) {
 	bestHP := math.Inf(1)
 	for i := range enemies {
 		e := &enemies[i]
+		if !e.HasLOS {
+			continue
+		}
 		hp := e.HP
 		if e.Stunned {
 			hp -= 50
@@ -675,6 +797,9 @@ func nearestHealthPickup(pos [2]float64, pickups []entity) (*entity, float64) {
 		if pickups[i].SubType != "health_pack" {
 			continue
 		}
+		if pickupBlockedByActiveHazard(pickups[i].Position) {
+			continue
+		}
 		d := chebyshev(pos, pickups[i].Position)
 		if d < bestD {
 			bestD = d
@@ -689,6 +814,9 @@ func nearestPickup(pos [2]float64, pickups []entity) (*entity, float64) {
 	var best *entity
 	bestD := math.Inf(1)
 	for i := range pickups {
+		if pickupBlockedByActiveHazard(pickups[i].Position) {
+			continue
+		}
 		d := chebyshev(pos, pickups[i].Position)
 		if d < bestD {
 			bestD = d
@@ -706,6 +834,9 @@ func nearestPickupOfType(pos [2]float64, pickups []entity, subType string) (*ent
 		if pickups[i].SubType != subType {
 			continue
 		}
+		if pickupBlockedByActiveHazard(pickups[i].Position) {
+			continue
+		}
 		d := chebyshev(pos, pickups[i].Position)
 		if d < bestD {
 			bestD = d
@@ -720,6 +851,9 @@ func nearestPickupOfType(pos [2]float64, pickups []entity, subType string) (*ent
 // inHazardZone checks if a position is inside any active hazard zone.
 func inHazardZone(pos [2]float64, hazards []entity) bool {
 	for _, h := range hazards {
+		if !h.Active {
+			continue
+		}
 		r := h.Radius
 		if r <= 0 {
 			r = 2 // default hazard radius
@@ -729,6 +863,10 @@ func inHazardZone(pos [2]float64, hazards []entity) bool {
 		}
 	}
 	return false
+}
+
+func pickupBlockedByActiveHazard(pos [2]float64) bool {
+	return inHazardZone(pos, currentHazards)
 }
 
 // === Cluster Detection (for Staff AoE) ===
@@ -782,39 +920,51 @@ func enemiesWithinRange(pos [2]float64, enemies []entity, r float64) int {
 func trySmartPickup(ts tickState, strategy string) *actionResult {
 	pos := ts.Position
 	hpRatio := ts.HP / ts.MaxHP
+	visibleEnemies := countVisibleEnemies(ts.Enemies)
+	rangedThreat := hasVisibleRangedThreat(ts.Enemies)
 
-	// Gravity well: ALWAYS grab if within 5 tiles
+	if any, anyD := nearestPickup(pos, ts.Pickups); any != nil && anyD <= 1 && any.ID != "" {
+		a := useItem(any.ID)
+		return &a
+	}
+
+	// Gravity well: grab only if we do not already have a charge.
 	gw, gwD := nearestPickupOfType(pos, ts.Pickups, "gravity_well")
-	if gw != nil && gwD <= 5 {
+	if gw != nil && gwD <= 8 && ts.GravityWellCharge <= 0 {
 		a := moveTo(pos, gw.Position)
 		return &a
 	}
 
-	// Damage boost: grab if within 3 tiles AND enemies visible
+	// Damage boost: grab if there is a realistic fight to use it in.
 	dmg, dmgD := nearestPickupOfType(pos, ts.Pickups, "damage_boost")
-	if dmg != nil && dmgD <= 3 && len(ts.Enemies) > 0 {
+	if dmg != nil && dmgD <= 6 && (visibleEnemies > 0 || strategy == "aggressive" || strategy == "assassin") {
 		a := moveTo(pos, dmg.Position)
 		return &a
 	}
 
-	// Speed boost: grab if within 3 tiles AND playing assassin/kite
+	// Speed boost: useful for mobility styles and zone recovery.
 	spd, spdD := nearestPickupOfType(pos, ts.Pickups, "speed_boost")
-	if spd != nil && spdD <= 3 && (strategy == "assassin" || strategy == "kite") {
+	if spd != nil && spdD <= 6 && (strategy == "assassin" || strategy == "kite" || !ts.InZone) {
 		a := moveTo(pos, spd.Position)
 		return &a
 	}
 
-	// Shield bubble: grab if within 3 tiles AND HP < 70%
+	// Shield bubble: grab aggressively when ranged LOS is on us.
 	sb, sbD := nearestPickupOfType(pos, ts.Pickups, "shield_bubble")
-	if sb != nil && sbD <= 3 && hpRatio < 0.70 {
+	if sb != nil && sbD <= 5 && (hpRatio < 0.9 || rangedThreat) {
 		a := moveTo(pos, sb.Position)
 		return &a
 	}
 
-	// Health pack: grab when HP < 50% and within 2 tiles
+	// Health pack: be more willing to stabilize before losing initiative.
 	hp, hpD := nearestHealthPickup(pos, ts.Pickups)
-	if hp != nil && hpD <= 2 && hpRatio < 0.50 {
+	if hp != nil && hpD <= 6 && hpRatio < 0.8 {
 		a := moveTo(pos, hp.Position)
+		return &a
+	}
+
+	if any, anyD := nearestPickup(pos, ts.Pickups); any != nil && visibleEnemies == 0 && anyD <= 6 {
+		a := moveTo(pos, any.Position)
 		return &a
 	}
 
@@ -826,8 +976,7 @@ func trySmartPickup(ts tickState, strategy string) *actionResult {
 // tryPlaceMine checks if the bot should place a mine this tick.
 // Returns an action if a mine should be placed, nil otherwise.
 func tryPlaceMine(ts tickState, botID string, near *entity, nearD float64) *actionResult {
-	mines := getMineCount(botID)
-	if mines >= 3 {
+	if ts.MineCount >= 3 {
 		return nil
 	}
 
@@ -853,7 +1002,7 @@ func tryPlaceMine(ts tickState, botID string, near *entity, nearD float64) *acti
 
 // tryGravityWell checks if the bot should deploy a gravity well.
 func tryGravityWell(ts tickState, botID string) *actionResult {
-	if !getHasGravWell(botID) {
+	if ts.GravityWellCharge <= 0 && !getHasGravWell(botID) {
 		return nil
 	}
 
@@ -867,11 +1016,230 @@ func tryGravityWell(ts tickState, botID string) *actionResult {
 	return nil
 }
 
+// tryUniversalGrapple uses the global grapple ability to finish weak targets,
+// disrupt ranged threats, or force fights when carrying a bounty.
+func tryUniversalGrapple(ts tickState, weapon string, wrange float64) *actionResult {
+	if ts.GrappleCharges <= 0 || ts.GrappleCooldown > 0 || len(ts.Enemies) == 0 {
+		return nil
+	}
+	const grappleRange = 12.0
+
+	var best *entity
+	bestScore := -math.Inf(1)
+
+	for i := range ts.Enemies {
+		e := &ts.Enemies[i]
+		if e.ID == "" || !e.IsAlive {
+			continue
+		}
+		d := chebyshev(ts.Position, e.Position)
+		if d <= 1 || d > grappleRange {
+			continue
+		}
+
+		score := d
+		if d > wrange {
+			score += 25
+		}
+		if e.Type == "bounty_target" {
+			score += 50
+		}
+		if e.Weapon == "bow" || e.Weapon == "staff" {
+			score += 20
+		}
+		if e.Stunned {
+			score -= 15
+		}
+		if e.MaxHP > 0 {
+			enemyHPRatio := e.HP / math.Max(e.MaxHP, 1)
+			score += (1 - enemyHPRatio) * 35
+			if enemyHPRatio <= 0.40 {
+				score += 25
+			}
+		}
+		if ts.IsBountyTarget {
+			score += 15
+		}
+		if isMelee(weapon) {
+			score += d * 1.5
+		}
+		if d > 12 && e.Type != "bounty_target" {
+			score -= 30
+		}
+		if weapon == "grapple" && d >= 2 && d <= 8 {
+			score += 35
+		}
+		if isMelee(weapon) && d > wrange && d <= wrange+6 {
+			score += 18
+		}
+
+		if score > bestScore {
+			bestScore = score
+			best = e
+		}
+	}
+
+	if best == nil {
+		return nil
+	}
+
+	dist := chebyshev(ts.Position, best.Position)
+	shouldGrapple := best.Type == "bounty_target" ||
+		ts.IsBountyTarget ||
+		best.Weapon == "bow" ||
+		best.Weapon == "staff" ||
+		weapon == "grapple" ||
+		(best.MaxHP > 0 && best.HP <= best.MaxHP*0.45) ||
+		(dist > wrange && dist <= wrange+4)
+	if !shouldGrapple {
+		return nil
+	}
+
+	a := grapple(best.ID)
+	return &a
+}
+
+func tryAnchorGrapple(ts tickState, strategy string, near *entity, nearD, wrange float64) *actionResult {
+	if ts.GrappleCharges <= 0 || ts.GrappleCooldown > 0 {
+		return nil
+	}
+	const grappleRange = 12.0
+
+	hpRatio := ts.HP / math.Max(ts.MaxHP, 1)
+	if !ts.InZone {
+		dist := chebyshev(ts.Position, ts.ZoneTargetCenter)
+		if dist >= 5 && dist <= grappleRange && (near == nil || nearD > 3) {
+			a := grapplePos(ts.ZoneTargetCenter)
+			return &a
+		}
+	}
+
+	if near != nil && hpRatio < 0.45 {
+		away := [2]float64{
+			ts.Position[0] + (ts.Position[0]-near.Position[0])*4,
+			ts.Position[1] + (ts.Position[1]-near.Position[1])*4,
+		}
+		if chebyshev(ts.Position, away) <= grappleRange {
+			a := grapplePos(away)
+			return &a
+		}
+	}
+
+	if strategy == "kite" && near != nil && nearD > wrange+2 && nearD <= grappleRange {
+		offset := gridDirAway(near.Position, ts.Position)
+		anchor := [2]float64{
+			near.Position[0] + offset[0]*2,
+			near.Position[1] + offset[1]*2,
+		}
+		if chebyshev(ts.Position, anchor) <= grappleRange {
+			a := grapplePos(anchor)
+			return &a
+		}
+	}
+	return nil
+}
+
+func teleporterByID(teleporters []entity) map[string]entity {
+	pads := make(map[string]entity, len(teleporters))
+	for _, tp := range teleporters {
+		if tp.ID != "" {
+			pads[tp.ID] = tp
+		}
+	}
+	return pads
+}
+
+func isReadyTeleporter(tp entity) bool {
+	return tp.Ready || tp.Cooldown <= 0
+}
+
+func strategicMineTile(pos [2]float64, zoneCenter [2]float64) bool {
+	t := getTerrain()
+	if t == nil {
+		return chebyshev(pos, zoneCenter) <= 4
+	}
+
+	cell := [2]int{int(math.Round(pos[0])), int(math.Round(pos[1]))}
+	open := 0
+	dirs := [][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+	for _, d := range dirs {
+		if !t.isMoveBlocked(cell[0], cell[1], d[0], d[1]) {
+			open++
+		}
+	}
+	return open <= 2 || chebyshev(pos, zoneCenter) <= 4
+}
+
+// tryTeleporterEngage uses a nearby teleporter when its linked exit would put
+// the bot materially closer to the current target or the shrinking zone.
+func tryTeleporterEngage(ts tickState, target *entity, wrange float64) *actionResult {
+	if target == nil || len(ts.Teleporters) < 2 {
+		return nil
+	}
+	if ts.RoundTick < 45 {
+		return nil
+	}
+
+	pads := teleporterByID(ts.Teleporters)
+	currentDist := chebyshev(ts.Position, target.Position)
+	pressure := enemiesWithinRange(ts.Position, ts.Enemies, 5)
+	highValue := target.Type == "bounty_target" ||
+		target.Weapon == "bow" ||
+		target.Weapon == "staff" ||
+		(target.MaxHP > 0 && target.HP <= target.MaxHP*0.45)
+	if !highValue && pressure == 0 && currentDist <= wrange+6 {
+		return nil
+	}
+
+	bestScore := -math.Inf(1)
+	var bestPad *entity
+
+	for i := range ts.Teleporters {
+		tp := &ts.Teleporters[i]
+		dToPad := chebyshev(ts.Position, tp.Position)
+		if dToPad > 3 || tp.LinkedID == "" || !isReadyTeleporter(*tp) {
+			continue
+		}
+		linked, ok := pads[tp.LinkedID]
+		if !ok || !isReadyTeleporter(linked) {
+			continue
+		}
+		exitDist := chebyshev(linked.Position, target.Position)
+		if exitDist >= currentDist-4 {
+			continue
+		}
+
+		score := (currentDist-exitDist)*6 - dToPad*2
+		if exitDist <= wrange+1 {
+			score += 18
+		}
+		if chebyshev(linked.Position, ts.ZoneCenter) <= ts.ZoneRadius {
+			score += 8
+		}
+		if highValue {
+			score += 10
+		}
+		if pressure >= 2 {
+			score += 6
+		}
+		if score > bestScore {
+			bestScore = score
+			bestPad = tp
+		}
+	}
+
+	if bestPad == nil || bestScore < 20 {
+		return nil
+	}
+	a := moveTo(ts.Position, bestPad.Position)
+	return &a
+}
+
 // === Teleporter Escape ===
 
 // tryTeleporterEscape checks if the bot should escape via teleporter.
 func tryTeleporterEscape(ts tickState) *actionResult {
-	if ts.HP/ts.MaxHP > 0.25 {
+	if ts.HP/ts.MaxHP > 0.35 {
 		return nil
 	}
 	// Only if no health packs nearby
@@ -881,10 +1249,137 @@ func tryTeleporterEscape(ts tickState) *actionResult {
 	}
 	// Check for teleporter within 2 tiles
 	for _, tp := range ts.Teleporters {
-		if chebyshev(ts.Position, tp.Position) <= 2 {
+		if !isReadyTeleporter(tp) {
+			continue
+		}
+		if chebyshev(ts.Position, tp.Position) <= 6 {
 			a := moveTo(ts.Position, tp.Position)
 			return &a
 		}
+	}
+	return nil
+}
+
+// tryTeleporterPressureEscape uses any nearby teleporter when the bot is under
+// melee pressure or outnumbered, even if the linked exit is not currently visible.
+func tryTeleporterPressureEscape(ts tickState, strategy string, near *entity, nearD float64) *actionResult {
+	if near == nil || len(ts.Teleporters) == 0 {
+		return nil
+	}
+
+	hpRatio := ts.HP / math.Max(ts.MaxHP, 1)
+	pressure := enemiesWithinRange(ts.Position, ts.Enemies, 4)
+	urgent := hpRatio < 0.7 || pressure >= 2 || (strategy == "kite" && nearD <= 2)
+	if !urgent {
+		return nil
+	}
+
+	for _, tp := range ts.Teleporters {
+		if !isReadyTeleporter(tp) {
+			continue
+		}
+		if chebyshev(ts.Position, tp.Position) <= 8 {
+			a := moveTo(ts.Position, tp.Position)
+			return &a
+		}
+	}
+	return nil
+}
+
+// tryTeleporterZoneShortcut uses a linked teleporter pair to cut distance back
+// into the safe zone or toward the next shrink target.
+func tryTeleporterZoneShortcut(ts tickState) *actionResult {
+	if ts.InZone || len(ts.Teleporters) < 2 {
+		return nil
+	}
+
+	pads := teleporterByID(ts.Teleporters)
+	currentDist := chebyshev(ts.Position, ts.ZoneTargetCenter)
+	bestScore := -math.Inf(1)
+	var bestPad *entity
+
+	for i := range ts.Teleporters {
+		tp := &ts.Teleporters[i]
+		dToPad := chebyshev(ts.Position, tp.Position)
+		if dToPad > 8 || tp.LinkedID == "" || !isReadyTeleporter(*tp) {
+			continue
+		}
+		linked, ok := pads[tp.LinkedID]
+		if !ok || !isReadyTeleporter(linked) {
+			continue
+		}
+		exitDist := chebyshev(linked.Position, ts.ZoneTargetCenter)
+		if exitDist >= currentDist-2 {
+			continue
+		}
+		score := (currentDist-exitDist)*5 - dToPad
+		if chebyshev(linked.Position, ts.ZoneCenter) <= ts.ZoneRadius {
+			score += 10
+		}
+		if score > bestScore {
+			bestScore = score
+			bestPad = tp
+		}
+	}
+
+	if bestPad == nil {
+		return nil
+	}
+	a := moveTo(ts.Position, bestPad.Position)
+	return &a
+}
+
+// tryPlaceMineAdvanced places mines more proactively in hot lanes and while
+// retreating, using the server-provided mine counts instead of local guesses.
+func tryPlaceMineAdvanced(ts tickState, strategy, weapon string, near *entity, nearD float64) *actionResult {
+	if ts.MineCount >= 3 || ts.NearbyMines >= 2 {
+		return nil
+	}
+
+	pos := ts.Position
+	hpRatio := ts.HP / math.Max(ts.MaxHP, 1)
+	distToCenter := chebyshev(pos, ts.ZoneTargetCenter)
+	pressure := enemiesWithinRange(pos, ts.Enemies, 4)
+	earlyRound := ts.RoundTick < 35
+	onStrategicTile := strategicMineTile(pos, ts.ZoneTargetCenter)
+
+	if near != nil && nearD <= 2 && (strategy == "territorial" || strategy == "kite" || hpRatio < 0.7) {
+		a := placeMine()
+		return &a
+	}
+
+	for _, tp := range ts.Teleporters {
+		if !isReadyTeleporter(tp) {
+			continue
+		}
+		if chebyshev(pos, tp.Position) <= 1 && (near != nil && nearD <= 4 || pressure >= 2) {
+			a := placeMine()
+			return &a
+		}
+	}
+
+	if earlyRound && pressure == 0 && !onStrategicTile {
+		return nil
+	}
+	if earlyRound && near == nil && distToCenter > 4 {
+		return nil
+	}
+
+	if onStrategicTile && distToCenter <= 6 && pressure >= 1 && rand.Float64() < 0.65 {
+		a := placeMine()
+		return &a
+	}
+	if distToCenter <= 3 && (strategy == "territorial" || weapon == "shield") && (near == nil || nearD > 1) && pressure >= 1 && rand.Float64() < 0.45 {
+		a := placeMine()
+		return &a
+	}
+	if distToCenter <= 5 && onStrategicTile && (near == nil || nearD > 2) && pressure >= 1 && rand.Float64() < 0.25 {
+		a := placeMine()
+		return &a
+	}
+	if ts.IsBountyTarget && onStrategicTile && pressure >= 2 && rand.Float64() < 0.5 {
+		a := placeMine()
+		return &a
 	}
 	return nil
 }
@@ -895,6 +1390,7 @@ func tryTeleporterEscape(ts tickState) *actionResult {
 // attackRange is the Chebyshev grid range from the server's loadout_confirmed.
 func PickAction(strategy string, msg map[string]interface{}, weapon string, attackRange int, botID string) actionResult {
 	ts := parseTick(msg)
+	currentHazards = ts.HazardZones
 	pos := ts.Position
 	hpRatio := ts.HP / ts.MaxHP
 	wrange := float64(attackRange)
@@ -903,7 +1399,11 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	}
 	canAtk := ts.WeaponReady
 	canDodge := ts.DodgeCool <= 0
-	near, nearD := closest(pos, ts.Enemies)
+	visibleEnemies := countVisibleEnemies(ts.Enemies)
+	near, nearD := closestVisible(pos, ts.Enemies)
+	if near == nil {
+		near, nearD = closest(pos, ts.Enemies)
+	}
 
 	// Stunned — can't act
 	if ts.StunTicks > 0 {
@@ -940,9 +1440,30 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		return *gw
 	}
 
+	// === UNIVERSAL GRAPPLE: Pull high-value targets into kill range ===
+	if gp := tryUniversalGrapple(ts, weapon, wrange); gp != nil {
+		return *gp
+	}
+
+	// === ANCHOR GRAPPLE: use the hook for repositioning, not just target pulls ===
+	if ga := tryAnchorGrapple(ts, strategy, near, nearD, wrange); ga != nil {
+		return *ga
+	}
+
+	// === TELEPORTER ENGAGE: take a nearby pad if the linked exit improves the fight ===
+	if near != nil && nearD > wrange+1 {
+		if tp := tryTeleporterEngage(ts, near, wrange); tp != nil {
+			return *tp
+		}
+	}
+
+	// === TELEPORTER ESCAPE: bail through a nearby pad when heavily pressured ===
+	if tp := tryTeleporterPressureEscape(ts, strategy, near, nearD); tp != nil {
+		return *tp
+	}
+
 	// === MINE PLACEMENT ===
-	if mine := tryPlaceMine(ts, botID, near, nearD); mine != nil {
-		incMineCount(botID)
+	if mine := tryPlaceMineAdvanced(ts, strategy, weapon, near, nearD); mine != nil {
 		return *mine
 	}
 
@@ -977,6 +1498,11 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		}
 	}
 
+	// === ZONE SHORTCUT: use linked teleporters to cut back into the safe zone ===
+	if tp := tryTeleporterZoneShortcut(ts); tp != nil {
+		return *tp
+	}
+
 	// === ZONE SAFETY: Move into safe zone, but attack on the way ===
 	if !ts.InZone {
 		// Zone edge tactics: shove enemies OUT of zone
@@ -1008,7 +1534,19 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	// Adjustments are handled within each strategy below
 
 	// === NO ENEMIES VISIBLE: Hunt them down ===
-	if len(ts.Enemies) == 0 {
+	if visibleEnemies == 0 {
+		if pickup := trySmartPickup(ts, strategy); pickup != nil {
+			return *pickup
+		}
+		for _, h := range ts.Hints {
+			if h.HintType == "pickup" {
+				target := [2]float64{
+					pos[0] + h.Direction[0]*math.Min(h.Distance, 6),
+					pos[1] + h.Direction[1]*math.Min(h.Distance, 6),
+				}
+				return moveTo(pos, target)
+			}
+		}
 		for _, h := range ts.Hints {
 			if h.HintType == "bot" {
 				target := [2]float64{pos[0] + h.Direction[0]*h.Distance, pos[1] + h.Direction[1]*h.Distance}

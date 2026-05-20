@@ -12,6 +12,7 @@ type Landmine struct {
 	OwnerID   string
 	Position  Vec2
 	Damage    float64
+	BlastRadius int
 	Armed     bool // becomes true after arm delay
 	ArmTick   int  // tick at which it becomes armed
 }
@@ -37,6 +38,7 @@ func PlaceMine(bot *BotState, mines *[]Landmine, tickCount int) *Landmine {
 		OwnerID:  bot.BotID,
 		Position: bot.Position,
 		Damage:   c.MineDamage,
+		BlastRadius: c.MineBlastRadius,
 		Armed:    false,
 		ArmTick:  tickCount + c.MineArmDelayTicks,
 	}
@@ -46,10 +48,10 @@ func PlaceMine(bot *BotState, mines *[]Landmine, tickCount int) *Landmine {
 }
 
 // UpdateMines arms mines that have passed their delay, and detonates mines
-// when an enemy bot walks within blast radius. Returns IDs of detonated mines.
-func UpdateMines(mines *[]Landmine, bots map[string]*BotState, tickCount int) []string {
-	c := &config.C
-	var detonated []string
+// when an enemy bot walks within blast radius. Returns spectator events for
+// detonations so the client can render explicit blast feedback.
+func UpdateMines(mines *[]Landmine, bots map[string]*BotState, tickCount int) []ArenaEvent {
+	var events []ArenaEvent
 
 	active := (*mines)[:0]
 	for i := range *mines {
@@ -71,13 +73,13 @@ func UpdateMines(mines *[]Landmine, bots map[string]*BotState, tickCount int) []
 			if !bot.IsAlive || bot.BotID == mine.OwnerID {
 				continue
 			}
-			if IsInRange(bot.Position, mine.Position, c.MineBlastRadius) {
+			if IsInRange(bot.Position, mine.Position, mine.BlastRadius) {
 				// Detonate: deal damage to all bots in blast radius (except owner).
 				for _, target := range bots {
 					if !target.IsAlive || target.BotID == mine.OwnerID {
 						continue
 					}
-					if IsInRange(target.Position, mine.Position, c.MineBlastRadius) {
+					if IsInRange(target.Position, mine.Position, mine.BlastRadius) {
 						target.HP -= mine.Damage
 						target.RoundDamageTaken += mine.Damage
 
@@ -97,7 +99,7 @@ func UpdateMines(mines *[]Landmine, bots map[string]*BotState, tickCount int) []
 					}
 				}
 				triggered = true
-				detonated = append(detonated, mine.ID)
+				events = append(events, buildMineDetonationEvent(*mine, tickCount))
 
 				// Decrement owner's mine count.
 				if owner, ok := bots[mine.OwnerID]; ok {
@@ -116,7 +118,7 @@ func UpdateMines(mines *[]Landmine, bots map[string]*BotState, tickCount int) []
 	}
 
 	*mines = active
-	return detonated
+	return events
 }
 
 // BuildMineView creates a protocol-compatible view of a landmine.

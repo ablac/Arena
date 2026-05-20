@@ -120,6 +120,8 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 		// Leaderboard (public).
 		api.Get("/leaderboard", GetLeaderboard)
+		api.Get("/bounties", GetBountyBoard(engine))
+		api.Get("/weapon-stats", GetWeaponStats)
 
 		// Arena status (public).
 		api.Get("/arena/status", GetArenaStatus(engine))
@@ -166,6 +168,8 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				auth.Get("/bot/live", GetBotLive(engine))
 			})
 			api.Get("/leaderboard", GetLeaderboard)
+			api.Get("/bounties", GetBountyBoard(engine))
+			api.Get("/weapon-stats", GetWeaponStats)
 			api.Get("/arena/status", GetArenaStatus(engine))
 			api.Get("/arena/map", GetArenaMap(engine))
 

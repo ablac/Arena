@@ -214,6 +214,15 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 			"target_id":    botTargetID(bot),
 			"is_dodging":   bot.InvulnTicks > 0,
 			"is_stunned":   bot.StunTicks > 0,
+			"cooldown_remaining": round1(bot.CooldownRemaining),
+			"kill_streak":        bot.KillStreak,
+			"round_kills":        bot.RoundKills,
+			"shield_absorb":      round1(bot.ShieldAbsorb),
+			"mine_count":         bot.MineCount,
+			"grapple_charges":    bot.GrappleCharges,
+			"grapple_cooldown":   round1(bot.GrappleCooldown),
+			"gravity_well_charge": bot.GravityWellCharge,
+			"is_bounty_target":   bot.IsBountyTarget,
 		})
 	}
 	sort.Slice(botViews, func(i, j int) bool {

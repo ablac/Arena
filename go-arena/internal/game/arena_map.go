@@ -89,21 +89,52 @@ func (m *ArenaMap) UpdateZone(tickCount int, roundStartTick int) {
 	}
 
 	shrinkElapsed := elapsed - m.ShrinkDelayTicks
-	t := float64(shrinkElapsed) / float64(shrinkTicks)
-	if t < 0 {
-		t = 0
+	progress := float64(shrinkElapsed) / float64(shrinkTicks)
+	if progress < 0 {
+		progress = 0
 	}
-	if t > 1 {
-		t = 1
+	if progress > 1 {
+		progress = 1
 	}
-	m.ZoneLerpT = t
+	m.ZoneLerpT = progress
 
-	// Interpolate radius: initial -> min.
-	m.ZoneRadius = m.InitialRadius + (m.MinRadius-m.InitialRadius)*t
+	intervalTicks := int(c.ZoneShrinkInterval * float64(c.TickRate))
+	if intervalTicks <= 0 {
+		intervalTicks = 1
+	}
+
+	shrinkFactor := 1.0 - c.ZoneShrinkPercent
+	if shrinkFactor < 0 {
+		shrinkFactor = 0
+	}
+	if shrinkFactor > 1 {
+		shrinkFactor = 1
+	}
+
+	completedSteps := shrinkElapsed / intervalTicks
+	stepProgress := float64(shrinkElapsed%intervalTicks) / float64(intervalTicks)
+
+	startRadius := m.InitialRadius
+	for i := 0; i < completedSteps && startRadius > m.MinRadius; i++ {
+		startRadius *= shrinkFactor
+		if startRadius < m.MinRadius {
+			startRadius = m.MinRadius
+		}
+	}
+
+	endRadius := startRadius
+	if endRadius > m.MinRadius {
+		endRadius *= shrinkFactor
+		if endRadius < m.MinRadius {
+			endRadius = m.MinRadius
+		}
+	}
+
+	m.ZoneRadius = startRadius + (endRadius-startRadius)*stepProgress
 
 	// Drift centre from arena mid-point toward the random target.
 	arenaCenter := NewVec2(c.ZoneCenterX, c.ZoneCenterY)
-	m.ZoneCenter = arenaCenter.Add(m.ZoneTargetCenter.Sub(arenaCenter).Scale(t))
+	m.ZoneCenter = arenaCenter.Add(m.ZoneTargetCenter.Sub(arenaCenter).Scale(progress))
 
 	m.ZoneTargetRadius = m.MinRadius
 }

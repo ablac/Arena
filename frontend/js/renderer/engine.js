@@ -37,6 +37,7 @@ export class ArenaEngine {
     this.gameplayRenderer = null;
     this.state = null;
     this.ready = false;
+    this._seenArenaEvents = new Set();
   }
 
   /** Initialize Babylon engine. */
@@ -86,6 +87,17 @@ export class ArenaEngine {
     this.trailRenderer = new TrailRenderer(scene);
     this.projectileRenderer = new ProjectileRenderer(scene);
     this.gameplayRenderer = new GameplayRenderer(scene);
+    this.botRenderer.onSelectionChange = (botId) => {
+      if (this.onSelectBot) this.onSelectBot(botId);
+    };
+    scene.onPointerObservable.add((pointerInfo) => {
+      const B = window.BABYLON;
+      if (pointerInfo.type !== B.PointerEventTypes.POINTERDOWN) return;
+      const pickedMesh = pointerInfo.pickInfo?.pickedMesh || null;
+      if (!this.botRenderer.handlePick(pickedMesh)) {
+        this.botRenderer.clearSelection();
+      }
+    });
 
     // Wire up attack → per-weapon hit effects + projectiles for ranged
     this.botRenderer.onAttack = (ax, az, tx, tz, color, weapon) => {
@@ -108,11 +120,6 @@ export class ArenaEngine {
     // Wire up shove → shockwave blast effect
     this.botRenderer.onShove = (ax, az, tx, tz, color) => {
       this.effectRenderer.spawnShoveEffect(ax, az, tx, tz, color);
-    };
-
-    // Wire up grapple → chain pull animation
-    this.botRenderer.onGrapple = (ax, az, tx, tz) => {
-      this.effectRenderer.spawnGrappleEffect(ax, az, tx, tz);
     };
 
     this._addLights();
@@ -150,6 +157,9 @@ export class ArenaEngine {
       if (self.projectileRenderer) {
         self.projectileRenderer.update(dt);
       }
+      if (self.gameplayRenderer) {
+        self.gameplayRenderer.animate(self.botRenderer ? self.botRenderer.entries : null, dt);
+      }
       scene.render();
     });
     this._resizeHandler = () => engine.resize();
@@ -181,6 +191,7 @@ export class ArenaEngine {
   setState(state) {
     if (!this.ready || state.type !== 'arena_state') return;
     this.state = state;
+    this._playArenaEvents(state.events || [], state);
     this.obstacleRenderer.update(state.obstacles);
     this.envRenderer.update(state.safe_zone);
     this.botRenderer.update(state.bots);
@@ -190,10 +201,52 @@ export class ArenaEngine {
     this.camera.updateBotPositions(state.bots);
   }
 
+  _playArenaEvents(events, state) {
+    for (const ev of events) {
+      if (!ev || !ev.id || this._seenArenaEvents.has(ev.id)) continue;
+      this._seenArenaEvents.add(ev.id);
+
+      if (this._seenArenaEvents.size > 256) {
+        const first = this._seenArenaEvents.values().next();
+        if (!first.done) this._seenArenaEvents.delete(first.value);
+      }
+
+      if (ev.type === 'teleport' && ev.from_position && ev.to_position) {
+        this.effectRenderer.spawnTeleportBurst(
+          ev.from_position[0], ev.from_position[1],
+          ev.to_position[0], ev.to_position[1],
+          ev.color || '#00ffff'
+        );
+      } else if ((ev.type === 'grapple_pull' || ev.type === 'grapple_anchor') && ev.from_position && ev.to_position) {
+        const owner = (state?.bots || []).find((b) => b.bot_id === ev.owner_id || b.id === ev.owner_id);
+        const anchor = ev.position || ev.to_position;
+        if (ev.type === 'grapple_pull' && owner) {
+          this.effectRenderer.spawnGrappleEffect(
+            owner.position[0], owner.position[1],
+            ev.from_position[0], ev.from_position[1],
+            { mode: 'pull', endX: ev.to_position[0], endZ: ev.to_position[1], color: ev.color || '#59f1ff' }
+          );
+        } else {
+          this.effectRenderer.spawnGrappleEffect(
+            ev.from_position[0], ev.from_position[1],
+            anchor[0], anchor[1],
+            { mode: 'anchor', endX: ev.to_position[0], endZ: ev.to_position[1], color: ev.color || '#59f1ff' }
+          );
+        }
+      } else if (ev.type === 'mine_detonated' && ev.position) {
+        this.effectRenderer.spawnMineExplosion(
+          ev.position[0], ev.position[1],
+          (ev.radius || 1) * 20
+        );
+      }
+    }
+  }
+
   setZoom(z) { if (this.camera) this.camera.setZoom(z); }
   followBot(id) { if (this.camera) this.camera.followBot(id); }
   setAutoPan(on) { if (this.camera) this.camera.setAutoPan(on); }
   getState() { return this.state; }
+  selectBot(id) { if (this.botRenderer) this.botRenderer.selectBot(id); }
 
   dispose() {
     if (this._resizeHandler) {

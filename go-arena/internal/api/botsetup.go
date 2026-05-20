@@ -180,7 +180,7 @@ func BotSetup() http.HandlerFunc {
 				{"name": "idle", "description": "Do nothing this tick", "fields": map[string]string{}},
 				{"name": "place_mine", "description": "Place a landmine at current position (max 3 per bot, arms after 1 second, invisible to enemies)", "fields": map[string]string{}},
 				{"name": "use_gravity_well", "description": "Deploy a gravity well at target position (requires gravity_well pickup charge)", "fields": map[string]string{"target_position": "[x, y] in grid coordinates"}},
-				{"name": "grapple", "description": "Universal ability: grapple a target bot (map-wide range, 2 charges per round, 3s cooldown). Pulls target to 1 cell from you, deals 15 damage, stuns for 5 ticks.", "fields": map[string]string{"target": "bot_id of the target"}},
+				{"name": "grapple", "description": "Universal ability: either yank a target bot within 12 tiles or anchor-pull yourself to a target_position. 2 charges per round, 4s cooldown, 15 damage on enemy pulls, 3-tick stun.", "fields": map[string]string{"target": "bot_id of the target (enemy pull mode)", "target_position": "[x, y] anchor position (self-pull mode)"}},
 			},
 
 			// ── Weapons (from game.WeaponConfigs) ───────────────
@@ -244,7 +244,7 @@ func BotSetup() http.HandlerFunc {
 					"types":       map[string]string{"V": "void (impassable)", ".": "ground (walkable)", "#": "wall (impassable)", "~": "water (impassable)"},
 					"obstacles":   fmt.Sprintf("%d-%d randomly placed per round", c.ObstacleCountMin, c.ObstacleCountMax),
 					"pathfinding": "Server provides A* pathfinding via move_to action. Or use move for direct movement.",
-					"rest_api":    "GET /api/v1/arena/map — fetch the terrain grid without WebSocket. Same format as map_init. Map is pre-generated during intermission so bots can analyze it before the next round starts.",
+					"rest_api":    "GET /api/v1/arena/map — fetch the terrain grid over REST. The map is pre-generated during intermission so bots can analyze it before the next round starts.",
 				},
 				"combat": map[string]interface{}{
 					"dodge":     fmt.Sprintf("Speed x%.1f, %d invulnerability ticks, %d tick cooldown", c.DodgeSpeedMult, c.DodgeInvulnTicks, c.DodgeCooldownTicks),
@@ -252,13 +252,13 @@ func BotSetup() http.HandlerFunc {
 					"knockback": fmt.Sprintf("Wall collision deals %.0f bonus damage", c.KnockbackWallDamage),
 				},
 				"new_features": map[string]interface{}{
-					"teleport_pads": "3 linked pairs spawn each round. Step on one to teleport to its linked pad. 5 second cooldown between uses.",
+					"teleport_pads": "3 linked pairs spawn each round. Nearby pad entities expose is_ready and cooldown_remaining_ticks so bots can avoid locked pads.",
 					"environmental_hazards": "6 pulsing damage zones placed around the arena. They cycle 3 seconds on / 2 seconds off. Avoid the glow!",
 					"sudden_death": "Activates when the safe zone reaches minimum radius. Random tiles become void (instant death). Keep moving!",
-					"bounty_system": "Achieve a 3+ kill streak to become a bounty target. Your position becomes visible to all bots. Other bots earn bonus points for killing you.",
-					"landmines": "Use the place_mine action to plant a landmine at your current position. Max 3 per bot. Mines are invisible to enemies and have a blast radius of 1.5 tiles. Arms after 1 second.",
+					"bounty_system": "Consecutive round winners build a public bounty board. The live bounty target is exposed in ticks, and the full board is available via GET /api/v1/bounties.",
+					"landmines": "Use the place_mine action to plant a landmine at your current position. Max 3 per bot. Mines arm after 1 second and punish choke points, teleporter lanes, and retreat paths.",
 					"gravity_well": "Pick up a gravity_well pickup to gain 1 charge. Use the use_gravity_well action to deploy it at a target position. Pulls nearby enemies toward its center for 3 seconds.",
-					"grappling_hook": "Grapple is now a universal ability ALL bots get (not just a weapon). Every bot starts with 2 grapple charges per round, map-wide range, 3s cooldown. Pulls the target to 1 cell from you, deals 15 damage, and stuns for 5 ticks. Use the 'grapple' action with a target bot_id. The grapple weapon still exists for backward compatibility.",
+					"grappling_hook": "Grapple is a universal ability ALL bots get (not just a weapon). Every bot starts with 2 grapple charges per round. Use the 'grapple' action with a target bot_id to yank an enemy within 12 tiles, or use target_position to anchor-pull yourself to a valid landing. Cooldown 4s, 15 damage on enemy pulls, 3-tick stun. The grapple weapon still exists as a separate loadout.",
 				},
 			},
 
@@ -289,7 +289,7 @@ async def main():
     api_key = data["api_key"]
     print(f"Bot ID: {data['bot_id']}, Key: {api_key[:20]}...")
 
-    # Step 2: Pre-fetch map via REST (optional, lighter than WebSocket map_init)
+    # Step 2: Pre-fetch map via REST (optional, available before round_start)
     map_req = urllib.request.Request(f"{API_BASE}/api/v1/arena/map")
     with urllib.request.urlopen(map_req) as resp:
         map_data = json.loads(resp.read())
@@ -297,7 +297,7 @@ async def main():
         print(f"Map loaded: {map_data['width']}x{map_data['height']} grid")
         terrain = map_data["terrain"]  # list of row strings: '.' = ground, '#' = wall
     else:
-        print("No map yet (between rounds), will get it via WebSocket map_init")
+        print("No map yet (between rounds), retry arena/map after round_start")
         terrain = None
 
     # Step 3: Connect WebSocket

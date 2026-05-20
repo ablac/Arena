@@ -8,6 +8,165 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// EnsureCoreSchema creates or repairs the database tables required by the
+// runtime. It is intentionally idempotent so a fresh Postgres volume can be
+// bootstrapped on first server start without a separate migration step.
+func EnsureCoreSchema(ctx context.Context) error {
+	if Pool == nil {
+		return nil
+	}
+
+	tx, err := Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("EnsureCoreSchema begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS api_keys (
+			id TEXT PRIMARY KEY,
+			key_hash TEXT NOT NULL,
+			key_prefix TEXT NOT NULL UNIQUE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			last_seen TIMESTAMPTZ,
+			is_active BOOLEAN NOT NULL DEFAULT true,
+			ip_created TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_active_prefix
+			ON api_keys (key_prefix) WHERE is_active = true`,
+		`CREATE TABLE IF NOT EXISTS bots (
+			id TEXT PRIMARY KEY,
+			api_key_id TEXT NOT NULL UNIQUE REFERENCES api_keys(id) ON DELETE CASCADE,
+			name TEXT NOT NULL DEFAULT 'Unnamed Bot',
+			avatar_color TEXT NOT NULL DEFAULT '#888888',
+			default_weapon TEXT NOT NULL DEFAULT 'sword',
+			default_stats JSONB NOT NULL DEFAULT '{}'::jsonb,
+			default_fallback TEXT NOT NULL DEFAULT 'aggressive',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_bots_api_key_id ON bots (api_key_id)`,
+		`CREATE TABLE IF NOT EXISTS bot_stats (
+			bot_id TEXT PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE,
+			kills INT NOT NULL DEFAULT 0,
+			deaths INT NOT NULL DEFAULT 0,
+			assists INT NOT NULL DEFAULT 0,
+			damage_dealt BIGINT NOT NULL DEFAULT 0,
+			damage_taken BIGINT NOT NULL DEFAULT 0,
+			current_streak INT NOT NULL DEFAULT 0,
+			best_streak INT NOT NULL DEFAULT 0,
+			elo INT NOT NULL DEFAULT 1000,
+			time_alive_seconds BIGINT NOT NULL DEFAULT 0,
+			longest_life_secs INT NOT NULL DEFAULT 0,
+			rounds_played INT NOT NULL DEFAULT 0,
+			round_wins INT NOT NULL DEFAULT 0,
+			pickups_collected INT NOT NULL DEFAULT 0,
+			distance_traveled DOUBLE PRECISION NOT NULL DEFAULT 0,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_bot_stats_elo ON bot_stats (elo DESC)`,
+		`CREATE TABLE IF NOT EXISTS rounds (
+			id TEXT PRIMARY KEY,
+			round_number INT NOT NULL,
+			started_at TIMESTAMPTZ NOT NULL,
+			ended_at TIMESTAMPTZ,
+			bots_participated INT NOT NULL DEFAULT 0,
+			mvp_bot_id TEXT REFERENCES bots(id) ON DELETE SET NULL,
+			status TEXT NOT NULL DEFAULT 'active'
+		)`,
+		`DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM pg_constraint
+				WHERE conrelid = 'rounds'::regclass
+				  AND conname = 'rounds_round_number_key'
+			) THEN
+				ALTER TABLE rounds DROP CONSTRAINT rounds_round_number_key;
+			END IF;
+		END
+		$$`,
+		`CREATE INDEX IF NOT EXISTS idx_rounds_round_number ON rounds (round_number DESC)`,
+		`CREATE TABLE IF NOT EXISTS kill_log (
+			id TEXT PRIMARY KEY,
+			round_id TEXT REFERENCES rounds(id) ON DELETE SET NULL,
+			killer_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+			victim_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+			weapon TEXT NOT NULL,
+			damage INT NOT NULL DEFAULT 0,
+			killer_hp INT NOT NULL DEFAULT 0,
+			tick INT NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kill_log_round_id ON kill_log (round_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_kill_log_created_at ON kill_log (created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS rate_limits (
+			ip_address TEXT PRIMARY KEY,
+			keys_generated INT NOT NULL DEFAULT 0,
+			window_start TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_rate_limits_window_start
+			ON rate_limits (window_start DESC)`,
+		`CREATE TABLE IF NOT EXISTS weapon_balance (
+			weapon TEXT PRIMARY KEY,
+			damage_scale DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+			cooldown_scale DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+			adjustment_scale DOUBLE PRECISION NOT NULL DEFAULT 0.05,
+			rounds_tracked INT NOT NULL DEFAULT 0,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS weapon_balance_history (
+			id BIGSERIAL PRIMARY KEY,
+			weapon TEXT NOT NULL,
+			rounds_tracked INT NOT NULL DEFAULT 0,
+			damage_scale DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+			cooldown_scale DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+			adjustment_scale DOUBLE PRECISION NOT NULL DEFAULT 0.05,
+			avg_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+			mean_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+			diff_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+			damage_delta DOUBLE PRECISION NOT NULL DEFAULT 0,
+			cooldown_delta DOUBLE PRECISION NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_weapon_balance_history_weapon_created
+			ON weapon_balance_history (weapon, created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS bounty_board (
+			bot_id TEXT PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE,
+			name TEXT NOT NULL DEFAULT '',
+			avatar_color TEXT NOT NULL DEFAULT '#888888',
+			weapon TEXT NOT NULL DEFAULT 'sword',
+			win_streak INT NOT NULL DEFAULT 0,
+			bounty_points INT NOT NULL DEFAULT 0,
+			claims INT NOT NULL DEFAULT 0,
+			is_target BOOLEAN NOT NULL DEFAULT false,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+	}
+
+	for _, stmt := range statements {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("EnsureCoreSchema exec: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema commit: %w", err)
+	}
+
+	if err := EnsureRoundBotStatsTable(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema round_bot_stats: %w", err)
+	}
+	if err := EnsureDemoBotKeysTable(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema demo_bot_keys: %w", err)
+	}
+	if err := EnsureAdminTokensTable(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema admin_tokens: %w", err)
+	}
+
+	return nil
+}
+
 // ---------- round_bot_stats (per-round per-bot performance for time-based leaderboards) ----------
 
 func EnsureRoundBotStatsTable(ctx context.Context) error {
@@ -17,10 +176,12 @@ func EnsureRoundBotStatsTable(ctx context.Context) error {
 			round_number INT NOT NULL,
 			bot_id TEXT NOT NULL,
 			bot_name TEXT NOT NULL DEFAULT '',
+			weapon TEXT NOT NULL DEFAULT '',
 			kills INT NOT NULL DEFAULT 0,
 			deaths INT NOT NULL DEFAULT 0,
 			damage_dealt BIGINT NOT NULL DEFAULT 0,
 			damage_taken BIGINT NOT NULL DEFAULT 0,
+			longest_life_secs INT NOT NULL DEFAULT 0,
 			pickups INT NOT NULL DEFAULT 0,
 			distance DOUBLE PRECISION NOT NULL DEFAULT 0,
 			elo INT NOT NULL DEFAULT 1000,
@@ -30,19 +191,128 @@ func EnsureRoundBotStatsTable(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	Pool.Exec(ctx, `ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS weapon TEXT NOT NULL DEFAULT ''`)
+	Pool.Exec(ctx, `ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS longest_life_secs INT NOT NULL DEFAULT 0`)
+	Pool.Exec(ctx, `UPDATE round_bot_stats AS r
+		SET weapon = b.default_weapon
+		FROM bots AS b
+		WHERE r.weapon = ''
+		  AND r.bot_id = b.id
+		  AND b.default_weapon <> ''`)
 	// Index for time-based queries
 	Pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_rbs_created ON round_bot_stats (created_at)`)
 	Pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_rbs_bot ON round_bot_stats (bot_id)`)
+	Pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_rbs_weapon ON round_bot_stats (weapon)`)
+	Pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_rbs_round_number ON round_bot_stats (round_number DESC)`)
 	return nil
 }
 
-func InsertRoundBotStats(ctx context.Context, roundNumber int, botID, botName string,
-	kills, deaths int, dmgDealt, dmgTaken int64, pickups int, distance float64, elo int, won bool) error {
+func InsertRoundBotStats(ctx context.Context, roundNumber int, botID, botName, weapon string,
+	kills, deaths int, dmgDealt, dmgTaken int64, longestLife, pickups int, distance float64, elo int, won bool) error {
 	_, err := Pool.Exec(ctx,
-		`INSERT INTO round_bot_stats (round_number, bot_id, bot_name, kills, deaths, damage_dealt, damage_taken, pickups, distance, elo, won)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-		roundNumber, botID, botName, kills, deaths, dmgDealt, dmgTaken, pickups, distance, elo, won)
+		`INSERT INTO round_bot_stats (round_number, bot_id, bot_name, weapon, kills, deaths, damage_dealt, damage_taken, longest_life_secs, pickups, distance, elo, won)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		roundNumber, botID, botName, weapon, kills, deaths, dmgDealt, dmgTaken, longestLife, pickups, distance, elo, won)
 	return err
+}
+
+// ListRecentWeaponPerformance returns average per-weapon round score over the last N rounds.
+func ListRecentWeaponPerformance(ctx context.Context, roundLimit int) ([]WeaponRecentPerformance, error) {
+	rows, err := Pool.Query(ctx, `
+		WITH recent_rounds AS (
+			SELECT DISTINCT DATE_TRUNC('second', created_at) AS round_at
+			FROM round_bot_stats
+			ORDER BY round_at DESC
+			LIMIT $1
+		)
+		SELECT
+			weapon,
+			COUNT(*)::INT AS bots,
+			SUM(CASE WHEN won THEN 1 ELSE 0 END)::INT AS wins,
+			COUNT(DISTINCT DATE_TRUNC('second', created_at))::INT AS rounds,
+			AVG(
+				(kills * 30)::DOUBLE PRECISION +
+				(damage_dealt * 0.12)::DOUBLE PRECISION +
+				(longest_life_secs * 0.35)::DOUBLE PRECISION +
+				(CASE WHEN won THEN 60 ELSE 0 END)::DOUBLE PRECISION
+			) AS avg_score
+		FROM round_bot_stats
+		WHERE DATE_TRUNC('second', created_at) IN (SELECT round_at FROM recent_rounds)
+		  AND weapon <> ''
+		GROUP BY weapon
+		ORDER BY weapon
+	`, roundLimit)
+	if err != nil {
+		return nil, fmt.Errorf("ListRecentWeaponPerformance: %w", err)
+	}
+	defer rows.Close()
+
+	var items []WeaponRecentPerformance
+	for rows.Next() {
+		var item WeaponRecentPerformance
+		if err := rows.Scan(&item.Weapon, &item.Bots, &item.Wins, &item.Rounds, &item.AvgScore); err != nil {
+			return nil, fmt.Errorf("ListRecentWeaponPerformance scan: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ListRecentWeaponPerformance rows: %w", err)
+	}
+	return items, nil
+}
+
+// InsertWeaponBalanceHistory stores one balance-decision snapshot.
+func InsertWeaponBalanceHistory(ctx context.Context, item *WeaponBalanceHistory) error {
+	_, err := Pool.Exec(ctx,
+		`INSERT INTO weapon_balance_history
+			(weapon, rounds_tracked, damage_scale, cooldown_scale, adjustment_scale, avg_score, mean_score, diff_pct, damage_delta, cooldown_delta, created_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		item.Weapon, item.RoundsTracked, item.DamageScale, item.CooldownScale, item.AdjustmentScale,
+		item.AvgScore, item.MeanScore, item.DiffPct, item.DamageDelta, item.CooldownDelta, item.CreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("InsertWeaponBalanceHistory: %w", err)
+	}
+	return nil
+}
+
+// ListWeaponBalanceHistory returns up to N most recent history points per weapon.
+func ListWeaponBalanceHistory(ctx context.Context, perWeapon int) ([]WeaponBalanceHistory, error) {
+	rows, err := Pool.Query(ctx, `
+		WITH ranked AS (
+			SELECT
+				weapon, rounds_tracked, damage_scale, cooldown_scale, adjustment_scale,
+				avg_score, mean_score, diff_pct, damage_delta, cooldown_delta, created_at,
+				ROW_NUMBER() OVER (PARTITION BY weapon ORDER BY created_at DESC, rounds_tracked DESC) AS rn
+			FROM weapon_balance_history
+		)
+		SELECT
+			weapon, rounds_tracked, damage_scale, cooldown_scale, adjustment_scale,
+			avg_score, mean_score, diff_pct, damage_delta, cooldown_delta, created_at
+		FROM ranked
+		WHERE rn <= $1
+		ORDER BY weapon, created_at ASC, rounds_tracked ASC
+	`, perWeapon)
+	if err != nil {
+		return nil, fmt.Errorf("ListWeaponBalanceHistory: %w", err)
+	}
+	defer rows.Close()
+
+	var items []WeaponBalanceHistory
+	for rows.Next() {
+		var item WeaponBalanceHistory
+		if err := rows.Scan(
+			&item.Weapon, &item.RoundsTracked, &item.DamageScale, &item.CooldownScale, &item.AdjustmentScale,
+			&item.AvgScore, &item.MeanScore, &item.DiffPct, &item.DamageDelta, &item.CooldownDelta, &item.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("ListWeaponBalanceHistory scan: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ListWeaponBalanceHistory rows: %w", err)
+	}
+	return items, nil
 }
 
 // GetTimeBasedLeaderboard returns aggregated stats for bots within a time window.
@@ -74,6 +344,7 @@ func GetTimeBasedLeaderboard(ctx context.Context, since time.Time, sortBy string
 		FROM round_bot_stats r
 		LEFT JOIN bots b ON b.id::text = r.bot_id
 		WHERE r.created_at >= $1
+		  AND r.bot_name NOT LIKE 'Legacy-%%'
 		GROUP BY r.bot_id
 		HAVING COUNT(*) > 0
 		ORDER BY %s
@@ -522,12 +793,100 @@ func UpdateRound(ctx context.Context, round *Round) error {
 	return nil
 }
 
+// ---------- weapon_balance ----------
+
+// ListWeaponBalances returns every persisted weapon balance row.
+func ListWeaponBalances(ctx context.Context) ([]WeaponBalance, error) {
+	rows, err := Pool.Query(ctx,
+		`SELECT weapon, damage_scale, cooldown_scale, adjustment_scale, rounds_tracked, updated_at
+		 FROM weapon_balance ORDER BY weapon`)
+	if err != nil {
+		return nil, fmt.Errorf("ListWeaponBalances: %w", err)
+	}
+	defer rows.Close()
+
+	var balances []WeaponBalance
+	for rows.Next() {
+		var wb WeaponBalance
+		if err := rows.Scan(
+			&wb.Weapon, &wb.DamageScale, &wb.CooldownScale,
+			&wb.AdjustmentScale, &wb.RoundsTracked, &wb.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("ListWeaponBalances scan: %w", err)
+		}
+		balances = append(balances, wb)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ListWeaponBalances rows: %w", err)
+	}
+	return balances, nil
+}
+
+// UpsertWeaponBalance stores the adaptive balance state for a weapon.
+func UpsertWeaponBalance(ctx context.Context, wb *WeaponBalance) error {
+	_, err := Pool.Exec(ctx,
+		`INSERT INTO weapon_balance
+			(weapon, damage_scale, cooldown_scale, adjustment_scale, rounds_tracked, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (weapon) DO UPDATE SET
+			damage_scale = EXCLUDED.damage_scale,
+			cooldown_scale = EXCLUDED.cooldown_scale,
+			adjustment_scale = EXCLUDED.adjustment_scale,
+			rounds_tracked = EXCLUDED.rounds_tracked,
+			updated_at = EXCLUDED.updated_at`,
+		wb.Weapon, wb.DamageScale, wb.CooldownScale, wb.AdjustmentScale, wb.RoundsTracked, wb.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("UpsertWeaponBalance: %w", err)
+	}
+	return nil
+}
+
+// ListWeaponKillStats returns per-weapon kill totals from the kill log.
+func ListWeaponKillStats(ctx context.Context) ([]WeaponKillStats, error) {
+	rows, err := Pool.Query(ctx, `
+		SELECT
+			weapon,
+			COUNT(*)::INT AS kills,
+			COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::INT AS kills_24h,
+			COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour')::INT AS kills_1h,
+			COALESCE(SUM(damage), 0)::BIGINT AS finisher_damage
+		FROM kill_log
+		GROUP BY weapon
+		ORDER BY weapon
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("ListWeaponKillStats: %w", err)
+	}
+	defer rows.Close()
+
+	var stats []WeaponKillStats
+	for rows.Next() {
+		var item WeaponKillStats
+		if err := rows.Scan(
+			&item.Weapon,
+			&item.Kills,
+			&item.Kills24h,
+			&item.Kills1h,
+			&item.FinisherDamage,
+		); err != nil {
+			return nil, fmt.Errorf("ListWeaponKillStats scan: %w", err)
+		}
+		stats = append(stats, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ListWeaponKillStats rows: %w", err)
+	}
+	return stats, nil
+}
+
 // ---------- leaderboard ----------
 
 // validSortColumns maps allowed sort keys to SQL ORDER BY clauses.
 var validSortColumns = map[string]string{
 	"kills":      "s.kills DESC",
 	"elo":        "s.elo DESC",
+	"streak":     "s.best_streak DESC",
 	"best_streak": "s.best_streak DESC",
 	"kd_ratio":   "CASE WHEN s.deaths = 0 THEN s.kills ELSE s.kills::float / s.deaths END DESC",
 }
@@ -547,6 +906,8 @@ func GetLeaderboard(ctx context.Context, sortBy string, limit, offset int) ([]Le
 		   s.damage_dealt, s.rounds_played, s.round_wins
 		 FROM bot_stats s
 		 JOIN bots b ON b.id = s.bot_id
+		 WHERE b.name NOT LIKE 'Legacy-%%'
+		   AND (s.rounds_played > 0 OR s.kills > 0 OR s.deaths > 0 OR s.damage_dealt > 0)
 		 ORDER BY %s
 		 LIMIT $1 OFFSET $2`, orderClause, orderClause,
 	)
@@ -578,11 +939,151 @@ func GetLeaderboard(ctx context.Context, sortBy string, limit, offset int) ([]Le
 // GetLeaderboardCount returns the total number of entries in bot_stats.
 func GetLeaderboardCount(ctx context.Context) (int, error) {
 	var count int
-	err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM bot_stats`).Scan(&count)
+	err := Pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM bot_stats s
+		JOIN bots b ON b.id = s.bot_id
+		WHERE b.name NOT LIKE 'Legacy-%'
+		  AND (s.rounds_played > 0 OR s.kills > 0 OR s.deaths > 0 OR s.damage_dealt > 0)
+	`).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("GetLeaderboardCount: %w", err)
 	}
 	return count, nil
+}
+
+// ---------- bounty board ----------
+
+// ListBountyBoardEntries loads the persisted public bounty board.
+func ListBountyBoardEntries(ctx context.Context) ([]BountyBoardEntry, error) {
+	rows, err := Pool.Query(ctx, `
+		SELECT bot_id, name, avatar_color, weapon, win_streak, bounty_points, claims, is_target, updated_at
+		FROM bounty_board
+		ORDER BY bounty_points DESC, win_streak DESC, name ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("ListBountyBoardEntries: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []BountyBoardEntry
+	for rows.Next() {
+		var entry BountyBoardEntry
+		if err := rows.Scan(
+			&entry.BotID, &entry.Name, &entry.AvatarColor, &entry.Weapon,
+			&entry.WinStreak, &entry.BountyPoints, &entry.Claims, &entry.IsTarget, &entry.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("ListBountyBoardEntries scan: %w", err)
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ListBountyBoardEntries rows: %w", err)
+	}
+	return entries, nil
+}
+
+// ReplaceBountyBoardEntries rewrites the persisted bounty board to match the in-memory snapshot.
+func ReplaceBountyBoardEntries(ctx context.Context, entries []BountyBoardEntry) error {
+	tx, err := Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("ReplaceBountyBoardEntries begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM bounty_board`); err != nil {
+		return fmt.Errorf("ReplaceBountyBoardEntries clear: %w", err)
+	}
+
+	now := time.Now()
+	for _, entry := range entries {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO bounty_board
+				(bot_id, name, avatar_color, weapon, win_streak, bounty_points, claims, is_target, updated_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		`,
+			entry.BotID, entry.Name, entry.AvatarColor, entry.Weapon,
+			entry.WinStreak, entry.BountyPoints, entry.Claims, entry.IsTarget, now,
+		); err != nil {
+			return fmt.Errorf("ReplaceBountyBoardEntries insert: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("ReplaceBountyBoardEntries commit: %w", err)
+	}
+	return nil
+}
+
+// GetLatestWinnerBountySeed reconstructs a single bounty candidate from the most
+// recent consecutive completed round winners. It is used to repopulate the
+// bounty board after a restart if no persisted board state exists.
+func GetLatestWinnerBountySeed(ctx context.Context, threshold, base, step, maxPoints int) (*BountyBoardEntry, error) {
+	rows, err := Pool.Query(ctx, `
+		SELECT r.mvp_bot_id, b.name, b.avatar_color, b.default_weapon
+		FROM rounds r
+		JOIN bots b ON b.id = r.mvp_bot_id
+		WHERE r.status = 'completed'
+		  AND r.mvp_bot_id IS NOT NULL
+		  AND b.name NOT LIKE 'Legacy-%'
+		ORDER BY r.round_number DESC
+		LIMIT 32
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("GetLatestWinnerBountySeed: %w", err)
+	}
+	defer rows.Close()
+
+	type winnerRow struct {
+		BotID       string
+		Name        string
+		AvatarColor string
+		Weapon      string
+	}
+
+	var winners []winnerRow
+	for rows.Next() {
+		var row winnerRow
+		if err := rows.Scan(&row.BotID, &row.Name, &row.AvatarColor, &row.Weapon); err != nil {
+			return nil, fmt.Errorf("GetLatestWinnerBountySeed scan: %w", err)
+		}
+		winners = append(winners, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetLatestWinnerBountySeed rows: %w", err)
+	}
+	if len(winners) == 0 {
+		return nil, nil
+	}
+
+	seed := winners[0]
+	streak := 0
+	for _, row := range winners {
+		if row.BotID != seed.BotID {
+			break
+		}
+		streak++
+	}
+	if streak < threshold {
+		return nil, nil
+	}
+
+	points := base + (streak-threshold)*step
+	if points > maxPoints {
+		points = maxPoints
+	}
+
+	return &BountyBoardEntry{
+		BotID:        seed.BotID,
+		Name:         seed.Name,
+		AvatarColor:  seed.AvatarColor,
+		Weapon:       seed.Weapon,
+		WinStreak:    streak,
+		BountyPoints: points,
+		Claims:       0,
+		IsTarget:     true,
+		UpdatedAt:    time.Now(),
+	}, nil
 }
 
 // GetBotRank returns the 1-based rank of a bot for a given sort column.

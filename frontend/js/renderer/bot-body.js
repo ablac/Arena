@@ -24,6 +24,7 @@ let _shdMat = null;
 let _tplArm = null;
 let _tplArmMat = null;
 let _tplShadow = null;
+let _pickMat = null;
 
 /** Singleton fullscreen GUI texture for all bot HUD elements. */
 let _guiTexture = null;
@@ -97,6 +98,19 @@ export function _getTplShadow(scene) {
   return _tplShadow;
 }
 
+function _getPickMat(scene) {
+  if (!_pickMat || _pickMat.isDisposed) {
+    const B = window.BABYLON;
+    _pickMat = new B.StandardMaterial('bot-pick-mat', scene);
+    _pickMat.diffuseColor = B.Color3.Black();
+    _pickMat.emissiveColor = B.Color3.Black();
+    _pickMat.alpha = 0.001;
+    _pickMat.disableLighting = true;
+    _pickMat.backFaceCulling = false;
+  }
+  return _pickMat;
+}
+
 export function createBotEntry(bot, scene) {
   // Sword bots get the articulated swordsman character
   if ((bot.weapon || 'sword') === 'sword') {
@@ -115,7 +129,8 @@ export function createBotEntry(bot, scene) {
   }, scene);
   body.position.y = BODY_H / 2;
   body.parent = root;
-  body.isPickable = false;
+  body.isPickable = true;
+  body.metadata = { botId: id };
   body.alwaysSelectAsActiveMesh = true;
   const bodyMat = makeMat(`bmat-${id}`, scene, color, { emissiveFactor: 0.35 });
   bodyMat.emissiveFresnelParameters = new B.FresnelParameters({
@@ -130,7 +145,8 @@ export function createBotEntry(bot, scene) {
   const head = B.MeshBuilder.CreateSphere(`head-${id}`, {
     diameter: HEAD_R * 2, segments: 4
   }, scene);
-  head.isPickable = false;
+  head.isPickable = true;
+  head.metadata = { botId: id };
   head.alwaysSelectAsActiveMesh = true;
   head.position.y = BODY_H + HEAD_R * 0.7;
   head.parent = root;
@@ -168,6 +184,17 @@ export function createBotEntry(bot, scene) {
   shadow.parent = root;
   shadow.isPickable = false;
   shadow.alwaysSelectAsActiveMesh = true;
+
+  const selector = B.MeshBuilder.CreateCylinder(`pick-${id}`, {
+    height: 34, diameter: 28, tessellation: 12,
+  }, scene);
+  selector.parent = root;
+  selector.position.y = 16;
+  selector.material = _getPickMat(scene);
+  selector.isPickable = true;
+  selector.metadata = { botId: id };
+  selector.visibility = 0.01;
+  selector.alwaysSelectAsActiveMesh = true;
 
   // Weapon
   const weapon = createWeaponMesh(bot.weapon || 'sword', id, scene, root);
@@ -212,6 +239,7 @@ export function createBotEntry(bot, scene) {
   return {
     root, body, bodyMat, head, headMat, lArm, rArm,
     shadow, weapon, hpContainer, hpFill, nameLabel,
+    selector, pickMeshes: [selector, body, head],
     anim: new BotAnimState(),
     isAlive: true, _wasAlive: true, _lastHp: -1,
   };
@@ -234,6 +262,7 @@ export function disposeBotEntry(entry) {
   if (entry.lArm && !entry.lArm.isDisposed()) entry.lArm.dispose();
   if (entry.rArm && !entry.rArm.isDisposed()) entry.rArm.dispose();
   if (entry.shadow && !entry.shadow.isDisposed()) entry.shadow.dispose();
+  if (entry.selector && !entry.selector.isDisposed()) entry.selector.dispose();
   if (entry.weapon) disposeWeapon(entry.weapon);
   entry.root.dispose();
 }

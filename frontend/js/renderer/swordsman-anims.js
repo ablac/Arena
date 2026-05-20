@@ -291,6 +291,7 @@ export class SwordsmanAnimState {
     this.attackTimer = -1;
     this.attackKeyframes = null;
     this.attackComboIndex = 0;
+    this.attackDuration = ATTACK_DURATION;
 
     // Base anim compat
     this.deathTimer = -1;
@@ -409,7 +410,8 @@ export function updateSwordsmanAnim(entry, dt) {
   // ── Attack animation ──
   if (anim.attackTimer >= 0 && anim.attackKeyframes) {
     anim.attackTimer += dt;
-    const progress = Math.min(anim.attackTimer / ATTACK_DURATION, 1);
+    const duration = anim.attackDuration > 0 ? anim.attackDuration : ATTACK_DURATION;
+    const progress = Math.min(anim.attackTimer / duration, 1);
 
     const pose = interpolateKeyframes(progress, anim.attackKeyframes);
     const bodyYOffset = applyPose(pose, joints);
@@ -492,11 +494,12 @@ function _updateIdle(anim, joints, dt) {
  *
  * @param {SwordsmanAnimState} anim
  */
-export function triggerSwordsmanAttack(anim) {
+export function triggerSwordsmanAttack(anim, durationOverride) {
   if (anim.dodgeTimer >= 0) return;
   if (anim.attackTimer >= 0) {
     // Allow interrupt only in last 30% of attack (recovery)
-    if (anim.attackTimer / ATTACK_DURATION < 0.7) return;
+    const duration = anim.attackDuration > 0 ? anim.attackDuration : ATTACK_DURATION;
+    if (anim.attackTimer / duration < 0.7) return;
   }
 
   const combo = ATTACK_COMBOS[anim.attackComboIndex % ATTACK_COMBOS.length];
@@ -510,6 +513,7 @@ export function triggerSwordsmanAttack(anim) {
   if (!animData) return;
 
   anim.attackTimer = 0;
+  anim.attackDuration = Math.max(0.16, Number(durationOverride) || ATTACK_DURATION);
   anim.attackKeyframes = animData.kf;
 }
 

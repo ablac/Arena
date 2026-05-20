@@ -106,6 +106,62 @@ type Round struct {
 	Status           string     `json:"status"`
 }
 
+// WeaponBalance represents the adaptive balancing state for a weapon.
+type WeaponBalance struct {
+	Weapon          string    `json:"weapon"`
+	DamageScale     float64   `json:"damage_scale"`
+	CooldownScale   float64   `json:"cooldown_scale"`
+	AdjustmentScale float64   `json:"adjustment_scale"`
+	RoundsTracked   int       `json:"rounds_tracked"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// WeaponKillStats represents aggregated kill activity for a weapon.
+type WeaponKillStats struct {
+	Weapon         string `json:"weapon"`
+	Kills          int    `json:"kills"`
+	Kills24h       int    `json:"kills_24h"`
+	Kills1h        int    `json:"kills_1h"`
+	FinisherDamage int64  `json:"finisher_damage"`
+}
+
+// WeaponRecentPerformance represents aggregated per-weapon performance across recent rounds.
+type WeaponRecentPerformance struct {
+	Weapon    string  `json:"weapon"`
+	Bots      int     `json:"bots"`
+	Wins      int     `json:"wins"`
+	Rounds    int     `json:"rounds"`
+	AvgScore  float64 `json:"avg_score"`
+}
+
+// WeaponBalanceHistory captures one adaptive balancing decision snapshot.
+type WeaponBalanceHistory struct {
+	Weapon          string    `json:"weapon"`
+	RoundsTracked   int       `json:"rounds_tracked"`
+	DamageScale     float64   `json:"damage_scale"`
+	CooldownScale   float64   `json:"cooldown_scale"`
+	AdjustmentScale float64   `json:"adjustment_scale"`
+	AvgScore        float64   `json:"avg_score"`
+	MeanScore       float64   `json:"mean_score"`
+	DiffPct         float64   `json:"diff_pct"`
+	DamageDelta     float64   `json:"damage_delta"`
+	CooldownDelta   float64   `json:"cooldown_delta"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// BountyBoardEntry represents a persisted bounty board row.
+type BountyBoardEntry struct {
+	BotID        string    `json:"bot_id"`
+	Name         string    `json:"name"`
+	AvatarColor  string    `json:"avatar_color"`
+	Weapon       string    `json:"weapon"`
+	WinStreak    int       `json:"win_streak"`
+	BountyPoints int       `json:"bounty_points"`
+	Claims       int       `json:"claims"`
+	IsTarget     bool      `json:"is_target"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 // RateLimit represents a row in the rate_limits table.
 type RateLimit struct {
 	IPAddress     string    `json:"ip_address"`

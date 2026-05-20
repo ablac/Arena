@@ -216,19 +216,20 @@ export class EffectRenderer {
   }
 
   /**
-   * Spawn a grapple chain animation from grappler to target.
-   * Draws a glowing cyan chain with segments, pulls tight, then fades.
-   * @param {number} ax - grappler x
-   * @param {number} az - grappler z
-   * @param {number} tx - target x
-   * @param {number} tz - target z
+   * Spawn a grapple line + hook animation.
+   * `mode=pull` means the chain retracts toward the shooter.
+   * `mode=anchor` means the chain stays anchored while the user is pulled in.
    */
-  spawnGrappleEffect(ax, az, tx, tz) {
+  spawnGrappleEffect(ax, az, tx, tz, opts = {}) {
     const B = window.BABYLON;
     const scene = this.scene;
-    const CHAIN_COLOR = new B.Color3(0, 1, 1); // electric cyan
-    const SEGMENTS = 10;
+    const color = parseColor(opts.color || '#59f1ff');
+    const CHAIN_COLOR = new B.Color3(color.r, color.g, color.b);
+    const SEGMENTS = 14;
     const CHAIN_Y = 12;
+    const mode = opts.mode || 'pull';
+    const endX = typeof opts.endX === 'number' ? opts.endX : tx;
+    const endZ = typeof opts.endZ === 'number' ? opts.endZ : tz;
 
     // Create chain segment meshes
     const dx = tx - ax;
@@ -238,11 +239,19 @@ export class EffectRenderer {
 
     const chainMat = new B.StandardMaterial(`grapple-chain-mat-${++_psCounter}`, scene);
     chainMat.diffuseColor = CHAIN_COLOR;
-    chainMat.emissiveColor = CHAIN_COLOR.scale(0.8);
+    chainMat.emissiveColor = CHAIN_COLOR.scale(0.95);
     chainMat.disableLighting = true;
 
     const root = new B.TransformNode(`grapple-root-${_psCounter}`, scene);
     const segments = [];
+    const hook = B.MeshBuilder.CreateCylinder(`ghook-head-${_psCounter}`, {
+      height: 5, diameterTop: 0.6, diameterBottom: 2.4, tessellation: 6
+    }, scene);
+    hook.material = chainMat;
+    hook.position.set(tx, CHAIN_Y, tz);
+    hook.rotation.z = Math.PI / 2;
+    hook.rotation.y = Math.atan2(dx, dz);
+    hook.parent = root;
 
     for (let i = 0; i < SEGMENTS; i++) {
       const t = (i + 0.5) / SEGMENTS;
@@ -282,12 +291,12 @@ export class EffectRenderer {
     spawnSparks(ax, az);
     spawnSparks(tx, tz);
 
-    // Phase 1 (0-500ms): chain appears with wave animation
-    // Phase 2 (500-800ms): segments converge toward grappler (pull)
-    // Phase 3 (800ms+): fade out and dispose
+    // Phase 1: chain lashes out.
+    // Phase 2: retract toward shooter or stay anchored while pull completes.
+    // Phase 3: fade.
     const startTime = performance.now();
-    const APPEAR_MS = 500;
-    const PULL_MS = 300;
+    const APPEAR_MS = 240;
+    const PULL_MS = 240;
     const FADE_MS = 200;
     const TOTAL_MS = APPEAR_MS + PULL_MS + FADE_MS;
 
@@ -302,17 +311,25 @@ export class EffectRenderer {
           segments[i].position.y = CHAIN_Y + wave;
           segments[i].scaling.set(progress, 1, 1);
         }
+        hook.position.set(ax + dx * progress, CHAIN_Y, az + dz * progress);
       } else if (elapsed < APPEAR_MS + PULL_MS) {
-        // Pull phase: segments slide toward grappler position
+        // Pull phase
         const pullT = (elapsed - APPEAR_MS) / PULL_MS;
         for (let i = 0; i < segments.length; i++) {
           const origT = (i + 0.5) / SEGMENTS;
-          const newT = origT * (1 - pullT * 0.8); // converge toward 0 (grappler)
+          const newT = mode === 'anchor'
+            ? origT + (1 - origT) * pullT * 0.45
+            : origT * (1 - pullT * 0.82);
           segments[i].position.x = ax + dx * newT;
           segments[i].position.z = az + dz * newT;
           segments[i].position.y = CHAIN_Y;
           segments[i].scaling.set(1, 1, 1);
         }
+        hook.position.set(
+          mode === 'anchor' ? tx : ax + dx * (1 - pullT * 0.82),
+          CHAIN_Y,
+          mode === 'anchor' ? tz : az + dz * (1 - pullT * 0.82)
+        );
       } else if (elapsed < TOTAL_MS) {
         // Fade out
         const fadeT = (elapsed - APPEAR_MS - PULL_MS) / FADE_MS;
@@ -320,14 +337,138 @@ export class EffectRenderer {
         for (const seg of segments) {
           seg.visibility = 1 - fadeT;
         }
+        hook.visibility = 1 - fadeT;
       } else {
         // Cleanup
         scene.onBeforeRenderObservable.remove(observer);
         for (const seg of segments) seg.dispose();
+        hook.dispose();
         root.dispose();
         chainMat.dispose();
       }
     });
+
+    // Subtle impact burst where the pull resolves.
+    spawnSparks(endX, endZ);
+  }
+
+  /**
+   * Spawn a mine detonation with a hot core, shock ring, and debris burst.
+   * @param {number} x
+   * @param {number} z
+   * @param {number} [radius=20]
+   */
+  spawnMineExplosion(x, z, radius = 20) {
+    const B = window.BABYLON;
+    const blastRadius = Math.max(12, radius);
+
+    const ring = B.MeshBuilder.CreateTorus(`mine-ring-${++_psCounter}`, {
+      diameter: blastRadius * 1.4,
+      thickness: Math.max(1.2, blastRadius * 0.08),
+      tessellation: 32,
+    }, this.scene);
+    const ringMat = new B.StandardMaterial(`mine-ring-mat-${_psCounter}`, this.scene);
+    ringMat.emissiveColor = new B.Color3(1.0, 0.45, 0.1);
+    ringMat.diffuseColor = B.Color3.Black();
+    ringMat.disableLighting = true;
+    ring.material = ringMat;
+    ring.position.set(x, 2, z);
+    ring.rotation.x = Math.PI / 2;
+
+    const core = B.MeshBuilder.CreateSphere(`mine-core-${++_psCounter}`, {
+      diameter: blastRadius * 0.35,
+      segments: 10,
+    }, this.scene);
+    const coreMat = new B.StandardMaterial(`mine-core-mat-${_psCounter}`, this.scene);
+    coreMat.emissiveColor = new B.Color3(1.0, 0.8, 0.2);
+    coreMat.diffuseColor = B.Color3.Black();
+    coreMat.disableLighting = true;
+    core.material = coreMat;
+    core.position.set(x, 4, z);
+
+    const scorch = B.MeshBuilder.CreateDisc(`mine-scorch-${++_psCounter}`, {
+      radius: blastRadius * 0.55,
+      tessellation: 28,
+    }, this.scene);
+    scorch.rotation.x = Math.PI / 2;
+    scorch.position.set(x, 0.25, z);
+    const scorchMat = new B.StandardMaterial(`mine-scorch-mat-${_psCounter}`, this.scene);
+    scorchMat.diffuseColor = B.Color3.Black();
+    scorchMat.emissiveColor = new B.Color3(0.18, 0.08, 0.02);
+    scorchMat.disableLighting = true;
+    scorchMat.alpha = 0.42;
+    scorch.material = scorchMat;
+
+    const ps = new B.ParticleSystem(`mine-ps-${++_psCounter}`, 35, this.scene);
+    ps.emitter = new B.Vector3(x, 2, z);
+    ps.createPointEmitter(new B.Vector3(-3, 1, -3), new B.Vector3(3, 6, 3));
+    ps.color1 = new B.Color4(1, 0.85, 0.3, 1);
+    ps.color2 = new B.Color4(1, 0.35, 0.05, 0.9);
+    ps.colorDead = new B.Color4(0.2, 0.05, 0.02, 0);
+    ps.minSize = 1.5; ps.maxSize = 4.5;
+    ps.minLifeTime = 0.12; ps.maxLifeTime = 0.28;
+    ps.emitRate = 240;
+    ps.minEmitPower = 18; ps.maxEmitPower = 45;
+    ps.gravity = new B.Vector3(0, -35, 0);
+    ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
+    ps.targetStopDuration = 0.10;
+    ps.disposeOnStop = true;
+    ps.start();
+
+    const start = performance.now();
+    const obs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - start) / 260;
+      if (t >= 1) {
+        this.scene.onBeforeRenderObservable.remove(obs);
+        ring.dispose();
+        ringMat.dispose();
+        core.dispose();
+        coreMat.dispose();
+        scorch.dispose();
+        scorchMat.dispose();
+        return;
+      }
+      ring.scaling.set(1 + t * 1.6, 1 + t * 1.6, 1);
+      ringMat.alpha = 1 - t;
+      core.scaling.set(1 + t * 1.1, 1 + t * 1.1, 1 + t * 1.1);
+      coreMat.alpha = 1 - t;
+      scorchMat.alpha = Math.max(0, 0.42 - t * 0.12);
+    });
+  }
+
+  /**
+   * Spawn matching bursts at teleport entry and exit.
+   * @param {number} fromX
+   * @param {number} fromZ
+   * @param {number} toX
+   * @param {number} toZ
+   * @param {string} [hexColor='#00ffff']
+   */
+  spawnTeleportBurst(fromX, fromZ, toX, toZ, hexColor = '#00ffff') {
+    const B = window.BABYLON;
+    const c = parseColor(hexColor);
+    const burstAt = (x, z, invert = false) => {
+      const ps = new B.ParticleSystem(`tp-burst-${++_psCounter}`, 24, this.scene);
+      ps.emitter = new B.Vector3(x, 8, z);
+      ps.createPointEmitter(
+        new B.Vector3(-2, invert ? -1 : 1, -2),
+        new B.Vector3(2, invert ? 4 : 7, 2)
+      );
+      ps.color1 = new B.Color4(c.r, c.g, c.b, 1);
+      ps.color2 = new B.Color4(1, 1, 1, 0.9);
+      ps.colorDead = new B.Color4(c.r * 0.2, c.g * 0.2, c.b * 0.2, 0);
+      ps.minSize = 1.5; ps.maxSize = 5;
+      ps.minLifeTime = 0.08; ps.maxLifeTime = 0.22;
+      ps.emitRate = 220;
+      ps.minEmitPower = 12; ps.maxEmitPower = 32;
+      ps.gravity = new B.Vector3(0, invert ? 10 : -10, 0);
+      ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
+      ps.targetStopDuration = 0.06;
+      ps.disposeOnStop = true;
+      ps.start();
+    };
+    burstAt(fromX, fromZ, true);
+    burstAt(toX, toZ, false);
   }
 
   /** @private */
