@@ -34,6 +34,9 @@ func aiAggressive(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 	if canAttack(bot, target) {
 		return &Action{Type: ActionAttack, TargetID: target.BotID}
 	}
+	if canUseUniversalGrapple(bot, target) {
+		return &Action{Type: ActionGrapple, TargetID: target.BotID}
+	}
 	return moveTowardPos(bot, target.Position)
 }
 
@@ -73,6 +76,9 @@ func aiOpportunistic(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action
 			return &Action{Type: ActionAttack, TargetID: target.BotID}
 		}
 		if target != nil {
+			if canUseUniversalGrapple(bot, target) {
+				return &Action{Type: ActionGrapple, TargetID: target.BotID}
+			}
 			return moveTowardPos(bot, target.Position)
 		}
 	}
@@ -137,6 +143,9 @@ func aiHunter(bot *BotState, nearby []*BotState, arena *ArenaMap) *Action {
 	}
 	if canAttack(bot, target) {
 		return &Action{Type: ActionAttack, TargetID: target.BotID}
+	}
+	if canUseUniversalGrapple(bot, target) {
+		return &Action{Type: ActionGrapple, TargetID: target.BotID}
 	}
 	return moveTowardPos(bot, target.Position)
 }
@@ -242,6 +251,26 @@ func canAttack(bot *BotState, target *BotState) bool {
 	}
 	wc := GetWeaponConfig(bot.Weapon)
 	return IsInRange(bot.Position, target.Position, wc.GridRange)
+}
+
+func canUseUniversalGrapple(bot *BotState, target *BotState) bool {
+	if !target.IsAlive || bot.GrappleCharges <= 0 || bot.GrappleCooldown > 0 {
+		return false
+	}
+	if bot.BotID == target.BotID {
+		return false
+	}
+	if canAttack(bot, target) {
+		return false
+	}
+	if !hasLOS(bot.Position, target.Position) {
+		return false
+	}
+	rangeTiles := config.C.GrappleAbilityRangeTiles
+	if rangeTiles <= 0 {
+		rangeTiles = 12
+	}
+	return IsInRange(bot.Position, target.Position, rangeTiles)
 }
 
 // moveTowardPos returns a move_to action that uses server-side pathfinding,

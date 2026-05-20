@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"time"
 
@@ -22,17 +23,24 @@ type demoBot struct {
 	serverURL   string // e.g. "http://localhost:8000"
 	apiKey      string
 	logger      *slog.Logger
+	client      *http.Client
 	attackRange int     // Chebyshev grid range from loadout_confirmed
 	maxHP       float64 // max HP from loadout_confirmed
 	botID       string  // bot ID from connected message
+	strategy    string  // current live strategy, rerolled each round
 }
 
 // newDemoBot creates a demoBot from a config and server URL.
 func newDemoBot(cfg BotConfig, serverURL string) *demoBot {
+	initialStrategy := pickStrategyForWeapon(cfg.Weapon, cfg.Strategy)
 	return &demoBot{
 		config:    cfg,
 		serverURL: serverURL,
 		logger:    slog.With("demo_bot", cfg.Name),
+		strategy:  initialStrategy,
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+		},
 	}
 }
 
@@ -62,7 +70,7 @@ func (b *demoBot) register(ctx context.Context) error {
 		return fmt.Errorf("create register request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := b.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("register request: %w", err)
 	}
@@ -123,7 +131,7 @@ func (b *demoBot) configure(ctx context.Context) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Arena-Key", b.apiKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := b.client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -179,6 +187,7 @@ func (b *demoBot) session(ctx context.Context) error {
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
+		EnableCompression: true,
 	}
 
 	conn, _, err := dialer.DialContext(ctx, wsURL, nil)
@@ -230,19 +239,12 @@ func (b *demoBot) session(ctx context.Context) error {
 	}
 
 	// 2. Send "select_loadout".
-	fallback := b.config.Strategy
-	switch fallback {
-	case "aggressive", "defensive", "territorial", "opportunistic", "hunter":
-		// valid
-	default:
-		fallback = "aggressive"
-	}
-
+	b.rollStrategy("session_start")
 	loadout := map[string]interface{}{
 		"type":              "select_loadout",
 		"weapon":            b.config.Weapon,
 		"stats":             b.config.Stats,
-		"fallback_behavior": fallback,
+		"fallback_behavior": fallbackBehaviorForStrategy(b.strategy),
 	}
 	if err := conn.WriteJSON(loadout); err != nil {
 		return fmt.Errorf("send loadout: %w", err)
@@ -266,8 +268,11 @@ func (b *demoBot) session(ctx context.Context) error {
 		}
 	}
 
-	b.logger.Info("entered arena", "weapon", b.config.Weapon, "strategy", b.config.Strategy,
+	b.logger.Info("entered arena", "weapon", b.config.Weapon, "strategy", b.strategy,
 		"attack_range", b.attackRange, "max_hp", b.maxHP)
+	if err := b.fetchMap(ctx); err != nil {
+		b.logger.Debug("map prefetch failed", "error", err)
+	}
 
 	// 4. Main message loop.
 	for {
@@ -291,19 +296,12 @@ func (b *demoBot) session(ctx context.Context) error {
 		msgType, _ := msg["type"].(string)
 		switch msgType {
 		case "tick":
-			// Track gravity well pickup from nearby_entities
 			if ys, ok := msg["your_state"].(map[string]interface{}); ok {
-				if effs, ok := ys["effects"].([]interface{}); ok {
-					for _, raw := range effs {
-						if e, ok := raw.(map[string]interface{}); ok {
-							if name, _ := e["name"].(string); name == "gravity_well" {
-								setHasGravWell(b.botID, true)
-							}
-						}
-					}
+				if charge, ok := ys["gravity_well_charge"].(float64); ok {
+					setHasGravWell(b.botID, charge > 0)
 				}
 			}
-			action := PickAction(b.config.Strategy, msg, b.config.Weapon, b.attackRange, b.botID)
+			action := PickAction(b.strategy, msg, b.config.Weapon, b.attackRange, b.botID)
 			payload := map[string]interface{}{
 				"type": "action",
 				"tick": msg["tick"],
@@ -333,7 +331,12 @@ func (b *demoBot) session(ctx context.Context) error {
 			// Bot is alive again.
 
 		case "round_end":
-			// Wait for next round.
+			if err := b.refreshStats(ctx); err != nil {
+				b.logger.Debug("stats refresh failed", "error", err)
+			}
+			if err := b.fetchMap(ctx); err != nil {
+				b.logger.Debug("map refresh failed", "error", err)
+			}
 
 		case "map_init":
 			parseTerrain(msg)
@@ -341,6 +344,10 @@ func (b *demoBot) session(ctx context.Context) error {
 		case "round_start":
 			resetMineCount(b.botID)
 			resetGravWell(b.botID)
+			b.rollStrategy("round_start")
+			if err := b.fetchMap(ctx); err != nil {
+				b.logger.Debug("map refresh failed", "error", err)
+			}
 
 		case "lobby":
 			// Waiting for more players.
@@ -360,6 +367,149 @@ func (b *demoBot) session(ctx context.Context) error {
 		default:
 			// Ignore unknown message types gracefully.
 		}
+	}
+}
+
+func (b *demoBot) fetchMap(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.serverURL+"/api/v1/arena/map", nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := b.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("arena map failed: HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var payload map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return fmt.Errorf("decode arena map: %w", err)
+	}
+	if status, _ := payload["status"].(string); status != "ok" {
+		return nil
+	}
+
+	parseTerrain(payload)
+	return nil
+}
+
+func (b *demoBot) refreshStats(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.serverURL+"/api/v1/bot/stats", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Arena-Key", b.apiKey)
+
+	resp, err := b.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("bot stats failed: HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var stats struct {
+		Elo          int `json:"elo"`
+		Rank         int `json:"rank"`
+		Kills        int `json:"kills"`
+		Deaths       int `json:"deaths"`
+		RoundsPlayed int `json:"rounds_played"`
+		RoundWins    int `json:"round_wins"`
+		BestStreak   int `json:"best_streak"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		return fmt.Errorf("decode bot stats: %w", err)
+	}
+
+	b.logger.Info("lifetime stats",
+		"elo", stats.Elo,
+		"rank", stats.Rank,
+		"kills", stats.Kills,
+		"deaths", stats.Deaths,
+		"rounds_played", stats.RoundsPlayed,
+		"round_wins", stats.RoundWins,
+		"best_streak", stats.BestStreak,
+	)
+	return nil
+}
+
+func fallbackBehaviorForStrategy(strategy string) string {
+	switch strategy {
+	case "defensive":
+		return "defensive"
+	case "territorial":
+		return "territorial"
+	case "assassin":
+		return "hunter"
+	case "kite":
+		return "opportunistic"
+	case "berserker":
+		return "aggressive"
+	case "hunter", "opportunistic", "aggressive":
+		return strategy
+	default:
+		return "aggressive"
+	}
+}
+
+func pickStrategyForWeapon(weapon, current string) string {
+	choices := strategyPoolForWeapon(weapon)
+	if len(choices) == 0 {
+		return current
+	}
+	if len(choices) == 1 {
+		return choices[0]
+	}
+	idx := rand.Intn(len(choices))
+	next := choices[idx]
+	if current == "" {
+		return next
+	}
+	for attempts := 0; attempts < 4 && next == current; attempts++ {
+		next = choices[rand.Intn(len(choices))]
+	}
+	return next
+}
+
+func strategyPoolForWeapon(weapon string) []string {
+	switch weapon {
+	case "shield":
+		return []string{"territorial", "aggressive", "defensive"}
+	case "staff":
+		return []string{"kite", "defensive", "aggressive"}
+	case "bow":
+		return []string{"kite", "assassin", "defensive"}
+	case "daggers":
+		return []string{"assassin", "berserker", "aggressive"}
+	case "grapple":
+		return []string{"assassin", "aggressive", "territorial"}
+	case "spear":
+		return []string{"aggressive", "territorial", "berserker"}
+	case "sword":
+		return []string{"aggressive", "berserker", "territorial", "defensive"}
+	default:
+		return []string{"aggressive", "defensive", "territorial", "assassin", "kite", "berserker"}
+	}
+}
+
+func (b *demoBot) rollStrategy(reason string) {
+	prev := b.strategy
+	next := pickStrategyForWeapon(b.config.Weapon, prev)
+	if next == "" {
+		next = b.config.Strategy
+	}
+	b.strategy = next
+	if prev != next {
+		b.logger.Info("strategy rerolled", "reason", reason, "from", prev, "to", next)
 	}
 }
 

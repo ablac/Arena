@@ -24,6 +24,7 @@ const (
 var spectatorUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 4096,
+	EnableCompression: true,
 	CheckOrigin: func(r *http.Request) bool {
 		return true // allow all origins for now
 	},

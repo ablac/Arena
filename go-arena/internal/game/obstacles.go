@@ -63,6 +63,15 @@ func LineIntersectsObstacle(x1, y1, x2, y2 float64, obstacles []Obstacle) bool {
 	return false
 }
 
+// CombatLineBlocked returns true if a combat ray between two world-space
+// positions is blocked by the active terrain grid or obstacle geometry.
+func CombatLineBlocked(from, to Vec2, obstacles []Obstacle) bool {
+	if ActiveTerrain != nil && ActiveTerrain.GridLineBlocked(from, to) {
+		return true
+	}
+	return LineIntersectsObstacle(from.X(), from.Y(), to.X(), to.Y(), obstacles)
+}
+
 // SlideAlongObstacle attempts to move from (oldX,oldY) to (newX,newY),
 // using stepped collision to prevent tunnelling through thin obstacles.
 //

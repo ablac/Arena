@@ -214,7 +214,7 @@ func (m *Manager) ListBots() []DemoBotInfo {
 		infos = append(infos, DemoBotInfo{
 			Name:     name,
 			Weapon:   entry.bot.config.Weapon,
-			Strategy: entry.bot.config.Strategy,
+			Strategy: entry.bot.strategy,
 			Color:    entry.bot.config.Color,
 			Running:  entry.cancel != nil,
 		})
