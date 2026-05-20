@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -1563,14 +1564,20 @@ func toI(v interface{}) int {
 
 func (h *AdminHandler) getWeapons(w http.ResponseWriter, r *http.Request) {
 	weapons := make(map[string]interface{})
-	for name, wc := range game.WeaponConfigs {
+	for _, name := range game.GetAvailableWeapons() {
+		wc := game.GetWeaponConfig(name)
+		balance, _ := game.GetWeaponBalanceState(name)
 		weapons[name] = map[string]interface{}{
-			"name":     wc.Name,
-			"damage":   wc.Damage,
-			"range":    wc.Range,
-			"cooldown": wc.Cooldown,
-			"special":  wc.Special,
-			"param":    wc.Param,
+			"name":             wc.Name,
+			"damage":           wc.Damage,
+			"range":            wc.Range,
+			"cooldown":         wc.Cooldown,
+			"special":          wc.Special,
+			"param":            wc.Param,
+			"damage_scale":     balance.DamageScale,
+			"cooldown_scale":   balance.CooldownScale,
+			"adjustment_scale": balance.AdjustmentScale,
+			"rounds_tracked":   balance.RoundsTracked,
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1580,7 +1587,7 @@ func (h *AdminHandler) getWeapons(w http.ResponseWriter, r *http.Request) {
 
 func (h *AdminHandler) updateWeapon(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	wc, ok := game.WeaponConfigs[name]
+	wc, ok := game.GetBaseWeaponConfig(name)
 	if !ok {
 		writeError(w, http.StatusNotFound, "weapon not found: "+name)
 		return
@@ -1603,6 +1610,7 @@ func (h *AdminHandler) updateWeapon(w http.ResponseWriter, r *http.Request) {
 	if v, ok := req["range"]; ok {
 		if f, ok := toFloat(v); ok && f >= 0 {
 			wc.Range = f
+			wc.GridRange = int(math.Round(f / config.C.PathfindingCellSize))
 			applied = append(applied, fmt.Sprintf("range=%.1f", wc.Range))
 		}
 	}
@@ -1619,7 +1627,7 @@ func (h *AdminHandler) updateWeapon(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	game.WeaponConfigs[name] = wc
+	game.UpdateBaseWeaponConfig(name, wc)
 
 	slog.Info("admin updated weapon", "weapon", name, "changes", applied)
 	writeJSON(w, http.StatusOK, map[string]interface{}{

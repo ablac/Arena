@@ -96,6 +96,79 @@ type LeaderboardResponse struct {
 	Offset  int                `json:"offset"`
 }
 
+// BountyBoardEntry represents a single active bounty target row.
+type BountyBoardEntry struct {
+	Rank         int    `json:"rank"`
+	BotID        string `json:"bot_id"`
+	Name         string `json:"name"`
+	AvatarColor  string `json:"avatar_color"`
+	Weapon       string `json:"weapon"`
+	BountyPoints int    `json:"bounty_points"`
+	WinStreak    int    `json:"win_streak"`
+	Claims       int    `json:"claims"`
+	IsTarget     bool   `json:"is_target"`
+}
+
+// BountyBoardResponse wraps the current public bounty board.
+type BountyBoardResponse struct {
+	Entries []BountyBoardEntry `json:"entries"`
+	Total   int                `json:"total"`
+}
+
+// WeaponStatsEntry represents one weapon's live balance and performance state.
+type WeaponStatsEntry struct {
+	Rank             int       `json:"rank"`
+	Weapon           string    `json:"weapon"`
+	Tier             string    `json:"tier"`
+	MetaScore        float64   `json:"meta_score"`
+	RecentForm       float64   `json:"recent_form"`
+	RecentRoundScore float64   `json:"recent_round_score"`
+	RecentDiffPct    float64   `json:"recent_diff_pct"`
+	RecentRounds     int       `json:"recent_rounds"`
+	BalanceDirection string    `json:"balance_direction"`
+	Kills            int       `json:"kills"`
+	Kills24h         int       `json:"kills_24h"`
+	Kills1h          int       `json:"kills_1h"`
+	FinisherDamage   int64     `json:"finisher_damage"`
+	Damage           int       `json:"damage"`
+	DamageExact      float64   `json:"damage_exact"`
+	Cooldown         float64   `json:"cooldown"`
+	Range            float64   `json:"range"`
+	GridRange        int       `json:"grid_range"`
+	Special          string    `json:"special"`
+	BaseDamage       int       `json:"base_damage"`
+	BaseCooldown     float64   `json:"base_cooldown"`
+	DamageScale      float64   `json:"damage_scale"`
+	CooldownScale    float64   `json:"cooldown_scale"`
+	AdjustmentScale  float64   `json:"adjustment_scale"`
+	DamageTrend      string    `json:"damage_trend"`
+	CooldownTrend    string    `json:"cooldown_trend"`
+	LastDamageMove   string    `json:"last_damage_move"`
+	LastCooldownMove string    `json:"last_cooldown_move"`
+	DamageShiftPct   float64   `json:"damage_shift_pct"`
+	CooldownShiftPct float64   `json:"cooldown_shift_pct"`
+	RoundsTracked    int       `json:"rounds_tracked"`
+	LastBalanceAt    time.Time `json:"last_balance_at"`
+	History          []WeaponBalanceHistoryPoint `json:"history,omitempty"`
+}
+
+// WeaponBalanceHistoryPoint represents one historical balance snapshot for charting.
+type WeaponBalanceHistoryPoint struct {
+	Round         int       `json:"round"`
+	DamageScale   float64   `json:"damage_scale"`
+	CooldownScale float64   `json:"cooldown_scale"`
+	DamageExact   float64   `json:"damage_exact"`
+	Cooldown      float64   `json:"cooldown"`
+	DiffPct       float64   `json:"diff_pct"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// WeaponStatsResponse wraps the public live weapon stats board.
+type WeaponStatsResponse struct {
+	Entries   []WeaponStatsEntry `json:"entries"`
+	UpdatedAt time.Time          `json:"updated_at"`
+}
+
 // ErrorResponse is the standard error envelope.
 type ErrorResponse struct {
 	Error string `json:"error"`

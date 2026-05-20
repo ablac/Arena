@@ -20,10 +20,14 @@ export class GameplayRenderer {
     this.landmines = new Map();
     /** @type {Map<string, object>} */
     this.gravityWells = new Map();
+    /** @type {Map<string, object>} */
+    this.staffImpacts = new Map();
     /** @type {Map<string, BABYLON.Mesh>} */
     this.voidTiles = new Map();
     /** @type {object|null} */
     this.bountyGroup = null;
+    this.bountyTargetId = null;
+    this.bountyBots = [];
     this._tick = 0;
     this._glowTex = null;
     this._initGlowTexture();
@@ -48,10 +52,13 @@ export class GameplayRenderer {
     this._tick++;
     this._updateTeleportPads(state.teleport_pads || []);
     this._updateHazardZones(state.hazard_zones || []);
+    this._updateStaffImpacts(state.staff_impacts || []);
     this._updateLandmines(state.landmines || []);
     this._updateGravityWells(state.gravity_wells || []);
     this._updateVoidTiles(state.void_tiles || []);
-    this._updateBounty(state.bots || [], state.bounty_target);
+    this.bountyBots = state.bots || [];
+    this.bountyTargetId = state.bounty_target || null;
+    this._updateBounty();
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -138,16 +145,31 @@ export class GameplayRenderer {
 
       const pos = pad.position;
       const x = pos[0], z = pos[1];
+      const ready = pad.is_ready !== false;
+      const cooldown = pad.cooldown_remaining_ticks || 0;
+      const inactiveColor = new B.Color3(0.38, 0.38, 0.42);
+      const blend = ready ? 1 : Math.max(0.15, 1 - cooldown / 30);
+      const emissive = B.Color3.Lerp(inactiveColor, entry.color, blend);
       entry.platform.position.set(x, 0.75, z);
-      entry.ring.position.set(x, 2 + Math.sin(this._tick * 0.04) * 0.5, z);
-      entry.ring.rotation.y += 0.02;
+      entry.ring.position.set(x, 2 + Math.sin(this._tick * 0.04) * (ready ? 0.5 : 0.15), z);
+      entry.ring.rotation.y += ready ? 0.02 : 0.006;
       entry.beam.emitter.x = x;
       entry.beam.emitter.z = z;
       entry.swirl.emitter.x = x;
       entry.swirl.emitter.z = z;
+      entry.platform.material.emissiveColor.copyFrom(emissive);
+      entry.ring.material.emissiveColor.copyFrom(emissive);
+      entry.beam.color1 = new B.Color4(emissive.r, emissive.g, emissive.b, ready ? 0.7 : 0.18);
+      entry.beam.color2 = new B.Color4(emissive.r * 0.5, emissive.g * 0.5, emissive.b * 0.5, ready ? 0.3 : 0.06);
+      entry.swirl.color1 = new B.Color4(emissive.r, emissive.g, emissive.b, ready ? 0.5 : 0.12);
+      entry.beam.emitRate = ready ? 20 : 4;
+      entry.swirl.emitRate = ready ? 12 : 2;
 
       // Pulse the platform glow
-      entry.platform.material.alpha = 0.4 + 0.15 * Math.sin(this._tick * 0.06);
+      entry.platform.material.alpha = ready
+        ? 0.4 + 0.15 * Math.sin(this._tick * 0.06)
+        : 0.2 + 0.04 * Math.sin(this._tick * 0.03);
+      entry.ring.material.alpha = ready ? 0.8 : 0.28;
     }
 
     for (const [id, entry] of this.teleportPads) {
@@ -164,6 +186,70 @@ export class GameplayRenderer {
   // ═══════════════════════════════════════════════════════════════════
   // HAZARD ZONES — electric floor panels with spark particles
   // ═══════════════════════════════════════════════════════════════════
+  _updateStaffImpacts(impacts) {
+    const B = window.BABYLON;
+    const seen = new Set();
+
+    for (const impact of impacts) {
+      const pos = impact.position || [0, 0];
+      const id = `${impact.owner_id || 'staff'}-${pos[0]}-${pos[1]}`;
+      seen.add(id);
+      let entry = this.staffImpacts.get(id);
+      if (!entry) {
+        const outer = B.MeshBuilder.CreateTorus(`staff-ring-${id}`, {
+          diameter: Math.max(18, (impact.radius || 1) * 40),
+          thickness: 1.6,
+          tessellation: 48,
+        }, this.scene);
+        outer.rotation.x = Math.PI / 2;
+        outer.isPickable = false;
+        const outerMat = new B.StandardMaterial(`staff-ring-mat-${id}`, this.scene);
+        outerMat.diffuseColor = B.Color3.Black();
+        outerMat.emissiveColor = new B.Color3(0.7, 0.3, 1.0);
+        outerMat.disableLighting = true;
+        outer.material = outerMat;
+
+        const disc = B.MeshBuilder.CreateDisc(`staff-disc-${id}`, {
+          radius: Math.max(10, (impact.radius || 1) * 20),
+          tessellation: 40,
+        }, this.scene);
+        disc.rotation.x = Math.PI / 2;
+        disc.position.y = 0.2;
+        disc.isPickable = false;
+        const discMat = new B.StandardMaterial(`staff-disc-mat-${id}`, this.scene);
+        discMat.diffuseColor = B.Color3.Black();
+        discMat.emissiveColor = new B.Color3(0.45, 0.15, 0.8);
+        discMat.disableLighting = true;
+        discMat.alpha = 0.16;
+        disc.material = discMat;
+
+        entry = { outer, outerMat, disc, discMat };
+        this.staffImpacts.set(id, entry);
+      }
+
+      const urgency = Math.min(1, 1 / Math.max(impact.ticks_left || 1, 1));
+      const scale = 1 + urgency * 0.14 + Math.sin(this._tick * 0.15) * 0.04;
+      entry.outer.position.set(pos[0], 1.2, pos[1]);
+      entry.disc.position.set(pos[0], 0.2, pos[1]);
+      entry.outer.scaling.set(scale, scale, 1);
+      entry.disc.scaling.set(1 + urgency * 0.08, 1 + urgency * 0.08, 1);
+      entry.outerMat.emissiveColor.set(0.5 + urgency * 0.5, 0.2 + urgency * 0.35, 1.0);
+      entry.discMat.emissiveColor.set(0.3 + urgency * 0.4, 0.1 + urgency * 0.2, 0.75 + urgency * 0.2);
+      entry.outerMat.alpha = 0.35 + urgency * 0.45;
+      entry.discMat.alpha = 0.10 + urgency * 0.22;
+    }
+
+    for (const [id, entry] of this.staffImpacts) {
+      if (!seen.has(id)) {
+        entry.outer.dispose();
+        entry.disc.dispose();
+        entry.outerMat.dispose();
+        entry.discMat.dispose();
+        this.staffImpacts.delete(id);
+      }
+    }
+  }
+
   _updateHazardZones(zones) {
     const B = window.BABYLON;
     const seen = new Set();
@@ -433,14 +519,23 @@ export class GameplayRenderer {
   // ═══════════════════════════════════════════════════════════════════
   // BOUNTY — golden spinning crown ring above the target
   // ═══════════════════════════════════════════════════════════════════
-  _updateBounty(bots, bountyTargetId) {
+  _updateBounty() {
     const B = window.BABYLON;
-    if (!bountyTargetId) {
+    const streakLeader = (this.bountyBots || [])
+      .filter((b) => b && b.is_alive && Number(b.kill_streak || 0) >= 2)
+      .sort((a, b) => {
+        const streakGap = Number(b.kill_streak || 0) - Number(a.kill_streak || 0);
+        if (streakGap !== 0) return streakGap;
+        return Number(b.round_kills || 0) - Number(a.round_kills || 0);
+      })[0];
+    const highlightId = this.bountyTargetId || streakLeader?.bot_id || streakLeader?.id || null;
+    if (!highlightId) {
       if (this.bountyGroup) this.bountyGroup.ring.visibility = 0;
       return;
     }
 
-    const target = bots.find(b => b.bot_id === bountyTargetId || b.id === bountyTargetId);
+    this.bountyTargetId = highlightId;
+    const target = this.bountyBots.find(b => b.bot_id === highlightId || b.id === highlightId);
     if (!target || !target.is_alive) {
       if (this.bountyGroup) this.bountyGroup.ring.visibility = 0;
       return;
@@ -459,17 +554,29 @@ export class GameplayRenderer {
       ring.isPickable = false;
       this.bountyGroup = { ring, curX: 0, curZ: 0, initialized: false };
     }
+  }
 
-    const pos = target.position;
-    const tx = pos[0], tz = pos[1];
+  animate(botEntries, dt) {
+    if (!this.bountyGroup || !this.bountyTargetId) return;
+    const targetEntry = botEntries && botEntries.get ? botEntries.get(this.bountyTargetId) : null;
+    const fallback = this.bountyBots.find((b) => b.bot_id === this.bountyTargetId || b.id === this.bountyTargetId);
+    const sourcePos = targetEntry?.root?.position
+      ? [targetEntry.root.position.x, targetEntry.root.position.z]
+      : fallback?.position;
+    if (!sourcePos) {
+      this.bountyGroup.ring.visibility = 0;
+      return;
+    }
+
+    const tx = sourcePos[0];
+    const tz = sourcePos[1];
     const g = this.bountyGroup;
     if (!g.initialized) {
       g.curX = tx;
       g.curZ = tz;
       g.initialized = true;
     }
-    // Smooth lerp to target position (high factor = nearly instant, no trailing)
-    const lerp = 0.5;
+    const lerp = 1 - Math.exp(-10 * Math.max(dt, 0.016));
     g.curX += (tx - g.curX) * lerp;
     g.curZ += (tz - g.curZ) * lerp;
     g.ring.position.set(g.curX, 25 + Math.sin(this._tick * 0.06) * 3, g.curZ);
@@ -484,12 +591,14 @@ export class GameplayRenderer {
     for (const [, e] of this.hazardZones) { e.edges.forEach(m => m.dispose()); e.parent.dispose(); e.zaps.dispose(); e.sparks.dispose(); }
     for (const m of this.landmines.values()) m.dispose();
     for (const [, e] of this.gravityWells) { e.ring.dispose(); e.inner.dispose(); e.vortex.dispose(); }
+    for (const [, e] of this.staffImpacts) { e.outer.dispose(); e.disc.dispose(); e.outerMat.dispose(); e.discMat.dispose(); }
     for (const m of this.voidTiles.values()) m.dispose();
     if (this.bountyGroup) this.bountyGroup.ring.dispose();
     this.teleportPads.clear();
     this.hazardZones.clear();
     this.landmines.clear();
     this.gravityWells.clear();
+    this.staffImpacts.clear();
     this.voidTiles.clear();
   }
 }

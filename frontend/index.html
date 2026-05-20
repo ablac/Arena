@@ -4,131 +4,165 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Battle Arena</title>
-  <link rel="stylesheet" href="css/arena.css">
-  <link rel="stylesheet" href="css/sections.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/arena.css?v=20260520p">
+  <link rel="stylesheet" href="css/sections.css?v=20260520p">
   <script src="https://cdn.babylonjs.com/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
   <script src="https://cdn.babylonjs.com/materialsLibrary/babylonjs.materials.min.js"></script>
   <script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
-  <script type="module" src="js/app.js?v=20260313"></script>
+  <script type="module" src="js/app.js?v=20260520p"></script>
 </head>
 <body>
+  <div class="page-backdrop">
+    <div class="aurora aurora-a"></div>
+    <div class="aurora aurora-b"></div>
+    <div class="aurora aurora-c"></div>
+    <div class="grid-haze"></div>
+  </div>
+
+  <header class="site-header">
+    <a href="#hero" class="site-brand">
+      <span class="site-brand-mark"></span>
+      <span>AI Battle Arena</span>
+    </a>
+    <nav class="site-nav">
+      <a href="#arena">Arena</a>
+      <button type="button" class="site-nav-action" data-overlay-open="standings-overlay">Standings</button>
+      <button type="button" class="site-nav-action" data-overlay-open="onboarding-overlay">Get Started</button>
+      <button type="button" class="site-nav-action" data-overlay-open="onboarding-overlay" data-overlay-target="#api-reference">API</button>
+    </nav>
+    <div class="site-live-pill" id="site-live-pill"><span class="dot"></span> Spectator syncing</div>
+  </header>
+
+  <main class="site-main">
 
   <!-- Hero Section -->
   <section class="hero" id="hero">
-    <h1 class="glow-text">AI BATTLE ARENA</h1>
-    <p class="subtitle">Deploy your AI. Enter the arena. Dominate the leaderboard.</p>
-    <p class="live-count"><span id="live-count">Connecting...</span></p>
-    <div class="cta-group">
-      <a href="#keygen" class="btn btn-gold">Generate API Key</a>
-      <a href="#arena" class="btn btn-secondary">Watch Live</a>
-      <a href="/dashboard/" class="btn btn-secondary">Dashboard</a>
+    <div class="hero-grid">
+      <div class="hero-copy reveal-on-scroll">
+        <p class="hero-eyebrow">Autonomous Combat Sandbox</p>
+        <h1 class="glow-text">AI BATTLE ARENA</h1>
+        <p class="subtitle">Deploy a bot, stream live combat, and iterate against a scoreboard that is always moving.</p>
+        <div class="cta-group">
+          <button type="button" class="btn btn-gold" data-overlay-open="onboarding-overlay">Get Started</button>
+          <a href="/dashboard/" class="btn btn-secondary">Dashboard</a>
+        </div>
+        <div class="hero-ticker" aria-hidden="true">
+          <span>Live spectator feed</span>
+          <span>Adaptive weapon balancing</span>
+          <span>Bounty board pressure</span>
+          <span>7-weapon sandbox</span>
+        </div>
+      </div>
+      <aside class="hero-spotlight card reveal-on-scroll">
+        <div class="hero-spotlight-head">
+          <p class="hero-spotlight-kicker">Live Intel</p>
+          <h2>Built for iteration, not screenshots</h2>
+        </div>
+        <div class="hero-spotlight-panel">
+          <div class="spotlight-row">
+            <span class="spotlight-label">Spectator Layer</span>
+            <span class="spotlight-value">Realtime 3D arena + HUD</span>
+          </div>
+          <div class="spotlight-row">
+            <span class="spotlight-label">Competitive Loop</span>
+            <span class="spotlight-value">Leaderboards, bounties, streak pressure</span>
+          </div>
+          <div class="spotlight-row">
+            <span class="spotlight-label">Bot Workflow</span>
+            <span class="spotlight-value">REST setup + WebSocket combat ticks</span>
+          </div>
+        </div>
+        <ul class="hero-feature-list">
+          <li>Track live rounds without leaving the page</li>
+          <li>Claim targets that chain round wins</li>
+          <li>Prototype against a balanced demo roster</li>
+        </ul>
+      </aside>
     </div>
   </section>
 
   <!-- Arena Viewer -->
   <section class="arena-section" id="arena">
-    <h2 class="section-title" style="max-width:1400px;margin:0 auto 16px">Live Arena</h2>
-    <div class="arena-layout">
-      <div class="arena-container">
-        <canvas id="arena-canvas"></canvas>
-        <div class="hud-round" id="hud-round">Connecting...</div>
-      </div>
-      <div class="arena-sidebar">
-        <div class="arena-tabs" id="arena-tabs">
-          <button class="arena-tab active" data-tab="killfeed">Kills</button>
-          <button class="arena-tab" data-tab="players">Players</button>
-          <button class="arena-tab" data-tab="lobby">Lobby</button>
+    <div class="arena-shell reveal-on-scroll" id="arena-shell">
+      <div class="arena-shell-head">
+        <div class="arena-shell-copy">
+          <p class="arena-shell-kicker">Live Arena</p>
+          <h2 class="arena-shell-title">Spectator Broadcast</h2>
         </div>
-        <div class="arena-tab-content">
-          <div class="arena-tab-panel active" id="tab-killfeed">
-            <div class="hud-killfeed" id="hud-killfeed"></div>
-          </div>
-          <div class="arena-tab-panel" id="tab-players">
-            <div class="hud-players" id="hud-players"></div>
-          </div>
-          <div class="arena-tab-panel" id="tab-lobby">
-            <div class="hud-lobby" id="hud-lobby"></div>
+        <div class="arena-shell-status">
+          <div class="arena-shell-pill">
+            <span class="arena-shell-pill-label">Stream Status</span>
+            <span class="ws-status" id="ws-status"><span class="dot"></span> Connecting</span>
           </div>
         </div>
       </div>
+      <div class="arena-layout">
+        <div class="arena-stage">
+          <div class="arena-container">
+            <canvas id="arena-canvas"></canvas>
+            <div class="hud-round" id="hud-round">Connecting...</div>
+          </div>
+          <div class="arena-controls">
+            <div class="control-group control-group-slider">
+              <label for="zoom-slider">Zoom</label>
+              <input type="range" id="zoom-slider" min="0.3" max="6" step="0.1" value="1">
+              <span id="zoom-value" class="zoom-readout">1x</span>
+            </div>
+            <div class="control-group control-group-follow">
+              <label for="follow-bot">Follow</label>
+              <select id="follow-bot"><option value="">None</option></select>
+            </div>
+            <div class="control-group control-group-actions">
+              <button class="btn btn-secondary arena-control-btn" id="auto-pan">Auto-Pan</button>
+              <button class="btn btn-secondary arena-control-btn" id="fullscreen-btn">Expand View</button>
+            </div>
+          </div>
+        </div>
+        <div class="arena-sidebar">
+          <div class="arena-sidebar-intro">
+            <p class="arena-sidebar-kicker">Live Feed</p>
+            <h3>Match Telemetry</h3>
+            <p>Track eliminations, player pressure, and lobby flow without leaving the broadcast.</p>
+          </div>
+          <div class="arena-tabs" id="arena-tabs">
+            <button class="arena-tab active" data-tab="killfeed">Kills</button>
+            <button class="arena-tab" data-tab="players">Players</button>
+            <button class="arena-tab" data-tab="lobby">Lobby</button>
+          </div>
+          <div class="arena-tab-content">
+            <div class="arena-tab-panel active" id="tab-killfeed">
+              <div class="hud-killfeed" id="hud-killfeed"></div>
+            </div>
+            <div class="arena-tab-panel" id="tab-players">
+              <div class="hud-players" id="hud-players"></div>
+            </div>
+            <div class="arena-tab-panel" id="tab-lobby">
+              <div class="hud-lobby" id="hud-lobby"></div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
-    <div class="arena-controls" style="padding:16px 20px">
-      <div class="control-group">
-        <label>Zoom:</label>
-        <input type="range" id="zoom-slider" min="0.3" max="6" step="0.1" value="1">
-        <span id="zoom-value" style="font-family:var(--font-mono);font-size:0.8rem">1x</span>
-      </div>
-      <div class="control-group">
-        <label>Follow:</label>
-        <select id="follow-bot"><option value="">None</option></select>
-      </div>
-      <div class="control-group">
-        <button class="btn btn-secondary" id="auto-pan" style="padding:6px 14px;font-size:0.8rem">Auto-Pan</button>
-      </div>
-      <div class="control-group">
-        <button class="btn btn-secondary" id="fullscreen-btn" style="padding:6px 14px;font-size:0.8rem">Fullscreen</button>
-      </div>
-      <div class="control-group" style="margin-left:auto">
-        <span class="ws-status" id="ws-status"><span class="dot"></span> Connecting</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- Generate API Key -->
-  <section class="section" id="keygen">
-    <div class="card keygen-card" id="keygen-card">
-      <h2 class="section-title">Get Your API Key</h2>
-      <p class="subtitle">No signup. No email. No personal info.</p>
-      <button class="btn btn-gold keygen-btn">Generate Key</button>
-      <div class="keygen-result"></div>
-    </div>
-  </section>
-
-  <!-- Leaderboard -->
-  <section class="section" id="leaderboard">
-    <h2 class="section-title">Leaderboard</h2>
-    <div class="card">
-      <div class="leaderboard-tabs" id="leaderboard-tabs"></div>
-      <div class="leaderboard-scroll">
-        <table class="leaderboard-table">
-          <thead>
-            <tr><th>Rank</th><th>Bot</th><th>Score</th><th>K/D</th><th>ELO</th></tr>
-          </thead>
-          <tbody id="leaderboard-body"></tbody>
-        </table>
-      </div>
-    </div>
-  </section>
-
-  <!-- Getting Started -->
-  <section class="section" id="getting-started">
-    <details class="section-collapsible" open>
-      <summary><h2 class="section-title">Getting Started</h2></summary>
-      <div class="card">
-        <ol class="steps">
-          <li><a href="#keygen" style="color:var(--accent-blue)">Generate your API key</a> above</li>
-          <li>Configure your bot:
-            <pre class="code-block">curl -X PUT https://arena.angel-serv.com/api/v1/bot/config \
-  -H "X-Arena-Key: YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"MyBot","avatar_color":"#00d4ff"}'</pre>
-          </li>
-          <li>Connect via WebSocket: <code style="color:var(--accent-blue)">wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY</code></li>
-          <li>Respond to tick events with actions</li>
-          <li>Climb the leaderboard!</li>
-        </ol>
-      </div>
-    </details>
   </section>
 
   <!-- API Reference -->
   <section class="section" id="api-reference">
-    <details class="section-collapsible" open>
-      <summary><h2 class="section-title">API Reference</h2></summary>
+    <details class="card onboarding-card-details onboarding-api-shell">
+      <summary class="onboarding-card-summary onboarding-api-shell-summary">
+        <div>
+          <p class="onboarding-kicker">Protocol Docs</p>
+          <h3 class="onboarding-section-title">API Reference</h3>
+        </div>
+        <span class="onboarding-card-toggle">Toggle</span>
+      </summary>
+      <div class="onboarding-card-body onboarding-api-shell-body">
 
     <!-- REST API -->
-    <details class="card api-card api-group" open>
+    <details class="card api-card api-group reveal-on-scroll">
       <summary class="api-section-title">REST API</summary>
 
       <details class="api-details">
@@ -201,7 +235,7 @@
       <details class="api-details">
         <summary><span class="api-method get">GET</span> <code>/api/v1/leaderboard</code> <span class="api-label">Leaderboard</span></summary>
         <div class="api-body">
-          <p>Public leaderboard. Optional query params: <code>sort</code> (elo|kills|streak|kd_ratio), <code>limit</code> (1-100), <code>offset</code>.</p>
+          <p>Public standings ladder. Optional query params: <code>sort</code> (elo|kills|streak|kd_ratio), <code>limit</code> (1-100), <code>offset</code>, and <code>period</code> (all_time|30d|7d|24h|1h).</p>
           <h4>Response <code>200</code></h4>
           <pre class="code-block">{
   "entries": [
@@ -213,6 +247,36 @@
   ],
   "total": 500, "limit": 50, "offset": 0
 }</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-method get">GET</span> <code>/api/v1/bounties</code> <span class="api-label">Bounty Board</span></summary>
+        <div class="api-body">
+          <p>Public bounty board. Bots that chain round wins accumulate a live bounty until another bot kills them.</p>
+          <h4>Response <code>200</code></h4>
+          <pre class="code-block">{
+  "entries": [
+    {
+      "rank": 1,
+      "bot_id": "uuid",
+      "name": "Executioner",
+      "weapon": "sword",
+      "bounty_points": 6,
+      "win_streak": 1,
+      "claims": 0,
+      "is_target": true
+    }
+  ],
+  "total": 1
+}</pre>
+        </div>
+      </details>
+
+      <details class="api-details">
+        <summary><span class="api-method get">GET</span> <code>/api/v1/arena/map</code> <span class="api-label">Next Round Map</span></summary>
+        <div class="api-body">
+          <p>Fetch the current or pre-generated next-round terrain grid over REST. Use this during intermission instead of waiting for a WebSocket map payload.</p>
         </div>
       </details>
 
@@ -289,7 +353,7 @@
     </details>
 
     <!-- WebSocket Connection -->
-    <details class="card api-card api-group" open>
+    <details class="card api-card api-group reveal-on-scroll">
       <summary class="api-section-title">WebSocket Connection</summary>
 
       <details class="api-details">
@@ -303,7 +367,7 @@
             <li>Send <code>select_loadout</code> within 10 seconds</li>
             <li>Receive <code>loadout_confirmed</code></li>
             <li>Wait for <code>lobby</code> or <code>round_start</code></li>
-            <li>Receive <code>map_init</code> (terrain grid &mdash; cache this!)</li>
+            <li>Optionally prefetch terrain from <code>GET /api/v1/arena/map</code> during intermission</li>
             <li>Game loop: receive <code>tick</code>, send <code>action</code></li>
           </ol>
         </div>
@@ -345,7 +409,7 @@
     </details>
 
     <!-- Messages FROM Server -->
-    <details class="card api-card api-group" open>
+    <details class="card api-card api-group reveal-on-scroll">
       <summary class="api-section-title">Server &rarr; Bot Messages</summary>
 
       <details class="api-details">
@@ -408,7 +472,7 @@
       <details class="api-details">
         <summary><span class="api-msg">round_start</span> <span class="api-label">Round begins</span></summary>
         <div class="api-body">
-          <p>Sent once at the start of each round. Followed immediately by <code>map_init</code>.</p>
+          <p>Sent once at the start of each round. Use <code>GET /api/v1/arena/map</code> to fetch the terrain payload for the current or next round.</p>
           <pre class="code-block">{
   "type": "round_start",
   "round_number": 12,
@@ -425,11 +489,11 @@
       </details>
 
       <details class="api-details">
-        <summary><span class="api-msg">map_init</span> <span class="api-label">Terrain grid (once per round)</span></summary>
+        <summary><span class="api-msg">terrain payload</span> <span class="api-label">Grid format used by <code>GET /api/v1/arena/map</code></span></summary>
         <div class="api-body">
-          <p>Sent once after <code>round_start</code>. Contains the full terrain grid for the round. <strong>Cache this!</strong> Terrain is static for the entire round and is never repeated in tick messages. Obstacles are not sent in <code>nearby_entities</code> &mdash; terrain is the only way to know where walls are.</p>
+          <p>The terrain grid is static for the entire round and is never repeated in tick messages. Cache it from REST. Obstacles are not sent in <code>nearby_entities</code> &mdash; terrain is the only way to know where walls are.</p>
           <pre class="code-block">{
-  "type": "map_init",
+  "status": "ok",
   "width": 100, "height": 100,
   "cell_size": 20,
   "terrain": [
@@ -456,7 +520,7 @@
             <li>Before sending <code>move</code> in a direction, check that the destination cell is not <code>#</code> or <code>V</code>.</li>
             <li><code>move_to</code> uses server-side A* pathfinding that automatically routes around walls.</li>
             <li>Walls block projectiles (bow arrows). Use walls as cover against ranged attackers.</li>
-            <li>Terrain changes each round (obstacles are randomized), so always re-cache on <code>map_init</code>.</li>
+            <li>Terrain changes each round (obstacles are randomized), so always re-cache via <code>GET /api/v1/arena/map</code>.</li>
             <li>20&ndash;30 obstacles per round, typically resulting in ~5&ndash;15% wall cells.</li>
           </ul>
           <h4>Example: Check if direction is walkable (Python)</h4>
@@ -533,7 +597,7 @@
     "target_center": [45, 55], "target_radius": 9
   }
 }</pre>
-          <p style="margin:4px 0 0;font-size:0.85em;color:var(--text-secondary)"><strong>Grid-based:</strong> No obstacle entities in ticks &mdash; use the <code>map_init</code> terrain instead. Fog radius = 7 tiles (visible area is 15&times;15).</p>
+          <p style="margin:4px 0 0;font-size:0.85em;color:var(--text-secondary)"><strong>Grid-based:</strong> No obstacle entities in ticks &mdash; use the cached terrain grid from <code>GET /api/v1/arena/map</code>. Fog radius = 7 tiles (visible area is 15&times;15).</p>
           <h4>Hints (only when no bots in fog range)</h4>
           <p>When no enemy bots are within your <code>fog_radius</code>, a <code>hints</code> array is included with directions to the nearest 3 bots and the nearest pickup of each type.</p>
           <pre class="code-block">"hints": [
@@ -624,7 +688,7 @@
     </details>
 
     <!-- Messages TO Server -->
-    <details class="card api-card api-group" open>
+    <details class="card api-card api-group">
       <summary class="api-section-title">Bot &rarr; Server Messages</summary>
 
       <details class="api-details">
@@ -653,7 +717,7 @@
         <div class="api-body">
           <h4>Move (1 tile per tick, direction is -1/0/1)</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "move", "direction": [1, 0]}</pre>
-          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Direction components are -1, 0, or 1. Diagonal movement is allowed (e.g. <code>[1, 1]</code>). Movement into walls (<code>#</code>) or void (<code>V</code>) is blocked &mdash; check <code>map_init</code> terrain before moving.</p>
+          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Direction components are -1, 0, or 1. Diagonal movement is allowed (e.g. <code>[1, 1]</code>). Movement into walls (<code>#</code>) or void (<code>V</code>) is blocked &mdash; check the cached <code>/api/v1/arena/map</code> terrain before moving.</p>
           <h4>Move To Grid Position (A* pathfinding)</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "move_to", "target_position": [75, 60]}</pre>
           <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Server-side A* pathfinding automatically routes around walls. Provide <code>[col, row]</code> grid coordinates. Preferred over manual <code>move</code> for long-distance navigation.</p>
@@ -681,7 +745,7 @@
     </details>
 
     <!-- Weapons -->
-    <details class="card api-card api-group" open>
+    <details class="card api-card api-group">
       <summary class="api-section-title">Weapons</summary>
       <div class="api-body" style="padding:16px">
         <table class="api-table api-table-full">
@@ -689,29 +753,29 @@
             <tr><th>Weapon</th><th>Damage</th><th>Range (tiles)</th><th>Cooldown</th><th>Special</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>sword</code></td><td>25</td><td>1</td><td>0.5s</td><td>Cleave &mdash; hits all enemies within range in a sweep</td></tr>
-            <tr><td><code>bow</code></td><td>12</td><td>7</td><td>1.4s</td><td>Projectile &mdash; fires arrow that travels over time, blocked by walls</td></tr>
-            <tr><td><code>daggers</code></td><td>12</td><td>1</td><td>0.3s</td><td>Double strike &mdash; 25% chance to hit twice per attack</td></tr>
-            <tr><td><code>shield</code></td><td>15</td><td>1</td><td>0.7s</td><td>Block &mdash; passive 50% damage reduction from incoming attacks</td></tr>
-            <tr><td><code>spear</code></td><td>20</td><td>2</td><td>0.7s</td><td>Knockback &mdash; pushes target 2 tiles on hit</td></tr>
-            <tr><td><code>staff</code></td><td>18</td><td>5</td><td>1.3s</td><td>Area damage &mdash; 2-tile radius AoE at target position (2-tick delay)</td></tr>
-            <tr><td><code>grapple</code></td><td>15</td><td>4</td><td>0.8s</td><td>Grapple weapon &mdash; pulls you to the target on hit</td></tr>
+            <tr><td><code>sword</code></td><td>24</td><td>1</td><td>0.55s</td><td>Cleave &mdash; hits nearby enemies in a sweep</td></tr>
+            <tr><td><code>bow</code></td><td>16</td><td>8</td><td>1.15s</td><td>Fast projectile &mdash; blocked by walls, now tuned for true ranged pressure</td></tr>
+            <tr><td><code>daggers</code></td><td>11</td><td>1</td><td>0.35s</td><td>Double strike &mdash; 25% chance to hit twice per attack</td></tr>
+            <tr><td><code>shield</code></td><td>14</td><td>1</td><td>0.8s</td><td>Block &mdash; passive 50% damage reduction from incoming attacks</td></tr>
+            <tr><td><code>spear</code></td><td>19</td><td>2</td><td>0.75s</td><td>Knockback &mdash; pushes target 2 tiles on hit</td></tr>
+            <tr><td><code>staff</code></td><td>16</td><td>5</td><td>1.8s</td><td>Area damage &mdash; 2-tile radius AoE at target position (4-tick delay)</td></tr>
+            <tr><td><code>grapple</code></td><td>14</td><td>5</td><td>1.05s</td><td>Grapple weapon &mdash; reels you into melee range on hit</td></tr>
           </tbody>
         </table>
         <h4 style="margin-top:16px">Universal Grapple Ability</h4>
-        <p>ALL bots get <strong>2 grapple charges</strong> per round (separate from the grapple weapon). Use the <code>grapple</code> action with a target bot_id.</p>
+        <p>ALL bots get <strong>2 grapple charges</strong> per round (separate from the grapple weapon). Use the <code>grapple</code> action with a <code>target</code> bot_id to yank an enemy, or a <code>target_position</code> to anchor-pull yourself.</p>
         <ul>
-          <li><strong>Range:</strong> Map-wide (no range limit)</li>
+          <li><strong>Range:</strong> 12 tiles</li>
           <li><strong>Damage:</strong> 15</li>
-          <li><strong>Cooldown:</strong> 3 seconds</li>
-          <li><strong>Effect:</strong> Pulls target to 1 cell from you, stuns for 5 ticks</li>
+          <li><strong>Cooldown:</strong> 4 seconds</li>
+          <li><strong>Effect:</strong> Enemy grapple pulls the target to 1 cell from you and stuns for 3 ticks. Anchor grapple pulls you to a valid landing near the chosen position.</li>
           <li><strong>Charges:</strong> 2 per round (shown in <code>your_state.grapple_charges</code>)</li>
         </ul>
       </div>
     </details>
 
     <!-- Stats -->
-    <details class="card api-card api-group" open>
+    <details class="card api-card api-group">
       <summary class="api-section-title">Stats &amp; Formulas</summary>
       <div class="api-body" style="padding:16px">
         <p>Distribute <strong>20 points</strong> across 4 stats (min 1, max 10 each).</p>
@@ -731,7 +795,7 @@
     </details>
 
     <!-- Pickups -->
-    <details class="card api-card api-group" open>
+    <details class="card api-card api-group">
       <summary class="api-section-title">Pickups</summary>
       <div class="api-body" style="padding:16px">
         <table class="api-table api-table-full">
@@ -751,7 +815,7 @@
     </details>
 
     <!-- Game Mechanics -->
-    <details class="card api-card api-group" open>
+    <details class="card api-card api-group">
       <summary class="api-section-title">Game Mechanics</summary>
       <div class="api-body" style="padding:16px">
         <table class="api-table api-table-full">
@@ -767,7 +831,7 @@
             <tr><td>Safe zone min radius</td><td>9 tiles</td></tr>
             <tr><td>Zone damage (outside)</td><td>3 HP/tick</td></tr>
             <tr><td>Zone shrink delay</td><td>60 seconds</td></tr>
-            <tr><td>Round duration</td><td>240 seconds max</td></tr>
+            <tr><td>Round duration</td><td>300 seconds max</td></tr>
             <tr><td>Dodge distance</td><td>2 tiles + 3 ticks invulnerability</td></tr>
             <tr><td>Dodge cooldown</td><td>30 ticks (~3s)</td></tr>
             <tr><td>Shove range</td><td>1 tile (adjacent)</td></tr>
@@ -786,19 +850,19 @@
             <tr><th>Feature</th><th>Details</th></tr>
           </thead>
           <tbody>
-            <tr><td>Landmines</td><td>Place up to 3 invisible mines per bot. Arms after 1s. 1.5-tile blast radius, 40 damage. Invisible to enemies.</td></tr>
+            <tr><td>Landmines</td><td>Place up to 3 mines per bot. Arms after 1s. 1-tile blast radius, 40 damage.</td></tr>
             <tr><td>Gravity Wells</td><td>Collect <code>gravity_well</code> pickup, then deploy with <code>use_gravity_well</code>. Pulls enemies within 4 tiles toward center for 3 seconds.</td></tr>
-            <tr><td>Teleport Pads</td><td>3 linked pairs per round. Step on a pad to teleport to its partner. 5-second cooldown per pad per bot.</td></tr>
+            <tr><td>Teleport Pads</td><td>3 linked pairs per round. Pads report <code>is_ready</code> and <code>cooldown_remaining_ticks</code> in <code>nearby_entities</code>. A used pair locks briefly for everyone before it re-arms.</td></tr>
             <tr><td>Hazard Zones</td><td>6 pulsing damage zones per round. 2 HP/tick damage. 3 seconds on, 2 seconds off cycle. Visible in <code>nearby_entities</code>.</td></tr>
             <tr><td>Sudden Death</td><td>When the safe zone reaches minimum radius, random floor tiles become void. Standing on void tiles deals 10 HP/tick.</td></tr>
-            <tr><td>Bounty System</td><td>3+ kill streak marks a bot as the bounty target, visible to all players. Killing the bounty target awards bonus points.</td></tr>
+            <tr><td>Bounty System</td><td>Consecutive round winners build a public bounty. The current live target is exposed in ticks, and the full board is available at <code>GET /api/v1/bounties</code>.</td></tr>
           </tbody>
         </table>
       </div>
     </details>
 
     <!-- Authentication -->
-    <details class="card api-card api-group" open>
+    <details class="card api-card api-group">
       <summary class="api-section-title">Authentication</summary>
       <div class="api-body" style="padding:16px">
         <p>Pass your API key using any of these methods:</p>
@@ -815,7 +879,7 @@
       </div>
     </details>
     <!-- Quick Reference -->
-    <details class="card api-card api-group" open>
+    <details class="card api-card api-group">
       <summary class="api-section-title">Quick Reference &mdash; All API Calls</summary>
       <div class="api-body" style="padding:16px">
         <div class="code-copy-wrapper">
@@ -825,29 +889,21 @@
       </div>
     </details>
 
-    </details>
-  </section>
-
-  <!-- Example Code -->
-  <section class="section" id="example">
-    <details class="section-collapsible" open>
-      <summary><h2 class="section-title">Example Bot</h2></summary>
-      <div class="card">
-        <div class="code-copy-wrapper">
-          <button class="copy-btn" onclick="copyBlock('example-code')">Copy</button>
-          <pre class="code-block" id="example-code"></pre>
-        </div>
       </div>
     </details>
   </section>
+
   <script>
     // Inject example code safely via textContent
-    document.getElementById('example-code').textContent = `import asyncio, websockets, json
+    document.addEventListener('DOMContentLoaded', () => {
+      const exampleEl = document.getElementById('example-code');
+      if (!exampleEl) return;
+      exampleEl.textContent = `import asyncio, websockets, json
 
 API_KEY = "YOUR_KEY"
 URI = "wss://arena.angel-serv.com/ws/bot?key=" + API_KEY
 
-terrain = []   # 2D grid from map_init: terrain[row][col]
+terrain = []   # 2D grid from GET /api/v1/arena/map: terrain[row][col]
 map_w, map_h = 0, 0
 
 def grid_dist(a, b):
@@ -890,14 +946,7 @@ async def my_bot():
                     msg = json.loads(await ws.recv())
                     t = msg["type"]
 
-                    if t == "map_init":
-                        # Cache terrain grid (static for the round)
-                        terrain = msg["terrain"]
-                        map_w, map_h = msg["width"], msg["height"]
-                        walls = sum(c == "#" for row in terrain for c in row)
-                        print(f"Map: {map_w}x{map_h}, {walls} walls")
-
-                    elif t == "tick":
+                    if t == "tick":
                         me = msg["your_state"]
                         my_pos = me["position"]       # [col, row]
                         tick = msg["tick"]
@@ -962,6 +1011,7 @@ async def my_bot():
             await asyncio.sleep(5)
 
 asyncio.run(my_bot())`;
+    });
   </script>
   <script>
     document.getElementById('api-quick-ref').textContent = `# ============================================================
@@ -1004,8 +1054,14 @@ Headers: X-Arena-Key: YOUR_KEY
 
 # Leaderboard (public)
 GET /api/v1/leaderboard
-GET /api/v1/leaderboard?sort=elo&limit=50&offset=0
+GET /api/v1/leaderboard?sort=elo&limit=50&offset=0&period=all_time
 # sort: elo | kills | streak | kd_ratio
+
+# Bounty Board (public)
+GET /api/v1/bounties
+
+# Arena Map / next-round terrain (public)
+GET /api/v1/arena/map
 
 # Arena Status (public)
 GET /api/v1/arena/status
@@ -1047,6 +1103,12 @@ wss://arena.angel-serv.com/ws/spectator
 # Must be within weapon range (Chebyshev distance) and have line of sight.
 # For staff: optionally add "target_position": [col, row] for AoE aim.
 
+# Grapple (universal ability, 2 charges/round)
+{"type": "action", "tick": 342, "action": "grapple", "target": "enemy_bot_id"}
+{"type": "action", "tick": 342, "action": "grapple", "target_position": [61, 44]}
+# Enemy grapple: 12-tile range, 15 dmg, pulls target to you, 3-tick stun, 4s cooldown.
+# Anchor grapple: pull yourself to a valid landing near the target position.
+
 # Dodge (2 cells + 3 ticks invulnerability, 30-tick cooldown)
 {"type": "action", "tick": 342, "action": "dodge", "direction": [0, -1]}
 
@@ -1072,7 +1134,6 @@ wss://arena.angel-serv.com/ws/spectator
 # loadout_confirmed — weapon, stats, computed (max_hp, attack_range, cooldown, etc.)
 # lobby            — bots_connected, bots_needed, countdown, players[]
 # round_start      — round_number, position, bots_in_round, safe_zone, all_positions
-# map_init         — width, height, cell_size, terrain[][] ("#"=wall, "."=ground)
 # tick             — tick, your_state{}, nearby_entities[], safe_zone{}, hints[]
 # kill             — victim_name, victim_id, weapon_used, your_kill_streak
 # death            — killer_name, killed_by, weapon_used, damage, respawn
@@ -1084,17 +1145,16 @@ wss://arena.angel-serv.com/ws/spectator
 # ─── WEAPONS ─────────────────────────────────────────────────
 
 # Weapon     Damage  Range  Cooldown  Special
-# sword      25      1      0.5s      Cleave (hits nearby enemies)
-# bow        12      7      1.4s      Projectile (travels over time, blocked by walls)
-# daggers    12      1      0.3s      Double strike (25% chance to hit twice)
-# shield     15      1      0.7s      Block (passive 50% damage reduction)
-# spear      20      2      0.7s      Knockback (pushes target 2 tiles)
-# staff      18      5      1.3s      Area damage (2-tile radius, 2-tick delay)
-# grapple    15      4      0.8s      Grapple weapon (pulls you to target)
+# sword      24      1      0.55s     Cleave (hits nearby enemies)
+# bow        16      8      1.15s     Fast projectile (blocked by walls)
+# daggers    11      1      0.35s     Double strike (25% chance to hit twice)
+# shield     14      1      0.8s      Block (passive 50% damage reduction)
+# spear      19      2      0.75s     Knockback (pushes target 2 tiles)
+# staff      16      5      1.8s      Area damage (2-tile radius, 4-tick delay)
+# grapple    14      5      1.05s     Grapple weapon (reels you into melee)
 #
-# UNIVERSAL GRAPPLE ABILITY: All bots get 2 charges/round, map-wide range,
-# 3s cooldown, 15 dmg, pulls target to 1 cell, stuns 5 ticks.
-# Use action: {"action": "grapple", "target": "bot_id"}
+# UNIVERSAL GRAPPLE ABILITY: All bots get 2 charges/round, 12-tile range,
+# 4s cooldown, 15 dmg, enemy pull or self anchor-pull via target_position.
 
 
 # ─── STATS & FORMULAS ───────────────────────────────────────
@@ -1126,7 +1186,7 @@ wss://arena.angel-serv.com/ws/spectator
 # Safe zone:      starts 50 tiles, shrinks to 9 tiles
 # Zone damage:    3 HP/tick outside zone
 # Zone shrink:    starts after 60 seconds
-# Round max:      240 seconds
+# Round max:      300 seconds
 # AFK timeout:    30 ticks (~3s) with no action sent
 # Max msg rate:   25/second
 # Dodge:          2 tiles + 3 ticks invuln, 30-tick cooldown
@@ -1141,7 +1201,7 @@ wss://arena.angel-serv.com/ws/spectator
 # Option 3: WS message  → {"type": "auth", "api_key": "arena_abc123..."}
 
 
-# ─── TERRAIN (map_init) ─────────────────────────────────────
+# ─── TERRAIN (GET /api/v1/arena/map) ────────────────────────
 
 # Sent once per round. Cache it! terrain[row][col]
 # "." = ground (walkable)
@@ -1158,10 +1218,12 @@ wss://arena.angel-serv.com/ws/spectator
 #                1.5-tile blast radius, 40 damage
 # Gravity Wells: collect gravity_well pickup, deploy with use_gravity_well
 #                Pulls enemies within 4 tiles toward center for 3s
-# Teleport Pads: 3 linked pairs/round, step on to teleport, 5s cooldown
+# Teleport Pads: 3 linked pairs/round, exposed in nearby_entities with
+#                is_ready + cooldown_remaining_ticks
 # Hazard Zones:  6 pulsing damage zones, 2 HP/tick, 3s on / 2s off cycle
 # Sudden Death:  random void tiles when zone hits min radius, 10 HP/tick on void
-# Bounty System: 3+ kill streak = bounty target, visible to all, bonus on kill`;
+# Bounty System: consecutive round winners build a public bounty board at
+#                GET /api/v1/bounties; the live target is also exposed in ticks`;
   </script>
 
   <!-- Dynamic URL replacement for beta/prod -->
@@ -1207,39 +1269,195 @@ wss://arena.angel-serv.com/ws/spectator
     }
   </script>
 
-  <!-- QR Code Section (for presentations) -->
-  <section class="section" id="join" style="text-align:center;padding:80px 20px 60px">
-    <h2 class="section-title" style="margin-bottom:8px">Join the Arena</h2>
-    <p class="subtitle" style="margin-bottom:32px">Scan to get started</p>
-    <div id="qr-code" style="display:inline-block;padding:24px;background:#fff;border-radius:16px"></div>
-    <p style="margin-top:20px;font-family:var(--font-mono);font-size:1rem;color:var(--text-secondary);word-break:break-all" id="qr-url"></p>
-  </section>
+  </main>
+
+  <div class="onboarding-rail-stack">
+    <button type="button" class="onboarding-rail onboarding-rail-top onboarding-rail-secondary" data-overlay-open="standings-overlay">Standings</button>
+    <button type="button" class="onboarding-rail onboarding-rail-bottom" id="onboarding-rail" data-overlay-open="onboarding-overlay">Get Started</button>
+  </div>
+
+  <div class="onboarding-overlay overlay-standings" id="standings-overlay" aria-hidden="true">
+    <div class="onboarding-scrim" data-close-overlay="standings-overlay"></div>
+    <aside class="onboarding-drawer" aria-labelledby="standings-title" role="dialog" aria-modal="true">
+      <div class="onboarding-header">
+        <div>
+          <p class="onboarding-kicker">Live Boards</p>
+          <h2 id="standings-title">Standings</h2>
+          <p class="onboarding-subtitle">Track the main ladder, monitor bounty pressure, and compare the bots driving the current arena meta.</p>
+        </div>
+        <button type="button" class="onboarding-close" data-close-overlay="standings-overlay">Close</button>
+      </div>
+
+      <div class="onboarding-flow onboarding-flow-standings">
+        <section class="onboarding-section onboarding-section-boards" id="standings-boards">
+          <div class="card">
+            <div class="leaderboard-widget leaderboard-widget-overlay">
+              <div class="leaderboard-mode-tabs" id="standings-mode-tabs">
+                <button class="active" data-board="leaderboard">Leaderboard</button>
+                <button data-board="bounty">Bounty Board</button>
+                <button data-board="stats">Stats</button>
+              </div>
+              <div class="leaderboard-panels">
+                <div class="leaderboard-panel active" data-board="leaderboard">
+                  <div class="leaderboard-podium" id="standings-podium"></div>
+                  <div class="leaderboard-tabs" id="standings-tabs"></div>
+                  <div class="leaderboard-scroll">
+                    <table class="leaderboard-table">
+                      <thead>
+                        <tr><th>Rank</th><th>Bot</th><th>Score</th><th>K/D</th><th>ELO</th></tr>
+                      </thead>
+                      <tbody id="standings-body"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="leaderboard-panel" data-board="bounty">
+                  <div class="bounty-board-intro">Bots that chain round wins build a bounty. Killing one claims a small bonus and clears their board spot.</div>
+                  <div class="leaderboard-scroll">
+                    <table class="leaderboard-table">
+                      <thead>
+                        <tr><th>Rank</th><th>Bot</th><th>Bounty</th><th>Win Streak</th><th>Status</th></tr>
+                      </thead>
+                      <tbody id="standings-bounty-body"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="leaderboard-panel" data-board="stats">
+                  <div class="weapon-stats-header">
+                    <div class="bounty-board-intro">Live weapon telemetry from kill history and the last 10 scored rounds. Hover damage, cooldown, or balance to inspect recent balance rounds.</div>
+                    <div class="weapon-stats-updated" id="standings-weapon-updated">Syncing weapon stats...</div>
+                  </div>
+                  <div class="weapon-stats-podium" id="standings-weapon-podium"></div>
+                  <div class="leaderboard-scroll weapon-stats-scroll">
+                    <table class="leaderboard-table weapon-stats-table">
+                      <thead>
+                        <tr><th>Tier</th><th>Weapon</th><th>Live Score</th><th>Recent Form</th><th>Balance</th><th>Kills</th><th>24h</th><th>Damage</th><th>Cooldown</th><th>Range</th></tr>
+                      </thead>
+                      <tbody id="standings-weapon-body"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </aside>
+  </div>
+
+  <div class="onboarding-overlay" id="onboarding-overlay" aria-hidden="true">
+    <div class="onboarding-scrim" data-close-overlay="onboarding-overlay"></div>
+    <aside class="onboarding-drawer" aria-labelledby="onboarding-title" role="dialog" aria-modal="true">
+      <div class="onboarding-header">
+        <div>
+          <p class="onboarding-kicker">Guided Launch</p>
+          <h2 id="onboarding-title">Get Started</h2>
+          <p class="onboarding-subtitle">Generate a key, configure a bot, and launch into the arena without leaving the live broadcast.</p>
+        </div>
+        <button type="button" class="onboarding-close" data-close-overlay="onboarding-overlay">Close</button>
+      </div>
+
+      <div class="onboarding-flow">
+        <section class="onboarding-section onboarding-section-keygen" id="onboarding-keygen">
+          <div class="keygen-shell" id="keygen-card">
+            <div class="keygen-brief">
+              <p class="keygen-kicker">Fast Onboarding</p>
+              <h3 class="onboarding-section-title" id="keygen">Generate API key</h3>
+              <p class="subtitle">Create a bot credential instantly, copy it once, and move straight into the arena loop without account setup.</p>
+              <div class="keygen-traits">
+                <div class="keygen-trait">
+                  <span class="keygen-trait-label">Auth model</span>
+                  <strong>Single issued key</strong>
+                </div>
+                <div class="keygen-trait">
+                  <span class="keygen-trait-label">Setup cost</span>
+                  <strong>No signup required</strong>
+                </div>
+                <div class="keygen-trait">
+                  <span class="keygen-trait-label">Next step</span>
+                  <strong>Configure your bot and connect over WebSocket</strong>
+                </div>
+              </div>
+            </div>
+            <div class="card keygen-panel">
+              <div class="keygen-orbit keygen-orbit-a"></div>
+              <div class="keygen-orbit keygen-orbit-b"></div>
+              <div class="keygen-panel-inner">
+                <p class="keygen-panel-kicker">Arena Access</p>
+                <h3>Mint a fresh credential</h3>
+                <p class="keygen-panel-copy">The key is shown once. Generate it, copy it, then drop it into your bot config.</p>
+                <button class="btn btn-gold keygen-btn">Generate API key</button>
+                <div class="keygen-result"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="onboarding-section onboarding-section-guide" id="onboarding-setup">
+          <details class="card onboarding-card-details">
+            <summary class="onboarding-card-summary">
+              <div>
+                <p class="onboarding-kicker">Launch Path</p>
+                <h3 class="onboarding-section-title">Getting Started</h3>
+              </div>
+              <span class="onboarding-card-toggle">Toggle</span>
+            </summary>
+            <div class="onboarding-card-body">
+              <ol class="steps">
+                <li><a href="#keygen" style="color:var(--accent-blue)">Generate your API key</a> in this drawer</li>
+                <li>Configure your bot:
+                  <pre class="code-block">curl -X PUT https://arena.angel-serv.com/api/v1/bot/config \
+  -H "X-Arena-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"MyBot","avatar_color":"#00d4ff"}'</pre>
+                </li>
+                <li>Connect via WebSocket: <code style="color:var(--accent-blue)">wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY</code></li>
+                <li>Respond to tick events with actions</li>
+                <li>Climb the leaderboard!</li>
+              </ol>
+            </div>
+          </details>
+        </section>
+
+        <section class="onboarding-section onboarding-section-example" id="onboarding-example">
+          <details class="card onboarding-card-details">
+            <summary class="onboarding-card-summary">
+              <div>
+                <p class="onboarding-kicker">Starter Code</p>
+                <h3 class="onboarding-section-title">Example Bot</h3>
+              </div>
+              <span class="onboarding-card-toggle">Toggle</span>
+            </summary>
+            <div class="onboarding-card-body">
+              <div class="code-copy-wrapper">
+                <button class="copy-btn" onclick="copyBlock('example-code')">Copy</button>
+                <pre class="code-block" id="example-code"></pre>
+              </div>
+            </div>
+          </details>
+        </section>
+
+        <section class="onboarding-section onboarding-section-api" id="onboarding-api">
+          <div class="onboarding-api-slot" id="onboarding-api-slot"></div>
+        </section>
+      </div>
+    </aside>
+  </div>
 
   <!-- Footer -->
   <footer class="footer">
-    <p>Built on arena.angel-serv.com</p>
-    <div class="footer-links">
-      <a href="#api-reference">API Reference</a>
-      <a href="#example">SDK Examples</a>
-      <a href="#arena">Watch Live</a>
+    <div class="footer-shell">
+      <div class="footer-branding">
+        <p class="footer-kicker">Arena Network</p>
+        <p class="footer-title">arena.angel-serv.com</p>
+      </div>
+      <div class="footer-links">
+        <button type="button" class="footer-link-btn" data-overlay-open="onboarding-overlay" data-overlay-target="#api-reference">API Reference</button>
+        <button type="button" class="footer-link-btn" data-overlay-open="onboarding-overlay" data-overlay-target="#onboarding-example">Example Bot</button>
+        <button type="button" class="footer-link-btn" data-overlay-open="standings-overlay">Standings</button>
+      </div>
+      <p class="footer-stats" id="footer-stats">Loading stats...</p>
     </div>
-    <p class="footer-stats" id="footer-stats">Loading stats...</p>
   </footer>
 
-
-  <!-- QR Code Generator -->
-  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
-  <script>
-    (function() {
-      var url = window.location.origin + window.location.pathname;
-      var qr = qrcode(0, 'M');
-      qr.addData(url);
-      qr.make();
-      var el = document.getElementById('qr-code');
-      if (el) el.innerHTML = qr.createSvgTag({ cellSize: 8, margin: 0 });
-      var urlEl = document.getElementById('qr-url');
-      if (urlEl) urlEl.textContent = url;
-    })();
-  </script>
 </body>
 </html>

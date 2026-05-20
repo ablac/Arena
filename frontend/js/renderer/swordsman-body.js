@@ -221,8 +221,11 @@ export function createSwordsmanEntry(bot, scene) {
   head.parent = body;
   head.position.y = TORSO_H / 2 + HEAD_R * 0.8;
   head.material = headMat;
-  head.isPickable = false;
+  head.isPickable = true;
+  head.metadata = { botId: id };
   head.alwaysSelectAsActiveMesh = true;
+  torso.isPickable = true;
+  torso.metadata = { botId: id };
 
   // ── Arm material (shared per bot, slightly darker) ──
   const armMat = makeMat(`sw-amat-${id}`, scene, color.scale(0.8), { emissiveFactor: 0.3 });
@@ -309,6 +312,21 @@ export function createSwordsmanEntry(bot, scene) {
   shadow.isPickable = false;
   shadow.alwaysSelectAsActiveMesh = true;
 
+  const selector = B.MeshBuilder.CreateCylinder(`swPick-${id}`, {
+    height: 38, diameter: 30, tessellation: 12,
+  }, scene);
+  selector.parent = root;
+  selector.position.y = 18;
+  selector.isPickable = true;
+  selector.metadata = { botId: id };
+  selector.visibility = 0.01;
+  const selectorMat = new B.StandardMaterial(`sw-pick-mat-${id}`, scene);
+  selectorMat.diffuseColor = B.Color3.Black();
+  selectorMat.emissiveColor = B.Color3.Black();
+  selectorMat.alpha = 0.001;
+  selectorMat.disableLighting = true;
+  selector.material = selectorMat;
+
   // ── GUI-based name label & HP bar ──
   const GUI = window.BABYLON.GUI;
   const adt = getGuiTexture();
@@ -373,10 +391,12 @@ export function createSwordsmanEntry(bot, scene) {
     rArm: rightArm,
     armMat,
     shadow,
+    selector,
     weapon: sword,       // kept for disposeWeapon compat
     hpContainer,
     hpFill,
     nameLabel,
+    pickMeshes: [selector, torso, head],
     anim: new SwordsmanAnimState(),
     isAlive: true,
     _wasAlive: true,
@@ -387,7 +407,7 @@ export function createSwordsmanEntry(bot, scene) {
     joints,
 
     // Per-bot mats for disposal
-    _swMats: [bodyMat, headMat, armMat, handMat, legMat],
+    _swMats: [bodyMat, headMat, armMat, handMat, legMat, selectorMat],
   };
 }
 
@@ -402,6 +422,7 @@ export function disposeSwordsmanEntry(entry) {
   if (entry.nameLabel) entry.nameLabel.dispose();
   // Dispose shadow instance
   if (entry.shadow && !entry.shadow.isDisposed()) entry.shadow.dispose();
+  if (entry.selector && !entry.selector.isDisposed()) entry.selector.dispose();
   for (const mat of entry._swMats) {
     if (mat && !mat.isDisposed) mat.dispose();
   }

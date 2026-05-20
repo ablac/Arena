@@ -50,13 +50,15 @@ func GetArenaMap(engine *game.GameEngine) http.HandlerFunc {
 			return
 		}
 
+		snap := engine.GetArenaSnapshot()
+
 		// Get teleport pads and hazard zones from engine
 		pads, zones := engine.GetMapFeatures()
 
 		// Also provide detailed metadata for bots that want extra info
 		padViews := make([]map[string]interface{}, 0, len(pads))
 		for _, pad := range pads {
-			padViews = append(padViews, game.BuildTeleportPadView(pad, true))
+			padViews = append(padViews, game.BuildTeleportPadView(pad, snap.Tick, true))
 		}
 
 		zoneViews := make([]map[string]interface{}, 0, len(zones))

@@ -3,8 +3,10 @@ package game
 import (
 	"context"
 	"log/slog"
+	"math"
 	"time"
 
+	"arena-server/internal/config"
 	"arena-server/internal/db"
 
 	"github.com/google/uuid"
@@ -13,15 +15,15 @@ import (
 // PersistBotStatsFromSnapshot saves accumulated round stats using pre-copied
 // stat snapshots. This avoids data races because the snapshot values are
 // copied under the engine lock before the goroutine starts.
-func PersistBotStatsFromSnapshot(ctx context.Context, snaps []BotStatsSnapshot) {
+func PersistBotStatsFromSnapshot(ctx context.Context, snaps []BotStatsSnapshot, winnerID string, finalizeRound bool) {
 	for _, snap := range snaps {
-		persistOneSnapshot(ctx, snap)
+		persistOneSnapshot(ctx, snap, winnerID, finalizeRound)
 	}
 }
 
 // persistOneSnapshot performs the load-merge-upsert for one bot using a
 // value-copy snapshot instead of a live BotState pointer.
-func persistOneSnapshot(ctx context.Context, snap BotStatsSnapshot) {
+func persistOneSnapshot(ctx context.Context, snap BotStatsSnapshot, winnerID string, finalizeRound bool) {
 	existing, err := db.GetBotStats(ctx, snap.BotID)
 	if err != nil {
 		slog.Error("persist: failed to get bot stats", "bot_id", snap.BotID, "error", err)
@@ -45,6 +47,20 @@ func persistOneSnapshot(ctx context.Context, snap BotStatsSnapshot) {
 	existing.DamageTaken += int64(snap.RoundDamageTaken) - int64(snap.PersistedDamageTaken)
 	existing.DistanceTraveled += snap.RoundDistance - snap.PersistedDistance
 	existing.PickupsCollected += snap.RoundPickups - snap.PersistedPickups
+	existing.CurrentStreak = snap.KillStreak
+	if snap.BestStreak > existing.BestStreak {
+		existing.BestStreak = snap.BestStreak
+	}
+	lifeSecs := int(math.Round(float64(snap.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))))
+	if lifeSecs > existing.LongestLifeSecs {
+		existing.LongestLifeSecs = lifeSecs
+	}
+	if finalizeRound {
+		existing.RoundsPlayed++
+		if snap.BotID == winnerID {
+			existing.RoundWins++
+		}
+	}
 
 	existing.Elo = snap.Elo
 	existing.UpdatedAt = now
@@ -97,15 +113,15 @@ func persistOne(ctx context.Context, bot *BotState) {
 
 	// Streak tracking.
 	existing.CurrentStreak = bot.KillStreak
-	if bot.KillStreak > existing.BestStreak {
-		existing.BestStreak = bot.KillStreak
+	if bot.BestKillStreak > existing.BestStreak {
+		existing.BestStreak = bot.BestKillStreak
 	}
 
 	// ELO.
 	existing.Elo = bot.Elo
 
 	// Longest life (in ticks, stored as seconds).
-	lifeSecs := bot.RoundLongestLife
+	lifeSecs := int(math.Round(float64(bot.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))))
 	if lifeSecs > existing.LongestLifeSecs {
 		existing.LongestLifeSecs = lifeSecs
 	}

@@ -1,10 +1,6 @@
 package game
 
-import (
-	"log/slog"
-
-	"arena-server/internal/config"
-)
+import "arena-server/internal/config"
 
 // WeaponConfig defines the properties of a weapon type.
 type WeaponConfig struct {
@@ -18,85 +14,8 @@ type WeaponConfig struct {
 	GridParam int     // special param in grid tiles (e.g. staff area radius)
 }
 
-// WeaponConfigs maps weapon name to its configuration.
+// WeaponConfigs maps weapon name to its effective runtime configuration.
 var WeaponConfigs map[string]WeaponConfig
-
-func init() {
-	WeaponConfigs = map[string]WeaponConfig{
-		"sword": {
-			Name:      "sword",
-			Damage:    25,
-			GridRange: 1,
-			Cooldown:  0.5,
-			Special:   "cleave",
-		},
-		"bow": {
-			Name:      "bow",
-			Damage:    12,
-			GridRange: 7,
-			Cooldown:  1.4,
-			Special:   "projectile",
-		},
-		"daggers": {
-			Name:      "daggers",
-			Damage:    12,
-			GridRange: 1,
-			Cooldown:  0.3,
-			Special:   "double_strike",
-			Param:     0.25,
-		},
-		"shield": {
-			Name:      "shield",
-			Damage:    15,
-			GridRange: 1,
-			Cooldown:  0.7,
-			Special:   "block",
-			Param:     0.5,
-		},
-		"spear": {
-			Name:      "spear",
-			Damage:    20,
-			GridRange: 2,
-			Cooldown:  0.7,
-			Special:   "knockback",
-			Param:     2.0,
-		},
-		"staff": {
-			Name:      "staff",
-			Damage:    18,
-			GridRange: 5,
-			Cooldown:  1.3,
-			Special:   "area",
-			GridParam: 2,
-		},
-		"grapple": {
-			Name:      "grapple",
-			Damage:    15,
-			GridRange: 4,
-			Cooldown:  0.8,
-			Special:   "grapple",
-		},
-	}
-}
-
-// InitWeaponRanges computes the float Range from GridRange * CellSize.
-// Must be called after config.Load().
-func InitWeaponRanges(cellSize float64) {
-	for name, wc := range WeaponConfigs {
-		wc.Range = float64(wc.GridRange) * cellSize
-		WeaponConfigs[name] = wc
-	}
-}
-
-// GetWeaponConfig returns the configuration for the named weapon.
-// Falls back to sword if the name is not recognized.
-func GetWeaponConfig(name string) WeaponConfig {
-	if wc, ok := WeaponConfigs[name]; ok {
-		return wc
-	}
-	slog.Warn("unknown weapon, falling back to sword", "weapon", name)
-	return WeaponConfigs["sword"]
-}
 
 // GetAvailableWeapons returns the list of all weapon names.
 func GetAvailableWeapons() []string {

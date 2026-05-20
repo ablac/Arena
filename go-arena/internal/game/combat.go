@@ -2,6 +2,7 @@ package game
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 
 	"arena-server/internal/config"
@@ -11,7 +12,7 @@ import (
 
 // ProcessCombat handles ATTACK actions for all alive bots, creating projectiles
 // and staff impacts as needed.
-func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles *[]Projectile, staffImpacts *[]StaffImpact, grid *SpatialGrid, tickCount int, dt float64) {
+func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles *[]Projectile, staffImpacts *[]StaffImpact, arenaEvents *[]ArenaEvent, grid *SpatialGrid, tickCount int, dt float64) {
 	for _, bot := range bots {
 		if !bot.IsAlive || bot.PendingAction == nil || bot.Frozen {
 			continue
@@ -82,7 +83,7 @@ func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles 
 			processStaffAttack(bot, target, action, &wc, obstacles, staffImpacts, tickCount)
 
 		case "grapple":
-			processGrappleAttack(bot, target, &wc, obstacles, grid, tickCount)
+			processGrappleAttack(bot, target, &wc, obstacles, arenaEvents, grid, tickCount)
 
 		default:
 			processMeleeAttack(bot, target, &wc, bots, obstacles, grid, tickCount)
@@ -92,8 +93,18 @@ func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles 
 
 // processProjectileAttack handles bow attacks by spawning a projectile.
 func processProjectileAttack(bot, target *BotState, wc *WeaponConfig, obstacles []Obstacle, projectiles *[]Projectile, tickCount int) {
+	if !IsInRange(bot.Position, target.Position, wc.GridRange) {
+		bot.LastActionResult = &ActionResult{
+			Action:  "attack",
+			Success: false,
+			Target:  target.BotID,
+			Message: "out of range",
+		}
+		return
+	}
+
 	// Check line of sight against actual obstacle geometry.
-	if LineIntersectsObstacle(bot.Position.X(), bot.Position.Y(), target.Position.X(), target.Position.Y(), obstacles) {
+	if CombatLineBlocked(bot.Position, target.Position, obstacles) {
 		bot.LastActionResult = &ActionResult{
 			Action:  "attack",
 			Success: false,
@@ -105,14 +116,22 @@ func processProjectileAttack(bot, target *BotState, wc *WeaponConfig, obstacles 
 
 	dir := target.Position.Sub(bot.Position).Normalized()
 
-	maxAge := int(config.C.ProjectileMaxAgeSecs * float64(config.C.TickRate))
+	speed := config.C.ProjectileSpeed
+	if speed <= 0 {
+		speed = 240
+	}
+	maxAge := int(math.Ceil((wc.Range+2*config.C.BotRadius)/speed*float64(config.C.TickRate))) + 1
+	fallbackAge := int(config.C.ProjectileMaxAgeSecs * float64(config.C.TickRate))
+	if maxAge < fallbackAge {
+		maxAge = fallbackAge
+	}
 
 	proj := Projectile{
 		ID:        uuid.New().String(),
 		OwnerID:   bot.BotID,
 		Position:  bot.Position,
 		Direction: dir,
-		Speed:     config.C.ProjectileSpeed,
+		Speed:     speed,
 		Damage:    CalculateDamage(float64(wc.Damage), bot.AttackMultiplier, 0),
 		Weapon:    wc.Name,
 		AgeTicks:  0,
@@ -153,7 +172,7 @@ func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig,
 	}
 
 	// Check line of sight against actual obstacle geometry.
-	if LineIntersectsObstacle(bot.Position.X(), bot.Position.Y(), targetPos.X(), targetPos.Y(), obstacles) {
+	if CombatLineBlocked(bot.Position, targetPos, obstacles) {
 		bot.LastActionResult = &ActionResult{
 			Action:  "attack",
 			Success: false,
@@ -174,6 +193,7 @@ func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig,
 	*staffImpacts = append(*staffImpacts, impact)
 
 	bot.CooldownRemaining = wc.Cooldown
+	bot.RoundShotsFired++
 
 	bot.LastActionResult = &ActionResult{
 		Action:  "attack",
@@ -197,7 +217,7 @@ func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string
 	}
 
 	// Check line of sight against actual obstacle geometry.
-	if LineIntersectsObstacle(bot.Position.X(), bot.Position.Y(), target.Position.X(), target.Position.Y(), obstacles) {
+	if CombatLineBlocked(bot.Position, target.Position, obstacles) {
 		bot.LastActionResult = &ActionResult{
 			Action:  "attack",
 			Success: false,
@@ -294,7 +314,7 @@ func processExtraKnockback(target *BotState, attackerPos Vec2, wc *WeaponConfig,
 }
 
 // processGrappleAttack handles grapple weapon: ranged hit that pulls attacker to target.
-func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []Obstacle, grid *SpatialGrid, tickCount int) {
+func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []Obstacle, arenaEvents *[]ArenaEvent, grid *SpatialGrid, tickCount int) {
 	if !IsInRange(bot.Position, target.Position, wc.GridRange) {
 		bot.LastActionResult = &ActionResult{
 			Action:  "attack",
@@ -305,7 +325,7 @@ func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []O
 		return
 	}
 
-	if LineIntersectsObstacle(bot.Position.X(), bot.Position.Y(), target.Position.X(), target.Position.Y(), obstacles) {
+	if CombatLineBlocked(bot.Position, target.Position, obstacles) {
 		bot.LastActionResult = &ActionResult{
 			Action:  "attack",
 			Success: false,
@@ -319,6 +339,7 @@ func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []O
 	rawDmg := CalculateDamage(float64(wc.Damage), bot.AttackMultiplier, target.DefenseReduction)
 	dealt := ApplyDamage(target, bot, rawDmg, wc.Name, tickCount)
 
+	from := bot.Position
 	// Pull attacker to within 1 tile of target
 	if ActiveTerrain != nil {
 		targetCell := ActiveTerrain.WorldToGrid(target.Position)
@@ -347,6 +368,9 @@ func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []O
 			bot.LastValidPosition = bot.Position
 			grid.Update(bot.BotID, bot.Position)
 		}
+	}
+	if arenaEvents != nil {
+		*arenaEvents = append(*arenaEvents, buildGrappleEvent(bot.BotID, target.BotID, from, target.Position, bot.Position, false, tickCount))
 	}
 
 	bot.CooldownRemaining = wc.Cooldown
@@ -391,7 +415,9 @@ func ProcessStaffImpacts(staffImpacts *[]StaffImpact, bots map[string]*BotState,
 				}
 
 				dmg := CalculateDamage(impact.Damage, impact.AttackMult, bot.DefenseReduction)
-				ApplyDamage(bot, attacker, dmg, "staff", tickCount)
+				if dealt := ApplyDamage(bot, attacker, dmg, "staff", tickCount); dealt > 0 {
+					attacker.RoundShotsHit++
+				}
 			}
 			// Impact is consumed; do not keep it.
 		} else {
@@ -400,6 +426,23 @@ func ProcessStaffImpacts(staffImpacts *[]StaffImpact, bots map[string]*BotState,
 	}
 
 	*staffImpacts = active
+}
+
+// BuildStaffImpactView creates a protocol-compatible view of a pending staff blast.
+func BuildStaffImpactView(impact StaffImpact, useGridPos bool) map[string]interface{} {
+	view := map[string]interface{}{
+		"type":       "staff_impact",
+		"owner_id":   impact.OwnerID,
+		"radius":     impact.Radius,
+		"ticks_left": impact.TicksLeft,
+	}
+	if useGridPos {
+		gridPos := posToGrid(impact.Position)
+		view["position"] = [2]int{gridPos[0], gridPos[1]}
+	} else {
+		view["position"] = impact.Position
+	}
+	return view
 }
 
 // ProcessShoves handles all SHOVE actions for the current tick.

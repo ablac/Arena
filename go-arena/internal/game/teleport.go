@@ -10,10 +10,11 @@ import (
 
 // TeleportPad represents one end of a linked teleport pad pair.
 type TeleportPad struct {
-	ID          string
-	Position    Vec2
-	LinkedPadID string
-	Color       string // paired pads share a color
+	ID                string
+	Position          Vec2
+	LinkedPadID       string
+	Color             string // paired pads share a color
+	CooldownUntilTick int
 }
 
 // SpawnTeleportPads creates linked pairs of teleport pads at valid terrain positions.
@@ -69,14 +70,17 @@ func findValidPadPosition(arena *ArenaMap) Vec2 {
 }
 
 // ProcessTeleports checks if any alive bot is standing on a teleport pad and
-// teleports them to the linked pad. Respects per-bot cooldowns.
-func ProcessTeleports(bots map[string]*BotState, pads []TeleportPad, grid *SpatialGrid, tickCount int) {
+// teleports them to the linked pad. Respects per-bot cooldowns and returns
+// transient spectator events for visible teleport bursts.
+func ProcessTeleports(bots map[string]*BotState, pads []TeleportPad, grid *SpatialGrid, tickCount int) []ArenaEvent {
 	if len(pads) == 0 {
-		return
+		return nil
 	}
 
 	collectRadius := config.C.TeleportCollectRadius
 	cooldownTicks := config.C.TeleportCooldownTicks
+	lockTicks := config.C.TeleportPadLockTicks
+	var events []ArenaEvent
 
 	// Build a lookup of pad ID -> pad.
 	padMap := make(map[string]*TeleportPad, len(pads))
@@ -89,8 +93,12 @@ func ProcessTeleports(bots map[string]*BotState, pads []TeleportPad, grid *Spati
 			continue
 		}
 
-		for _, pad := range pads {
+		for i := range pads {
+			pad := &pads[i]
 			if !IsInRange(bot.Position, pad.Position, collectRadius) {
+				continue
+			}
+			if pad.CooldownUntilTick > tickCount {
 				continue
 			}
 
@@ -106,12 +114,17 @@ func ProcessTeleports(bots map[string]*BotState, pads []TeleportPad, grid *Spati
 			if !ok {
 				continue
 			}
+			if linked.CooldownUntilTick > tickCount {
+				continue
+			}
 
 			// Teleport the bot.
+			from := bot.Position
 			grid.Remove(bot.BotID)
 			bot.Position = linked.Position
 			bot.LastValidPosition = linked.Position
 			grid.Insert(bot.BotID, bot.Position)
+			events = append(events, buildTeleportEvent(bot, *pad, from, linked.Position, tickCount))
 
 			// Set cooldown on BOTH pads for this bot.
 			if bot.TeleportCooldowns == nil {
@@ -119,20 +132,29 @@ func ProcessTeleports(bots map[string]*BotState, pads []TeleportPad, grid *Spati
 			}
 			bot.TeleportCooldowns[pad.ID] = tickCount + cooldownTicks
 			bot.TeleportCooldowns[linked.ID] = tickCount + cooldownTicks
+			pad.CooldownUntilTick = tickCount + lockTicks
+			linked.CooldownUntilTick = tickCount + lockTicks
 
 			// Only teleport once per tick per bot.
 			break
 		}
 	}
+	return events
 }
 
 // BuildTeleportPadView creates a protocol-compatible view of a teleport pad.
-func BuildTeleportPadView(pad TeleportPad, useGridPos bool) map[string]interface{} {
+func BuildTeleportPadView(pad TeleportPad, tickCount int, useGridPos bool) map[string]interface{} {
+	remaining := 0
+	if pad.CooldownUntilTick > tickCount {
+		remaining = pad.CooldownUntilTick - tickCount
+	}
 	view := map[string]interface{}{
-		"type":          "teleport_pad",
-		"id":            pad.ID,
-		"linked_pad_id": pad.LinkedPadID,
-		"color":         pad.Color,
+		"type":                     "teleport_pad",
+		"id":                       pad.ID,
+		"linked_pad_id":            pad.LinkedPadID,
+		"color":                    pad.Color,
+		"is_ready":                 remaining == 0,
+		"cooldown_remaining_ticks": remaining,
 	}
 	if useGridPos {
 		gridPos := posToGrid(pad.Position)

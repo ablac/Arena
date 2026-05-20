@@ -1,19 +1,17 @@
-'use strict';
-
 /**
- * HUD overlay rendering — kill feed, round info, player roster, connection status.
- * Kill feed and player list render into tab panels above the arena.
- * Round info stays as a minimal overlay on the canvas.
+ * HUD overlay rendering - kill feed, round info, player roster, connection status.
+ * Kill feed and player list render into tab panels beside the arena.
+ * Round info stays as the on-canvas broadcast card.
  * @module renderer/hud
  */
 
 export class HudRenderer {
   /**
-   * @param {HTMLElement} roundEl - Round info overlay element (on canvas)
-   * @param {HTMLElement} killfeedEl - Kill feed panel element (in tab)
-   * @param {HTMLElement} playersEl - Players panel element (in tab)
-   * @param {HTMLElement} lobbyEl - Lobby panel element (in tab)
-   * @param {HTMLElement} statusEl - Connection status element
+   * @param {HTMLElement} roundEl
+   * @param {HTMLElement} killfeedEl
+   * @param {HTMLElement} playersEl
+   * @param {HTMLElement} lobbyEl
+   * @param {HTMLElement} statusEl
    */
   constructor(roundEl, killfeedEl, playersEl, lobbyEl, statusEl) {
     this.roundEl = roundEl;
@@ -21,18 +19,36 @@ export class HudRenderer {
     this.playersEl = playersEl;
     this.lobbyEl = lobbyEl;
     this.statusEl = statusEl;
-    this.maxKills = 12;
-    this._killLifetimeMs = 10000;
     this._seenKeys = new Set();
     this._activeEntries = [];
     this._lastPlayerHtml = '';
     this._lastLobbyHtml = '';
+    this._lastRoundState = null;
+    this._lastLobbyState = null;
+    this._roundMode = '';
+    this._roundRefs = {};
+    this.roundCollapsed = false;
+    this.selectedBotId = null;
+    this.onSelectBot = null;
+
+    this.roundEl.addEventListener('click', (event) => {
+      const toggle = event.target.closest('[data-hud-toggle]');
+      if (!toggle && !this.roundCollapsed) return;
+      this.roundCollapsed = !this.roundCollapsed;
+      if (this._lastRoundState) {
+        this._updateRoundInfo(this._lastRoundState);
+      } else if (this._lastLobbyState) {
+        this._updateLobbyInfo(this._lastLobbyState);
+      }
+    });
+
+    this.playersEl.addEventListener('click', (event) => {
+      const row = event.target.closest('.player-entry[data-bot-id]');
+      if (!row || !this.onSelectBot) return;
+      this.onSelectBot(row.dataset.botId);
+    });
   }
 
-  /**
-   * Update HUD with arena state.
-   * @param {Object} state - Arena state from spectator
-   */
   updateState(state) {
     if (!state) return;
     if (state.type === 'lobby_state') {
@@ -45,79 +61,103 @@ export class HudRenderer {
     this._updateWaitingBots(state.waiting_bots || []);
   }
 
-  /** @private */
   _updateLobbyInfo(state) {
+    this._lastLobbyState = state;
     this.resetKillFeed();
     const players = state.players || [];
     const count = state.bots_connected || 0;
+    const countdown = state.countdown ? `${state.countdown}s` : 'Waiting';
+    const needed = Math.max(0, (state.bots_needed || 2) - count);
+    const compactLabel = state.countdown ? `Lobby ${countdown}` : 'Lobby Waiting';
 
-    // Minimal overlay: lobby status + countdown
-    let statusText;
-    if (state.countdown) {
-      statusText = `LOBBY — Round in <span style="color:var(--accent-gold)">${state.countdown}s</span>`;
+    if (this.roundCollapsed) {
+      this._ensureCompactHud();
+      this._roundRefs.compactTitle.textContent = compactLabel;
     } else {
-      const needed = (state.bots_needed || 2) - count;
-      statusText = `LOBBY — Waiting for <span style="color:var(--accent-gold)">${needed}</span> more`;
+      this._ensureLobbyHud();
+      this._roundRefs.title.textContent = 'Lobby Flow';
+      this._roundRefs.phase.textContent = 'Queue';
+      this._roundRefs.metric1.textContent = String(count);
+      this._roundRefs.metric2.textContent = countdown;
+      this._roundRefs.metric3.textContent = String(needed);
+      this._roundRefs.metric4.textContent = state.countdown ? 'Seeding' : 'Staging';
     }
-    this.roundEl.innerHTML = `
-      <div style="color:var(--accent-blue);margin-bottom:2px">${statusText}</div>
-      <div>Players: <span style="color:var(--accent-gold)">${count}</span></div>
-    `;
 
-    // Lobby player list in the Lobby tab
-    const html = players.map(p =>
-      `<div class="player-entry">` +
-        `<span style="color:${this._esc(p.avatar_color || '#fff')}">\u25CF</span> ` +
-        `${this._esc(p.name)} ` +
-        `<span style="color:var(--text-muted)">[${this._esc(p.weapon)}]</span>` +
-      `</div>`
-    ).join('');
+    const html = players.map((p) => this._playerCard({
+      name: p.name,
+      botId: '',
+      avatarColor: p.avatar_color,
+      weapon: p.weapon,
+      status: 'Ready',
+      selectable: false,
+      pills: [p.weapon],
+    })).join('');
+
     if (html !== this._lastLobbyHtml) {
       this.lobbyEl.innerHTML = html;
       this._lastLobbyHtml = html;
     }
   }
 
-  /** @private */
   _updateRoundInfo(state) {
-    const botsAlive = (state.bots || []).filter(b => b.is_alive).length;
+    this._lastRoundState = state;
+    const botsAlive = (state.bots || []).filter((b) => b.is_alive).length;
     const totalBots = (state.bots || []).length;
-    this.roundEl.innerHTML = `
-      <div>Tick: <span style="color:var(--accent-blue)">${state.tick || 0}</span></div>
-      <div>Bots: <span style="color:var(--accent-gold)">${botsAlive}</span> / ${totalBots}</div>
-      <div>Zone: <span style="color:var(--accent-blue)">${Math.round(state.safe_zone?.radius || 0)}</span></div>
-    `;
+    const roundLabel = state.round_number ? `Round ${state.round_number}` : 'Live Round';
+    const zoneRadius = Math.round(state.safe_zone?.radius || 0);
+    const phase = botsAlive > 0 ? 'Broadcast' : 'Syncing';
+    const compactLabel = `${this._esc(roundLabel)} - ${botsAlive}/${totalBots}`;
+
+    if (this.roundCollapsed) {
+      this._ensureCompactHud();
+      this._roundRefs.compactTitle.textContent = compactLabel;
+      return;
+    }
+
+    this._ensureRoundHud();
+    this._roundRefs.title.textContent = roundLabel;
+    this._roundRefs.phase.textContent = phase;
+    this._roundRefs.metric1.textContent = String(state.tick || 0);
+    this._roundRefs.metric2.textContent = `${botsAlive} / ${totalBots}`;
+    this._roundRefs.metric3.textContent = String(zoneRadius);
+    this._roundRefs.metric4.textContent = String((state.pickups || []).length);
   }
 
-  /** @private - Update player roster during gameplay (alive first, then dead, API order within each) */
   _updatePlayers(bots) {
-    const alive = bots.filter(b => b.is_alive);
-    const dead = bots.filter(b => !b.is_alive);
+    const alive = bots.filter((b) => b.is_alive);
+    const dead = bots.filter((b) => !b.is_alive);
     const sorted = [...alive, ...dead];
-    const html = sorted.map(b =>
-      `<div class="player-entry${b.is_alive ? '' : ' dead'}">` +
-        `<span style="color:${this._esc(b.avatar_color || '#fff')}">\u25CF</span> ` +
-        `${this._esc(b.name)} ` +
-        `<span style="color:var(--text-muted)">${b.is_alive ? Math.round(b.hp) + 'hp' : 'dead'}</span>` +
-      `</div>`
-    ).join('');
+    const html = sorted.map((b) => this._playerCard({
+      botId: b.bot_id,
+      name: b.name,
+      avatarColor: b.avatar_color,
+      weapon: b.weapon,
+      status: b.is_alive ? `${Math.round(b.hp)} HP` : 'Eliminated',
+      selectable: true,
+      dead: !b.is_alive,
+      selected: this.selectedBotId === b.bot_id,
+      pills: [
+        b.weapon,
+        `${Math.round(b.round_kills || 0)} Kills`,
+        ...(b.kill_streak > 0 ? [`Streak ${Math.round(b.kill_streak)}`] : []),
+      ],
+    })).join('');
+
     if (html !== this._lastPlayerHtml) {
       this.playersEl.innerHTML = html;
       this._lastPlayerHtml = html;
     }
   }
 
-  /** @private */
   _updateKillFeed(kills) {
     if (!kills || kills.length === 0) return;
 
     const newKills = [];
     for (const kill of kills) {
       const key = `${kill.killer}-${kill.victim}-${kill.tick}`;
-      if (!this._seenKeys.has(key)) {
-        this._seenKeys.add(key);
-        newKills.push(kill);
-      }
+      if (this._seenKeys.has(key)) continue;
+      this._seenKeys.add(key);
+      newKills.push(kill);
     }
 
     for (let i = newKills.length - 1; i >= 0; i--) {
@@ -125,19 +165,14 @@ export class HudRenderer {
       const el = this._createKillEntry(kill);
       this.killfeedEl.prepend(el);
       this._activeEntries.unshift({ key: `${kill.killer}-${kill.victim}-${kill.tick}`, el });
-      setTimeout(() => this._removeEntry(el), this._killLifetimeMs);
-    }
-
-    while (this._activeEntries.length > this.maxKills) {
-      const removed = this._activeEntries.pop();
-      removed.el.remove();
     }
   }
 
-  /** @private */
   _createKillEntry(kill) {
     const el = document.createElement('div');
     el.className = 'killfeed-entry killfeed-new';
+
+    const left = document.createElement('div');
 
     const killer = document.createElement('span');
     killer.className = 'killer';
@@ -151,20 +186,16 @@ export class HudRenderer {
     victim.className = 'victim';
     victim.textContent = kill.victim || '???';
 
-    el.append(killer, sep, victim);
+    left.append(killer, sep, victim);
+
+    const weapon = document.createElement('span');
+    weapon.className = 'weapon';
+    weapon.textContent = (kill.weapon || 'unknown').replace('_', ' ');
+
+    el.append(left, weapon);
     return el;
   }
 
-  /** @private */
-  _removeEntry(el) {
-    el.classList.add('killfeed-out');
-    el.addEventListener('animationend', () => {
-      el.remove();
-      this._activeEntries = this._activeEntries.filter(e => e.el !== el);
-    }, { once: true });
-  }
-
-  /** @private - Show bots waiting to join next round */
   _updateWaitingBots(waitingBots) {
     if (!waitingBots || waitingBots.length === 0) {
       if (this._lastLobbyHtml !== '') {
@@ -173,50 +204,164 @@ export class HudRenderer {
       }
       return;
     }
-    const html = `<div style="color:var(--text-muted);padding:4px 0;font-size:0.8rem">Joining next round (${waitingBots.length})</div>` +
-      waitingBots.map(p =>
-        `<div class="player-entry">` +
-          `<span style="color:${this._esc(p.avatar_color || '#fff')}">\u25CF</span> ` +
-          `${this._esc(p.name)} ` +
-          `<span style="color:var(--text-muted)">[${this._esc(p.weapon)}]</span>` +
-        `</div>`
-      ).join('');
+
+    const intro = `<div style="color:var(--text-muted);padding:4px 0;font-size:0.8rem">Joining next round (${waitingBots.length})</div>`;
+    const html = intro + waitingBots.map((p) => this._playerCard({
+      name: p.name,
+      botId: '',
+      avatarColor: p.avatar_color,
+      weapon: p.weapon,
+      status: 'Queued',
+      selectable: false,
+      pills: [p.weapon],
+    })).join('');
+
     if (html !== this._lastLobbyHtml) {
       this.lobbyEl.innerHTML = html;
       this._lastLobbyHtml = html;
     }
   }
 
-  /** Reset kill feed state (e.g. on new round). */
   resetKillFeed() {
     this._seenKeys.clear();
     this._activeEntries = [];
     this.killfeedEl.innerHTML = '';
   }
 
-  /**
-   * Update connection status display.
-   * @param {string} status - 'connected' | 'disconnected' | 'connecting' | etc.
-   */
   setStatus(status) {
     const connected = status === 'connected';
     this.statusEl.className = `ws-status${connected ? ' connected' : ''}`;
-    this.statusEl.innerHTML = `<span class="dot"></span> ${connected ? 'Live' : status}`;
+    this.statusEl.innerHTML = `<span class="dot"></span> ${connected ? 'Live' : this._esc(status)}`;
+
+    const sitePill = document.getElementById('site-live-pill');
+    if (sitePill) {
+      sitePill.className = `site-live-pill${connected ? ' connected' : ''}`;
+      sitePill.innerHTML = `<span class="dot"></span> ${connected ? 'Spectator live' : `Spectator ${this._esc(status)}`}`;
+    }
   }
 
-  /** @private */
+  setSelectedBot(botID) {
+    this.selectedBotId = botID || null;
+    this._lastPlayerHtml = '';
+  }
+
+  _compactHudMarkup(label) {
+    return `
+      <button class="hud-compact-toggle" type="button" data-hud-toggle>
+        <span class="hud-overline">Spectator HUD</span>
+        <span class="hud-compact-title">${label}</span>
+      </button>
+    `;
+  }
+
+  _ensureCompactHud() {
+    if (this._roundMode === 'compact') return;
+    this._roundMode = 'compact';
+    this.roundEl.classList.add('is-collapsed');
+    this.roundEl.innerHTML = this._compactHudMarkup('Live Round');
+    this._roundRefs = {
+      compactTitle: this.roundEl.querySelector('.hud-compact-title'),
+    };
+  }
+
+  _ensureLobbyHud() {
+    if (this._roundMode === 'lobby') return;
+    this._roundMode = 'lobby';
+    this.roundEl.classList.remove('is-collapsed');
+    this.roundEl.innerHTML = `
+      <div class="hud-topline">
+        <div class="hud-overline">Live Arena</div>
+        <button class="hud-collapse-btn" type="button" data-hud-toggle>Hide</button>
+      </div>
+      <div class="hud-title-row">
+        <div class="hud-title"></div>
+        <div class="hud-phase"></div>
+      </div>
+      <div class="hud-metric-grid">
+        <div class="hud-metric"><span class="hud-metric-label">Connected</span><span class="hud-metric-value" data-hud-m1></span></div>
+        <div class="hud-metric"><span class="hud-metric-label">Countdown</span><span class="hud-metric-value" data-hud-m2></span></div>
+        <div class="hud-metric"><span class="hud-metric-label">Needed</span><span class="hud-metric-value" data-hud-m3></span></div>
+        <div class="hud-metric"><span class="hud-metric-label">State</span><span class="hud-metric-value" data-hud-m4></span></div>
+      </div>
+    `;
+    this._captureRoundRefs();
+  }
+
+  _ensureRoundHud() {
+    if (this._roundMode === 'round') return;
+    this._roundMode = 'round';
+    this.roundEl.classList.remove('is-collapsed');
+    this.roundEl.innerHTML = `
+      <div class="hud-topline">
+        <div class="hud-overline">Spectator HUD</div>
+        <button class="hud-collapse-btn" type="button" data-hud-toggle>Hide</button>
+      </div>
+      <div class="hud-title-row">
+        <div class="hud-title"></div>
+        <div class="hud-phase"></div>
+      </div>
+      <div class="hud-metric-grid">
+        <div class="hud-metric"><span class="hud-metric-label">Tick</span><span class="hud-metric-value" data-hud-m1></span></div>
+        <div class="hud-metric"><span class="hud-metric-label">Alive</span><span class="hud-metric-value" data-hud-m2></span></div>
+        <div class="hud-metric"><span class="hud-metric-label">Zone Radius</span><span class="hud-metric-value" data-hud-m3></span></div>
+        <div class="hud-metric"><span class="hud-metric-label">Pickups</span><span class="hud-metric-value" data-hud-m4></span></div>
+      </div>
+    `;
+    this._captureRoundRefs();
+  }
+
+  _captureRoundRefs() {
+    this._roundRefs = {
+      title: this.roundEl.querySelector('.hud-title'),
+      phase: this.roundEl.querySelector('.hud-phase'),
+      metric1: this.roundEl.querySelector('[data-hud-m1]'),
+      metric2: this.roundEl.querySelector('[data-hud-m2]'),
+      metric3: this.roundEl.querySelector('[data-hud-m3]'),
+      metric4: this.roundEl.querySelector('[data-hud-m4]'),
+    };
+  }
+
+  _playerCard({ botId, name, avatarColor, weapon, status, selectable, dead, selected, pills }) {
+    const classes = [
+      'player-entry',
+      selectable ? 'selectable' : '',
+      dead ? 'dead' : '',
+      selected ? 'selected' : '',
+    ].filter(Boolean).join(' ');
+
+    const attrs = botId ? ` data-bot-id="${this._esc(botId)}"` : '';
+    const pillMarkup = (pills || []).map((pill) => `<span class="player-pill">${this._esc(pill)}</span>`).join('');
+
+    return `
+      <div class="${classes}"${attrs}>
+        <div class="player-entry-main">
+          <span class="player-entry-title">
+            <span style="color:${this._esc(avatarColor || '#fff')}">\u25CF</span>
+            <span class="player-entry-name">${this._esc(name)}</span>
+          </span>
+          <span class="player-entry-status">${this._esc(status)}</span>
+        </div>
+        <div class="player-entry-meta">${pillMarkup}</div>
+      </div>
+    `;
+  }
+
   _weaponIcon(weapon) {
     const icons = {
-      sword: '\u2694', bow: '\uD83C\uDFF9', daggers: '\uD83D\uDDE1',
-      shield: '\uD83D\uDEE1', spear: '\uD83D\uDD31', staff: '\uD83E\uDE84',
+      sword: '\u2694',
+      bow: '\uD83C\uDFF9',
+      daggers: '\uD83D\uDDE1',
+      shield: '\uD83D\uDEE1',
+      spear: '\uD83D\uDD31',
+      staff: '\uD83E\uDE84',
+      grapple: '\u26D3',
     };
     return icons[weapon] || '\u2620';
   }
 
-  /** @private */
   _esc(str) {
     const d = document.createElement('div');
-    d.textContent = str || '???';
+    d.textContent = str == null ? '???' : String(str);
     return d.innerHTML;
   }
 }

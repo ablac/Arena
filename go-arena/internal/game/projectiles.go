@@ -2,25 +2,25 @@ package game
 
 import (
 	"arena-server/internal/config"
+	"math"
 )
 
 // UpdateProjectiles advances all projectiles, checks for collisions with
 // obstacles and bots, applies damage on hit, and removes expired or collided
 // projectiles.
 func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obstacles []Obstacle, tickCount int, dt float64) {
-	maxAge := int(config.C.ProjectileMaxAgeSecs * float64(config.C.TickRate))
-
 	alive := (*projectiles)[:0]
 
 	for i := range *projectiles {
 		proj := &(*projectiles)[i]
+		prevPos := proj.Position
 
 		// 1. Move the projectile.
 		proj.Position = proj.Position.Add(proj.Direction.Scale(proj.Speed * dt))
 		proj.AgeTicks++
 
 		// 2. Check max age.
-		if proj.AgeTicks >= maxAge {
+		if proj.AgeTicks >= proj.MaxAge {
 			continue // Remove: expired
 		}
 
@@ -29,7 +29,6 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 		//    projectiles can never skip over a wall cell.
 		if ActiveTerrain != nil {
 			hitWall := false
-			prevPos := proj.Position.Sub(proj.Direction.Scale(proj.Speed * dt))
 			prevCell := ActiveTerrain.WorldToGrid(prevPos)
 			curCell := ActiveTerrain.WorldToGrid(proj.Position)
 
@@ -68,15 +67,17 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 			continue // Remove: hit obstacle
 		}
 
-		// 4. Check bot hits (grid-based: projectile hits bot in same cell).
+		// 4. Check bot hits using a swept segment so fast projectiles can still
+		// connect without landing in the exact same grid cell.
 		hit := false
+		hitRadius := config.C.BotRadius + config.C.ProjectileHitRadius
 
 		for _, bot := range bots {
 			if !bot.IsAlive || bot.BotID == proj.OwnerID {
 				continue
 			}
 
-			if !IsInRange(proj.Position, bot.Position, 0) {
+			if distancePointToSegment(bot.Position, prevPos, proj.Position) > hitRadius {
 				continue
 			}
 
@@ -114,4 +115,19 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 	}
 
 	*projectiles = alive
+}
+
+func distancePointToSegment(point, segStart, segEnd Vec2) float64 {
+	seg := segEnd.Sub(segStart)
+	segLenSq := seg.X()*seg.X() + seg.Y()*seg.Y()
+	if segLenSq <= 1e-9 {
+		return point.DistanceTo(segStart)
+	}
+
+	toPoint := point.Sub(segStart)
+	t := (toPoint.X()*seg.X() + toPoint.Y()*seg.Y()) / segLenSq
+	t = math.Max(0, math.Min(1, t))
+
+	closest := segStart.Add(seg.Scale(t))
+	return point.DistanceTo(closest)
 }
