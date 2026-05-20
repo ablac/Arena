@@ -6,7 +6,7 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, setHpColor } from './bot-body.js';
+import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js';
 import { updateBotAnim, triggerAttack, triggerDodge, triggerShove } from './animations.js';
 import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance } from './swordsman-anims.js';
 
@@ -25,6 +25,39 @@ export class BotRenderer {
     this.onShove = null;
     /** @type {Function|null} callback(attackerX, attackerZ, targetX, targetZ) */
     this.onGrapple = null;
+    this.onSelectionChange = null;
+    this.selectedBotId = null;
+    this._initSelectionPanel();
+  }
+
+  _initSelectionPanel() {
+    const GUI = window.BABYLON.GUI;
+    const adt = getGuiTexture();
+    const panel = new GUI.Rectangle('bot-summary-panel');
+    panel.width = '220px';
+    panel.height = '122px';
+    panel.thickness = 1;
+    panel.cornerRadius = 12;
+    panel.color = '#8adfff';
+    panel.background = 'rgba(8,12,20,0.9)';
+    panel.isVisible = false;
+    adt.addControl(panel);
+    this.summaryPanel = panel;
+
+    const text = new GUI.TextBlock('bot-summary-text');
+    text.paddingLeft = '10px';
+    text.paddingRight = '10px';
+    text.paddingTop = '8px';
+    text.paddingBottom = '8px';
+    text.textWrapping = true;
+    text.textHorizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+    text.textVerticalAlignment = GUI.Control.VERTICAL_ALIGNMENT_TOP;
+    text.color = 'white';
+    text.fontFamily = 'monospace';
+    text.fontSize = 12;
+    text.lineSpacing = '2px';
+    panel.addControl(text);
+    this.summaryText = text;
   }
 
   update(bots) {
@@ -48,6 +81,7 @@ export class BotRenderer {
         entry = createBotEntry(bot, this.scene);
         this.entries.set(bot.bot_id, entry);
       }
+      entry.botData = bot;
 
       // Entity interpolation: store last two server positions + timing.
       const now = performance.now();
@@ -89,10 +123,11 @@ export class BotRenderer {
       const weaponType = bot.weapon || 'sword';
       const botAction = bot.action || bot.last_action; // server sends last_action
       if (botAction === 'attack' && bot.is_alive && entry._wasAlive) {
+        const liveCooldown = Number(bot.cooldown_remaining || 0);
         if (entry.isSwordsman) {
-          triggerSwordsmanAttack(entry.anim);
+          triggerSwordsmanAttack(entry.anim, liveCooldown);
         } else {
-          triggerAttack(entry.anim, weaponType);
+          triggerAttack(entry.anim, weaponType, liveCooldown);
         }
 
         // Face toward target (smoothed via anim.targetRotY)
@@ -164,10 +199,13 @@ export class BotRenderer {
 
     for (const [id, entry] of this.entries) {
       if (!seen.has(id)) {
+        if (this.selectedBotId === id) this.clearSelection();
         disposeBotEntry(entry);
         this.entries.delete(id);
       }
     }
+
+    this._refreshSelectionPanel();
   }
 
   /**
@@ -256,5 +294,51 @@ export class BotRenderer {
 
     this.scene.beginDirectAnimation(entry.bodyMat, [bodyAnim], 0, 30, false);
     this.scene.beginDirectAnimation(entry.headMat, [headAnim], 0, 30, false);
+  }
+
+  handlePick(mesh) {
+    const botId = mesh?.metadata?.botId;
+    if (!botId) {
+      this.clearSelection();
+      return false;
+    }
+    this.selectBot(this.selectedBotId === botId ? null : botId);
+    return true;
+  }
+
+  selectBot(botId) {
+    this.selectedBotId = botId || null;
+    this._refreshSelectionPanel();
+    if (this.onSelectionChange) this.onSelectionChange(this.selectedBotId);
+  }
+
+  clearSelection() {
+    this.selectBot(null);
+  }
+
+  _refreshSelectionPanel() {
+    if (!this.summaryPanel || !this.summaryText) return;
+    if (!this.selectedBotId) {
+      this.summaryPanel.isVisible = false;
+      this.summaryPanel.linkWithMesh(null);
+      return;
+    }
+    const entry = this.entries.get(this.selectedBotId);
+    if (!entry || !entry.botData || !entry.root) {
+      this.summaryPanel.isVisible = false;
+      return;
+    }
+    const bot = entry.botData;
+    const lines = [
+      `${bot.name || 'Unknown'}${bot.is_bounty_target ? ' [BOUNTY]' : ''}`,
+      `HP ${bot.hp}/${bot.max_hp}  ${bot.weapon || 'unknown'}`,
+      `Kills ${bot.round_kills || 0}  Streak ${bot.kill_streak || 0}`,
+      `Shield ${bot.shield_absorb || 0}  CD ${bot.cooldown_remaining || 0}s`,
+      `Mines ${bot.mine_count || 0}  Grapple ${bot.grapple_charges || 0}`,
+    ];
+    this.summaryText.text = lines.join('\n');
+    this.summaryPanel.linkWithMesh(entry.root);
+    this.summaryPanel.linkOffsetY = -128;
+    this.summaryPanel.isVisible = !!bot.is_alive;
   }
 }

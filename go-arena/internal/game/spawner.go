@@ -1,5 +1,7 @@
 package game
 
+import "arena-server/internal/config"
+
 // SpawnBotAt places a bot at a specific position and resets its combat state.
 // If the chosen cell is blocked it searches outward for the nearest open cell.
 func SpawnBotAt(bot *BotState, pos Vec2, grid *SpatialGrid, tickCount int) {
@@ -41,7 +43,7 @@ func SpawnBotAt(bot *BotState, pos Vec2, grid *SpatialGrid, tickCount int) {
 	bot.CurrentPath = nil
 	bot.PathTarget = nil
 
-	bot.GrappleCharges = 2
+	bot.GrappleCharges = config.C.GrappleChargesPerRound
 	bot.GrappleCooldown = 0
 
 	bot.RoundLifeStartTick = tickCount

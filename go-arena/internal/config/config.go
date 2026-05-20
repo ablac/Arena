@@ -38,7 +38,7 @@ type Config struct {
 	StatBudget        int     `envconfig:"ARENA_STAT_BUDGET" default:"20"`
 	StatMin           int     `envconfig:"ARENA_STAT_MIN" default:"1"`
 	StatMax           int     `envconfig:"ARENA_STAT_MAX" default:"10"`
-	RoundDuration     float64 `envconfig:"ARENA_ROUND_DURATION" default:"240"`
+	RoundDuration     float64 `envconfig:"ARENA_ROUND_DURATION" default:"300"`
 	IntermissionTime  float64 `envconfig:"ARENA_INTERMISSION_TIME" default:"10"`
 	LobbyCountdown    float64 `envconfig:"ARENA_LOBBY_COUNTDOWN" default:"10"`
 	MinBotsToStart    int     `envconfig:"ARENA_MIN_BOTS_TO_START" default:"2"`
@@ -61,13 +61,20 @@ type Config struct {
 	KnockbackWallDamage float64 `envconfig:"ARENA_KNOCKBACK_WALL_DAMAGE" default:"5"`
 
 	// Projectiles
-	ProjectileSpeed      float64 `envconfig:"ARENA_PROJECTILE_SPEED" default:"30.0"`
+	ProjectileSpeed      float64 `envconfig:"ARENA_PROJECTILE_SPEED" default:"240.0"`
 	ProjectileHitRadius  float64 `envconfig:"ARENA_PROJECTILE_HIT_RADIUS" default:"1.0"`
 	ProjectileMaxAgeSecs float64 `envconfig:"ARENA_PROJECTILE_MAX_AGE_SECS" default:"1.0"`
 
 	// Staff
-	StaffDelayTicks    int `envconfig:"ARENA_STAFF_DELAY_TICKS" default:"2"`
+	StaffDelayTicks    int `envconfig:"ARENA_STAFF_DELAY_TICKS" default:"4"`
 	StunDurationTicks  int `envconfig:"ARENA_STUN_DURATION_TICKS" default:"1"`
+
+	// Universal Grapple Ability
+	GrappleChargesPerRound     int     `envconfig:"ARENA_GRAPPLE_CHARGES_PER_ROUND" default:"2"`
+	GrappleAbilityRangeTiles   int     `envconfig:"ARENA_GRAPPLE_RANGE_TILES" default:"12"`
+	GrappleAbilityDamage       float64 `envconfig:"ARENA_GRAPPLE_DAMAGE" default:"15"`
+	GrappleAbilityCooldownSecs float64 `envconfig:"ARENA_GRAPPLE_COOLDOWN_SECS" default:"4.0"`
+	GrappleAbilityStunTicks    int     `envconfig:"ARENA_GRAPPLE_STUN_TICKS" default:"3"`
 
 	// Shove
 	ShoveRange        float64 `envconfig:"ARENA_SHOVE_RANGE" default:"2.0"`
@@ -166,7 +173,8 @@ type Config struct {
 	// Teleport Pads
 	TeleportPadPairs       int `envconfig:"ARENA_TELEPORT_PAD_PAIRS" default:"3"`
 	TeleportCooldownTicks  int `envconfig:"ARENA_TELEPORT_COOLDOWN_TICKS" default:"50"`
-	TeleportCollectRadius  int `envconfig:"ARENA_TELEPORT_COLLECT_RADIUS" default:"0"`
+	TeleportCollectRadius  int `envconfig:"ARENA_TELEPORT_COLLECT_RADIUS" default:"1"`
+	TeleportPadLockTicks   int `envconfig:"ARENA_TELEPORT_PAD_LOCK_TICKS" default:"30"`
 
 	// Environmental Hazards
 	HazardZoneCount        int     `envconfig:"ARENA_HAZARD_ZONE_COUNT" default:"6"`
@@ -183,6 +191,10 @@ type Config struct {
 	// Bounty System
 	BountyKillStreakThreshold int     `envconfig:"ARENA_BOUNTY_KILL_STREAK" default:"3"`
 	BountyBonusPoints        float64 `envconfig:"ARENA_BOUNTY_BONUS_POINTS" default:"50"`
+	BountyWinStreakThreshold int     `envconfig:"ARENA_BOUNTY_WIN_STREAK" default:"1"`
+	BountyBoardBasePoints    int     `envconfig:"ARENA_BOUNTY_BOARD_BASE_POINTS" default:"6"`
+	BountyBoardStepPoints    int     `envconfig:"ARENA_BOUNTY_BOARD_STEP_POINTS" default:"4"`
+	BountyBoardMaxPoints     int     `envconfig:"ARENA_BOUNTY_BOARD_MAX_POINTS" default:"18"`
 
 	// Landmines
 	MineMaxPerBot     int     `envconfig:"ARENA_MINE_MAX_PER_BOT" default:"3"`
@@ -194,6 +206,20 @@ type Config struct {
 	GravityWellDurationTicks int     `envconfig:"ARENA_GRAVITY_WELL_DURATION_TICKS" default:"30"`
 	GravityWellPullRadius    int     `envconfig:"ARENA_GRAVITY_WELL_PULL_RADIUS" default:"3"`
 	GravityWellPullForce     float64 `envconfig:"ARENA_GRAVITY_WELL_PULL_FORCE" default:"0.5"`
+
+	// Automatic weapon balancing
+	WeaponAutoBalanceEnabled          bool    `envconfig:"ARENA_WEAPON_AUTO_BALANCE_ENABLED" default:"true"`
+	WeaponAutoBalanceStartStep        float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_START_STEP" default:"0.05"`
+	WeaponAutoBalanceMinStep          float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_STEP" default:"0.005"`
+	WeaponAutoBalanceDecay            float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_DECAY" default:"0.94"`
+	WeaponAutoBalanceDeadzoneStart    float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_DEADZONE_START" default:"0.02"`
+	WeaponAutoBalanceDeadzoneMin      float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_DEADZONE_MIN" default:"0.003"`
+	WeaponAutoBalanceMinDamageScale   float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_DAMAGE_SCALE" default:"0.80"`
+	WeaponAutoBalanceMaxDamageScale   float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MAX_DAMAGE_SCALE" default:"1.30"`
+	WeaponAutoBalanceMinCooldownScale float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_COOLDOWN_SCALE" default:"0.85"`
+	WeaponAutoBalanceMaxCooldownScale float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MAX_COOLDOWN_SCALE" default:"1.20"`
+	WeaponAutoBalanceDamageWeight     float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_DAMAGE_WEIGHT" default:"0.65"`
+	WeaponAutoBalanceCooldownWeight   float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_COOLDOWN_WEIGHT" default:"0.45"`
 
 	// OIDC / SSO (opt-in)
 	OIDCEnabled      bool   `envconfig:"ARENA_OIDC_ENABLED" default:"false"`

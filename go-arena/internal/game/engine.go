@@ -3,6 +3,7 @@ package game
 import (
 	"context"
 	"log/slog"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -68,6 +69,7 @@ type GameEngine struct {
 	// Events (buffered, drained after each tick)
 	DeathEvents   []DeathEvent
 	KillEvents    []KillEvent
+	RecentEvents  []ArenaEvent
 	// Persistence tracking
 	lastPersistTick int
 }
@@ -166,6 +168,8 @@ func (e *GameEngine) tick() {
 // --------------------------------------------------------------------------
 
 func (e *GameEngine) tickLobby(c *config.Config) {
+	e.Round.TimeRemaining = 0
+
 	// Merge waiting bots into active bots.
 	for id, bot := range e.WaitingBots {
 		e.Bots[id] = bot
@@ -181,6 +185,7 @@ func (e *GameEngine) tickLobby(c *config.Config) {
 	}
 
 	if e.Round.LobbyCountdownTicks > 0 {
+		e.Round.TimeRemaining = float64(e.Round.LobbyCountdownTicks) / float64(config.C.TickRate)
 		e.Round.LobbyCountdownTicks--
 		if e.Round.LobbyCountdownTicks <= 0 {
 			e.startRound()
@@ -210,14 +215,22 @@ func (e *GameEngine) tickLobby(c *config.Config) {
 }
 
 func (e *GameEngine) tickIntermission() {
+	e.Round.TimeRemaining = float64(e.Round.IntermissionTicks) / float64(config.C.TickRate)
 	e.Round.IntermissionTicks--
 	if e.Round.IntermissionTicks <= 0 {
 		e.Round.Phase = PhaseLobby
 		e.Round.LobbyCountdownTicks = 0
+		e.Round.TimeRemaining = 0
 	}
 }
 
 func (e *GameEngine) tickActive(c *config.Config, dt float64) {
+	remainingTicks := int(c.RoundDuration*float64(c.TickRate)) - (e.TickCount - e.Round.StartTick)
+	if remainingTicks < 0 {
+		remainingTicks = 0
+	}
+	e.Round.TimeRemaining = float64(remainingTicks) / float64(c.TickRate)
+
 	// Apply fallback AI actions for bots without pending actions.
 	e.applyFallbacks()
 
@@ -261,7 +274,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	ProcessShoves(e.Bots, e.Arena.Obstacles)
 
 	// Combat.
-	ProcessCombat(e.Bots, e.Arena.Obstacles, &e.Projectiles, &e.StaffImpacts, e.Grid, e.TickCount, dt)
+	ProcessCombat(e.Bots, e.Arena.Obstacles, &e.Projectiles, &e.StaffImpacts, &e.RecentEvents, e.Grid, e.TickCount, dt)
 
 	// Record attacks for anti-teaming (reset proximity for fighting pairs).
 	for _, bot := range e.Bots {
@@ -283,13 +296,13 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	e.applyZoneDamage()
 
 	// Teleport pads.
-	ProcessTeleports(e.Bots, e.TeleportPads, e.Grid, e.TickCount)
+	e.appendArenaEvents(ProcessTeleports(e.Bots, e.TeleportPads, e.Grid, e.TickCount)...)
 
 	// Environmental hazards.
 	UpdateHazards(e.HazardZones, e.Bots, e.TickCount)
 
 	// Landmines.
-	UpdateMines(&e.Landmines, e.Bots, e.TickCount)
+	e.appendArenaEvents(UpdateMines(&e.Landmines, e.Bots, e.TickCount)...)
 
 	// Gravity wells.
 	UpdateGravityWells(&e.GravityWells, e.Bots, e.Grid)
@@ -369,18 +382,6 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 
 	// No respawns — dead bots stay dead until next round.
 
-	// Teleport pads.
-	ProcessTeleports(e.Bots, e.TeleportPads, e.Grid, e.TickCount)
-
-	// Environmental hazards.
-	UpdateHazards(e.HazardZones, e.Bots, e.TickCount)
-
-	// Gravity wells.
-	UpdateGravityWells(&e.GravityWells, e.Bots, e.Grid)
-
-	// Landmines.
-	UpdateMines(&e.Landmines, e.Bots, e.TickCount)
-
 	// Sudden death (activates when zone reaches minimum).
 	e.SuddenDeath.CheckActivation(e.Arena)
 	e.SuddenDeath.Update(e.Bots, e.Arena)
@@ -426,7 +427,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	persistInterval := int(c.PersistIntervalSecs * float64(c.TickRate))
 	if persistInterval > 0 && e.TickCount-e.lastPersistTick >= persistInterval {
 		e.lastPersistTick = e.TickCount
-		go PersistBotStatsFromSnapshot(context.Background(), e.snapshotBotStats())
+		go PersistBotStatsFromSnapshot(context.Background(), e.snapshotBotStats(), "", false)
 	}
 
 	// Check round end.
@@ -480,24 +481,34 @@ func (e *GameEngine) startRound() {
 	e.KillFeed.Clear()
 	e.AntiTeam.Clear()
 	e.SuddenDeath.Clear()
-	e.Bounty.Clear()
+	e.Bounty.ResetRoundState(e.Bots)
 
-	// Spawn new gameplay features.
-	e.TeleportPads = SpawnTeleportPads(e.Arena, c.TeleportPadPairs)
-	e.HazardZones = SpawnHazardZones(e.Arena, c.HazardZoneCount)
-
-	// Clear and spawn new gameplay systems.
+	// Spawn new gameplay systems.
 	e.Landmines = nil
 	e.GravityWells = nil
 	e.SuddenDeath.Clear()
-	e.Bounty.Clear()
+	e.Bounty.ResetRoundState(e.Bots)
 	e.TeleportPads = SpawnTeleportPads(e.Arena, config.C.TeleportPadPairs)
 	e.HazardZones = SpawnHazardZones(e.Arena, config.C.HazardZoneCount)
 
 	// Set round state.
 	e.Round.Phase = PhaseActive
 	e.Round.StartTick = e.TickCount
+	e.Round.TimeRemaining = c.RoundDuration
 	e.Round.RoundID = uuid.New().String()
+
+	if db.Pool != nil {
+		round := &db.Round{
+			ID:               e.Round.RoundID,
+			RoundNumber:      e.Round.RoundNumber,
+			StartedAt:        time.Now(),
+			BotsParticipated: len(e.Bots),
+			Status:           "active",
+		}
+		if err := db.CreateRound(context.Background(), round); err != nil {
+			slog.Error("failed to create round record", "round_id", round.ID, "round", round.RoundNumber, "error", err)
+		}
+	}
 
 	// Spawn bots evenly around the zone perimeter.
 	botList := make([]*BotState, 0, len(e.Bots))
@@ -552,11 +563,32 @@ func (e *GameEngine) endRound() {
 		SendRoundEnd(bot, info, nextRoundIn)
 	}
 
+	e.Bounty.OnRoundEnd(e.Bots, winnerID)
+	e.persistBountyBoardAsync()
 	e.Round.Phase = PhaseIntermission
 	e.Round.IntermissionTicks = int(config.C.IntermissionTime * float64(config.C.TickRate))
+	e.Round.TimeRemaining = config.C.IntermissionTime
+	AutoBalanceWeapons(context.Background(), e.Bots, winnerID)
+
+	if db.Pool != nil {
+		endedAt := time.Now()
+		var winnerIDPtr *string
+		if winnerID != "" {
+			winnerIDPtr = &winnerID
+		}
+		round := &db.Round{
+			ID:       e.Round.RoundID,
+			EndedAt:  &endedAt,
+			MVPBotID: winnerIDPtr,
+			Status:   "completed",
+		}
+		if err := db.UpdateRound(context.Background(), round); err != nil {
+			slog.Error("failed to update round record", "round_id", round.ID, "round", e.Round.RoundNumber, "error", err)
+		}
+	}
 
 	// Persist final stats for the round.
-	go PersistBotStatsFromSnapshot(context.Background(), e.snapshotBotStats())
+	go PersistBotStatsFromSnapshot(context.Background(), e.snapshotBotStats(), winnerID, true)
 
 	// Record per-round per-bot stats for time-based leaderboards.
 	roundNum := e.Round.RoundNumber
@@ -564,10 +596,11 @@ func (e *GameEngine) endRound() {
 		ctx := context.Background()
 		for _, bot := range bots {
 			won := bot.BotID == wID
-			db.InsertRoundBotStats(ctx, roundNum, bot.BotID, bot.Name,
+			lifeSecs := int(math.Round(float64(bot.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))))
+			db.InsertRoundBotStats(ctx, roundNum, bot.BotID, bot.Name, bot.Weapon,
 				bot.RoundKills, bot.RoundDeaths,
 				int64(bot.RoundDamageDealt), int64(bot.RoundDamageTaken),
-				bot.RoundPickups, bot.RoundDistance, bot.Elo, won)
+				lifeSecs, bot.RoundPickups, bot.RoundDistance, bot.Elo, won)
 		}
 	}(e.copyBotsForPersist(), winnerID)
 
@@ -608,6 +641,22 @@ func (e *GameEngine) AddBot(bot *BotState) bool {
 		return false
 	}
 
+	if existing := e.Bots[bot.BotID]; existing != nil {
+		e.Grid.Remove(bot.BotID)
+		e.Bots[bot.BotID] = bot
+		if existing.Conn != nil {
+			go existing.Conn.Close()
+		}
+		return true
+	}
+	if existing := e.WaitingBots[bot.BotID]; existing != nil {
+		e.WaitingBots[bot.BotID] = bot
+		if existing.Conn != nil {
+			go existing.Conn.Close()
+		}
+		return true
+	}
+
 	if e.Round.Phase == PhaseLobby {
 		e.Bots[bot.BotID] = bot
 	} else {
@@ -616,14 +665,21 @@ func (e *GameEngine) AddBot(bot *BotState) bool {
 	return true
 }
 
-// RemoveBot removes a bot from both active and waiting maps and persists its
-// stats.
-func (e *GameEngine) RemoveBot(botID string) {
+// RemoveBot removes a specific bot instance from both active and waiting maps
+// and persists its stats. If a reconnect has already replaced this bot in the
+// engine maps, the newer instance is left alone.
+func (e *GameEngine) RemoveBot(botID string, expected *BotState) {
 	e.mu.Lock()
-	bot := e.Bots[botID]
-	delete(e.Bots, botID)
-	delete(e.WaitingBots, botID)
-	e.Grid.Remove(botID)
+	var bot *BotState
+	if current := e.Bots[botID]; current != nil && current == expected {
+		bot = current
+		delete(e.Bots, botID)
+		e.Grid.Remove(botID)
+	}
+	if current := e.WaitingBots[botID]; current != nil && current == expected {
+		bot = current
+		delete(e.WaitingBots, botID)
+	}
 	e.mu.Unlock()
 
 	if bot != nil {
@@ -729,6 +785,7 @@ func (e *GameEngine) GetState() SpectatorState {
 // ArenaSnapshot holds read-only arena state for the REST API.
 type ArenaSnapshot struct {
 	Phase              RoundPhase
+	Tick               int
 	BotsConnected      int
 	BotsAlive          int
 	RoundNumber        int
@@ -745,6 +802,7 @@ func (e *GameEngine) GetArenaSnapshot() ArenaSnapshot {
 
 	snap := ArenaSnapshot{
 		Phase:              e.Round.Phase,
+		Tick:               e.TickCount,
 		BotsConnected:      len(e.Bots),
 		RoundNumber:        e.Round.RoundNumber,
 		RoundTimeRemaining: e.Round.TimeRemaining,
@@ -783,6 +841,48 @@ func (e *GameEngine) ConnectedBotCount() int {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return len(e.Bots) + len(e.WaitingBots)
+}
+
+// GetBountyBoard returns a snapshot of the current cross-round bounty board.
+func (e *GameEngine) GetBountyBoard() []BountyEntry {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.Bounty.Snapshot()
+}
+
+// RestoreBountyBoard replaces the in-memory bounty board from persisted entries.
+func (e *GameEngine) RestoreBountyBoard(entries []db.BountyBoardEntry) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.Bounty.Restore(entries)
+}
+
+func (e *GameEngine) persistBountyBoardAsync() {
+	if db.Pool == nil {
+		return
+	}
+
+	snapshot := e.Bounty.Snapshot()
+
+	rows := make([]db.BountyBoardEntry, 0, len(snapshot))
+	for _, entry := range snapshot {
+		rows = append(rows, db.BountyBoardEntry{
+			BotID:        entry.BotID,
+			Name:         entry.Name,
+			AvatarColor:  entry.AvatarColor,
+			Weapon:       entry.Weapon,
+			WinStreak:    entry.WinStreak,
+			BountyPoints: entry.BountyPoints,
+			Claims:       entry.Claims,
+			IsTarget:     entry.IsTarget,
+		})
+	}
+
+	go func(entries []db.BountyBoardEntry) {
+		if err := db.ReplaceBountyBoardEntries(context.Background(), entries); err != nil {
+			slog.Error("failed to persist bounty board", "error", err)
+		}
+	}(rows)
 }
 
 // --------------------------------------------------------------------------
@@ -887,8 +987,9 @@ func (e *GameEngine) processUseItems() {
 	}
 }
 
-// processGrappleAbility handles the universal grapple ability (separate from grapple weapon).
-// Pulls the target to 1 cell from the grappler, deals 15 damage, stuns for 5 ticks.
+// processGrappleAbility handles the universal grapple ability (separate from
+// the grapple weapon). It can either yank an enemy into close range or latch
+// onto an anchor point and pull the user across the arena.
 func (e *GameEngine) processGrappleAbility(bot *BotState) {
 	if bot.GrappleCharges <= 0 {
 		bot.LastActionResult = &ActionResult{
@@ -906,7 +1007,57 @@ func (e *GameEngine) processGrappleAbility(bot *BotState) {
 		}
 		return
 	}
+	maxRange := config.C.GrappleAbilityRangeTiles
+	if maxRange <= 0 {
+		maxRange = 12
+	}
+
 	targetID := bot.PendingAction.TargetID
+	targetPos := bot.PendingAction.TargetPosition
+	if targetID == "" && targetPos == nil {
+		bot.LastActionResult = &ActionResult{
+			Action:  "grapple",
+			Success: false,
+			Message: "target or target_position required",
+		}
+		return
+	}
+
+	if targetPos != nil {
+		if !IsInRange(bot.Position, *targetPos, maxRange) {
+			bot.LastActionResult = &ActionResult{
+				Action:  "grapple",
+				Success: false,
+				Message: "anchor out of range",
+			}
+			return
+		}
+
+		from := bot.Position
+		landing, ok := findGrappleLandingPosition(bot.Position, *targetPos)
+		if !ok {
+			bot.LastActionResult = &ActionResult{
+				Action:  "grapple",
+				Success: false,
+				Message: "no valid anchor landing",
+			}
+			return
+		}
+
+		bot.Position = landing
+		bot.LastValidPosition = landing
+		e.Grid.Update(bot.BotID, landing)
+		bot.GrappleCharges--
+		bot.GrappleCooldown = config.C.GrappleAbilityCooldownSecs
+		e.appendArenaEvents(buildGrappleEvent(bot.BotID, "", from, *targetPos, landing, true, e.TickCount))
+		bot.LastActionResult = &ActionResult{
+			Action:  "grapple",
+			Success: true,
+			Message: "grapple anchor pull",
+		}
+		return
+	}
+
 	target, ok := e.Bots[targetID]
 	if !ok || !target.IsAlive {
 		bot.LastActionResult = &ActionResult{
@@ -917,48 +1068,49 @@ func (e *GameEngine) processGrappleAbility(bot *BotState) {
 		}
 		return
 	}
-
-	// Map-wide range: no range limit check.
-	// Deal 15 damage.
-	const grappleDamage = 15.0
-	rawDmg := CalculateDamage(grappleDamage, bot.AttackMultiplier, target.DefenseReduction)
-	dealt := ApplyDamage(target, bot, rawDmg, "grapple", e.TickCount)
-
-	// Pull target to 1 cell from grappler.
-	if ActiveTerrain != nil {
-		grapCell := ActiveTerrain.WorldToGrid(bot.Position)
-		targetCell := ActiveTerrain.WorldToGrid(target.Position)
-		bestCell := targetCell
-		bestDist := 999
-		for dx := -1; dx <= 1; dx++ {
-			for dy := -1; dy <= 1; dy++ {
-				if dx == 0 && dy == 0 {
-					continue
-				}
-				nc := [2]int{grapCell[0] + dx, grapCell[1] + dy}
-				if ActiveTerrain.IsBlocked(nc[0], nc[1]) {
-					continue
-				}
-				d := GridDistance(targetCell, nc)
-				if d < bestDist {
-					bestDist = d
-					bestCell = nc
-				}
-			}
+	if !IsInRange(bot.Position, target.Position, maxRange) {
+		bot.LastActionResult = &ActionResult{
+			Action:  "grapple",
+			Success: false,
+			Target:  targetID,
+			Message: "target out of grapple range",
 		}
-		if bestCell != targetCell {
-			target.Position = ActiveTerrain.GridToWorld(bestCell)
-			target.LastValidPosition = target.Position
-			e.Grid.Update(target.BotID, target.Position)
+		return
+	}
+	if CombatLineBlocked(bot.Position, target.Position, e.Arena.Obstacles) {
+		bot.LastActionResult = &ActionResult{
+			Action:  "grapple",
+			Success: false,
+			Target:  targetID,
+			Message: "no line of sight",
 		}
+		return
 	}
 
-	// Stun target for 5 ticks.
-	target.StunTicks = 5
+	damage := config.C.GrappleAbilityDamage
+	if damage <= 0 {
+		damage = 15
+	}
+	rawDmg := CalculateDamage(damage, bot.AttackMultiplier, target.DefenseReduction)
+	dealt := ApplyDamage(target, bot, rawDmg, "grapple", e.TickCount)
 
-	// Consume charge and set cooldown (3 seconds).
+	from := target.Position
+	landing, ok := findAdjacentPullPosition(bot.Position, target.Position)
+	if ok {
+		target.Position = landing
+		target.LastValidPosition = landing
+		e.Grid.Update(target.BotID, landing)
+	}
+
+	stunTicks := config.C.GrappleAbilityStunTicks
+	if stunTicks <= 0 {
+		stunTicks = 3
+	}
+	target.StunTicks = stunTicks
+
 	bot.GrappleCharges--
-	bot.GrappleCooldown = 3.0
+	bot.GrappleCooldown = config.C.GrappleAbilityCooldownSecs
+	e.appendArenaEvents(buildGrappleEvent(bot.BotID, target.BotID, from, target.Position, target.Position, false, e.TickCount))
 
 	bot.LastActionResult = &ActionResult{
 		Action:  "grapple",
@@ -967,6 +1119,86 @@ func (e *GameEngine) processGrappleAbility(bot *BotState) {
 		Damage:  dealt,
 		Message: "grapple pull",
 	}
+}
+
+func findAdjacentPullPosition(pullerPos, targetPos Vec2) (Vec2, bool) {
+	if ActiveTerrain == nil {
+		dir := targetPos.Sub(pullerPos).Normalized()
+		if dir.Length() < 1e-9 {
+			dir = NewVec2(1, 0)
+		}
+		return pullerPos.Add(dir.Scale(config.C.PathfindingCellSize)), true
+	}
+
+	pullerCell := ActiveTerrain.WorldToGrid(pullerPos)
+	targetCell := ActiveTerrain.WorldToGrid(targetPos)
+	bestCell := targetCell
+	bestDist := 1 << 30
+	found := false
+	for dx := -1; dx <= 1; dx++ {
+		for dy := -1; dy <= 1; dy++ {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			nc := [2]int{pullerCell[0] + dx, pullerCell[1] + dy}
+			if ActiveTerrain.IsBlocked(nc[0], nc[1]) {
+				continue
+			}
+			d := GridDistance(targetCell, nc)
+			if d < bestDist {
+				bestDist = d
+				bestCell = nc
+				found = true
+			}
+		}
+	}
+	if !found {
+		return Vec2{}, false
+	}
+	return ActiveTerrain.GridToWorld(bestCell), true
+}
+
+func findGrappleLandingPosition(from, anchor Vec2) (Vec2, bool) {
+	if ActiveTerrain == nil {
+		return anchor, true
+	}
+
+	anchorCell := ActiveTerrain.WorldToGrid(anchor)
+	fromCell := ActiveTerrain.WorldToGrid(from)
+	bestCell := anchorCell
+	bestDist := 1 << 30
+	found := false
+
+	tryCell := func(cell [2]int) {
+		if ActiveTerrain.IsBlocked(cell[0], cell[1]) {
+			return
+		}
+		d := GridDistance(fromCell, cell)
+		if d < bestDist {
+			bestDist = d
+			bestCell = cell
+			found = true
+		}
+	}
+
+	tryCell(anchorCell)
+	if !found {
+		for radius := 1; radius <= 2 && !found; radius++ {
+			for dx := -radius; dx <= radius; dx++ {
+				for dy := -radius; dy <= radius; dy++ {
+					if dx != -radius && dx != radius && dy != -radius && dy != radius {
+						continue
+					}
+					tryCell([2]int{anchorCell[0] + dx, anchorCell[1] + dy})
+				}
+			}
+		}
+	}
+
+	if !found {
+		return Vec2{}, false
+	}
+	return ActiveTerrain.GridToWorld(bestCell), true
 }
 
 // applyZoneDamage hurts alive bots that are outside the safe zone.
@@ -999,6 +1231,9 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 
 		if killer != nil {
 			killer.KillStreak++
+			if killer.KillStreak > killer.BestKillStreak {
+				killer.BestKillStreak = killer.KillStreak
+			}
 			killer.RoundKills++
 			killerName = killer.Name
 			weapon = killer.Weapon
@@ -1009,7 +1244,11 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 				ApplyEloChange(killer, victim)
 				// Bounty bonus for killing the bounty target.
 				e.Bounty.OnKill(killer, victim)
+				e.persistBountyBoardAsync()
 			}
+		} else if victimOk {
+			e.Bounty.OnDeath(victim)
+			e.persistBountyBoardAsync()
 		}
 
 		if victimOk {
@@ -1153,10 +1392,10 @@ func (e *GameEngine) sendBotTickUpdates() {
 				botCell := ActiveTerrain.WorldToGrid(bot.Position)
 				padCell := ActiveTerrain.WorldToGrid(pad.Position)
 				if GridDistance(botCell, padCell) <= fogRadius {
-					nearby = append(nearby, BuildTeleportPadView(pad, true))
+					nearby = append(nearby, BuildTeleportPadView(pad, e.TickCount, true))
 				}
 			} else if bot.Position.DistanceTo(pad.Position) <= viewRadius {
-				nearby = append(nearby, BuildTeleportPadView(pad, true))
+				nearby = append(nearby, BuildTeleportPadView(pad, e.TickCount, true))
 			}
 		}
 
@@ -1232,6 +1471,7 @@ func (e *GameEngine) sendBotTickUpdates() {
 			"sudden_death":  e.SuddenDeath.Active,
 			"bounty_target": e.Bounty.TargetID,
 			"nearby_mines":  nearbyMineCount,
+			"round_tick":    e.TickCount - e.Round.StartTick,
 		}
 
 		SendTickUpdate(bot, yourState, nearby, e.TickCount, e.Arena, hints, fogRadius, tickExtra)
@@ -1305,7 +1545,7 @@ func (e *GameEngine) sendSpectatorUpdate() {
 
 	// Add new gameplay entities to spectator state.
 	for _, pad := range e.TeleportPads {
-		state.TeleportPads = append(state.TeleportPads, BuildTeleportPadView(pad, false))
+		state.TeleportPads = append(state.TeleportPads, BuildTeleportPadView(pad, e.TickCount, false))
 	}
 	for _, zone := range e.HazardZones {
 		state.HazardZones = append(state.HazardZones, BuildHazardZoneView(zone, false))
@@ -1316,9 +1556,15 @@ func (e *GameEngine) sendSpectatorUpdate() {
 	for _, well := range e.GravityWells {
 		state.GravityWells = append(state.GravityWells, BuildGravityWellView(well, false))
 	}
+	for _, impact := range e.StaffImpacts {
+		state.StaffImpacts = append(state.StaffImpacts, BuildStaffImpactView(impact, false))
+	}
 	state.VoidTiles = e.SuddenDeath.GetAllVoidTiles()
 	state.SuddenDeath = e.SuddenDeath.Active
 	state.BountyTarget = e.Bounty.TargetID
+	if len(e.RecentEvents) > 0 {
+		state.Events = append(state.Events, e.RecentEvents...)
+	}
 
 	data, err := marshalJSON(state)
 	if err != nil {
@@ -1332,6 +1578,7 @@ func (e *GameEngine) sendSpectatorUpdate() {
 	e.spectatorsMu.RUnlock()
 
 	BroadcastToSpectators(specs, data)
+	e.RecentEvents = nil
 }
 
 // sendEventMessages delivers buffered death and kill events to the relevant
@@ -1971,17 +2218,20 @@ type BotStatsSnapshot struct {
 	BotID            string
 	APIKeyID         string
 	Elo              int
+	KillStreak       int
+	BestStreak       int
 	RoundKills       int
 	RoundDeaths      int
 	RoundDamageDealt float64
 	RoundDamageTaken float64
-	RoundDistance     float64
+	RoundDistance    float64
+	RoundLongestLife int
 	RoundPickups     int
 	PersistedKills       int
 	PersistedDeaths      int
 	PersistedDamageDealt float64
 	PersistedDamageTaken float64
-	PersistedDistance     float64
+	PersistedDistance    float64
 	PersistedPickups     int
 }
 
@@ -2019,17 +2269,20 @@ func (e *GameEngine) snapshotBotStats() []BotStatsSnapshot {
 			BotID:            bot.BotID,
 			APIKeyID:         bot.APIKeyID,
 			Elo:              bot.Elo,
+			KillStreak:       bot.KillStreak,
+			BestStreak:       bot.BestKillStreak,
 			RoundKills:       bot.RoundKills,
 			RoundDeaths:      bot.RoundDeaths,
 			RoundDamageDealt: bot.RoundDamageDealt,
 			RoundDamageTaken: bot.RoundDamageTaken,
-			RoundDistance:     bot.RoundDistance,
+			RoundDistance:    bot.RoundDistance,
+			RoundLongestLife: bot.RoundLongestLife,
 			RoundPickups:     bot.RoundPickups,
 			PersistedKills:       bot.PersistedKills,
 			PersistedDeaths:      bot.PersistedDeaths,
 			PersistedDamageDealt: bot.PersistedDamageDealt,
 			PersistedDamageTaken: bot.PersistedDamageTaken,
-			PersistedDistance:     bot.PersistedDistance,
+			PersistedDistance:    bot.PersistedDistance,
 			PersistedPickups:     bot.PersistedPickups,
 		})
 	}

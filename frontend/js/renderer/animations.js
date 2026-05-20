@@ -163,7 +163,8 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat) {
   if (anim.attackTimer >= 0) {
     anim.attackTimer += dt;
     const cfg = WEAPON_ANIMS[anim.attackType] || WEAPON_ANIMS.sword;
-    const progress = Math.min(anim.attackTimer / cfg.duration, 1);
+    const duration = anim.attackDuration > 0 ? anim.attackDuration : cfg.duration;
+    const progress = Math.min(anim.attackTimer / duration, 1);
 
     const windupEnd = cfg.windupPct;
     const activeEnd = windupEnd + cfg.activePct;
@@ -205,7 +206,7 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat) {
     body.rotation.x = anim.smoothRotX;
     body.position.y = anim.smoothY;
 
-    if (anim.attackTimer > cfg.duration) {
+    if (anim.attackTimer > duration) {
       anim.attackTimer = -1;
       anim.attackType = null;
       // Let smoothing handle return — no hard snap
@@ -240,18 +241,19 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat) {
  * @param {BotAnimState} anim
  * @param {string} [weapon='sword'] - weapon type name
  */
-export function triggerAttack(anim, weapon) {
+export function triggerAttack(anim, weapon, durationOverride) {
   if (anim.dodgeTimer >= 0) return; // dodge can't be interrupted by attack
   // If already attacking, only interrupt during recovery phase
   if (anim.attackTimer >= 0) {
     const curCfg = WEAPON_ANIMS[anim.attackType] || WEAPON_ANIMS.sword;
-    const progress = anim.attackTimer / curCfg.duration;
+    const activeDuration = anim.attackDuration > 0 ? anim.attackDuration : curCfg.duration;
+    const progress = anim.attackTimer / activeDuration;
     if (progress < curCfg.windupPct + curCfg.activePct) return; // in windup or active
   }
   const cfg = WEAPON_ANIMS[weapon] || WEAPON_ANIMS.sword;
   anim.attackTimer = 0;
   anim.attackType = weapon || 'sword';
-  anim.attackDuration = cfg.duration;
+  anim.attackDuration = Math.max(0.12, Number(durationOverride) || cfg.duration);
 }
 
 /**

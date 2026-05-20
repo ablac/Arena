@@ -150,28 +150,79 @@ function shield(id, scene) {
 
 function grapple(id, scene) {
   const root = new (B().TransformNode)(`wpn-${id}`, scene);
-  // Chain/rope handle
+  const steel = _mat('w-grapple-steel', scene, new (B().Color3)(0.72, 0.82, 0.9), {
+    emissiveFactor: 0.35, specular: new (B().Color3)(0.4, 0.45, 0.5)
+  });
+  const cord = _mat('w-grapple-cord', scene, new (B().Color3)(0.25, 0.55, 0.75), {
+    emissiveFactor: 0.5, noLight: true
+  });
+
+  // Handle
   const handle = B().MeshBuilder.CreateCylinder(`ghandle-${id}`, {
-    height: 8, diameter: 1.5, tessellation: 8
+    height: 7, diameter: 1.6, tessellation: 8
   }, scene);
-  handle.position.set(8, 2, 0);
-  handle.rotation.z = -0.4;
+  handle.position.set(7, 2, 0);
+  handle.rotation.z = -0.55;
   handle.parent = root;
   handle.material = _mat('w-grapple-handle', scene, new (B().Color3)(0.4, 0.4, 0.45), {
     emissiveFactor: 0.3
   });
 
-  // Hook
-  const hook = B().MeshBuilder.CreateTorus(`ghook-${id}`, {
-    diameter: 5, thickness: 1.2, tessellation: 8
+  const cable = B().MeshBuilder.CreateTube(`gcable-${id}`, {
+    path: [
+      new (B().Vector3)(7.5, 5.0, 0),
+      new (B().Vector3)(10.2, 6.8, 0),
+      new (B().Vector3)(12.4, 8.4, 0)
+    ],
+    radius: 0.35,
+    tessellation: 8
   }, scene);
-  hook.position.set(10, 8, 0);
-  hook.parent = root;
-  hook.material = _mat('w-grapple-hook', scene, new (B().Color3)(0.2, 0.8, 0.4), {
-    emissiveFactor: 0.7, noLight: true
+  cable.parent = root;
+  cable.material = cord;
+
+  const hub = B().MeshBuilder.CreateSphere(`ghub-${id}`, {
+    diameter: 1.8, segments: 8
+  }, scene);
+  hub.position.set(12.7, 8.6, 0);
+  hub.parent = root;
+  hub.material = steel;
+
+  const clawA = B().MeshBuilder.CreateCylinder(`gclaw-a-${id}`, {
+    height: 5.2, diameterTop: 0.4, diameterBottom: 1.0, tessellation: 6
+  }, scene);
+  clawA.position.set(14.2, 10.0, -0.9);
+  clawA.rotation.z = -0.8;
+  clawA.rotation.x = 0.3;
+  clawA.parent = root;
+  clawA.material = steel;
+
+  const clawB = B().MeshBuilder.CreateCylinder(`gclaw-b-${id}`, {
+    height: 5.2, diameterTop: 0.4, diameterBottom: 1.0, tessellation: 6
+  }, scene);
+  clawB.position.set(14.2, 10.0, 0.9);
+  clawB.rotation.z = -0.8;
+  clawB.rotation.x = -0.3;
+  clawB.parent = root;
+  clawB.material = steel;
+
+  const clawC = B().MeshBuilder.CreateCylinder(`gclaw-c-${id}`, {
+    height: 4.6, diameterTop: 0.35, diameterBottom: 0.9, tessellation: 6
+  }, scene);
+  clawC.position.set(14.7, 8.0, 0);
+  clawC.rotation.z = -1.2;
+  clawC.parent = root;
+  clawC.material = steel;
+
+  const glow = B().MeshBuilder.CreateSphere(`gglow-${id}`, {
+    diameter: 1.4, segments: 6
+  }, scene);
+  glow.position.set(12.7, 8.6, 0);
+  glow.parent = root;
+  glow.material = _mat('w-grapple-glow', scene, new (B().Color3)(0.2, 0.9, 1.0), {
+    emissiveFactor: 0.9, noLight: true
   });
 
-  root._children = [handle, hook];
+  root._children = [handle, cable, hub, clawA, clawB, clawC, glow];
   return root;
 }
 

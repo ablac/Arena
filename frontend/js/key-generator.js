@@ -16,14 +16,14 @@ export function initKeyGenerator(container) {
 
   btn.addEventListener('click', async () => {
     btn.disabled = true;
-    btn.textContent = 'Generating...';
+    btn.textContent = 'Generating key...';
     try {
       const data = await generateKey();
       showKey(resultDiv, data);
-      btn.textContent = 'Generate Another Key';
+      btn.textContent = 'Generate another key';
     } catch (err) {
-      resultDiv.innerHTML = `<p style="color:var(--accent-red)">Error: ${escapeHtml(err.message)}</p>`;
-      btn.textContent = 'Generate Key';
+      resultDiv.innerHTML = `<p class="keygen-error">Error: ${escapeHtml(err.message)}</p>`;
+      btn.textContent = 'Generate API key';
     }
     btn.disabled = false;
   });
@@ -51,17 +51,18 @@ async function generateKey() {
 function showKey(container, data) {
   container.innerHTML = `
     <div class="keygen-success">
-      <div class="copy-field">
-        <input type="text" value="${escapeAttr(data.api_key)}" readonly id="key-display">
-        <button onclick="document.getElementById('key-display').select();document.execCommand('copy');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',2000)">Copy</button>
+      <div class="keygen-result-header">
+        <span class="keygen-badge">Credential ready</span>
       </div>
-      <p class="keygen-warning">Save this key! It cannot be recovered.</p>
-      <p style="margin-top:12px;font-size:0.9rem">
-        Bot ID: <code style="color:var(--accent-blue)">${escapeHtml(data.bot_id)}</code>
-      </p>
-      <p style="margin-top:8px;font-size:0.9rem">
-        <a href="#getting-started" style="color:var(--accent-blue)">Now configure your bot &rarr;</a>
-      </p>
+      <div class="copy-field keygen-copy-field">
+        <input type="text" value="${escapeAttr(data.api_key)}" readonly id="key-display">
+        <button onclick="document.getElementById('key-display').select();document.execCommand('copy');this.textContent='Copied';setTimeout(()=>this.textContent='Copy',2000)">Copy</button>
+      </div>
+      <div class="keygen-meta">
+        <p class="keygen-warning">Store this key now. It cannot be recovered later.</p>
+        <p class="keygen-bot-id">Bot ID: <code>${escapeHtml(data.bot_id)}</code></p>
+      </div>
+      <a class="keygen-next-link" href="#onboarding-setup">Continue to bot configuration</a>
     </div>`;
 }
 

@@ -31,10 +31,10 @@ func main() {
 	}
 	defer db.Close()
 
-	// Ensure time-based leaderboard table.
+	// Ensure the database schema for persistence-backed features.
 	if db.Pool != nil {
-		if err := db.EnsureRoundBotStatsTable(ctx); err != nil {
-			slog.Warn("failed to ensure round_bot_stats table", "error", err)
+		if err := db.EnsureCoreSchema(ctx); err != nil {
+			slog.Warn("failed to ensure database schema", "error", err)
 		}
 	}
 
@@ -45,9 +45,31 @@ func main() {
 
 	// Initialise grid-based weapon ranges from config cell size.
 	game.InitWeaponRanges(config.C.PathfindingCellSize)
+	if err := game.LoadWeaponBalance(ctx); err != nil {
+		slog.Warn("failed to load weapon balance state", "error", err)
+	}
 
 	// Create and start the game engine.
 	engine := game.NewGameEngine()
+	if db.Pool != nil {
+		if entries, err := db.ListBountyBoardEntries(ctx); err != nil {
+			slog.Warn("failed to load bounty board state", "error", err)
+		} else if len(entries) > 0 {
+			engine.RestoreBountyBoard(entries)
+			slog.Info("restored bounty board state", "entries", len(entries))
+		} else if seed, err := db.GetLatestWinnerBountySeed(
+			ctx,
+			config.C.BountyWinStreakThreshold,
+			config.C.BountyBoardBasePoints,
+			config.C.BountyBoardStepPoints,
+			config.C.BountyBoardMaxPoints,
+		); err != nil {
+			slog.Warn("failed to seed bounty board from recent rounds", "error", err)
+		} else if seed != nil {
+			engine.RestoreBountyBoard([]db.BountyBoardEntry{*seed})
+			slog.Info("seeded bounty board from recent winners", "bot", seed.Name, "streak", seed.WinStreak)
+		}
+	}
 	go engine.Run(ctx)
 
 	// Demo bots: create manager before router so admin endpoints can reference it.
@@ -124,15 +146,15 @@ func demoBotEnabled() bool {
 }
 
 // demoBotCount returns the number of demo bots to spawn from the
-// ARENA_DEMO_BOT_COUNT env var. Defaults to 15.
+// ARENA_DEMO_BOT_COUNT env var. Defaults to the built-in roster size.
 func demoBotCount() int {
 	v := os.Getenv("ARENA_DEMO_BOT_COUNT")
 	if v == "" {
-		return 15
+		return len(demobots.DemoConfigs)
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 0 {
-		return 15
+		return len(demobots.DemoConfigs)
 	}
 	return n
 }

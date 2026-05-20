@@ -185,6 +185,8 @@ type BotState struct {
 	CooldownRemaining float64
 	IsAlive          bool
 	KillStreak       int
+	BestKillStreak   int
+	RoundWinStreak   int
 	ActiveEffects    []Effect
 
 	// AI
@@ -323,6 +325,21 @@ type RoundEndInfo struct {
 	Awards      map[string]string // award_name -> bot_name
 }
 
+// ArenaEvent is a short-lived spectator event used for high-signal visual
+// feedback such as teleports and mine detonations.
+type ArenaEvent struct {
+	ID           string  `json:"id"`
+	Type         string  `json:"type"`
+	Tick         int     `json:"tick"`
+	Position     Vec2    `json:"position"`
+	FromPosition *Vec2   `json:"from_position,omitempty"`
+	ToPosition   *Vec2   `json:"to_position,omitempty"`
+	OwnerID      string  `json:"owner_id,omitempty"`
+	TargetID     string  `json:"target_id,omitempty"`
+	Color        string  `json:"color,omitempty"`
+	Radius       float64 `json:"radius,omitempty"`
+}
+
 // SpectatorState is the serialized arena state for spectators.
 type SpectatorState struct {
 	Type         string                   `json:"type"`
@@ -338,9 +355,11 @@ type SpectatorState struct {
 	HazardZones  []map[string]interface{} `json:"hazard_zones,omitempty"`
 	Landmines    []map[string]interface{} `json:"landmines,omitempty"`
 	GravityWells []map[string]interface{} `json:"gravity_wells,omitempty"`
+	StaffImpacts []map[string]interface{} `json:"staff_impacts,omitempty"`
 	VoidTiles    [][2]int                 `json:"void_tiles,omitempty"`
 	SuddenDeath  bool                     `json:"sudden_death"`
 	BountyTarget string                   `json:"bounty_target,omitempty"`
+	Events       []ArenaEvent             `json:"events,omitempty"`
 }
 
 // DerivedStats are computed from stat allocations.
@@ -387,6 +406,7 @@ func (b *BotState) ResetRoundStats() {
 	b.RoundLongestLife = 0
 	b.RoundPickups = 0
 	b.RoundLifeStartTick = 0
+	b.BestKillStreak = 0
 	// Reset persistence snapshots so deltas start fresh
 	b.PersistedKills = 0
 	b.PersistedDeaths = 0

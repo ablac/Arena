@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ var WSMessageHook func(botID, botName, action string, data map[string]interface{
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 65536,
+	EnableCompression: true,
 	CheckOrigin: func(r *http.Request) bool {
 		return true // allow all origins for now
 	},
@@ -39,6 +41,7 @@ var upgrader = websocket.Upgrader{
 func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ip := security.ExtractClientIP(r)
+		remoteAddr := r.RemoteAddr
 
 		// Check IP ban.
 		if engine.IsIPBanned(ip) {
@@ -55,9 +58,19 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		}
 
 		// Per-IP WebSocket connection rate limiting (skip for localhost/demo bots).
+		// Authenticated reconnects get a roomier bucket so multiple real users
+		// behind the same NAT do not trip the anonymous connection cap.
 		isLocal := ip == "::1" || ip == "127.0.0.1" || ip == "localhost"
 		if config.C.WSConnectRatePerMin > 0 && !isLocal {
-			allowed, count, _, err := security.CheckRateLimit(r.Context(), "ws:bot:"+ip, config.C.WSConnectRatePerMin, 60)
+			presentedKey := presentedAPIKey(r)
+			limitKey := "ws:bot:anon:" + ip
+			limit := config.C.WSConnectRatePerMin
+			if presentedKey != "" {
+				limitKey = "ws:bot:auth:" + ip
+				limit = max(limit*5, 12)
+			}
+
+			allowed, count, _, err := security.CheckRateLimit(r.Context(), limitKey, limit, 60)
 			if err != nil {
 				slog.Warn("ws rate limit check error, allowing", "error", err, "ip", ip)
 			} else if !allowed {
@@ -65,11 +78,11 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 				w.Header().Set("Retry-After", "60")
 				w.WriteHeader(http.StatusTooManyRequests)
 				json.NewEncoder(w).Encode(map[string]interface{}{
-					"error":       "too many connections",
-					"code":        "WS_RATE_LIMITED",
+					"error": "too many connections",
+					"code":  "WS_RATE_LIMITED",
 					"details": map[string]interface{}{
 						"current_count": count,
-						"limit":         config.C.WSConnectRatePerMin,
+						"limit":         limit,
 						"retry_after":   60,
 						"window":        "60s",
 					},
@@ -81,9 +94,27 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			}
 		}
 
+		// If the client already presented a key in the HTTP upgrade request,
+		// validate it before upgrading so invalid keys fail as plain HTTP 401s
+		// instead of noisy websocket auth errors.
+		if presentedKey := presentedAPIKey(r); presentedKey != "" {
+			if _, err := security.VerifyAPIKey(r.Context(), presentedKey); err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": classifyAPIKeyError(err.Error()),
+					"code":  "INVALID_API_KEY",
+				})
+				if EventHook != nil {
+					EventHook("auth_failed", "", "", ip, "", err.Error())
+				}
+				return
+			}
+		}
+
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			slog.Error("websocket upgrade failed", "error", err, "remote", r.RemoteAddr)
+			slog.Error("websocket upgrade failed", "error", err, "client_ip", ip, "remote", remoteAddr)
 			if EventHook != nil {
 				EventHook("ws_upgrade_failed", "", "", ip, "", err.Error())
 			}
@@ -105,7 +136,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// ----------------------------------------------------------------
 		botRecord, err := authenticateBot(r, conn, cfg)
 		if err != nil {
-			slog.Warn("bot auth failed", "error", err, "remote", r.RemoteAddr)
+			slog.Warn("bot auth failed", "error", err, "client_ip", ip, "remote", remoteAddr)
 			sendWSErrorStructured(conn, err.Error(), "AUTH_FAILED", map[string]interface{}{
 				"ip": ip,
 			})
@@ -117,7 +148,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 
 		// Check if the bot's API key is banned.
 		if engine.IsKeyBanned(botRecord.APIKeyID) {
-			slog.Warn("banned bot attempted reconnection", "bot", botRecord.Name, "remote", r.RemoteAddr)
+			slog.Warn("banned bot attempted reconnection", "bot", botRecord.Name, "client_ip", ip, "remote", remoteAddr)
 			sendWSErrorStructured(conn, "your API key has been banned", "KEY_BANNED", map[string]interface{}{
 				"api_key_id": botRecord.APIKeyID,
 			})
@@ -210,7 +241,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// 6. Register with engine
 		// ----------------------------------------------------------------
 		if !engine.AddBot(bot) {
-			slog.Warn("bot rejected: server at capacity", "bot", bot.Name, "remote", r.RemoteAddr)
+			slog.Warn("bot rejected: server at capacity", "bot", bot.Name, "client_ip", ip, "remote", remoteAddr)
 			sendWSErrorStructured(conn, "server at capacity", "SERVER_FULL", map[string]interface{}{
 				"max_bots": config.C.MaxBots,
 			})
@@ -247,7 +278,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// 8. Cleanup on disconnect
 		// ----------------------------------------------------------------
 		cancel()
-		engine.RemoveBot(bot.BotID)
+		engine.RemoveBot(bot.BotID, bot)
 		close(bot.SendChan)
 
 		wg.Wait()
@@ -265,12 +296,7 @@ func authenticateBot(r *http.Request, conn *websocket.Conn, cfg *config.Config) 
 	ctx := r.Context()
 
 	// Try query parameter first.
-	apiKey := r.URL.Query().Get("key")
-
-	// Try X-Arena-Key header.
-	if apiKey == "" {
-		apiKey = r.Header.Get("X-Arena-Key")
-	}
+	apiKey := presentedAPIKey(r)
 
 	// Fall back to reading an auth message from the WebSocket.
 	if apiKey == "" {
@@ -302,6 +328,44 @@ func authenticateBot(r *http.Request, conn *websocket.Conn, cfg *config.Config) 
 	}
 
 	return bot, nil
+}
+
+func presentedAPIKey(r *http.Request) string {
+	if apiKey := r.URL.Query().Get("key"); apiKey != "" {
+		return apiKey
+	}
+	return r.Header.Get("X-Arena-Key")
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func classifyAPIKeyError(errMsg string) string {
+	switch {
+	case errMsg == "":
+		return "invalid API key"
+	case containsAny(errMsg, "too short"):
+		return "API key is too short"
+	case containsAny(errMsg, "not found"):
+		return "API key not found"
+	case containsAny(errMsg, "no bot associated"):
+		return "no bot associated with this API key"
+	default:
+		return "invalid API key"
+	}
+}
+
+func containsAny(s string, patterns ...string) bool {
+	for _, pattern := range patterns {
+		if pattern != "" && strings.Contains(s, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleLoadoutPhase reads a loadout selection from the bot, validates it,
