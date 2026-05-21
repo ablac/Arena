@@ -446,6 +446,8 @@ body.arena-fullscreen {
   padding: 14px;
   height: 100%;
   overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 
 .arena-tab-panel.active { display: block; }
@@ -913,10 +915,16 @@ body.arena-fullscreen {
 
 .leaderboard-tabs {
   display: flex;
+  flex-wrap: nowrap;
   gap: 0;
   margin-bottom: 16px;
+  padding: 0 4px 6px;
   border-bottom: 1px solid rgba(126, 166, 207, 0.14);
+  border-radius: 16px;
+  background: rgba(6, 11, 18, 0.28);
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
 }
 
 .leaderboard-podium {
@@ -1029,10 +1037,19 @@ body.arena-fullscreen {
 
 .leaderboard-scroll {
   max-height: 480px;
-  overflow-y: auto;
+  overflow: hidden;
   border-radius: 20px;
   border: 1px solid rgba(126, 166, 207, 0.08);
   background: rgba(6, 11, 18, 0.42);
+}
+
+.leaderboard-scroll-inner {
+  max-height: inherit;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 
 .leaderboard-table {
@@ -1066,9 +1083,79 @@ body.arena-fullscreen {
 }
 
 .leaderboard-table tr:hover { background: rgba(71, 215, 255, 0.03); }
-.leaderboard-widget-overlay .leaderboard-panels { min-height: clamp(520px, 66vh, 900px); }
-.leaderboard-widget-overlay .leaderboard-scroll { max-height: clamp(360px, 46vh, 620px); }
+.leaderboard-widget-overlay {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.leaderboard-widget-overlay .leaderboard-panels {
+  min-height: clamp(560px, 70vh, 940px);
+  height: 100%;
+  flex: 1;
+}
+
+.leaderboard-widget-overlay .leaderboard-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.leaderboard-widget-overlay .leaderboard-scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
 .leaderboard-widget-overlay .leaderboard-podium { margin-top: 4px; }
+#standings-boards .leaderboard-panel[data-board="leaderboard"] {
+  gap: 12px;
+}
+
+#standings-boards .leaderboard-panel[data-board="leaderboard"] .leaderboard-podium {
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+#standings-boards .leaderboard-panel[data-board="leaderboard"] .podium-card {
+  padding: 12px 14px 11px;
+}
+
+#standings-boards .leaderboard-panel[data-board="leaderboard"] .podium-rank {
+  margin-bottom: 8px;
+}
+
+#standings-boards .leaderboard-panel[data-board="leaderboard"] .podium-name-row {
+  margin-bottom: 10px;
+}
+
+#standings-boards .leaderboard-panel[data-board="leaderboard"] .podium-metric {
+  margin-bottom: 8px;
+}
+
+#standings-boards .leaderboard-panel[data-board="leaderboard"] .podium-metric-value {
+  font-size: 1.22rem;
+}
+
+#standings-boards .leaderboard-panel[data-board="leaderboard"] .podium-substats {
+  gap: 8px;
+  font-size: 0.76rem;
+}
+
+#standings-boards .leaderboard-panel[data-board="leaderboard"] .leaderboard-tabs {
+  margin-bottom: 12px;
+}
+
+#standings-boards .leaderboard-panel[data-board="leaderboard"] .leaderboard-tabs button {
+  padding: 8px 16px;
+}
+
+#standings-boards .leaderboard-panel[data-board="leaderboard"] .leaderboard-table th,
+#standings-boards .leaderboard-panel[data-board="leaderboard"] .leaderboard-table td {
+  padding: 10px 12px;
+}
 .rank-1 td:first-child { color: var(--accent-gold); font-weight: 700; }
 .rank-2 td:first-child { color: #d7dde6; font-weight: 700; }
 .rank-3 td:first-child { color: #ffb57a; font-weight: 700; }
@@ -1174,11 +1261,16 @@ body.arena-fullscreen {
 }
 
 .weapon-stat-value {
+  display: inline-grid;
+  gap: 3px;
+  position: relative;
+}
+
+.weapon-stat-primary {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   white-space: nowrap;
-  position: relative;
 }
 
 .weapon-stat-main {
@@ -1194,6 +1286,13 @@ body.arena-fullscreen {
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 0.72rem;
+}
+
+.weapon-stat-base {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  line-height: 1.1;
 }
 
 .weapon-stat-value.buffed .weapon-stat-trend {
@@ -1606,6 +1705,8 @@ pre.code-block {
   border-radius: 18px;
   padding: 16px;
   overflow: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
   max-height: 400px;
   font-family: var(--font-mono);
   font-size: 0.8rem;

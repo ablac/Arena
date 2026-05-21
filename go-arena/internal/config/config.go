@@ -66,7 +66,7 @@ type Config struct {
 	ProjectileMaxAgeSecs float64 `envconfig:"ARENA_PROJECTILE_MAX_AGE_SECS" default:"1.0"`
 
 	// Staff
-	StaffDelayTicks    int `envconfig:"ARENA_STAFF_DELAY_TICKS" default:"4"`
+	StaffDelayTicks    int `envconfig:"ARENA_STAFF_DELAY_TICKS" default:"3"`
 	StunDurationTicks  int `envconfig:"ARENA_STUN_DURATION_TICKS" default:"1"`
 
 	// Universal Grapple Ability

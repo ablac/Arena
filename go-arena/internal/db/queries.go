@@ -182,6 +182,8 @@ func EnsureRoundBotStatsTable(ctx context.Context) error {
 			damage_dealt BIGINT NOT NULL DEFAULT 0,
 			damage_taken BIGINT NOT NULL DEFAULT 0,
 			longest_life_secs INT NOT NULL DEFAULT 0,
+			shots_fired INT NOT NULL DEFAULT 0,
+			shots_hit INT NOT NULL DEFAULT 0,
 			pickups INT NOT NULL DEFAULT 0,
 			distance DOUBLE PRECISION NOT NULL DEFAULT 0,
 			elo INT NOT NULL DEFAULT 1000,
@@ -193,6 +195,8 @@ func EnsureRoundBotStatsTable(ctx context.Context) error {
 	}
 	Pool.Exec(ctx, `ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS weapon TEXT NOT NULL DEFAULT ''`)
 	Pool.Exec(ctx, `ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS longest_life_secs INT NOT NULL DEFAULT 0`)
+	Pool.Exec(ctx, `ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS shots_fired INT NOT NULL DEFAULT 0`)
+	Pool.Exec(ctx, `ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS shots_hit INT NOT NULL DEFAULT 0`)
 	Pool.Exec(ctx, `UPDATE round_bot_stats AS r
 		SET weapon = b.default_weapon
 		FROM bots AS b
@@ -208,11 +212,11 @@ func EnsureRoundBotStatsTable(ctx context.Context) error {
 }
 
 func InsertRoundBotStats(ctx context.Context, roundNumber int, botID, botName, weapon string,
-	kills, deaths int, dmgDealt, dmgTaken int64, longestLife, pickups int, distance float64, elo int, won bool) error {
+	kills, deaths int, dmgDealt, dmgTaken int64, longestLife, shotsFired, shotsHit, pickups int, distance float64, elo int, won bool) error {
 	_, err := Pool.Exec(ctx,
-		`INSERT INTO round_bot_stats (round_number, bot_id, bot_name, weapon, kills, deaths, damage_dealt, damage_taken, longest_life_secs, pickups, distance, elo, won)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		roundNumber, botID, botName, weapon, kills, deaths, dmgDealt, dmgTaken, longestLife, pickups, distance, elo, won)
+		`INSERT INTO round_bot_stats (round_number, bot_id, bot_name, weapon, kills, deaths, damage_dealt, damage_taken, longest_life_secs, shots_fired, shots_hit, pickups, distance, elo, won)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		roundNumber, botID, botName, weapon, kills, deaths, dmgDealt, dmgTaken, longestLife, shotsFired, shotsHit, pickups, distance, elo, won)
 	return err
 }
 
@@ -235,7 +239,37 @@ func ListRecentWeaponPerformance(ctx context.Context, roundLimit int) ([]WeaponR
 				(damage_dealt * 0.12)::DOUBLE PRECISION +
 				(longest_life_secs * 0.35)::DOUBLE PRECISION +
 				(CASE WHEN won THEN 60 ELSE 0 END)::DOUBLE PRECISION
-			) AS avg_score
+			) AS avg_score,
+			AVG(kills)::DOUBLE PRECISION AS avg_kills,
+			AVG(damage_dealt)::DOUBLE PRECISION AS avg_damage,
+			AVG(longest_life_secs)::DOUBLE PRECISION AS avg_life_secs,
+			COALESCE(SUM(shots_fired), 0)::INT AS shots_fired,
+			COALESCE(SUM(shots_hit), 0)::INT AS shots_hit,
+			CASE
+				WHEN COALESCE(SUM(shots_fired), 0) > 0
+				THEN COALESCE(SUM(shots_hit), 0)::DOUBLE PRECISION / SUM(shots_fired)
+				ELSE 0
+			END AS hit_rate,
+			CASE
+				WHEN COALESCE(SUM(shots_fired), 0) > 0
+				THEN COALESCE(SUM(damage_dealt), 0)::DOUBLE PRECISION / SUM(shots_fired)
+				ELSE 0
+			END AS damage_per_shot,
+			CASE
+				WHEN COALESCE(SUM(shots_hit), 0) > 0
+				THEN COALESCE(SUM(damage_dealt), 0)::DOUBLE PRECISION / SUM(shots_hit)
+				ELSE 0
+			END AS damage_per_hit,
+			CASE
+				WHEN COALESCE(SUM(longest_life_secs), 0) > 0
+				THEN COALESCE(SUM(shots_fired), 0)::DOUBLE PRECISION / SUM(longest_life_secs)
+				ELSE 0
+			END AS shots_per_life,
+			CASE
+				WHEN COALESCE(SUM(shots_hit), 0) > 0
+				THEN COALESCE(SUM(kills), 0)::DOUBLE PRECISION / SUM(shots_hit)
+				ELSE 0
+			END AS kills_per_hit
 		FROM round_bot_stats
 		WHERE DATE_TRUNC('second', created_at) IN (SELECT round_at FROM recent_rounds)
 		  AND weapon <> ''
@@ -250,7 +284,23 @@ func ListRecentWeaponPerformance(ctx context.Context, roundLimit int) ([]WeaponR
 	var items []WeaponRecentPerformance
 	for rows.Next() {
 		var item WeaponRecentPerformance
-		if err := rows.Scan(&item.Weapon, &item.Bots, &item.Wins, &item.Rounds, &item.AvgScore); err != nil {
+		if err := rows.Scan(
+			&item.Weapon,
+			&item.Bots,
+			&item.Wins,
+			&item.Rounds,
+			&item.AvgScore,
+			&item.AvgKills,
+			&item.AvgDamage,
+			&item.AvgLifeSecs,
+			&item.ShotsFired,
+			&item.ShotsHit,
+			&item.HitRate,
+			&item.DamagePerShot,
+			&item.DamagePerHit,
+			&item.ShotsPerLife,
+			&item.KillsPerHit,
+		); err != nil {
 			return nil, fmt.Errorf("ListRecentWeaponPerformance scan: %w", err)
 		}
 		items = append(items, item)

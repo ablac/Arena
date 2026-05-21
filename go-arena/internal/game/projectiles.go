@@ -70,7 +70,11 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 		// 4. Check bot hits using a swept segment so fast projectiles can still
 		// connect without landing in the exact same grid cell.
 		hit := false
-		hitRadius := config.C.BotRadius + config.C.ProjectileHitRadius
+		projectileHitRadius := proj.HitRadius
+		if projectileHitRadius <= 0 {
+			projectileHitRadius = config.C.ProjectileHitRadius
+		}
+		hitRadius := config.C.BotRadius + projectileHitRadius
 
 		for _, bot := range bots {
 			if !bot.IsAlive || bot.BotID == proj.OwnerID {

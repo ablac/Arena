@@ -8,7 +8,7 @@
 import { ArenaEngine } from './renderer/engine.js';
 import { HudRenderer } from './renderer/hud.js';
 import { SpectatorSocket } from './spectator-ws.js';
-import { initLeaderboardWidget } from './leaderboard.js';
+import { initLeaderboardWidget } from './leaderboard.js?v=20260520ar';
 import { initKeyGenerator } from './key-generator.js';
 
 const ARENA_WIDTH = 2000;
@@ -17,6 +17,7 @@ const ARENA_HEIGHT = 2000;
 /** Boot the application when DOM is ready. */
 document.addEventListener('DOMContentLoaded', async () => {
   mountOverlaySections();
+  normalizeOnboardingScrollShells();
   setupRevealAnimations();
   setupOverlays();
 
@@ -381,6 +382,67 @@ function mountOverlaySections() {
   document.body.classList.add('overlay-content-mounted');
 }
 
+function normalizeOnboardingScrollShells() {
+  const root = document.getElementById('onboarding-overlay');
+  if (!root) return;
+
+  root.querySelectorAll('pre.code-block').forEach((block) => {
+    if (block.closest('.drawer-code-scroll-shell')) return;
+    const shell = document.createElement('div');
+    shell.className = 'drawer-code-scroll-shell';
+    const inner = document.createElement('div');
+    inner.className = 'drawer-code-scroll-inner';
+    block.parentNode.insertBefore(shell, block);
+    shell.appendChild(inner);
+    inner.appendChild(block);
+    bindNestedWheel(shell, inner);
+  });
+
+  root.querySelectorAll('.api-table').forEach((table) => {
+    if (table.closest('.drawer-table-scroll-shell')) return;
+    const shell = document.createElement('div');
+    shell.className = 'drawer-table-scroll-shell';
+    const inner = document.createElement('div');
+    inner.className = 'drawer-table-scroll-inner';
+    table.parentNode.insertBefore(shell, table);
+    shell.appendChild(inner);
+    inner.appendChild(table);
+    bindNestedWheel(shell, inner);
+  });
+}
+
+function bindNestedWheel(shell, inner) {
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+  shell.addEventListener('wheel', (event) => {
+    const maxTop = Math.max(0, inner.scrollHeight - inner.clientHeight);
+    const maxLeft = Math.max(0, inner.scrollWidth - inner.clientWidth);
+    const canScrollY = maxTop > 0;
+    const canScrollX = maxLeft > 0;
+    let consumed = false;
+
+    if (canScrollY && Math.abs(event.deltaY) >= Math.abs(event.deltaX)) {
+      const nextTop = clamp(inner.scrollTop + event.deltaY, 0, maxTop);
+      if (nextTop !== inner.scrollTop) {
+        inner.scrollTop = nextTop;
+        consumed = true;
+      }
+    } else if (canScrollX) {
+      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+      const nextLeft = clamp(inner.scrollLeft + delta, 0, maxLeft);
+      if (nextLeft !== inner.scrollLeft) {
+        inner.scrollLeft = nextLeft;
+        consumed = true;
+      }
+    }
+
+    if (consumed) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, { passive: false });
+}
+
 function initLeaderboardWidgets() {
   const widgets = [
     {
@@ -408,24 +470,65 @@ function initLeaderboardWidgets() {
 
 function setupOverlays() {
   const onboardingOverlay = document.getElementById('onboarding-overlay');
+  const backdrop = document.getElementById('overlay-backdrop');
   const autoTrigger = document.querySelector('.arena-controls') || document.getElementById('arena');
   const openButtons = Array.from(document.querySelectorAll('[data-overlay-open]'));
   const closeButtons = Array.from(document.querySelectorAll('[data-close-overlay]'));
+  const overlays = Array.from(document.querySelectorAll('.onboarding-overlay'));
   let autoOpened = false;
+  const openStack = [];
+
+  const syncOverlayState = () => {
+    const openEntries = openStack
+      .map((id) => document.getElementById(id))
+      .filter((overlay) => overlay && overlay.classList.contains('open'));
+
+    const leftOpen = [];
+    const rightOpen = [];
+
+    openEntries.forEach((overlay, index) => {
+      overlay.classList.remove('overlay-primary', 'overlay-secondary');
+      overlay.style.zIndex = `${80 + index}`;
+      const side = overlay.dataset.overlaySide === 'left' ? leftOpen : rightOpen;
+      side.push(overlay);
+    });
+
+    [leftOpen, rightOpen].forEach((group) => {
+      group.forEach((overlay, index) => {
+        overlay.classList.add(index === 0 ? 'overlay-primary' : 'overlay-secondary');
+      });
+    });
+
+    const hasOpenOverlays = openEntries.length > 0;
+    document.body.classList.toggle('onboarding-open', hasOpenOverlays);
+    backdrop?.classList.toggle('active', hasOpenOverlays);
+  };
+
+  const removeFromStack = (overlayId) => {
+    const idx = openStack.indexOf(overlayId);
+    if (idx >= 0) openStack.splice(idx, 1);
+  };
 
   const openOverlay = (overlayId, targetSelector) => {
     const overlay = document.getElementById(overlayId);
     const drawer = overlay?.querySelector('.onboarding-drawer');
     if (!overlay || !drawer) return;
 
-    document.querySelectorAll('.onboarding-overlay.open').forEach((openNode) => {
-      openNode.classList.remove('open');
-      openNode.setAttribute('aria-hidden', 'true');
-    });
+    if (overlay.classList.contains('open')) {
+      removeFromStack(overlayId);
+      openStack.push(overlayId);
+      syncOverlayState();
+    } else {
+      overlay.classList.add('open');
+      overlay.setAttribute('aria-hidden', 'false');
+      openStack.push(overlayId);
+      syncOverlayState();
+    }
 
-    overlay.classList.add('open');
-    overlay.setAttribute('aria-hidden', 'false');
-    document.body.classList.add('onboarding-open');
+    const lazyFrame = overlay.querySelector('iframe[data-src]');
+    if (lazyFrame && !lazyFrame.getAttribute('src')) {
+      lazyFrame.setAttribute('src', lazyFrame.dataset.src);
+    }
 
     if (!targetSelector) {
       drawer.scrollTo({ top: 0, behavior: 'smooth' });
@@ -445,16 +548,22 @@ function setupOverlays() {
   const closeOverlay = (overlayId) => {
     const overlay = document.getElementById(overlayId);
     if (!overlay) return;
-    overlay.classList.remove('open');
+    overlay.classList.remove('open', 'overlay-primary', 'overlay-secondary');
     overlay.setAttribute('aria-hidden', 'true');
-    if (!document.querySelector('.onboarding-overlay.open')) {
-      document.body.classList.remove('onboarding-open');
-    }
+    removeFromStack(overlayId);
+    syncOverlayState();
   };
 
   openButtons.forEach((button) => {
     button.addEventListener('click', (event) => {
       event.preventDefault();
+      if (!button.dataset.overlayTarget) {
+        const overlay = document.getElementById(button.dataset.overlayOpen);
+        if (overlay?.classList.contains('open')) {
+          closeOverlay(button.dataset.overlayOpen);
+          return;
+        }
+      }
       openOverlay(button.dataset.overlayOpen, button.dataset.overlayTarget);
     });
   });
@@ -463,7 +572,7 @@ function setupOverlays() {
     button.addEventListener('click', () => closeOverlay(button.dataset.closeOverlay));
   });
 
-  document.querySelectorAll('.onboarding-overlay').forEach((overlay) => {
+  overlays.forEach((overlay) => {
     overlay.addEventListener('click', (event) => {
       if (event.target === overlay || event.target.classList.contains('onboarding-scrim')) {
         closeOverlay(overlay.id);
@@ -473,7 +582,8 @@ function setupOverlays() {
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
-      document.querySelectorAll('.onboarding-overlay.open').forEach((overlay) => closeOverlay(overlay.id));
+      const topOverlayId = openStack[openStack.length - 1];
+      if (topOverlayId) closeOverlay(topOverlayId);
     }
   });
 

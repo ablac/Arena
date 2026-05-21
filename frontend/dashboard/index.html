@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bot Dashboard — AI Battle Arena</title>
+<title>Bot Dashboard - AI Battle Arena</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--border:#30363d;--text:#c9d1d9;--text2:#8b949e;--accent:#58a6ff;--green:#3fb950;--red:#f85149;--orange:#d29922;--purple:#bc8cff;--cyan:#39d353;--gold:#f0c040}
@@ -59,10 +59,71 @@ tr:hover td{background:var(--bg3)}
 .tip b{color:var(--accent)}
 .tip.warn{border-color:var(--orange)}.tip.warn b{color:var(--orange)}
 .tip.good{border-color:var(--green)}.tip.good b{color:var(--green)}
-.weapon-card{display:flex;gap:14px;align-items:flex-start;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:8px}
-.weapon-card .icon{font-size:26px;flex-shrink:0}
+.weapon-card{display:flex;gap:14px;align-items:flex-start;padding:14px;background:var(--bg);border:1px solid var(--border);border-radius:14px;margin-bottom:10px}
+.weapon-card .icon{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:58px;
+  height:58px;
+  padding:0 10px;
+  border-radius:18px;
+  border:1px solid rgba(126,166,207,.16);
+  background:linear-gradient(180deg,rgba(71,215,255,.12),rgba(255,255,255,.03));
+  color:#47d7ff;
+  font:600 11px/1 'IBM Plex Mono',monospace;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  flex-shrink:0;
+}
+.weapon-card .icon svg,
+.weapon-inline-icon svg{
+  display:block;
+}
+.weapon-inline-icon{
+  display:inline-flex;
+  vertical-align:middle;
+  margin-right:6px;
+  color:#47d7ff;
+}
 .weapon-card .wname{color:var(--orange);font-weight:bold;font-size:13px}
 .weapon-card .wprop{font-size:10px;color:var(--text2);margin-top:2px}
+.pill-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.pill{
+  display:inline-flex;
+  align-items:center;
+  padding:4px 9px;
+  border-radius:999px;
+  background:rgba(255,255,255,.04);
+  border:1px solid rgba(126,166,207,.12);
+  font:500 10px/1 'IBM Plex Mono',monospace;
+  color:#91a6bd;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.utility-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
+.utility-card{
+  background:var(--bg);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:14px;
+}
+.utility-card h3{
+  color:#ecf4ff;
+  font-size:13px;
+  margin:0 0 8px;
+}
+.utility-card .mono{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:10px;
+  color:var(--text2);
+}
+.utility-card ul{
+  margin:8px 0 0 18px;
+  color:#91a6bd;
+  font-size:11px;
+}
+.utility-card li{margin-bottom:4px}
 .config-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .config-field label{display:block;font-size:10px;color:var(--text2);margin-bottom:2px}
 .config-field input,.config-field select{width:100%}
@@ -74,12 +135,320 @@ tr:hover td{background:var(--bg3)}
 .compare-grid .better{color:var(--green);font-weight:bold}
 .compare-grid .worse{color:var(--red)}
 </style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+body{
+  font-family:'Space Grotesk',sans-serif;
+  background:
+    radial-gradient(circle at 12% 18%,rgba(71,215,255,.16),transparent 0 28%),
+    radial-gradient(circle at 84% 14%,rgba(255,138,61,.16),transparent 0 24%),
+    radial-gradient(circle at 50% 100%,rgba(255,206,84,.08),transparent 0 28%),
+    linear-gradient(180deg,#07111b 0%,#08131d 35%,#05080f 100%);
+  color:#ecf4ff;
+  line-height:1.6;
+  overflow-x:hidden;
+}
+body::before,body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:-1}
+body::before{
+  background:
+    linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);
+  background-size:118px 118px;
+  mask-image:linear-gradient(180deg,rgba(0,0,0,.46),rgba(0,0,0,0));
+  opacity:.32;
+}
+body::after{background:radial-gradient(circle at center,transparent 42%,rgba(0,0,0,.34) 100%)}
+a{color:#47d7ff}
+a:hover{text-decoration:underline}
+button,input,select{font-family:'IBM Plex Mono',monospace}
+button{
+  border-color:rgba(126,166,207,.18);
+  background:rgba(255,255,255,.04);
+  color:#ecf4ff;
+  border-radius:999px;
+  transition:transform .2s ease,border-color .2s ease,background .2s ease,color .2s ease,box-shadow .2s ease;
+}
+button:hover{
+  background:rgba(71,215,255,.1);
+  color:#fff;
+  border-color:rgba(71,215,255,.32);
+  box-shadow:0 10px 24px rgba(71,215,255,.14);
+  transform:translateY(-1px);
+}
+button.active{background:rgba(71,215,255,.16);border-color:rgba(71,215,255,.34)}
+button.sm{padding:5px 11px;font-size:10px;letter-spacing:.04em;text-transform:uppercase}
+button.danger{border-color:rgba(255,123,114,.36);color:#ff7b72}
+button.danger:hover{background:rgba(255,123,114,.14);border-color:rgba(255,123,114,.46)}
+input,select{
+  background:rgba(6,12,20,.9);
+  color:#ecf4ff;
+  border:1px solid rgba(126,166,207,.18);
+  padding:8px 12px;
+  border-radius:14px;
+}
+input:focus,select:focus{border-color:rgba(71,215,255,.3);box-shadow:0 0 0 3px rgba(71,215,255,.08)}
+#login{
+  min-height:100vh;
+  padding:32px 18px;
+  position:relative;
+}
+#login::before{
+  content:'';
+  position:absolute;
+  inset:auto 10% 14% auto;
+  width:240px;
+  height:240px;
+  border-radius:999px;
+  background:rgba(71,215,255,.12);
+  filter:blur(72px);
+  pointer-events:none;
+}
+#login h1{
+  color:#ecf4ff;
+  font-size:clamp(2rem,5vw,3.2rem);
+  line-height:.94;
+  letter-spacing:-.06em;
+}
+#login p{color:#91a6bd;font-size:13px;max-width:460px}
+#login input{width:min(420px,100%);padding:12px 14px}
+#login button{
+  padding:12px 28px;
+  background:linear-gradient(135deg,#ffd571,#ffb54e);
+  border-color:rgba(255,213,113,.4);
+  color:#20160a;
+  font-weight:700;
+}
+#login button:hover{
+  background:linear-gradient(135deg,#ffe08a,#ffc560);
+  box-shadow:0 16px 34px rgba(255,181,78,.2);
+}
+#login .saved-keys{max-width:460px}
+#login .saved-key{
+  gap:10px;
+  padding:10px 12px;
+  background:linear-gradient(180deg,rgba(14,25,38,.92),rgba(9,16,25,.82));
+  border:1px solid rgba(126,166,207,.18);
+  border-radius:16px;
+  margin-bottom:8px;
+  box-shadow:0 18px 42px rgba(0,0,0,.28);
+}
+#login .saved-key:hover{border-color:rgba(71,215,255,.26);transform:translateY(-1px)}
+#login .saved-key .name{color:#ecf4ff;font-weight:700}
+#login .saved-key .prefix,#login .error{font-family:'IBM Plex Mono',monospace}
+#app{max-width:1380px;padding:24px 20px 38px}
+body.dashboard-embedded{
+  overflow:hidden;
+}
+body.dashboard-embedded #app{
+  max-width:none;
+  padding:18px;
+  border-radius:28px;
+}
+body.dashboard-embedded.mode-public #app{
+  height:100vh;
+  overflow-y:auto;
+  overflow-x:hidden;
+  scrollbar-gutter:stable;
+}
+body.dashboard-embedded.mode-public header{
+  display:none;
+}
+body.dashboard-embedded.mode-private{
+  overflow-y:auto;
+  overflow-x:hidden;
+}
+body.dashboard-embedded.mode-private #app{
+  min-height:100vh;
+  overflow:visible;
+}
+body.dashboard-embedded.mode-private header{
+  display:none;
+}
+body.dashboard-embedded header{
+  justify-content:flex-end;
+  padding-top:0;
+}
+body.dashboard-embedded header h1{
+  display:none;
+}
+.dashboard-status-cache{
+  display:none;
+}
+.tabs-shell{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  margin-bottom:16px;
+}
+.tabs-toolbar{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:8px;
+  flex-wrap:wrap;
+  flex-shrink:0;
+}
+.tabs-toolbar select{
+  min-width:220px;
+}
+header{
+  align-items:flex-start;
+  padding:18px 0 20px;
+  margin-bottom:20px;
+  border-bottom:1px solid rgba(126,166,207,.1);
+  gap:12px;
+}
+header h1{font-size:clamp(1.3rem,2.4vw,2rem);line-height:1;color:#ecf4ff;letter-spacing:-.05em}
+header .meta{color:#91a6bd}
+#onlineStatus,#arenaPhase{
+  display:inline-flex;
+  align-items:center;
+  min-height:34px;
+  padding:0 12px;
+  border-radius:999px;
+  border:1px solid rgba(126,166,207,.14);
+  background:rgba(255,255,255,.04);
+}
+.cards{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;margin-bottom:20px}
+.card{
+  background:
+    radial-gradient(circle at top right,rgba(71,215,255,.08),transparent 28%),
+    linear-gradient(180deg,rgba(14,25,38,.92),rgba(9,16,25,.82));
+  border:1px solid rgba(126,166,207,.18);
+  border-radius:24px;
+  padding:16px;
+  box-shadow:0 18px 42px rgba(0,0,0,.28);
+}
+.card .label,.section h3,.config-field label,th,.compare-grid .lbl{
+  font-family:'IBM Plex Mono',monospace;
+  text-transform:uppercase;
+  letter-spacing:.12em;
+}
+.card .label{color:#91a6bd;margin-bottom:5px}
+.card .value{font-size:27px;font-weight:800;line-height:1.02;letter-spacing:-.05em;color:#47d7ff}
+.card .value.green{color:#58e58f}.card .value.red{color:#ff7b72}.card .value.gold{color:#ffce54}.card .value.purple{color:#c5a6ff}
+.card .sub{font-size:10px;color:#91a6bd;margin-top:4px}
+.section{
+  background:
+    radial-gradient(circle at top right,rgba(71,215,255,.06),transparent 30%),
+    linear-gradient(180deg,rgba(14,25,38,.9),rgba(9,16,25,.8));
+  border:1px solid rgba(126,166,207,.18);
+  border-radius:28px;
+  padding:20px;
+  box-shadow:0 18px 42px rgba(0,0,0,.28);
+}
+.section h2{color:#ecf4ff;font-size:15px;letter-spacing:-.03em}
+.section h3{color:#91a6bd;font-size:11px;margin:12px 0 8px}
+th{
+  color:#91a6bd;
+  border-bottom:1px solid rgba(126,166,207,.12);
+  font-size:10px;
+}
+td{padding:7px 10px;border-bottom:1px solid rgba(126,166,207,.08)}
+tr:hover td{background:rgba(71,215,255,.035)}
+.bar-w{background:rgba(255,255,255,.06);border-radius:999px}
+.bar-f{border-radius:999px}
+.srow{gap:10px;margin-bottom:7px}
+.srow .lbl{min-width:74px;color:#91a6bd;font-family:'IBM Plex Mono',monospace}
+.tabs{
+  gap:8px;
+  margin-bottom:18px;
+  padding:6px;
+  border:1px solid rgba(126,166,207,.12);
+  border-radius:999px;
+  background:rgba(7,13,21,.72);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+}
+.tbtn{
+  padding:9px 14px;
+  color:#91a6bd;
+  border:1px solid transparent;
+  border-radius:999px;
+  background:none;
+  font-family:'IBM Plex Mono',monospace;
+  text-transform:uppercase;
+  letter-spacing:.12em;
+}
+.tbtn:hover{color:#ecf4ff;background:rgba(71,215,255,.06)}
+.tbtn.active{color:#ecf4ff;background:rgba(71,215,255,.1);border-color:rgba(71,215,255,.18)}
+.tip{
+  background:rgba(6,12,20,.74);
+  border:1px solid rgba(71,215,255,.18);
+  border-radius:18px;
+  padding:10px 14px;
+  margin-bottom:10px;
+}
+.tip b{color:#47d7ff}
+.tip.warn{border-color:rgba(255,184,107,.24)}.tip.warn b{color:#ffb86b}
+.tip.good{border-color:rgba(88,229,143,.22)}.tip.good b{color:#58e58f}
+.weapon-card{
+  padding:12px;
+  background:rgba(6,12,20,.7);
+  border:1px solid rgba(126,166,207,.12);
+  border-radius:18px;
+  margin-bottom:10px;
+}
+.weapon-card .wname{color:#ffb86b;font-weight:700;font-size:14px}
+.weapon-card .wprop{font-family:'IBM Plex Mono',monospace}
+.config-grid{gap:12px}
+.code-block{
+  background:rgba(6,12,20,.86);
+  border:1px solid rgba(126,166,207,.14);
+  border-radius:18px;
+  padding:12px 14px;
+  font-family:'IBM Plex Mono',monospace;
+  scrollbar-gutter:stable;
+}
+.build-code-shell{
+  background:rgba(6,12,20,.86);
+  border:1px solid rgba(126,166,207,.14);
+  border-radius:18px;
+  overflow:hidden;
+}
+.build-code-scroll{
+  max-height:200px;
+  overflow-y:auto;
+  overflow-x:hidden;
+  padding:12px 14px;
+  font-size:10px;
+  font-family:'IBM Plex Mono',monospace;
+  white-space:pre;
+  scrollbar-gutter:stable;
+}
+.compare-grid .col,.compare-grid .lbl{border-bottom:1px solid rgba(126,166,207,.1)}
+.compare-grid .better{color:#58e58f}.compare-grid .worse{color:#ff7b72}
+::-webkit-scrollbar{width:10px}
+::-webkit-scrollbar-track{background:rgba(3,7,12,.7)}
+::-webkit-scrollbar-thumb{
+  background:linear-gradient(180deg,rgba(71,215,255,.4),rgba(255,138,61,.4));
+  border-radius:999px
+}
+.code-block::-webkit-scrollbar-track-piece:start{margin-top:10px}
+.code-block::-webkit-scrollbar-track-piece:end{margin-bottom:10px}
+.code-block::-webkit-scrollbar-corner{background:transparent}
+.build-code-scroll::-webkit-scrollbar-corner{background:transparent}
+@media (max-width: 900px){#app{padding:18px 14px 26px}.config-grid{grid-template-columns:1fr}.cards{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
+@media (max-width: 640px){#login h1{font-size:2rem}header{padding-top:8px}.section{padding:16px}.tabs{border-radius:24px}}
+@media (max-width: 900px){
+  .tabs-shell{flex-direction:column;align-items:stretch}
+  .tabs-toolbar{justify-content:flex-start}
+  .tabs-toolbar select{min-width:0;width:100%}
+}
+</style>
 </head>
 <body>
+<script>
+if (window.self !== window.top) {
+  document.body.classList.add('dashboard-embedded');
+}
+</script>
 
 <div id="login">
   <h1>// BOT DASHBOARD</h1>
-  <p>Enter your API key to view stats, configure loadouts, and develop strategies. You can save multiple keys.</p>
+  <p>Enter your API key to view bot-specific performance, compare your saved bots, and monitor the data tied to your own arena keys.</p>
   <input type="password" id="apiKeyInput" placeholder="arena_..." autofocus>
   <input id="keyLabel" placeholder="Label (optional, e.g. My Sniper Bot)" style="width:340px;margin-top:-4px">
   <button onclick="doLogin()">Connect</button>
@@ -91,34 +460,33 @@ tr:hover td{background:var(--bg3)}
 </div>
 
 <div id="app">
-  <header>
-    <h1>// <span id="botName">Bot</span></h1>
-    <div class="meta">
-      <span id="onlineStatus"></span>
-      <span id="arenaPhase"></span>
-      <select id="botSwitcher" onchange="switchBot(this.value)" style="font-size:11px"></select>
-      <button class="sm" onclick="refreshAll()">Refresh</button>
-      <button class="sm" onclick="logout()">Logout</button>
+  <div class="dashboard-status-cache" aria-hidden="true">
+    <span id="botName">Bot</span>
+    <span id="onlineStatus"></span>
+    <span id="arenaPhase"></span>
+  </div>
+  <div class="tabs-shell">
+    <div class="tabs">
+      <div class="tbtn active" data-tab="overview" data-view="private">Overview</div>
+      <div class="tbtn" data-tab="compare" data-view="private">Compare Bots</div>
+      <div class="tbtn" data-tab="allbots" data-view="private">All My Bots</div>
+      <div class="tbtn" data-tab="simulator" data-view="public">Stat Simulator</div>
+      <div class="tbtn" data-tab="weapons" data-view="public">Weapons</div>
+      <div class="tbtn" data-tab="skills" data-view="public">Skills</div>
+      <div class="tbtn" data-tab="builds" data-view="public">Build Templates</div>
+      <div class="tbtn" data-tab="mapviewer" data-view="public">Map Viewer</div>
+      <div class="tbtn" data-tab="metareport" data-view="public">Meta Report</div>
+      <div class="tbtn" data-tab="strategy" data-view="public">Strategy</div>
     </div>
-  </header>
-
+    <div class="tabs-toolbar" data-view="private">
+      <select id="botSwitcher" onchange="switchBot(this.value)" style="font-size:11px"></select>
+      <button class="sm" id="refreshBtn" onclick="refreshAll()">Refresh</button>
+      <button class="sm" id="logoutBtn" onclick="logout()">Logout</button>
+    </div>
+  </div>
   <div class="cards" id="statCards"></div>
 
-  <div class="tabs">
-    <div class="tbtn active" data-tab="overview">Overview</div>
-    <div class="tbtn" data-tab="simulator">Stat Simulator</div>
-    <div class="tbtn" data-tab="weapons">Weapons</div>
-    <div class="tbtn" data-tab="builds">Build Templates</div>
-    <div class="tbtn" data-tab="mapviewer">Map Viewer</div>
-    <div class="tbtn" data-tab="metareport">Meta Report</div>
-    <div class="tbtn" data-tab="leaderboard">Leaderboard</div>
-    <div class="tbtn" data-tab="compare">Compare Bots</div>
-    <div class="tbtn" data-tab="allbots">All My Bots</div>
-    <div class="tbtn" data-tab="codebook">Code Reference</div>
-    <div class="tbtn" data-tab="strategy">Strategy</div>
-  </div>
-
-  <div class="tpanel active" id="tab-overview">
+  <div class="tpanel active" id="tab-overview" data-view="private">
     <div style="display:flex;gap:12px;flex-wrap:wrap">
       <div class="section" style="flex:1;min-width:280px">
         <h2>Live Radar <button class="sm" id="radarToggle" onclick="toggleRadar()" style="margin-left:8px">Start</button></h2>
@@ -134,25 +502,25 @@ tr:hover td{background:var(--bg3)}
     </div>
   </div>
 
-  <div class="tpanel" id="tab-builds"><div class="section"><h2>Build Templates</h2><p style="font-size:11px;color:var(--text2);margin-bottom:12px">Pre-made loadouts. Click "Copy Code" for a ready-to-paste Python snippet.</p><div id="buildTemplates"></div></div></div>
+  <div class="tpanel" id="tab-builds" data-view="public"><div class="section"><h2>Build Templates</h2><p style="font-size:11px;color:var(--text2);margin-bottom:12px">Simple starter loadouts only. Click "Copy Code" for a ready-to-paste Python snippet.</p><div id="buildTemplates"></div></div></div>
 
-  <div class="tpanel" id="tab-mapviewer">
+  <div class="tpanel" id="tab-mapviewer" data-view="public">
     <div class="section">
-      <h2>Map Viewer <button class="sm" onclick="loadMapViewer()" style="margin-left:8px">Refresh</button> <button class="sm" onclick="mapZoom(1)" style="margin-left:4px">Zoom +</button> <button class="sm" onclick="mapZoom(-1)">Zoom −</button> <button class="sm" onclick="mapZoom(0)">Reset</button></h2>
+      <h2>Map Viewer <button class="sm" onclick="loadMapViewer()" style="margin-left:8px">Refresh</button> <button class="sm" onclick="mapZoom(1)" style="margin-left:4px">Zoom +</button> <button class="sm" onclick="mapZoom(-1)">Zoom -</button> <button class="sm" onclick="mapZoom(0)">Reset</button></h2>
       <div id="mapStatus" style="font-size:11px;color:var(--text2);margin-bottom:8px"></div>
-      <div style="overflow:auto;max-height:600px;border:1px solid var(--border);border-radius:4px;background:var(--bg)"><canvas id="mapCanvas" style="display:block"></canvas></div>
+      <div id="mapViewport" style="display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:600px;max-height:70vh;border:1px solid var(--border);border-radius:18px;background:var(--bg)"><canvas id="mapCanvas" style="display:block;max-width:100%;max-height:100%;margin:auto"></canvas></div>
     </div>
   </div>
 
-  <div class="tpanel" id="tab-metareport"><div class="section"><h2>Meta Report</h2><div id="metaReport"><span style="color:var(--text2)">Loading...</span></div></div></div>
+  <div class="tpanel" id="tab-metareport" data-view="public"><div class="section"><h2>Meta Report</h2><div id="metaReport"><span style="color:var(--text2)">Loading...</span></div></div></div>
 
-  <div class="tpanel" id="tab-simulator">
+  <div class="tpanel" id="tab-simulator" data-view="public">
     <div style="display:flex;gap:12px;flex-wrap:wrap">
       <div class="section" style="flex:1;min-width:280px">
         <h2>Stat Simulator</h2>
         <div id="simStats"></div>
         <div id="simBudget" style="margin-top:6px;font-size:11px"></div>
-        <div class="config-field" style="margin-top:10px"><label>Weapon</label><select id="simWeapon" onchange="updateSim()"><option value="sword">Sword</option><option value="bow">Bow</option><option value="daggers">Daggers</option><option value="shield">Shield</option><option value="spear">Spear</option><option value="staff">Staff</option></select></div>
+        <div class="config-field" style="margin-top:10px"><label>Weapon</label><select id="simWeapon" onchange="updateSim()"></select></div>
       </div>
       <div class="section" style="flex:1;min-width:280px">
         <h2>Derived Stats</h2>
@@ -165,19 +533,13 @@ tr:hover td{background:var(--bg3)}
     </div>
   </div>
 
-  <div class="tpanel" id="tab-weapons"><div class="section"><h2>Weapon Reference &amp; Matchups</h2><div id="weaponGuide"></div></div></div>
+  <div class="tpanel" id="tab-weapons" data-view="public"><div class="section"><h2>Weapon Reference &amp; Matchups</h2><div id="weaponGuide"></div></div></div>
 
-  <div class="tpanel" id="tab-leaderboard">
-    <div class="section">
-      <h2>Leaderboard
-        <select id="lbSort" onchange="loadLB()" style="font-size:11px;margin-left:8px"><option value="elo">Elo</option><option value="kills">Kills</option><option value="kd_ratio">K/D</option><option value="best_streak">Streak</option><option value="wins">Wins</option><option value="damage">Damage</option></select>
-        <select id="lbPeriod" onchange="loadLB()" style="font-size:11px"><option value="1h">Last Hour</option><option value="24h">24 Hours</option><option value="7d">7 Days</option><option value="30d">30 Days</option><option value="all_time">All Time</option></select>
-      </h2>
-      <table><thead><tr><th>#</th><th>Name</th><th>Kills</th><th>Deaths</th><th>K/D</th><th>Elo</th><th>Streak</th><th>Rounds</th><th>Wins</th></tr></thead><tbody id="lbBody"></tbody></table>
-    </div>
+  <div class="tpanel" id="tab-skills" data-view="public">
+    <div class="section"><h2>Utility Skills</h2><div id="skillGuide"></div></div>
   </div>
 
-  <div class="tpanel" id="tab-compare">
+  <div class="tpanel" id="tab-compare" data-view="private">
     <div class="section">
       <h2>Compare Your Bots</h2>
       <div style="display:flex;gap:8px;margin-bottom:12px">
@@ -190,26 +552,119 @@ tr:hover td{background:var(--bg3)}
     </div>
   </div>
 
-  <div class="tpanel" id="tab-allbots">
+  <div class="tpanel" id="tab-allbots" data-view="private">
     <div class="section">
       <h2>All My Bots</h2>
       <table><thead><tr><th>Name</th><th>Elo</th><th>K/D</th><th>Kills</th><th>Deaths</th><th>Wins</th><th>Rounds</th><th>Streak</th><th></th></tr></thead><tbody id="allBotsBody"></tbody></table>
     </div>
   </div>
 
-  <div class="tpanel" id="tab-codebook">
-    <div class="section"><h2>API Action Reference</h2><div id="codeRef"></div></div>
-    <div class="section"><h2>Code Snippets (Python)</h2><div id="codeSnippets"></div></div>
-  </div>
-
-  <div class="tpanel" id="tab-strategy">
+  <div class="tpanel" id="tab-strategy" data-view="public">
     <div class="section"><h2>Strategy Guide</h2><div id="strategyTips"></div></div>
     <div class="section"><h2>Weapon Matchup Matrix</h2><p style="font-size:10px;color:var(--text2);margin-bottom:8px">Click a cell for matchup details.</p><div id="matchupMatrix"></div><div id="matchupDetail" style="margin-top:8px"></div></div>
-    <div class="section"><h2>Decision Tree — Bot Logic Loop</h2><div id="decisionTree"></div></div>
+    <div class="section"><h2>Decision Tree - Bot Logic Loop</h2><div id="decisionTree"></div></div>
   </div>
 </div>
 
 <script>
+const WEAPON_META = {
+  sword:{name:'Sword',badge:'SWD',role:'Balanced frontline weapon.',desc:'Reliable melee with cleave pressure when fights stack up.',build:'hp:5 speed:5 attack:5 defense:5',strongVs:'Daggers, shield',counter:'Bow, staff'},
+  bow:{name:'Bow',badge:'BOW',role:'Long-range poke and kiting.',desc:'Projectile weapon that wants room to move and clean sightlines.',build:'hp:4 speed:6 attack:6 defense:4',strongVs:'Shield, spear',counter:'Daggers, grapple'},
+  daggers:{name:'Daggers',badge:'DAG',role:'Close-range burst assassin.',desc:'Fast repeat pressure that rewards sticking on a target.',build:'hp:4 speed:6 attack:6 defense:4',strongVs:'Bow, staff',counter:'Sword, spear'},
+  shield:{name:'Shield',badge:'SHD',role:'Slow attrition tank.',desc:'Defensive brawler built to soak pressure and win longer trades.',build:'hp:7 speed:3 attack:4 defense:6',strongVs:'Daggers',counter:'Staff, bow'},
+  spear:{name:'Spear',badge:'SPR',role:'Spacing and knockback control.',desc:'Mid-range pressure tool that punishes over-commits.',build:'hp:5 speed:5 attack:6 defense:4',strongVs:'Daggers, shield',counter:'Bow, staff'},
+  staff:{name:'Staff',badge:'STF',role:'Area denial caster.',desc:'Delayed damage with splash value in crowded fights.',build:'hp:4 speed:5 attack:6 defense:5',strongVs:'Shield, sword',counter:'Daggers, grapple'},
+  grapple:{name:'Grapple',badge:'GRP',role:'Displacement and chase control.',desc:'Pull enemies into bad spots or yank yourself onto anchors and blocks.',build:'hp:5 speed:6 attack:5 defense:4',strongVs:'Bow, staff',counter:'Sword, shield'}
+};
+
+const TOOLKIT_CACHE_MS = 15000;
+const TOOLKIT_STATE = {loading:null,loadedAt:0,weaponStatsById:{},botSetup:null,setupWeaponsById:{},actionsByName:{}};
+let toolkitRefreshTimer = null;
+let simInitialized = false;
+
+function titleCaseWord(value) {
+  return String(value || '').split(/[_-]+/).filter(Boolean).map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+}
+function formatSpecial(value) { return value ? titleCaseWord(value) : 'None'; }
+function formatWeaponBadge(weaponId) { return (WEAPON_META[weaponId]?.badge || weaponId.slice(0, 3)).toUpperCase(); }
+function weaponIconSvg(weaponId, size=20) {
+  const s = Number(size) || 20;
+  const svgOpen = `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">`;
+  switch (weaponId) {
+    case 'sword':
+      return `${svgOpen}<path d="M12 3l3 3"/><path d="M10.5 7.5l6-6"/><path d="M8 10l6-6"/><path d="M7 11l6 6"/><path d="M6 18l-2 2"/><path d="M10 14l-4 4"/><path d="M9 13l2-2"/><path d="M5 19l-1 1"/></svg>`;
+    case 'bow':
+      return `${svgOpen}<path d="M7 4c5 3 5 13 0 16"/><path d="M7 12h10"/><path d="M13 9l4 3-4 3"/><path d="M5 6v12"/></svg>`;
+    case 'daggers':
+      return `${svgOpen}<path d="M7 5l5 5"/><path d="M6 6l2-2"/><path d="M12 10l2-2"/><path d="M17 5l-5 5"/><path d="M18 6l-2-2"/><path d="M12 10l-2-2"/><path d="M10 14l-4 4"/><path d="M14 14l4 4"/></svg>`;
+    case 'shield':
+      return `${svgOpen}<path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6l7-3z"/><path d="M12 7v10"/><path d="M8.5 10.5H15.5"/></svg>`;
+    case 'spear':
+      return `${svgOpen}<path d="M5 19L19 5"/><path d="M16 5h3v3"/><path d="M10 14l-5 5"/><path d="M7 20l-3-3"/></svg>`;
+    case 'staff':
+      return `${svgOpen}<circle cx="15.5" cy="7.5" r="3.2"/><path d="M13 10l-5 11"/><path d="M7 21h3"/><path d="M17.5 4.5l1.3-1.3"/><path d="M19.5 7.5H21"/><path d="M17.5 10.5l1.3 1.3"/></svg>`;
+    case 'grapple':
+      return `${svgOpen}<path d="M14 4l4 4"/><path d="M8 16l10-10"/><path d="M6 18l4-4"/><path d="M16.5 11.5l2 2c1.6 1.6 1.6 4.1 0 5.7l-.7.7"/><path d="M13.5 14.5l2 2"/><path d="M16.2 19.8l-2.7-2.7"/></svg>`;
+    default:
+      return `${svgOpen}<circle cx="12" cy="12" r="7"/><path d="M9 12h6"/></svg>`;
+  }
+}
+function getWeaponIds() { const live = Object.keys(TOOLKIT_STATE.weaponStatsById || {}); return live.length ? live : Object.keys(WEAPON_META); }
+function getWeaponBundle(weaponId) {
+  const live = TOOLKIT_STATE.weaponStatsById[weaponId] || {};
+  const setup = TOOLKIT_STATE.setupWeaponsById[weaponId] || {};
+  const meta = WEAPON_META[weaponId] || {};
+  return {
+    id:weaponId,
+    name:live.weapon ? titleCaseWord(live.weapon) : setup.name || meta.name || titleCaseWord(weaponId),
+    badge:meta.badge || formatWeaponBadge(weaponId),
+    role:meta.role || 'General arena weapon.',
+    desc:setup.description || meta.desc || 'Live balanced weapon.',
+    build:meta.build || 'hp:5 speed:5 attack:5 defense:5',
+    strongVs:meta.strongVs || 'Varies by pilot',
+    counter:meta.counter || 'Varies by pilot',
+    tier:live.tier || '--',
+    kills:live.kills || 0,
+    recentForm:typeof live.recent_form === 'number' ? live.recent_form : null,
+    damage:typeof live.damage_exact === 'number' ? live.damage_exact : (typeof live.damage === 'number' ? live.damage : setup.damage),
+    appliedDamage:typeof live.damage === 'number' ? live.damage : setup.damage,
+    cooldown:typeof live.cooldown === 'number' ? live.cooldown : setup.cooldown_secs,
+    rangeTiles:typeof live.grid_range === 'number' ? live.grid_range : setup.range_tiles,
+    special:formatSpecial(live.special || setup.special_ability),
+    balance:live.balance_direction || 'steady'
+  };
+}
+async function ensureToolkitData(force=false) {
+  const now = Date.now();
+  if (!force && TOOLKIT_STATE.loadedAt && (now - TOOLKIT_STATE.loadedAt) < TOOLKIT_CACHE_MS) return TOOLKIT_STATE;
+  if (TOOLKIT_STATE.loading) return TOOLKIT_STATE.loading;
+  TOOLKIT_STATE.loading = (async () => {
+    const [weaponStats, botSetup] = await Promise.all([
+      pub('/weapon-stats').catch(() => ({entries:[]})),
+      pub('/bot-setup').catch(() => ({}))
+    ]);
+    TOOLKIT_STATE.weaponStatsById = {};
+    (weaponStats.entries || []).forEach(entry => {
+      if (entry?.weapon) TOOLKIT_STATE.weaponStatsById[entry.weapon] = entry;
+    });
+    TOOLKIT_STATE.botSetup = botSetup || {};
+    TOOLKIT_STATE.setupWeaponsById = {};
+    (botSetup.weapons || []).forEach(entry => {
+      if (entry?.name) TOOLKIT_STATE.setupWeaponsById[String(entry.name).toLowerCase()] = entry;
+    });
+    TOOLKIT_STATE.actionsByName = {};
+    (botSetup.actions || []).forEach(entry => {
+      if (entry?.name) TOOLKIT_STATE.actionsByName[entry.name] = entry;
+    });
+    TOOLKIT_STATE.loadedAt = Date.now();
+    TOOLKIT_STATE.loading = null;
+    return TOOLKIT_STATE;
+  })().catch(err => {
+    TOOLKIT_STATE.loading = null;
+    throw err;
+  });
+  return TOOLKIT_STATE.loading;
+}
 const WEAPONS = {
   sword:{name:'Sword',icon:'⚔️',dmg:25,range:2.5,cd:0.5,special:'Cleave',desc:'Hits 2 extra enemies at 50% dmg',style:'Aggressive melee',stats:'spd:6-7 atk:8-9 hp:3-4 def:1-2',counter:'Bow, Staff (outranged)',strongVs:'Daggers, Shield (cleave bypasses block range)'},
   bow:{name:'Bow',icon:'🏹',dmg:12,range:15,cd:1.4,special:'Projectile',desc:'Fires arrow, long range',style:'Ranged kiter',stats:'spd:7-8 atk:8-9 hp:2-3 def:1-2',counter:'Daggers (too fast, close gap)',strongVs:'Shield, Spear (outranges both)'},
@@ -240,6 +695,7 @@ renderSavedKeys();
 // ========== API ==========
 let apiKey = '';
 let stats = null;
+const DASHBOARD_VIEW = new URLSearchParams(window.location.search).get('view') === 'public' ? 'public' : 'private';
 function getBase() { return location.pathname.startsWith('/arena/') ? '/arena/api/v1' : '/api/v1'; }
 async function api(path, opts={}) {
   const r = await fetch(getBase()+path, {...opts, headers:{'X-Arena-Key':apiKey,'Content-Type':'application/json',...(opts.headers||{})}});
@@ -282,21 +738,79 @@ function buildBotSwitcher() {
 }
 
 // ========== Tabs ==========
-document.querySelectorAll('.tbtn').forEach(b => b.addEventListener('click', () => {
+function activateTab(tabName) {
   document.querySelectorAll('.tbtn').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.tpanel').forEach(p=>p.classList.remove('active'));
-  b.classList.add('active');
-  document.getElementById('tab-'+b.dataset.tab).classList.add('active');
-  if (b.dataset.tab==='leaderboard') loadLB();
-  if (b.dataset.tab==='weapons') renderWeapons();
-  if (b.dataset.tab==='simulator') initSim();
-  if (b.dataset.tab==='allbots') loadAllBots();
-  if (b.dataset.tab==='codebook') renderCodebook();
-  if (b.dataset.tab==='strategy') renderStrategy();
-  if (b.dataset.tab==='builds') renderBuilds();
-  if (b.dataset.tab==='mapviewer') loadMapViewer();
-  if (b.dataset.tab==='metareport') loadMetaReport();
-}));
+  const button = document.querySelector(`.tbtn[data-tab="${tabName}"]`);
+  const panel = document.getElementById('tab-'+tabName);
+  if (!button || !panel || button.style.display === 'none') return;
+  button.classList.add('active');
+  panel.classList.add('active');
+  if (tabName==='weapons') renderWeapons();
+  if (tabName==='simulator') initSim();
+  if (tabName==='skills') renderSkills();
+  if (tabName==='allbots') loadAllBots();
+  if (tabName==='strategy') renderStrategy();
+  if (tabName==='builds') renderBuilds();
+  if (tabName==='mapviewer') loadMapViewer();
+  if (tabName==='metareport') loadMetaReport();
+}
+
+document.querySelectorAll('.tbtn').forEach(b => b.addEventListener('click', () => activateTab(b.dataset.tab)));
+
+function initDashboardMode() {
+  const isPublic = DASHBOARD_VIEW === 'public';
+  document.body.classList.toggle('mode-public', isPublic);
+  document.body.classList.toggle('mode-private', !isPublic);
+
+  document.querySelectorAll('[data-view]').forEach((node) => {
+    node.style.display = node.dataset.view === DASHBOARD_VIEW ? '' : 'none';
+  });
+
+  if (isPublic) {
+    document.getElementById('login').style.display='none';
+    document.getElementById('app').style.display='block';
+    document.getElementById('botName').textContent='Toolkit';
+    document.getElementById('onlineStatus').textContent='Public knowledge';
+    document.getElementById('arenaPhase').textContent='No API key required';
+    document.getElementById('botSwitcher').style.display='none';
+    document.getElementById('refreshBtn').style.display='none';
+    document.getElementById('logoutBtn').style.display='none';
+    document.getElementById('statCards').style.display='none';
+    startToolkitRefreshLoop();
+    activateTab('simulator');
+    return;
+  }
+
+  document.getElementById('login').style.display='flex';
+  document.getElementById('app').style.display='none';
+  document.getElementById('statCards').style.display='';
+  document.getElementById('botSwitcher').style.display='';
+  document.getElementById('refreshBtn').style.display='';
+  document.getElementById('logoutBtn').style.display='';
+  activateTab('overview');
+}
+
+initDashboardMode();
+
+function getActivePublicTab() {
+  return document.querySelector('.tbtn.active[data-view="public"]')?.dataset.tab || 'simulator';
+}
+
+function startToolkitRefreshLoop() {
+  if (toolkitRefreshTimer) return;
+  toolkitRefreshTimer = setInterval(async () => {
+    try {
+      await ensureToolkitData(true);
+      const active = getActivePublicTab();
+      if (active === 'weapons') renderWeapons();
+      if (active === 'simulator') updateSim();
+      if (active === 'skills') renderSkills();
+      if (active === 'builds') renderBuilds();
+      if (active === 'strategy') renderStrategy();
+    } catch (e) {}
+  }, 20000);
+}
 
 // ========== Refresh ==========
 async function refreshAll() {
@@ -402,29 +916,40 @@ function renderAnalysis(s) {
 // ========== Budget Helper (shared by simulator) ==========
 function updBudget(pfx) {
   let t=0;['hp','speed','attack','defense'].forEach(s=>{const v=parseInt(document.getElementById(pfx+'_'+s).value);document.getElementById(pfx+'V_'+s).textContent=v;t+=v;});
-  document.getElementById(pfx+'Budget').innerHTML=`<b style="color:${t===20?'var(--green)':'var(--red)'}"> ${t}/20</b>${t===20?'':' — must equal 20'}`;
+  document.getElementById(pfx+'Budget').innerHTML=`<b style="color:${t===20?'var(--green)':'var(--red)'}"> ${t}/20</b>${t===20?'':' - must equal 20'}`;
   return t;
 }
 
 // ========== Stat Simulator ==========
-function initSim() {
+async function initSim() {
+  await ensureToolkitData().catch(() => {});
   const sts=['hp','speed','attack','defense'];
-  document.getElementById('simStats').innerHTML=sts.map(st=>`<div class="srow"><span class="lbl">${st}</span><input type="range" min="1" max="10" value="5" id="sim_${st}" oninput="updateSim()" style="flex:1;accent-color:var(--accent)"><span class="val" id="simV_${st}">5</span></div>`).join('');
-  document.getElementById('simBudget').innerHTML='';
+  if (!simInitialized) {
+    document.getElementById('simStats').innerHTML=sts.map(st=>`<div class="srow"><span class="lbl">${st}</span><input type="range" min="1" max="10" value="5" id="sim_${st}" oninput="updateSim()" style="flex:1;accent-color:var(--accent)"><span class="val" id="simV_${st}">5</span></div>`).join('');
+    document.getElementById('simBudget').innerHTML='';
+    simInitialized = true;
+  }
+  const selected = document.getElementById('simWeapon').value || 'sword';
+  document.getElementById('simWeapon').innerHTML = getWeaponIds().map(id => {
+    const bundle = getWeaponBundle(id);
+    return `<option value="${id}" ${id===selected?'selected':''}>${bundle.name}</option>`;
+  }).join('');
   updateSim();
 }
-function updateSim() {
+async function updateSim() {
+  await ensureToolkitData().catch(() => {});
   const t=updBudget('sim');
   const hp=parseInt(document.getElementById('sim_hp').value);
   const spd=parseInt(document.getElementById('sim_speed').value);
   const atk=parseInt(document.getElementById('sim_attack').value);
   const def=parseInt(document.getElementById('sim_defense').value);
   const w=document.getElementById('simWeapon').value;
-  const wc=WEAPONS[w];
+  const wc=getWeaponBundle(w);
 
   const maxHP=100+hp*10, moveSpd=3+spd*0.5, atkMult=1+atk*0.1, defRed=def*0.03;
-  const dmgPerHit=wc.dmg*atkMult;
-  const dps=dmgPerHit/wc.cd;
+  const baseDamage=Number(wc.damage || wc.appliedDamage || 0);
+  const dmgPerHit=baseDamage*atkMult;
+  const dps=dmgPerHit/Number(wc.cooldown || 1);
   const ehp=maxHP/(1-defRed); // effective HP accounting for defense
 
   document.getElementById('simDerived').innerHTML=`
@@ -439,32 +964,51 @@ function updateSim() {
   let dpsHTML='<table><thead><tr><th>Enemy Def</th><th>Dmg/Hit</th><th>DPS</th><th>Hits to Kill (150hp)</th></tr></thead><tbody>';
   [0,3,5,7,10].forEach(d=>{
     const dr=d*0.03;
-    const dmg=wc.dmg*atkMult*(1-dr);
+    const dmg=baseDamage*atkMult*(1-dr);
     const hits=Math.ceil(150/dmg);
-    dpsHTML+=`<tr><td>${d}</td><td>${dmg.toFixed(1)}</td><td>${(dmg/wc.cd).toFixed(1)}</td><td>${hits} (${(hits*wc.cd).toFixed(1)}s)</td></tr>`;
+    dpsHTML+=`<tr><td>${d}</td><td>${dmg.toFixed(2)}</td><td>${(dmg/Number(wc.cooldown || 1)).toFixed(2)}</td><td>${hits} (${(hits*Number(wc.cooldown || 1)).toFixed(1)}s)</td></tr>`;
   });
   dpsHTML+='</tbody></table>';
   if(w==='shield') dpsHTML+='<div style="font-size:10px;color:var(--text2);margin-top:4px">Note: Shield halves incoming damage passively</div>';
   if(w==='daggers') dpsHTML+='<div style="font-size:10px;color:var(--text2);margin-top:4px">Note: 25% chance for double strike (effective DPS ~25% higher)</div>';
+  if(w==='grapple') dpsHTML+='<div style="font-size:10px;color:var(--text2);margin-top:4px">Note: Grapple also creates value through pulls, spacing, and anchor movement.</div>';
   document.getElementById('simDPS').innerHTML=dpsHTML;
 
   // Recommendations
-  const rec=WEAPONS[w].stats;
-  document.getElementById('simRecommend').innerHTML=`<div style="font-size:11px">Recommended for <b style="color:var(--orange)">${wc.name}</b>: ${rec}</div>`;
+  document.getElementById('simRecommend').innerHTML=`
+    <div style="font-size:11px"><b style="color:var(--orange)">${wc.name}</b> starter split: ${wc.build}</div>
+    <div style="font-size:10px;color:var(--text2);margin-top:5px">Live balance: ${baseDamage.toFixed(2)} damage (${wc.appliedDamage} applied) | ${Number(wc.cooldown || 0).toFixed(2)}s cooldown | ${wc.rangeTiles ?? '--'} tile reach</div>
+    <div style="font-size:10px;color:var(--text2);margin-top:5px">Budget status: ${t===20?'legal loadout':'adjust sliders until the budget reaches 20/20'}.</div>
+  `;
 }
 
 // ========== Weapons ==========
-function renderWeapons() {
+async function renderWeapons() {
+  await ensureToolkitData().catch(() => {});
   let html='';
-  for(const[k,w] of Object.entries(WEAPONS)){
-    html+=`<div class="weapon-card"><div class="icon">${w.icon}</div><div style="flex:1">
-      <div class="wname">${w.name}</div>
-      <div class="wprop">Dmg: <b>${w.dmg}</b> | Range: <b>${w.range}</b> | CD: <b>${w.cd}s</b> | ${w.special}: ${w.desc}</div>
-      <div style="font-size:11px;margin-top:4px">${w.style}. Stats: ${w.stats}</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:2px">Strong vs: <span style="color:var(--green)">${w.strongVs}</span> | Countered by: <span style="color:var(--red)">${w.counter}</span></div>
+  for(const weaponId of getWeaponIds()){
+    const w=getWeaponBundle(weaponId);
+    html+=`<div class="weapon-card"><div class="icon">${weaponIconSvg(weaponId, 30)}</div><div style="flex:1">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
+        <div>
+          <div class="wname">${w.name}</div>
+          <div class="wprop">${w.role} ${w.desc}</div>
+        </div>
+        <div class="pill">${w.tier} tier</div>
+      </div>
+      <div class="pill-row">
+        <span class="pill">Damage ${Number(w.damage || 0).toFixed(2)}</span>
+        <span class="pill">Applied ${w.appliedDamage ?? '--'}</span>
+        <span class="pill">Cooldown ${Number(w.cooldown || 0).toFixed(2)}s</span>
+        <span class="pill">Range ${w.rangeTiles ?? '--'} tiles</span>
+        <span class="pill">Special ${w.special}</span>
+        <span class="pill">${w.kills} kills</span>
+      </div>
+      <div style="font-size:11px;margin-top:8px">Basic starter: ${w.build}</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px">Strong vs <span style="color:var(--green)">${w.strongVs}</span> | Watch for <span style="color:var(--red)">${w.counter}</span>${w.recentForm!=null ? ` | Recent form ${w.recentForm.toFixed(0)}` : ''}</div>
     </div></div>`;
   }
-  document.getElementById('weaponGuide').innerHTML=html;
+  document.getElementById('weaponGuide').innerHTML=html || '<span style="color:var(--text2)">No weapon data available.</span>';
 }
 
 // ========== Leaderboard ==========
@@ -589,6 +1133,10 @@ for p in sorted(pickups, key=lambda p: distance(my_pos, p["position"])):
 
 // ========== Strategy ==========
 function renderStrategy() {
+  const weaponTips = getWeaponIds().map((weaponId) => {
+    const w = getWeaponBundle(weaponId);
+    return `<div class="tip"><b><span class="weapon-inline-icon">${weaponIconSvg(weaponId, 14)}</span>${w.name}:</b> ${w.desc} Role: ${w.role} Starter: ${w.build}. Strong vs ${w.strongVs}. Watch for ${w.counter}.</div>`;
+  }).join('');
   document.getElementById('strategyTips').innerHTML=`
 <div class="tip"><b>Stat Budget:</b> 20 points across HP, Speed, Attack, Defense (1-10 each). Specialize — don't spread evenly!</div>
 <div class="tip"><b>Dodge:</b> 3 ticks invulnerable, 30 tick cooldown. Use reactively (when hit) or offensively (gap close). Dodge perpendicular for unpredictability.</div>
@@ -602,7 +1150,7 @@ function renderStrategy() {
 <div class="tip"><b>Winning:</b> Last alive wins, not most kills. Sometimes retreating and letting others fight is the best strategy.</div>
 
 <h3 style="margin-top:14px;color:var(--accent)">Weapon Tips</h3>
-${Object.entries(WEAPONS).map(([k,w])=>`<div class="tip"><b>${w.icon} ${w.name}:</b> ${w.desc}. ${w.style}. Build: ${w.stats}. Strong vs ${w.strongVs}. Countered by ${w.counter}.</div>`).join('')}
+${weaponTips}
   `;
 }
 
@@ -839,15 +1387,109 @@ elif enemies and state.get("shove_cooldown", 1) <= 0:
         send_action("shove", target=nearest["bot_id"])`},
 ];
 
-function renderBuilds() {
-  document.getElementById('buildTemplates').innerHTML = BUILD_TEMPLATES.map((b,i) => {
+const TOOLKIT_BUILD_TEMPLATES = [
+  {name:'Basic Sword Starter',weapon:'sword',stats:{hp:5,speed:5,attack:5,defense:5},style:'Simple balanced melee starter. Walk into range, swing when ready, and keep drifting toward the zone.',strong:'General purpose',counter:'Dedicated range pressure',code:`await ws.send(json.dumps({
+    "type": "select_loadout",
+    "weapon": "sword",
+    "stats": {"hp": 5, "speed": 5, "attack": 5, "defense": 5},
+    "fallback_behavior": "aggressive"
+}))
+
+if not state["in_safe_zone"]:
+    send_action("move_to", target_position=safe_zone["center"])
+elif enemies and state["weapon_ready"]:
+    send_action("attack", target=min(enemies, key=lambda e: dist(my_pos, e["position"]))["bot_id"])
+elif enemies:
+    send_action("move_to", target_position=min(enemies, key=lambda e: dist(my_pos, e["position"]))["position"])`},
+  {name:'Basic Bow Starter',weapon:'bow',stats:{hp:4,speed:6,attack:6,defense:4},style:'Basic ranged starter. Take open shots and back away when melee gets too close.',strong:'Open sightlines',counter:'Fast gap closers',code:`await ws.send(json.dumps({
+    "type": "select_loadout",
+    "weapon": "bow",
+    "stats": {"hp": 4, "speed": 6, "attack": 6, "defense": 4},
+    "fallback_behavior": "opportunistic"
+}))
+
+if enemies and state["weapon_ready"]:
+    send_action("attack", target=min(enemies, key=lambda e: e["hp"])["bot_id"])
+elif enemies:
+    nearest = min(enemies, key=lambda e: dist(my_pos, e["position"]))
+    if dist(my_pos, nearest["position"]) < 3:
+        send_action("move", direction=[my_pos[0]-nearest["position"][0], my_pos[1]-nearest["position"][1]])
+    else:
+        send_action("move_to", target_position=nearest["position"])`},
+  {name:'Basic Daggers Starter',weapon:'daggers',stats:{hp:4,speed:6,attack:6,defense:4},style:'Basic rush-down starter. Close space quickly and stay on one target.',strong:'Catching ranged bots',counter:'Knockback and cleave',code:`await ws.send(json.dumps({
+    "type": "select_loadout",
+    "weapon": "daggers",
+    "stats": {"hp": 4, "speed": 6, "attack": 6, "defense": 4},
+    "fallback_behavior": "aggressive"
+}))
+
+if enemies and state["weapon_ready"]:
+    send_action("attack", target=min(enemies, key=lambda e: dist(my_pos, e["position"]))["bot_id"])
+elif enemies:
+    send_action("move_to", target_position=min(enemies, key=lambda e: dist(my_pos, e["position"]))["position"])`},
+  {name:'Basic Shield Starter',weapon:'shield',stats:{hp:7,speed:3,attack:4,defense:6},style:'Basic tank starter. Hold the zone and force nearby brawls.',strong:'Long trades',counter:'Area damage and kiting',code:`await ws.send(json.dumps({
+    "type": "select_loadout",
+    "weapon": "shield",
+    "stats": {"hp": 7, "speed": 3, "attack": 4, "defense": 6},
+    "fallback_behavior": "defensive"
+}))
+
+if not state["in_safe_zone"]:
+    send_action("move_to", target_position=safe_zone["center"])
+elif enemies and state["weapon_ready"]:
+    send_action("attack", target=min(enemies, key=lambda e: dist(my_pos, e["position"]))["bot_id"])
+elif enemies:
+    send_action("move_to", target_position=min(enemies, key=lambda e: dist(my_pos, e["position"]))["position"])`},
+  {name:'Basic Spear Starter',weapon:'spear',stats:{hp:5,speed:5,attack:6,defense:4},style:'Basic spacing starter. Poke from mid-range and keep moving.',strong:'Spacing control',counter:'Longer-range poke',code:`await ws.send(json.dumps({
+    "type": "select_loadout",
+    "weapon": "spear",
+    "stats": {"hp": 5, "speed": 5, "attack": 6, "defense": 4},
+    "fallback_behavior": "aggressive"
+}))
+
+if enemies and state["weapon_ready"]:
+    send_action("attack", target=min(enemies, key=lambda e: dist(my_pos, e["position"]))["bot_id"])
+elif enemies:
+    send_action("move_to", target_position=min(enemies, key=lambda e: dist(my_pos, e["position"]))["position"])`},
+  {name:'Basic Staff Starter',weapon:'staff',stats:{hp:4,speed:5,attack:6,defense:5},style:'Basic caster starter. Drop damage on the nearest threat and keep a little space.',strong:'Grouped enemies',counter:'Fast divers',code:`await ws.send(json.dumps({
+    "type": "select_loadout",
+    "weapon": "staff",
+    "stats": {"hp": 4, "speed": 5, "attack": 6, "defense": 5},
+    "fallback_behavior": "opportunistic"
+}))
+
+if enemies and state["weapon_ready"]:
+    send_action("attack", target=min(enemies, key=lambda e: dist(my_pos, e["position"]))["bot_id"])
+elif enemies:
+    nearest = min(enemies, key=lambda e: dist(my_pos, e["position"]))
+    send_action("move", direction=[my_pos[0]-nearest["position"][0], my_pos[1]-nearest["position"][1]])`},
+  {name:'Basic Grapple Starter',weapon:'grapple',stats:{hp:5,speed:6,attack:5,defense:4},style:'Basic grapple starter. Use pulls for simple engage value and keep chasing.',strong:'Displacing ranged bots',counter:'Heavy bruisers',code:`await ws.send(json.dumps({
+    "type": "select_loadout",
+    "weapon": "grapple",
+    "stats": {"hp": 5, "speed": 6, "attack": 5, "defense": 4},
+    "fallback_behavior": "opportunistic"
+}))
+
+if enemies and state["weapon_ready"]:
+    send_action("attack", target=min(enemies, key=lambda e: dist(my_pos, e["position"]))["bot_id"])
+elif enemies and state.get("grapple_charges", 0) > 0:
+    send_action("grapple", target=min(enemies, key=lambda e: dist(my_pos, e["position"]))["bot_id"])
+elif enemies:
+    send_action("move_to", target_position=min(enemies, key=lambda e: dist(my_pos, e["position"]))["position"])`}
+];
+
+async function renderBuilds() {
+  await ensureToolkitData().catch(() => {});
+  document.getElementById('buildTemplates').innerHTML = TOOLKIT_BUILD_TEMPLATES.map((b,i) => {
     const statsStr = Object.entries(b.stats).map(([k,v])=>`${k}:${v}`).join(' ');
+    const bundle = getWeaponBundle(b.weapon);
     return `<div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <span style="color:var(--orange);font-weight:bold;font-size:14px">${esc(b.name)}</span>
         <span style="font-size:11px;color:var(--text2)">${esc(b.weapon.toUpperCase())} | ${statsStr}</span>
       </div>
       <div style="font-size:11px;margin-bottom:6px">${esc(b.style)}</div>
+      <div style="font-size:10px;color:var(--text2);margin-bottom:6px">Current live tuning: ${Number(bundle.damage || 0).toFixed(2)} damage (${bundle.appliedDamage} applied) | ${Number(bundle.cooldown || 0).toFixed(2)}s cooldown | ${bundle.rangeTiles ?? '--'} tiles</div>
       <div style="font-size:10px;margin-bottom:4px"><span style="color:var(--green)">Strong vs:</span> ${esc(b.strong)}</div>
       <div style="font-size:10px;margin-bottom:8px"><span style="color:var(--red)">Countered by:</span> ${esc(b.counter)}</div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
@@ -855,20 +1497,63 @@ function renderBuilds() {
         <button class="sm" onclick="copyBuildCode(${i})">Copy Code</button>
         <span id="buildCopy${i}" style="font-size:10px;color:var(--green)"></span>
       </div>
-      <div class="code-block" id="buildCode${i}" style="font-size:10px;max-height:200px;overflow-y:auto">${esc(b.code)}</div>
+      <div class="build-code-shell">
+        <div class="build-code-scroll" id="buildCode${i}">${esc(b.code)}</div>
+      </div>
     </div>`;
   }).join('');
 }
 function copyBuildCode(i) {
-  const code = BUILD_TEMPLATES[i].code;
+  const code = TOOLKIT_BUILD_TEMPLATES[i].code;
   navigator.clipboard.writeText(code).then(() => {
     document.getElementById('buildCopy'+i).textContent = 'Copied!';
     setTimeout(() => { document.getElementById('buildCopy'+i).textContent = ''; }, 2000);
   });
 }
 
+// ========== Utility Skills ==========
+async function renderSkills() {
+  await ensureToolkitData().catch(() => {});
+  const actionOrder = ['dodge','shove','place_mine','grapple','use_item','use_gravity_well','move_to'];
+  const actions = actionOrder.map(name => TOOLKIT_STATE.actionsByName[name]).filter(Boolean);
+  const featureLabels = {
+    teleport_pads:'Teleport Pads',
+    environmental_hazards:'Damage Zones',
+    sudden_death:'Sudden Death',
+    bounty_system:'Bounty Board',
+    landmines:'Landmines',
+    gravity_well:'Gravity Well'
+  };
+  const systems = TOOLKIT_STATE.botSetup?.game_mechanics?.new_features || {};
+
+  let html = '<div class="utility-grid">';
+  actions.forEach(action => {
+    const fieldList = Object.entries(action.fields || {});
+    html += `<div class="utility-card">
+      <div class="pill">${action.name.replaceAll('_',' ')}</div>
+      <h3>${titleCaseWord(action.name)}</h3>
+      <div>${esc(action.description || 'Public arena action.')}</div>
+      ${fieldList.length ? `<ul>${fieldList.map(([key, value]) => `<li><span class="mono">${esc(key)}</span>: ${esc(value)}</li>`).join('')}</ul>` : '<div class="mono" style="margin-top:8px">No payload fields required.</div>'}
+    </div>`;
+  });
+  html += '</div>';
+
+  html += '<div style="height:14px"></div><div class="utility-grid">';
+  Object.entries(featureLabels).forEach(([key, label]) => {
+    if (!systems[key]) return;
+    html += `<div class="utility-card">
+      <div class="pill">Arena System</div>
+      <h3>${label}</h3>
+      <div>${esc(systems[key])}</div>
+    </div>`;
+  });
+  html += '</div>';
+
+  document.getElementById('skillGuide').innerHTML = html;
+}
+
 // ========== Map Viewer ==========
-let mapZoomLevel = 4;
+let mapZoomLevel = 1.3;
 let mapData = null;
 async function loadMapViewer() {
   const status = document.getElementById('mapStatus');
@@ -895,8 +1580,8 @@ async function loadMapViewer() {
   }
 }
 function mapZoom(dir) {
-  if (dir === 0) mapZoomLevel = 4;
-  else mapZoomLevel = Math.max(1, Math.min(12, mapZoomLevel + dir));
+  if (dir === 0) mapZoomLevel = 1.3;
+  else mapZoomLevel = Math.max(0.5, Math.min(2.5, mapZoomLevel + dir * 0.15));
   if (mapData) drawMap();
 }
 function drawMap() {
@@ -904,10 +1589,16 @@ function drawMap() {
   const terrain = mapData.terrain;
   const rows = terrain.length;
   const cols = terrain[0] ? terrain[0].length : 0;
-  const cs = mapZoomLevel;
+  const viewport = document.getElementById('mapViewport');
+  const viewportWidth = Math.max(320, viewport?.clientWidth || 900);
+  const viewportHeight = Math.max(320, viewport?.clientHeight || 600);
+  const fitCellSize = Math.max(2, Math.floor(Math.min(viewportWidth / cols, viewportHeight / rows)));
+  const cs = Math.max(2, Math.floor(fitCellSize * mapZoomLevel));
   const canvas = document.getElementById('mapCanvas');
   canvas.width = cols * cs;
   canvas.height = rows * cs;
+  canvas.style.width = `${canvas.width}px`;
+  canvas.style.height = `${canvas.height}px`;
   const ctx = canvas.getContext('2d');
   const COLORS = { '.': '#1a2332', '#': '#3d4f5f', '~': '#1a3a5c', 'V': '#0a0a0a' };
   for (let r = 0; r < rows; r++) {
@@ -926,6 +1617,9 @@ function drawMap() {
     for (let c = 0; c <= cols; c++) { ctx.beginPath(); ctx.moveTo(c*cs, 0); ctx.lineTo(c*cs, rows*cs); ctx.stroke(); }
   }
 }
+window.addEventListener('resize', () => {
+  if (mapData && document.getElementById('tab-mapviewer')?.classList.contains('active')) drawMap();
+});
 
 // ========== Meta Report ==========
 async function loadMetaReport() {
@@ -1020,20 +1714,34 @@ const MATCHUPS = {
   spear: {sword:{r:0,d:'Similar melee range. Knockback helps, but sword has cleave DPS.'},bow:{r:-1,d:'Bow outranges by 5 tiles. Spear can\'t reach.'},daggers:{r:1,d:'Knockback prevents daggers from sticking. Range advantage.'},shield:{r:1,d:'Knockback disrupts shield positioning. Push into zone damage.'},spear:{r:0,d:'Mirror — both knockback each other. Stalemately.'},staff:{r:-1,d:'Staff outranges spear. AoE zones out spear user.'}},
   staff: {sword:{r:1,d:'AoE zones out sword. Place impacts between you and them.'},bow:{r:0,d:'Both ranged. Bow has speed, staff has area control. Even matchup.'},daggers:{r:-2,d:'Daggers rush in and burst. AoE has 2-tick delay — too slow vs speed.'},shield:{r:2,d:'AoE bypasses block entirely. Shield has no answer to area damage.'},spear:{r:1,d:'Outranges spear. AoE denies spear\'s mid-range zone.'},staff:{r:0,d:'Mirror — area control contest. Positioning is everything.'}},
 };
-const WEAPON_ORDER = ['sword','bow','daggers','shield','spear','staff'];
-const WEAPON_ICONS = {sword:'⚔️',bow:'🏹',daggers:'🗡️',shield:'🛡️',spear:'🔱',staff:'🪄'};
+MATCHUPS.grapple = {
+  sword:{r:-1,d:'Sword trades hard once grapple is forced into close range.'},
+  bow:{r:2,d:'Grapple can yank ranged targets out of safe spacing.'},
+  daggers:{r:0,d:'Both want fast close-range scraps. Positioning decides it.'},
+  shield:{r:-1,d:'Shield survives the pull and drags the fight into a brawl.'},
+  spear:{r:0,d:'Spear spacing can deny entries, but grapple can punish overextension.'},
+  staff:{r:2,d:'Hooking casters before the blast lands is a strong punish.'},
+  grapple:{r:0,d:'Mirror - whoever lands the better displacement first wins space.'}
+};
+MATCHUPS.sword.grapple = {r:1,d:'Sword likes grapple once the hook user is dragged into melee.'};
+MATCHUPS.bow.grapple = {r:-2,d:'A landed hook or pull ruins bow spacing instantly.'};
+MATCHUPS.daggers.grapple = {r:0,d:'Daggers can burst after a bad pull, but grapple can also peel them off.'};
+MATCHUPS.shield.grapple = {r:1,d:'Shield survives the engage and punishes the follow-up fight.'};
+MATCHUPS.spear.grapple = {r:0,d:'Spear spacing contests grapple entry, but neither side hard-counters.'};
+MATCHUPS.staff.grapple = {r:-2,d:'Grapple can disrupt staff before the delayed hit resolves.'};
+const WEAPON_ORDER = ['sword','bow','daggers','shield','spear','staff','grapple'];
 
 function renderMatchupMatrix() {
   const ratingColor = r => r >= 2 ? '#3fb950' : r >= 1 ? '#2ea043' : r === 0 ? '#d29922' : r >= -1 ? '#da3633' : '#f85149';
-  const ratingText = r => r >= 2 ? '++' : r >= 1 ? '+' : r === 0 ? '=' : r >= -1 ? '−' : '−−';
+  const ratingText = r => r >= 2 ? '++' : r >= 1 ? '+' : r === 0 ? '=' : r >= -1 ? '-' : '--';
 
   let html = '<div style="overflow-x:auto"><table style="border-collapse:collapse;text-align:center;font-size:11px">';
   html += '<thead><tr><th style="padding:6px;border:1px solid var(--border)">ATK \\ DEF</th>';
-  WEAPON_ORDER.forEach(w => html += `<th style="padding:6px;border:1px solid var(--border)">${WEAPON_ICONS[w]} ${w}</th>`);
+  WEAPON_ORDER.forEach(w => html += `<th style="padding:6px;border:1px solid var(--border)"><span class="weapon-inline-icon">${weaponIconSvg(w, 12)}</span>${w}</th>`);
   html += '</tr></thead><tbody>';
 
   WEAPON_ORDER.forEach(atk => {
-    html += `<tr><td style="padding:6px;border:1px solid var(--border);font-weight:bold;text-align:left">${WEAPON_ICONS[atk]} ${atk}</td>`;
+    html += `<tr><td style="padding:6px;border:1px solid var(--border);font-weight:bold;text-align:left"><span class="weapon-inline-icon">${weaponIconSvg(atk, 12)}</span>${atk}</td>`;
     WEAPON_ORDER.forEach(def => {
       const m = MATCHUPS[atk][def];
       const bg = ratingColor(m.r);
@@ -1042,13 +1750,13 @@ function renderMatchupMatrix() {
     html += '</tr>';
   });
   html += '</tbody></table></div>';
-  html += '<div style="font-size:10px;color:var(--text2);margin-top:6px"><span style="color:#3fb950">++</span> strong win &nbsp; <span style="color:#2ea043">+</span> slight edge &nbsp; <span style="color:#d29922">=</span> even &nbsp; <span style="color:#da3633">−</span> slight loss &nbsp; <span style="color:#f85149">−−</span> hard counter</div>';
+  html += '<div style="font-size:10px;color:var(--text2);margin-top:6px"><span style="color:#3fb950">++</span> strong win &nbsp; <span style="color:#2ea043">+</span> slight edge &nbsp; <span style="color:#d29922">=</span> even &nbsp; <span style="color:#da3633">-</span> slight loss &nbsp; <span style="color:#f85149">--</span> hard counter</div>';
   document.getElementById('matchupMatrix').innerHTML = html;
 }
 function showMatchup(atk, def) {
   const m = MATCHUPS[atk][def];
   const ratingColor = m.r >= 1 ? 'var(--green)' : m.r <= -1 ? 'var(--red)' : 'var(--orange)';
-  document.getElementById('matchupDetail').innerHTML = `<div class="tip" style="border-color:${ratingColor}"><b>${WEAPON_ICONS[atk]} ${atk} vs ${WEAPON_ICONS[def]} ${def}:</b> ${m.d}</div>`;
+  document.getElementById('matchupDetail').innerHTML = `<div class="tip" style="border-color:${ratingColor}"><b><span class="weapon-inline-icon">${weaponIconSvg(atk, 12)}</span>${atk} vs <span class="weapon-inline-icon">${weaponIconSvg(def, 12)}</span>${def}:</b> ${m.d}</div>`;
 }
 
 // ========== Decision Tree ==========
@@ -1057,11 +1765,11 @@ function renderDecisionTree() {
     const pad = indent * 20;
     return `<div style="margin-left:${pad}px;margin-bottom:2px">
       <div style="display:flex;align-items:center;gap:6px">
-        <span style="color:var(--accent);font-weight:bold;font-size:12px">${indent > 0 ? (indent % 2 === 0 ? '└─' : '├─') : '▶'}</span>
+        <span style="color:var(--accent);font-weight:bold;font-size:12px">${indent > 0 ? '->' : '>'}</span>
         <span style="font-size:12px">${q}</span>
       </div>
-      ${yes ? `<div style="margin-left:${pad+20}px;font-size:11px;color:var(--green);margin:2px 0">✓ YES → ${yes}</div>` : ''}
-      ${no ? `<div style="margin-left:${pad+20}px;font-size:11px;color:var(--red);margin:2px 0">✗ NO → ${no}</div>` : ''}
+      ${yes ? `<div style="margin-left:${pad+20}px;font-size:11px;color:var(--green);margin:2px 0">[Y] YES -> ${yes}</div>` : ''}
+      ${no ? `<div style="margin-left:${pad+20}px;font-size:11px;color:var(--red);margin:2px 0">[N] NO -> ${no}</div>` : ''}
     </div>`;
   };
 

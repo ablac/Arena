@@ -600,7 +600,7 @@ func (e *GameEngine) endRound() {
 			db.InsertRoundBotStats(ctx, roundNum, bot.BotID, bot.Name, bot.Weapon,
 				bot.RoundKills, bot.RoundDeaths,
 				int64(bot.RoundDamageDealt), int64(bot.RoundDamageTaken),
-				lifeSecs, bot.RoundPickups, bot.RoundDistance, bot.Elo, won)
+				lifeSecs, bot.RoundShotsFired, bot.RoundShotsHit, bot.RoundPickups, bot.RoundDistance, bot.Elo, won)
 		}
 	}(e.copyBotsForPersist(), winnerID)
 
@@ -971,7 +971,8 @@ func (e *GameEngine) processUseItems() {
 					Message: "target_position required",
 				}
 			} else {
-				well := CreateGravityWell(bot.BotID, *bot.PendingAction.TargetPosition)
+				targetPos := normalizeActionTargetPosition(*bot.PendingAction.TargetPosition)
+				well := CreateGravityWell(bot.BotID, targetPos)
 				e.GravityWells = append(e.GravityWells, *well)
 				bot.GravityWellCharge--
 				bot.LastActionResult = &ActionResult{
@@ -1024,7 +1025,8 @@ func (e *GameEngine) processGrappleAbility(bot *BotState) {
 	}
 
 	if targetPos != nil {
-		if !IsInRange(bot.Position, *targetPos, maxRange) {
+		normalizedTarget := normalizeActionTargetPosition(*targetPos)
+		if !IsInRange(bot.Position, normalizedTarget, maxRange) {
 			bot.LastActionResult = &ActionResult{
 				Action:  "grapple",
 				Success: false,
@@ -1034,7 +1036,7 @@ func (e *GameEngine) processGrappleAbility(bot *BotState) {
 		}
 
 		from := bot.Position
-		landing, ok := findGrappleLandingPosition(bot.Position, *targetPos)
+		landing, ok := findGrappleLandingPosition(bot.Position, normalizedTarget)
 		if !ok {
 			bot.LastActionResult = &ActionResult{
 				Action:  "grapple",
@@ -1049,7 +1051,7 @@ func (e *GameEngine) processGrappleAbility(bot *BotState) {
 		e.Grid.Update(bot.BotID, landing)
 		bot.GrappleCharges--
 		bot.GrappleCooldown = config.C.GrappleAbilityCooldownSecs
-		e.appendArenaEvents(buildGrappleEvent(bot.BotID, "", from, *targetPos, landing, true, e.TickCount))
+		e.appendArenaEvents(buildGrappleEvent(bot.BotID, "", from, normalizedTarget, landing, true, e.TickCount))
 		bot.LastActionResult = &ActionResult{
 			Action:  "grapple",
 			Success: true,
@@ -2088,6 +2090,7 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 		"kill_streak":       bot.KillStreak,
 		"attack_multiplier": round1(bot.AttackMultiplier),
 		"defense_reduction": round1(bot.DefenseReduction),
+		"cooldown_remaining": round1(bot.CooldownRemaining),
 		"dodge_cooldown":    bot.DodgeCooldown,
 		"invuln_ticks":      bot.InvulnTicks,
 		"stun_ticks":        bot.StunTicks,
@@ -2104,6 +2107,7 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 		"round_pickups":      bot.RoundPickups,
 		"last_action_tick":   bot.LastActionTick,
 		"last_action_result": lastAction,
+		"current_action":     bot.PendingAction,
 		"connected_at":      bot.ConnectedAt,
 		"action_counts":     botActionCounts(bot),
 		"connection":         connInfo,

@@ -127,11 +127,21 @@ type WeaponKillStats struct {
 
 // WeaponRecentPerformance represents aggregated per-weapon performance across recent rounds.
 type WeaponRecentPerformance struct {
-	Weapon    string  `json:"weapon"`
-	Bots      int     `json:"bots"`
-	Wins      int     `json:"wins"`
-	Rounds    int     `json:"rounds"`
-	AvgScore  float64 `json:"avg_score"`
+	Weapon        string  `json:"weapon"`
+	Bots          int     `json:"bots"`
+	Wins          int     `json:"wins"`
+	Rounds        int     `json:"rounds"`
+	AvgScore      float64 `json:"avg_score"`
+	AvgKills      float64 `json:"avg_kills"`
+	AvgDamage     float64 `json:"avg_damage"`
+	AvgLifeSecs   float64 `json:"avg_life_secs"`
+	ShotsFired    int     `json:"shots_fired"`
+	ShotsHit      int     `json:"shots_hit"`
+	HitRate       float64 `json:"hit_rate"`
+	DamagePerShot float64 `json:"damage_per_shot"`
+	DamagePerHit  float64 `json:"damage_per_hit"`
+	ShotsPerLife  float64 `json:"shots_per_life"`
+	KillsPerHit   float64 `json:"kills_per_hit"`
 }
 
 // WeaponBalanceHistory captures one adaptive balancing decision snapshot.

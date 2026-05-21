@@ -758,6 +758,20 @@ func bestTarget(pos [2]float64, enemies []entity, wrange float64) *entity {
 	return best
 }
 
+func visibleEnemiesInRange(pos [2]float64, enemies []entity, wrange float64) []entity {
+	filtered := make([]entity, 0, len(enemies))
+	for _, e := range enemies {
+		if !e.IsAlive || !e.HasLOS || e.Dodging {
+			continue
+		}
+		if chebyshev(pos, e.Position) > wrange {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	return filtered
+}
+
 // weakest returns the enemy with the lowest HP.
 func weakest(pos [2]float64, enemies []entity) (*entity, float64) {
 	var best *entity
@@ -911,6 +925,68 @@ func enemiesWithinRange(pos [2]float64, enemies []entity, r float64) int {
 		}
 	}
 	return count
+}
+
+func bestStaffCast(pos [2]float64, enemies []entity, wrange float64) (*actionResult, bool) {
+	candidates := visibleEnemiesInRange(pos, enemies, wrange)
+	if len(candidates) == 0 {
+		return nil, false
+	}
+
+	clusterCenter, clusterCount := enemyClusterCenter(candidates, 3)
+	if clusterCount >= 2 && chebyshev(pos, clusterCenter) <= wrange {
+		a := atkPos(clusterCenter, "staff")
+		return &a, true
+	}
+
+	target := bestTarget(pos, candidates, wrange)
+	if target != nil {
+		a := atk(target, "staff")
+		return &a, true
+	}
+
+	near, nearD := closestVisible(pos, candidates)
+	if near != nil && nearD <= wrange {
+		a := atk(near, "staff")
+		return &a, true
+	}
+
+	return nil, false
+}
+
+func finalizeWeaponAction(ts tickState, weapon string, wrange float64, action actionResult) actionResult {
+	if weapon != "staff" || action.Action != "attack" {
+		return action
+	}
+
+	if action.TargetPosition != nil {
+		castPos := *action.TargetPosition
+		if chebyshev(ts.Position, castPos) <= wrange {
+			candidates := visibleEnemiesInRange(ts.Position, ts.Enemies, wrange)
+			if enemiesWithinRange(castPos, candidates, 2) > 0 {
+				return action
+			}
+		}
+	}
+
+	if action.Target != "" {
+		for i := range ts.Enemies {
+			e := &ts.Enemies[i]
+			if e.ID == action.Target && e.IsAlive && e.HasLOS && chebyshev(ts.Position, e.Position) <= wrange {
+				return atk(e, "staff")
+			}
+		}
+	}
+
+	if best, ok := bestStaffCast(ts.Position, ts.Enemies, wrange); ok {
+		return *best
+	}
+
+	near, _ := closestVisible(ts.Position, ts.Enemies)
+	if near != nil {
+		return moveTo(ts.Position, near.Position)
+	}
+	return moveTo(ts.Position, ts.ZoneTargetCenter)
 }
 
 // === Smart Pickup Prioritization ===
@@ -1511,7 +1587,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 			return shove(near.ID)
 		}
 		if near != nil && nearD <= wrange && canAtk {
-			return atk(near, weapon)
+			return finalizeWeaponAction(ts, weapon, wrange, atk(near, weapon))
 		}
 		return moveTo(pos, ts.ZoneCenter)
 	}
@@ -1563,19 +1639,19 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	// === COMBAT: Strategy-specific ===
 	switch strategy {
 	case "aggressive":
-		return aiAggressive(ts, near, nearD, wrange, weapon, canAtk, canDodge, botID)
+		return finalizeWeaponAction(ts, weapon, wrange, aiAggressive(ts, near, nearD, wrange, weapon, canAtk, canDodge, botID))
 	case "berserker":
-		return aiBerserker(ts, near, nearD, wrange, weapon, canAtk, canDodge)
+		return finalizeWeaponAction(ts, weapon, wrange, aiBerserker(ts, near, nearD, wrange, weapon, canAtk, canDodge))
 	case "kite":
-		return aiKite(ts, near, nearD, wrange, weapon, canAtk, canDodge, botID)
+		return finalizeWeaponAction(ts, weapon, wrange, aiKite(ts, near, nearD, wrange, weapon, canAtk, canDodge, botID))
 	case "assassin":
-		return aiAssassin(ts, near, nearD, wrange, weapon, canAtk, canDodge, botID)
+		return finalizeWeaponAction(ts, weapon, wrange, aiAssassin(ts, near, nearD, wrange, weapon, canAtk, canDodge, botID))
 	case "defensive":
-		return aiDefensive(ts, near, nearD, wrange, weapon, canAtk, canDodge)
+		return finalizeWeaponAction(ts, weapon, wrange, aiDefensive(ts, near, nearD, wrange, weapon, canAtk, canDodge))
 	case "territorial":
-		return aiTerritorial(ts, near, nearD, wrange, weapon, canAtk, canDodge, botID)
+		return finalizeWeaponAction(ts, weapon, wrange, aiTerritorial(ts, near, nearD, wrange, weapon, canAtk, canDodge, botID))
 	default:
-		return aiAggressive(ts, near, nearD, wrange, weapon, canAtk, canDodge, botID)
+		return finalizeWeaponAction(ts, weapon, wrange, aiAggressive(ts, near, nearD, wrange, weapon, canAtk, canDodge, botID))
 	}
 }
 
@@ -1646,21 +1722,8 @@ func aiKite(ts tickState, near *entity, nearD, wrange float64, weapon string, ca
 
 	// Staff AoE: target cluster center instead of individual enemies
 	if weapon == "staff" && canAtk {
-		clusterCenter, clusterCount := enemyClusterCenter(ts.Enemies, 3)
-		clusterDist := chebyshev(ts.Position, clusterCenter)
-
-		// If 2+ enemies are clustered and within range, AoE the cluster center
-		if clusterCount >= 2 && clusterDist <= wrange {
-			return atkPos(clusterCenter, weapon)
-		}
-
-		// Otherwise attack best single target
-		target := bestTarget(ts.Position, ts.Enemies, wrange)
-		if target != nil {
-			return atk(target, weapon)
-		}
-		if nearD <= wrange {
-			return atk(near, weapon)
+		if cast, ok := bestStaffCast(ts.Position, ts.Enemies, wrange); ok {
+			return *cast
 		}
 	} else if canAtk {
 		// Non-staff kite weapons
