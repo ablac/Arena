@@ -88,6 +88,7 @@ type Action struct {
 	Direction      Vec2   // (dx, dy) for move/dodge
 	ItemID         string // pickup_id for use_item
 	TargetPosition *Vec2  // for move_to and staff area attacks
+	Charged        bool   // optional charged bow shot
 }
 
 // Effect represents an active buff on a bot.
@@ -106,6 +107,8 @@ const (
 	PickupDamageBoost  PickupType = "damage_boost"
 	PickupShieldBubble PickupType = "shield_bubble"
 	PickupGravityWell  PickupType = "gravity_well"
+	PickupCooldownShard PickupType = "cooldown_shard"
+	PickupBountyToken   PickupType = "bounty_token"
 )
 
 // Pickup represents a collectible item on the map.
@@ -120,12 +123,14 @@ type Pickup struct {
 type Projectile struct {
 	ID        string
 	OwnerID   string
+	Color     string
 	Position  Vec2
 	Direction Vec2
 	Speed     float64
 	HitRadius float64
 	Damage    float64
 	Weapon    string
+	Intensity float64
 	AgeTicks  int
 	MaxAge    int
 }
@@ -146,6 +151,18 @@ type StaffImpact struct {
 	Damage     float64
 	TicksLeft  int
 	AttackMult float64
+}
+
+// BurnField is a lingering damage zone left behind by a staff detonation.
+type BurnField struct {
+	ID           string
+	OwnerID      string
+	Position     Vec2
+	Radius       float64
+	Damage       float64
+	TicksLeft    int
+	TickInterval int
+	PulseTick    int
 }
 
 // HitRecord tracks a hit received this tick (for feedback).
@@ -175,6 +192,7 @@ type BotState struct {
 	// Position & movement
 	Position          Vec2
 	LastValidPosition Vec2 // last position in an unblocked cell — for wall rejection
+	Facing            Vec2
 	Speed             float64
 
 	// Health & combat
@@ -203,6 +221,7 @@ type BotState struct {
 	DodgeCooldown int
 	InvulnTicks   int
 	StunTicks     int
+	RecentlyDisruptedTicks int
 	Frozen        bool // admin freeze — cannot move or attack
 
 	// Shove cooldown (separate from weapon cooldown)
@@ -216,6 +235,7 @@ type BotState struct {
 
 	// Stuck detection: counts consecutive ticks at the same grid cell.
 	StuckTicks int
+	StillTicks int
 
 	// Pathfinding
 	CurrentPath []Vec2
@@ -251,6 +271,7 @@ type BotState struct {
 
 	// Bounty
 	IsBountyTarget bool
+	BountyTokenBonus int
 
 	// Landmines: active mines placed by this bot
 	MineCount int
@@ -261,9 +282,12 @@ type BotState struct {
 	// Grapple ability (universal — 2 charges per round)
 	GrappleCharges  int
 	GrappleCooldown float64
+	BowChargeTicks  int
 
 	// Teleport pad cooldowns: padID -> tick when cooldown expires
 	TeleportCooldowns map[string]int
+	TeleportTouchedPads map[string]bool
+	TeleportHazardGraceTicks int
 
 	// Per-tick feedback (cleared each tick)
 	HitsReceived    []HitRecord
@@ -339,6 +363,7 @@ type ArenaEvent struct {
 	TargetID     string  `json:"target_id,omitempty"`
 	Color        string  `json:"color,omitempty"`
 	Radius       float64 `json:"radius,omitempty"`
+	Intensity    float64 `json:"intensity,omitempty"`
 }
 
 // SpectatorState is the serialized arena state for spectators.
@@ -354,6 +379,7 @@ type SpectatorState struct {
 	WaitingBots  []map[string]interface{} `json:"waiting_bots,omitempty"`
 	TeleportPads []map[string]interface{} `json:"teleport_pads,omitempty"`
 	HazardZones  []map[string]interface{} `json:"hazard_zones,omitempty"`
+	BurnFields   []map[string]interface{} `json:"burn_fields,omitempty"`
 	Landmines    []map[string]interface{} `json:"landmines,omitempty"`
 	GravityWells []map[string]interface{} `json:"gravity_wells,omitempty"`
 	StaffImpacts []map[string]interface{} `json:"staff_impacts,omitempty"`
@@ -408,6 +434,9 @@ func (b *BotState) ResetRoundStats() {
 	b.RoundPickups = 0
 	b.RoundLifeStartTick = 0
 	b.BestKillStreak = 0
+	b.RecentlyDisruptedTicks = 0
+	b.BowChargeTicks = 0
+	b.StillTicks = 0
 	// Reset persistence snapshots so deltas start fresh
 	b.PersistedKills = 0
 	b.PersistedDeaths = 0

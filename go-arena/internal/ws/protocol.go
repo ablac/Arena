@@ -29,6 +29,7 @@ type ActionMessage struct {
 	Direction      *game.Vec2 `json:"direction,omitempty"`
 	ItemID         string     `json:"item_id,omitempty"`
 	TargetPosition *game.Vec2 `json:"target_position,omitempty"`
+	Charged        bool       `json:"charged,omitempty"`
 }
 
 // AuthMessage represents the initial authentication message from a bot.
@@ -100,6 +101,7 @@ func ActionMessageToAction(msg *ActionMessage) *game.Action {
 		TargetID:       msg.Target,
 		ItemID:         msg.ItemID,
 		TargetPosition: msg.TargetPosition,
+		Charged:        msg.Charged,
 	}
 
 	if msg.Direction != nil {

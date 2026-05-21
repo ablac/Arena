@@ -92,10 +92,19 @@ func ProcessTeleports(bots map[string]*BotState, pads []TeleportPad, grid *Spati
 		if !bot.IsAlive {
 			continue
 		}
+		if bot.TeleportTouchedPads == nil {
+			bot.TeleportTouchedPads = make(map[string]bool)
+		}
+		touchedNow := make(map[string]bool)
+		teleported := false
 
 		for i := range pads {
 			pad := &pads[i]
 			if !IsInRange(bot.Position, pad.Position, collectRadius) {
+				continue
+			}
+			touchedNow[pad.ID] = true
+			if bot.TeleportTouchedPads[pad.ID] {
 				continue
 			}
 			if pad.CooldownUntilTick > tickCount {
@@ -123,6 +132,7 @@ func ProcessTeleports(bots map[string]*BotState, pads []TeleportPad, grid *Spati
 			grid.Remove(bot.BotID)
 			bot.Position = linked.Position
 			bot.LastValidPosition = linked.Position
+			bot.TeleportHazardGraceTicks = config.C.TeleportHazardGraceTicks
 			grid.Insert(bot.BotID, bot.Position)
 			events = append(events, buildTeleportEvent(bot, *pad, from, linked.Position, tickCount))
 
@@ -134,10 +144,19 @@ func ProcessTeleports(bots map[string]*BotState, pads []TeleportPad, grid *Spati
 			bot.TeleportCooldowns[linked.ID] = tickCount + cooldownTicks
 			pad.CooldownUntilTick = tickCount + lockTicks
 			linked.CooldownUntilTick = tickCount + lockTicks
+			touchedNow[pad.ID] = true
+			touchedNow[linked.ID] = true
 
 			// Only teleport once per tick per bot.
+			teleported = true
 			break
 		}
+
+		if teleported {
+			bot.TeleportTouchedPads = touchedNow
+			continue
+		}
+		bot.TeleportTouchedPads = touchedNow
 	}
 	return events
 }

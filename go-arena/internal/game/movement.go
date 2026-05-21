@@ -109,6 +109,7 @@ func processMove(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, dt floa
 
 	bot.Position = newPos
 	bot.LastValidPosition = newPos
+	bot.Facing = Vec2{float64(dx), float64(dy)}.Normalized()
 
 	// Track distance traveled.
 	dist := oldPos.DistanceTo(bot.Position)
@@ -184,6 +185,7 @@ func processDodge(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, dt flo
 
 	bot.Position = ActiveTerrain.GridToWorld(destCell)
 	bot.LastValidPosition = bot.Position
+	bot.Facing = Vec2{float64(dx), float64(dy)}.Normalized()
 	bot.InvulnTicks = config.C.DodgeInvulnTicks
 	bot.DodgeCooldown = config.C.DodgeCooldownTicks
 
@@ -282,6 +284,9 @@ func processMoveTo(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, navGr
 				bot.Position = ActiveTerrain.GridToWorld(targetCell)
 				bot.RoundDistance += oldPos.DistanceTo(bot.Position)
 				bot.LastValidPosition = bot.Position
+				if dx != 0 || dy != 0 {
+					bot.Facing = Vec2{float64(dx), float64(dy)}.Normalized()
+				}
 			}
 		}
 
@@ -315,6 +320,7 @@ func processMoveTo(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, navGr
 
 		bot.Position = NewVec2(newX, newY)
 		bot.RoundDistance += oldPos.DistanceTo(bot.Position)
+		bot.Facing = dir
 
 		if bot.Position.DistanceTo(waypoint) < 1.0 {
 			bot.CurrentPath = bot.CurrentPath[1:]

@@ -67,7 +67,28 @@ type Config struct {
 
 	// Staff
 	StaffDelayTicks    int `envconfig:"ARENA_STAFF_DELAY_TICKS" default:"3"`
+	StaffBurnFieldTicks int `envconfig:"ARENA_STAFF_BURN_FIELD_TICKS" default:"12"`
+	StaffBurnFieldRadius int `envconfig:"ARENA_STAFF_BURN_FIELD_RADIUS" default:"1"`
+	StaffBurnFieldTickInterval int `envconfig:"ARENA_STAFF_BURN_FIELD_TICK_INTERVAL" default:"2"`
+	StaffBurnFieldDamage float64 `envconfig:"ARENA_STAFF_BURN_FIELD_DAMAGE" default:"3"`
 	StunDurationTicks  int `envconfig:"ARENA_STUN_DURATION_TICKS" default:"1"`
+
+	// Weapon signatures
+	ShieldBashBonusMultiplier float64 `envconfig:"ARENA_SHIELD_BASH_BONUS_MULT" default:"1.35"`
+	ShieldDisruptWindowTicks  int     `envconfig:"ARENA_SHIELD_DISRUPT_WINDOW_TICKS" default:"10"`
+	DaggerBackstabBonusMultiplier float64 `envconfig:"ARENA_DAGGER_BACKSTAB_BONUS_MULT" default:"1.45"`
+	DaggerBackstabDotThreshold float64 `envconfig:"ARENA_DAGGER_BACKSTAB_DOT_THRESHOLD" default:"-0.35"`
+	SpearBraceStillTicks int     `envconfig:"ARENA_SPEAR_BRACE_STILL_TICKS" default:"2"`
+	SpearBraceBonusMultiplier float64 `envconfig:"ARENA_SPEAR_BRACE_BONUS_MULT" default:"1.35"`
+	SpearBraceBonusKnockback int `envconfig:"ARENA_SPEAR_BRACE_BONUS_KNOCKBACK" default:"1"`
+	BowChargeMaxTicks int `envconfig:"ARENA_BOW_CHARGE_MAX_TICKS" default:"6"`
+	BowChargeReadyTicks int `envconfig:"ARENA_BOW_CHARGE_READY_TICKS" default:"2"`
+	BowChargeDamagePerTick float64 `envconfig:"ARENA_BOW_CHARGE_DAMAGE_PER_TICK" default:"0.12"`
+	BowChargeSpeedPerTick float64 `envconfig:"ARENA_BOW_CHARGE_SPEED_PER_TICK" default:"0.08"`
+	BowChargeCooldownPerTick float64 `envconfig:"ARENA_BOW_CHARGE_COOLDOWN_PER_TICK" default:"0.06"`
+	GrappleSlamMinRange int `envconfig:"ARENA_GRAPPLE_SLAM_MIN_RANGE" default:"3"`
+	GrappleSlamBonusMultiplier float64 `envconfig:"ARENA_GRAPPLE_SLAM_BONUS_MULT" default:"1.4"`
+	GrappleSlamStunTicks int `envconfig:"ARENA_GRAPPLE_SLAM_STUN_TICKS" default:"2"`
 
 	// Universal Grapple Ability
 	GrappleChargesPerRound     int     `envconfig:"ARENA_GRAPPLE_CHARGES_PER_ROUND" default:"2"`
@@ -105,6 +126,10 @@ type Config struct {
 	PickupDamageBoostMult    float64 `envconfig:"ARENA_PICKUP_DAMAGE_BOOST_MULT" default:"1.5"`
 	PickupDamageBoostTicks   int     `envconfig:"ARENA_PICKUP_DAMAGE_BOOST_TICKS" default:"50"`
 	PickupShieldBubbleHP     float64 `envconfig:"ARENA_PICKUP_SHIELD_BUBBLE_HP" default:"50"`
+	PickupCooldownShardWeaponPct float64 `envconfig:"ARENA_PICKUP_COOLDOWN_SHARD_WEAPON_PCT" default:"0.7"`
+	PickupCooldownShardAbilityPct float64 `envconfig:"ARENA_PICKUP_COOLDOWN_SHARD_ABILITY_PCT" default:"0.5"`
+	PickupBountyTokenPoints  int     `envconfig:"ARENA_PICKUP_BOUNTY_TOKEN_POINTS" default:"18"`
+	PickupBountyTokenTicks   int     `envconfig:"ARENA_PICKUP_BOUNTY_TOKEN_TICKS" default:"90"`
 	PickupCollectRadius      float64 `envconfig:"ARENA_PICKUP_COLLECT_RADIUS" default:"2.0"`
 
 	// Network / persistence
@@ -175,6 +200,7 @@ type Config struct {
 	TeleportCooldownTicks  int `envconfig:"ARENA_TELEPORT_COOLDOWN_TICKS" default:"50"`
 	TeleportCollectRadius  int `envconfig:"ARENA_TELEPORT_COLLECT_RADIUS" default:"1"`
 	TeleportPadLockTicks   int `envconfig:"ARENA_TELEPORT_PAD_LOCK_TICKS" default:"30"`
+	TeleportHazardGraceTicks int `envconfig:"ARENA_TELEPORT_HAZARD_GRACE_TICKS" default:"2"`
 
 	// Environmental Hazards
 	HazardZoneCount        int     `envconfig:"ARENA_HAZARD_ZONE_COUNT" default:"6"`

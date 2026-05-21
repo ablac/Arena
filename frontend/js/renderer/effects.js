@@ -82,6 +82,67 @@ export class EffectRenderer {
   }
 
   /**
+   * Bow impact: sharper strike with a quick tracer flash and dust ping.
+   * @param {number} x
+   * @param {number} z
+   * @param {string} hexColor
+   */
+  spawnBowImpact(x, z, hexColor, didHit = true, intensity = 1) {
+    this.spawnHitSparks(x, z, hexColor, 'bow');
+    const B = window.BABYLON;
+    const c = parseColor(hexColor);
+    const power = Math.max(1, intensity || 1);
+    const ring = B.MeshBuilder.CreateTorus(`bow-impact-ring-${++_psCounter}`, {
+      diameter: (didHit ? 10 : 8) * Math.min(1.35, 1 + (power - 1) * 0.18),
+      thickness: (didHit ? 0.8 : 0.6) * Math.min(1.25, 1 + (power - 1) * 0.12),
+      tessellation: 28,
+    }, this.scene);
+    ring.position.set(x, didHit ? 10.4 : 2.6, z);
+    ring.rotation.x = Math.PI / 2;
+    const ringMat = new B.StandardMaterial(`bow-impact-ring-mat-${_psCounter}`, this.scene);
+    ringMat.diffuseColor = B.Color3.Black();
+    ringMat.emissiveColor = new B.Color3(
+      Math.min(1, c.r + (didHit ? 0.15 : 0.05)),
+      Math.min(1, c.g + (didHit ? 0.15 : 0.05)),
+      Math.min(1, c.b + (didHit ? 0.15 : 0.05)),
+    );
+    ringMat.disableLighting = true;
+    ring.material = ringMat;
+
+    if (!didHit) {
+      const dust = new B.ParticleSystem(`bow-miss-${++_psCounter}`, 12, this.scene);
+      dust.emitter = new B.Vector3(x, 1.4, z);
+      dust.createPointEmitter(new B.Vector3(-1.2, 0.3, -1.2), new B.Vector3(1.2, 1.5, 1.2));
+      dust.color1 = new B.Color4(0.6, 0.65, 0.72, 0.45);
+      dust.color2 = new B.Color4(0.35, 0.4, 0.48, 0.22);
+      dust.colorDead = new B.Color4(0.15, 0.18, 0.2, 0);
+      dust.minSize = 0.8; dust.maxSize = 2.4;
+      dust.minLifeTime = 0.08; dust.maxLifeTime = 0.16;
+      dust.emitRate = 120;
+      dust.minEmitPower = 4; dust.maxEmitPower = 10;
+      dust.gravity = new B.Vector3(0, -15, 0);
+      dust.blendMode = B.ParticleSystem.BLENDMODE_STANDARD;
+      dust.targetStopDuration = 0.06;
+      dust.disposeOnStop = true;
+      dust.start();
+    }
+
+    const start = performance.now();
+    const obs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - start) / 180;
+      if (t >= 1) {
+        this.scene.onBeforeRenderObservable.remove(obs);
+        ring.dispose();
+        ringMat.dispose();
+        return;
+      }
+      const s = 1 + t * 1.4;
+      ring.scaling.set(s, s, 1);
+      ringMat.alpha = 1 - t;
+    });
+  }
+
+  /**
    * Spawn dodge afterimage shimmer effect.
    * @param {number} x
    * @param {number} z
@@ -145,6 +206,244 @@ export class EffectRenderer {
     ps.targetStopDuration = 0.06;
     ps.disposeOnStop = true;
     ps.start();
+  }
+
+  /**
+   * Lightweight attack accent for melee/control weapons.
+   * Adds a short-lived slash/thrust/bash read without overriding hit sparks.
+   * @param {number} ax
+   * @param {number} az
+   * @param {number} tx
+   * @param {number} tz
+   * @param {string} hexColor
+   * @param {string} [weapon='sword']
+   */
+  spawnWeaponStrike(ax, az, tx, tz, hexColor, weapon = 'sword') {
+    const B = window.BABYLON;
+    const c = parseColor(hexColor);
+    const dx = tx - ax;
+    const dz = tz - az;
+    const len = Math.max(1, Math.sqrt(dx * dx + dz * dz));
+    const nx = dx / len;
+    const nz = dz / len;
+    const mx = ax + dx * 0.5;
+    const mz = az + dz * 0.5;
+    const rotY = Math.atan2(dx, dz);
+
+    const strikeCfg = {
+      sword:   { width: 3.1, height: 22, alpha: 0.46, lift: 11.5, scale: 1.42, hue: [1.0, 0.82, 0.38], trail: true, arc: 0.28 },
+      daggers: { width: 1.5, height: 12, alpha: 0.34, lift: 10, scale: 1.15, hue: [1.0, 0.58, 0.22] },
+      spear:   { width: 1.2, height: 24, alpha: 0.32, lift: 10, scale: 1.45, hue: [1.0, 0.55, 0.28] },
+      shield:  { width: 5.8, height: 5.8, alpha: 0.28, lift: 9, scale: 1.18, hue: [0.82, 0.92, 1.0] },
+      grapple: { width: 1.4, height: 16, alpha: 0.34, lift: 10, scale: 1.4, hue: [0.5, 0.95, 1.0] },
+    }[weapon] || { width: 2.2, height: 14, alpha: 0.34, lift: 10, scale: 1.2, hue: [1.0, 0.82, 0.38] };
+
+    const slash = B.MeshBuilder.CreatePlane(`strike-${++_psCounter}`, {
+      width: strikeCfg.width,
+      height: strikeCfg.height,
+      sideOrientation: B.Mesh.DOUBLESIDE,
+    }, this.scene);
+    slash.position.set(mx + nx * 3.5, strikeCfg.lift, mz + nz * 3.5);
+    slash.rotation.y = rotY;
+    slash.rotation.x = weapon === 'shield' ? Math.PI / 2 : Math.PI / 2.4;
+    slash.rotation.z = weapon === 'shield' ? 0 : Math.PI / 2;
+    const slashMat = new B.StandardMaterial(`strike-mat-${_psCounter}`, this.scene);
+    slashMat.diffuseColor = B.Color3.Black();
+    slashMat.emissiveColor = new B.Color3(
+      Math.min(1, strikeCfg.hue[0] * 0.65 + c.r * 0.55),
+      Math.min(1, strikeCfg.hue[1] * 0.65 + c.g * 0.55),
+      Math.min(1, strikeCfg.hue[2] * 0.65 + c.b * 0.55),
+    );
+    slashMat.alpha = strikeCfg.alpha;
+    slashMat.disableLighting = true;
+    slash.material = slashMat;
+
+    let wake = null;
+    let wakeMat = null;
+    if (strikeCfg.trail) {
+      wake = B.MeshBuilder.CreateDisc(`strike-wake-${++_psCounter}`, {
+        radius: 5.8,
+        tessellation: 26,
+        arc: 0.68,
+      }, this.scene);
+      wake.position.copyFrom(slash.position);
+      wake.rotation.x = Math.PI / 2;
+      wake.rotation.y = rotY - strikeCfg.arc;
+      wake.scaling.set(1.05, 1.05, 1);
+      wakeMat = new B.StandardMaterial(`strike-wake-mat-${_psCounter}`, this.scene);
+      wakeMat.diffuseColor = B.Color3.Black();
+      wakeMat.emissiveColor = new B.Color3(
+        Math.min(1, c.r * 0.62 + 0.42),
+        Math.min(1, c.g * 0.58 + 0.28),
+        Math.min(1, c.b * 0.38 + 0.12),
+      );
+      wakeMat.disableLighting = true;
+      wakeMat.alpha = 0.24;
+      wake.material = wakeMat;
+    }
+
+    const start = performance.now();
+    const obs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - start) / (weapon === 'daggers' ? 110 : 150);
+      if (t >= 1) {
+        this.scene.onBeforeRenderObservable.remove(obs);
+        slash.dispose();
+        slashMat.dispose();
+        if (wake) wake.dispose();
+        if (wakeMat) wakeMat.dispose();
+        return;
+      }
+      const pulse = 1 + Math.sin(t * Math.PI) * (strikeCfg.scale - 1);
+      slash.scaling.set(pulse, pulse, pulse);
+      slash.position.x = mx + nx * (3.5 + t * 3.2);
+      slash.position.z = mz + nz * (3.5 + t * 3.2);
+      slash.position.y = strikeCfg.lift + Math.sin(t * Math.PI) * 1.4;
+      slashMat.alpha = Math.max(0, strikeCfg.alpha * (1 - t));
+      if (wake && wakeMat) {
+        wake.position.copyFrom(slash.position);
+        wake.position.y = 1.25 + Math.sin(t * Math.PI) * 0.35;
+        wake.rotation.y = rotY - strikeCfg.arc + t * 0.55;
+        const sweep = 1 + t * 0.65;
+        wake.scaling.set(sweep, sweep, 1);
+        wakeMat.alpha = Math.max(0, 0.24 * (1 - t));
+      }
+    });
+  }
+
+  spawnShieldBash(ax, az, tx, tz, hexColor = '#bfe3ff') {
+    const B = window.BABYLON;
+    const c = parseColor(hexColor);
+    this.spawnWeaponStrike(ax, az, tx, tz, hexColor, 'shield');
+    this.spawnHitSparks(tx, tz, hexColor, 'shield');
+
+    const ring = B.MeshBuilder.CreateTorus(`shield-bash-${++_psCounter}`, {
+      diameter: 18,
+      thickness: 1.8,
+      tessellation: 28,
+    }, this.scene);
+    ring.position.set(tx, 2.2, tz);
+    ring.rotation.x = Math.PI / 2;
+    const ringMat = new B.StandardMaterial(`shield-bash-mat-${_psCounter}`, this.scene);
+    ringMat.diffuseColor = B.Color3.Black();
+    ringMat.emissiveColor = new B.Color3(Math.min(1, c.r + 0.2), Math.min(1, c.g + 0.2), Math.min(1, c.b + 0.2));
+    ringMat.disableLighting = true;
+    ring.material = ringMat;
+
+    const start = performance.now();
+    const obs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - start) / 180;
+      if (t >= 1) {
+        this.scene.onBeforeRenderObservable.remove(obs);
+        ring.dispose();
+        ringMat.dispose();
+        return;
+      }
+      const s = 1 + t * 1.2;
+      ring.scaling.set(s, s, 1);
+      ringMat.alpha = 1 - t;
+    });
+  }
+
+  spawnSpearBrace(ax, az, tx, tz, hexColor = '#ffe38a') {
+    const B = window.BABYLON;
+    const c = parseColor(hexColor);
+    this.spawnWeaponStrike(ax, az, tx, tz, hexColor, 'spear');
+    this.spawnHitSparks(tx, tz, hexColor, 'spear');
+
+    const ring = B.MeshBuilder.CreateTorus(`spear-brace-${++_psCounter}`, {
+      diameter: 12,
+      thickness: 0.9,
+      tessellation: 24,
+    }, this.scene);
+    ring.position.set(tx, 10.8, tz);
+    ring.rotation.x = Math.PI / 2;
+    const mat = new B.StandardMaterial(`spear-brace-mat-${_psCounter}`, this.scene);
+    mat.diffuseColor = B.Color3.Black();
+    mat.emissiveColor = new B.Color3(Math.min(1, c.r + 0.15), Math.min(1, c.g + 0.1), Math.min(1, c.b + 0.05));
+    mat.disableLighting = true;
+    ring.material = mat;
+
+    const start = performance.now();
+    const obs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - start) / 220;
+      if (t >= 1) {
+        this.scene.onBeforeRenderObservable.remove(obs);
+        ring.dispose();
+        mat.dispose();
+        return;
+      }
+      const s = 1 + t * 1.1;
+      ring.scaling.set(s, s, 1);
+      mat.alpha = 1 - t;
+    });
+  }
+
+  spawnBackstab(ax, az, tx, tz, hexColor = '#ff8f47') {
+    const B = window.BABYLON;
+    const c = parseColor(hexColor);
+    this.spawnWeaponStrike(ax, az, tx, tz, hexColor, 'daggers');
+    this.spawnHitSparks(tx, tz, hexColor, 'daggers');
+
+    const mark = B.MeshBuilder.CreatePlane(`backstab-mark-${++_psCounter}`, {
+      width: 8,
+      height: 16,
+      sideOrientation: B.Mesh.DOUBLESIDE,
+    }, this.scene);
+    mark.position.set(tx, 12, tz);
+    mark.rotation.x = Math.PI / 2.6;
+    mark.rotation.y = Math.atan2(tx - ax, tz - az);
+    const markMat = new B.StandardMaterial(`backstab-mark-mat-${_psCounter}`, this.scene);
+    markMat.diffuseColor = B.Color3.Black();
+    markMat.emissiveColor = new B.Color3(Math.min(1, c.r + 0.12), Math.min(1, c.g * 0.5 + 0.18), Math.min(1, c.b * 0.35 + 0.08));
+    markMat.disableLighting = true;
+    markMat.alpha = 0.58;
+    mark.material = markMat;
+
+    const start = performance.now();
+    const obs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - start) / 140;
+      if (t >= 1) {
+        this.scene.onBeforeRenderObservable.remove(obs);
+        mark.dispose();
+        markMat.dispose();
+        return;
+      }
+      mark.scaling.set(1 + t * 0.45, 1 + t * 0.45, 1);
+      mark.position.y = 12 + Math.sin(t * Math.PI) * 1.8;
+      markMat.alpha = Math.max(0, 0.58 * (1 - t));
+    });
+  }
+
+  spawnGrappleSlam(ax, az, tx, tz, hexColor = '#59f1ff') {
+    const B = window.BABYLON;
+    const c = parseColor(hexColor);
+    this.spawnHitSparks(tx, tz, hexColor, 'grapple');
+    const burst = B.MeshBuilder.CreateTorus(`grapple-slam-${++_psCounter}`, {
+      diameter: 14,
+      thickness: 1.2,
+      tessellation: 28,
+    }, this.scene);
+    burst.position.set(tx, 10.6, tz);
+    burst.rotation.x = Math.PI / 2;
+    const mat = new B.StandardMaterial(`grapple-slam-mat-${_psCounter}`, this.scene);
+    mat.diffuseColor = B.Color3.Black();
+    mat.emissiveColor = new B.Color3(Math.min(1, c.r + 0.2), Math.min(1, c.g + 0.18), Math.min(1, c.b + 0.22));
+    mat.disableLighting = true;
+    burst.material = mat;
+
+    const start = performance.now();
+    const obs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - start) / 260;
+      if (t >= 1) {
+        this.scene.onBeforeRenderObservable.remove(obs);
+        burst.dispose();
+        mat.dispose();
+        return;
+      }
+      const s = 1 + t * 1.6;
+      burst.scaling.set(s, s, 1);
+      mat.alpha = 1 - t;
+    });
   }
 
   spawnDamageNumber(x, z, dmg) {
@@ -225,56 +524,74 @@ export class EffectRenderer {
     const scene = this.scene;
     const color = parseColor(opts.color || '#59f1ff');
     const CHAIN_COLOR = new B.Color3(color.r, color.g, color.b);
-    const SEGMENTS = 14;
     const CHAIN_Y = 12;
     const mode = opts.mode || 'pull';
     const endX = typeof opts.endX === 'number' ? opts.endX : tx;
     const endZ = typeof opts.endZ === 'number' ? opts.endZ : tz;
-
-    // Create chain segment meshes
     const dx = tx - ax;
     const dz = tz - az;
-    const dist = Math.sqrt(dx * dx + dz * dz) || 1;
-    const segLen = dist / SEGMENTS;
+    const travelYaw = Math.atan2(dx, dz);
 
     const chainMat = new B.StandardMaterial(`grapple-chain-mat-${++_psCounter}`, scene);
-    chainMat.diffuseColor = CHAIN_COLOR;
-    chainMat.emissiveColor = CHAIN_COLOR.scale(0.95);
+    chainMat.diffuseColor = CHAIN_COLOR.scale(0.15);
+    chainMat.emissiveColor = CHAIN_COLOR.scale(1.05);
     chainMat.disableLighting = true;
+    chainMat.alpha = 0.92;
 
     const root = new B.TransformNode(`grapple-root-${_psCounter}`, scene);
-    const segments = [];
-    const hook = B.MeshBuilder.CreateCylinder(`ghook-head-${_psCounter}`, {
-      height: 5, diameterTop: 0.6, diameterBottom: 2.4, tessellation: 6
+    const line = B.MeshBuilder.CreateCylinder(`gline-${_psCounter}`, {
+      height: 1,
+      diameter: 1.16,
+      tessellation: 10,
     }, scene);
-    hook.material = chainMat;
+    line.material = chainMat;
+    line.parent = root;
+
+    const coreMat = new B.StandardMaterial(`grapple-core-mat-${++_psCounter}`, scene);
+    coreMat.diffuseColor = B.Color3.Black();
+    coreMat.emissiveColor = CHAIN_COLOR.scale(1.4);
+    coreMat.disableLighting = true;
+    coreMat.alpha = 0.78;
+    const core = B.MeshBuilder.CreateCylinder(`gcore-${_psCounter}`, {
+      height: 1,
+      diameter: 0.36,
+      tessellation: 8,
+    }, scene);
+    core.material = coreMat;
+    core.parent = root;
+
+    const hookMat = new B.StandardMaterial(`ghook-mat-${++_psCounter}`, scene);
+    hookMat.diffuseColor = B.Color3.Black();
+    hookMat.emissiveColor = new B.Color3(
+      Math.min(1, color.r + 0.28),
+      Math.min(1, color.g + 0.22),
+      Math.min(1, color.b + 0.18),
+    );
+    hookMat.disableLighting = true;
+    const hook = B.MeshBuilder.CreateCylinder(`ghook-head-${_psCounter}`, {
+      height: 6.4, diameterTop: 0.35, diameterBottom: 2.6, tessellation: 6
+    }, scene);
+    hook.material = hookMat;
     hook.position.set(tx, CHAIN_Y, tz);
     hook.rotation.z = Math.PI / 2;
-    hook.rotation.y = Math.atan2(dx, dz);
+    hook.rotation.y = travelYaw;
     hook.parent = root;
 
-    for (let i = 0; i < SEGMENTS; i++) {
-      const t = (i + 0.5) / SEGMENTS;
-      const sx = ax + dx * t;
-      const sz = az + dz * t;
-
-      const seg = B.MeshBuilder.CreateBox(`gseg-${_psCounter}-${i}`, {
-        width: segLen * 0.8, height: 1.5, depth: 1.5
-      }, scene);
-      seg.position.set(sx, CHAIN_Y, sz);
-      seg.rotation.y = Math.atan2(dx, dz);
-      seg.material = chainMat;
-      seg.parent = root;
-      segments.push(seg);
-    }
+    const flare = B.MeshBuilder.CreateTorus(`ghook-flare-${++_psCounter}`, {
+      diameter: 4.6, thickness: 0.35, tessellation: 18,
+    }, scene);
+    flare.position.copyFrom(hook.position);
+    flare.rotation.x = Math.PI / 2;
+    flare.material = hookMat;
+    flare.parent = root;
 
     // Spark particles at both ends
     const spawnSparks = (x, z) => {
       const ps = new B.ParticleSystem(`gspark-${++_psCounter}`, 15, scene);
       ps.emitter = new B.Vector3(x, CHAIN_Y, z);
       ps.createPointEmitter(new B.Vector3(-1, 1, -1), new B.Vector3(1, 2, 1));
-      ps.color1 = new B.Color4(0, 1, 1, 1);
-      ps.color2 = new B.Color4(0.5, 0.8, 1, 1);
+      ps.color1 = new B.Color4(color.r, color.g, color.b, 1);
+      ps.color2 = new B.Color4(Math.min(1, color.r + 0.3), Math.min(1, color.g + 0.2), Math.min(1, color.b + 0.1), 1);
       ps.colorDead = new B.Color4(0, 0.3, 0.5, 0);
       ps.minSize = 0.5; ps.maxSize = 2;
       ps.minLifeTime = 0.05; ps.maxLifeTime = 0.15;
@@ -291,60 +608,71 @@ export class EffectRenderer {
     spawnSparks(ax, az);
     spawnSparks(tx, tz);
 
-    // Phase 1: chain lashes out.
-    // Phase 2: retract toward shooter or stay anchored while pull completes.
-    // Phase 3: fade.
     const startTime = performance.now();
     const APPEAR_MS = 240;
     const PULL_MS = 240;
     const FADE_MS = 200;
     const TOTAL_MS = APPEAR_MS + PULL_MS + FADE_MS;
 
+    const updateLine = (sx, sz, ex, ez, arc = 0) => {
+      const midX = (sx + ex) * 0.5;
+      const midZ = (sz + ez) * 0.5;
+      const dx2 = ex - sx;
+      const dz2 = ez - sz;
+      const len = Math.max(0.001, Math.sqrt(dx2 * dx2 + dz2 * dz2));
+      const yaw = Math.atan2(dx2, dz2);
+      const pitch = Math.atan2(arc * 2, len);
+      const midY = CHAIN_Y + arc * 0.5;
+
+      line.position.set(midX, midY, midZ);
+      line.rotation.set(Math.PI / 2 - pitch, yaw, 0);
+      line.scaling.set(1, len, 1);
+
+      core.position.copyFrom(line.position);
+      core.rotation.copyFrom(line.rotation);
+      core.scaling.set(1, len, 1);
+    };
+
     const observer = scene.onBeforeRenderObservable.add(() => {
       const elapsed = performance.now() - startTime;
 
       if (elapsed < APPEAR_MS) {
-        // Wave animation: segments ripple vertically
         const progress = elapsed / APPEAR_MS;
-        for (let i = 0; i < segments.length; i++) {
-          const wave = Math.sin((i / SEGMENTS) * Math.PI * 4 - elapsed * 0.01) * 3 * (1 - progress);
-          segments[i].position.y = CHAIN_Y + wave;
-          segments[i].scaling.set(progress, 1, 1);
-        }
-        hook.position.set(ax + dx * progress, CHAIN_Y, az + dz * progress);
+        const hx = ax + dx * progress;
+        const hz = az + dz * progress;
+        updateLine(ax, az, hx, hz, 1.5 + (1 - progress) * 2.2);
+        hook.position.set(hx, CHAIN_Y, hz);
+        hook.rotation.y = travelYaw;
+        flare.position.copyFrom(hook.position);
+        flare.scaling.set(0.75 + progress * 0.45, 0.75 + progress * 0.45, 1);
       } else if (elapsed < APPEAR_MS + PULL_MS) {
-        // Pull phase
         const pullT = (elapsed - APPEAR_MS) / PULL_MS;
-        for (let i = 0; i < segments.length; i++) {
-          const origT = (i + 0.5) / SEGMENTS;
-          const newT = mode === 'anchor'
-            ? origT + (1 - origT) * pullT * 0.45
-            : origT * (1 - pullT * 0.82);
-          segments[i].position.x = ax + dx * newT;
-          segments[i].position.z = az + dz * newT;
-          segments[i].position.y = CHAIN_Y;
-          segments[i].scaling.set(1, 1, 1);
-        }
-        hook.position.set(
-          mode === 'anchor' ? tx : ax + dx * (1 - pullT * 0.82),
-          CHAIN_Y,
-          mode === 'anchor' ? tz : az + dz * (1 - pullT * 0.82)
-        );
+        const hx = mode === 'anchor' ? tx : ax + dx * (1 - pullT * 0.82);
+        const hz = mode === 'anchor' ? tz : az + dz * (1 - pullT * 0.82);
+        const sx = mode === 'anchor' ? ax + dx * pullT * 0.35 : ax;
+        const sz = mode === 'anchor' ? az + dz * pullT * 0.35 : az;
+        updateLine(sx, sz, hx, hz, Math.sin(pullT * Math.PI) * 1.2);
+        hook.position.set(hx, CHAIN_Y, hz);
+        flare.position.copyFrom(hook.position);
+        flare.scaling.set(1 + Math.sin(pullT * Math.PI) * 0.2, 1 + Math.sin(pullT * Math.PI) * 0.2, 1);
       } else if (elapsed < TOTAL_MS) {
-        // Fade out
         const fadeT = (elapsed - APPEAR_MS - PULL_MS) / FADE_MS;
         chainMat.alpha = 1 - fadeT;
-        for (const seg of segments) {
-          seg.visibility = 1 - fadeT;
-        }
+        coreMat.alpha = 0.78 * (1 - fadeT);
+        line.visibility = 1 - fadeT;
+        core.visibility = 1 - fadeT;
         hook.visibility = 1 - fadeT;
+        flare.visibility = 1 - fadeT;
       } else {
-        // Cleanup
         scene.onBeforeRenderObservable.remove(observer);
-        for (const seg of segments) seg.dispose();
+        line.dispose();
+        core.dispose();
         hook.dispose();
+        flare.dispose();
         root.dispose();
         chainMat.dispose();
+        coreMat.dispose();
+        hookMat.dispose();
       }
     });
 
@@ -437,6 +765,100 @@ export class EffectRenderer {
   }
 
   /**
+   * Spawn a staff detonation: arcane ring + flash + plume.
+   * This is the actual AoE blast and should happen when the delayed staff
+   * impact expires, whether or not any bot is hit.
+   * @param {number} x
+   * @param {number} z
+   * @param {number} [radius=20]
+   * @param {string} [hexColor='#8d4dff']
+   */
+  spawnStaffExplosion(x, z, radius = 20, hexColor = '#8d4dff') {
+    const B = window.BABYLON;
+    const c = parseColor(hexColor);
+    const blastRadius = Math.max(16, radius);
+
+    const ring = B.MeshBuilder.CreateTorus(`staff-ring-${++_psCounter}`, {
+      diameter: blastRadius * 1.6,
+      thickness: Math.max(1.4, blastRadius * 0.08),
+      tessellation: 40,
+    }, this.scene);
+    ring.position.set(x, 1.4, z);
+    ring.rotation.x = Math.PI / 2;
+    const ringMat = new B.StandardMaterial(`staff-ring-mat-${_psCounter}`, this.scene);
+    ringMat.diffuseColor = B.Color3.Black();
+    ringMat.emissiveColor = new B.Color3(
+      Math.min(1, c.r + 0.2),
+      Math.min(1, c.g + 0.08),
+      Math.min(1, c.b + 0.28),
+    );
+    ringMat.disableLighting = true;
+    ring.material = ringMat;
+
+    const disc = B.MeshBuilder.CreateDisc(`staff-disc-${++_psCounter}`, {
+      radius: blastRadius * 0.65,
+      tessellation: 34,
+    }, this.scene);
+    disc.rotation.x = Math.PI / 2;
+    disc.position.set(x, 0.25, z);
+    const discMat = new B.StandardMaterial(`staff-disc-mat-${_psCounter}`, this.scene);
+    discMat.diffuseColor = B.Color3.Black();
+    discMat.emissiveColor = new B.Color3(c.r * 0.9, c.g * 0.55, c.b);
+    discMat.disableLighting = true;
+    discMat.alpha = 0.28;
+    disc.material = discMat;
+
+    const flash = B.MeshBuilder.CreateSphere(`staff-flash-${++_psCounter}`, {
+      diameter: blastRadius * 0.4,
+      segments: 10,
+    }, this.scene);
+    flash.position.set(x, 6, z);
+    const flashMat = new B.StandardMaterial(`staff-flash-mat-${_psCounter}`, this.scene);
+    flashMat.diffuseColor = B.Color3.Black();
+    flashMat.emissiveColor = new B.Color3(1.0, 0.8, 1.0);
+    flashMat.disableLighting = true;
+    flash.material = flashMat;
+
+    const ps = new B.ParticleSystem(`staff-ps-${++_psCounter}`, 38, this.scene);
+    ps.emitter = new B.Vector3(x, 3, z);
+    ps.createPointEmitter(new B.Vector3(-2.2, 0.8, -2.2), new B.Vector3(2.2, 5.8, 2.2));
+    ps.color1 = new B.Color4(Math.min(1, c.r + 0.25), Math.min(1, c.g + 0.1), Math.min(1, c.b + 0.2), 1);
+    ps.color2 = new B.Color4(0.95, 0.85, 1.0, 0.75);
+    ps.colorDead = new B.Color4(c.r * 0.25, c.g * 0.15, c.b * 0.25, 0);
+    ps.minSize = 1.4; ps.maxSize = 4.6;
+    ps.minLifeTime = 0.14; ps.maxLifeTime = 0.26;
+    ps.emitRate = 260;
+    ps.minEmitPower = 14; ps.maxEmitPower = 34;
+    ps.gravity = new B.Vector3(0, -18, 0);
+    ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
+    ps.targetStopDuration = 0.08;
+    ps.disposeOnStop = true;
+    ps.start();
+
+    const start = performance.now();
+    const obs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - start) / 260;
+      if (t >= 1) {
+        this.scene.onBeforeRenderObservable.remove(obs);
+        ring.dispose();
+        ringMat.dispose();
+        disc.dispose();
+        discMat.dispose();
+        flash.dispose();
+        flashMat.dispose();
+        return;
+      }
+      const ringScale = 1 + t * 1.5;
+      ring.scaling.set(ringScale, ringScale, 1);
+      disc.scaling.set(1 + t * 0.85, 1 + t * 0.85, 1);
+      flash.scaling.set(1 + t * 1.2, 1 + t * 1.2, 1 + t * 1.2);
+      ringMat.alpha = 1 - t;
+      discMat.alpha = Math.max(0, 0.28 - t * 0.2);
+      flashMat.alpha = Math.max(0, 0.95 - t * 1.3);
+    });
+  }
+
+  /**
    * Spawn matching bursts at teleport entry and exit.
    * @param {number} fromX
    * @param {number} fromZ
@@ -467,8 +889,118 @@ export class EffectRenderer {
       ps.disposeOnStop = true;
       ps.start();
     };
+    const rippleAt = (x, z, tint = 1) => {
+      const ring = B.MeshBuilder.CreateTorus(`tp-ripple-${++_psCounter}`, {
+        diameter: 18,
+        thickness: 1.8,
+        tessellation: 40,
+      }, this.scene);
+      ring.position.set(x, 1.8, z);
+      ring.rotation.x = Math.PI / 2;
+      const ringMat = new B.StandardMaterial(`tp-ripple-mat-${_psCounter}`, this.scene);
+      ringMat.diffuseColor = B.Color3.Black();
+      ringMat.emissiveColor = new B.Color3(
+        Math.min(1, c.r * tint + 0.2),
+        Math.min(1, c.g * tint + 0.2),
+        Math.min(1, c.b * tint + 0.2),
+      );
+      ringMat.disableLighting = true;
+      ring.material = ringMat;
+
+      const disc = B.MeshBuilder.CreateDisc(`tp-disc-${++_psCounter}`, {
+        radius: 8,
+        tessellation: 36,
+      }, this.scene);
+      disc.position.set(x, 0.3, z);
+      disc.rotation.x = Math.PI / 2;
+      const discMat = new B.StandardMaterial(`tp-disc-mat-${_psCounter}`, this.scene);
+      discMat.diffuseColor = B.Color3.Black();
+      discMat.emissiveColor = new B.Color3(c.r * tint, c.g * tint, c.b * tint);
+      discMat.disableLighting = true;
+      discMat.alpha = 0.22;
+      disc.material = discMat;
+
+      const start = performance.now();
+      const obs = this.scene.onBeforeRenderObservable.add(() => {
+        const t = (performance.now() - start) / 320;
+        if (t >= 1) {
+          this.scene.onBeforeRenderObservable.remove(obs);
+          ring.dispose();
+          ringMat.dispose();
+          disc.dispose();
+          discMat.dispose();
+          return;
+        }
+        const ringScale = 1 + t * 1.75;
+        ring.scaling.set(ringScale, ringScale, 1);
+        disc.scaling.set(1 + t * 0.9, 1 + t * 0.9, 1);
+        ringMat.alpha = 1 - t;
+        discMat.alpha = Math.max(0, 0.22 - t * 0.18);
+      });
+    };
+    const portalAt = (x, z, invert = false, tint = 1) => {
+      const shell = B.MeshBuilder.CreateCylinder(`tp-shell-${++_psCounter}`, {
+        height: 14,
+        diameter: 12,
+        tessellation: 24,
+      }, this.scene);
+      shell.position.set(x, 8, z);
+      const shellMat = new B.StandardMaterial(`tp-shell-mat-${_psCounter}`, this.scene);
+      shellMat.diffuseColor = B.Color3.Black();
+      shellMat.emissiveColor = new B.Color3(
+        Math.min(1, c.r * tint + 0.18),
+        Math.min(1, c.g * tint + 0.18),
+        Math.min(1, c.b * tint + 0.18),
+      );
+      shellMat.disableLighting = true;
+      shellMat.alpha = 0.18;
+      shell.material = shellMat;
+
+      const innerRing = B.MeshBuilder.CreateTorus(`tp-inner-${++_psCounter}`, {
+        diameter: 10,
+        thickness: 0.85,
+        tessellation: 26,
+      }, this.scene);
+      innerRing.position.set(x, 4.2, z);
+      innerRing.rotation.x = Math.PI / 2;
+      const innerMat = new B.StandardMaterial(`tp-inner-mat-${_psCounter}`, this.scene);
+      innerMat.diffuseColor = B.Color3.Black();
+      innerMat.emissiveColor = new B.Color3(
+        Math.min(1, c.r * tint + 0.12),
+        Math.min(1, c.g * tint + 0.12),
+        Math.min(1, c.b * tint + 0.12),
+      );
+      innerMat.disableLighting = true;
+      innerMat.alpha = 0.72;
+      innerRing.material = innerMat;
+
+      const start = performance.now();
+      const obs = this.scene.onBeforeRenderObservable.add(() => {
+        const t = (performance.now() - start) / 240;
+        if (t >= 1) {
+          this.scene.onBeforeRenderObservable.remove(obs);
+          shell.dispose();
+          shellMat.dispose();
+          innerRing.dispose();
+          innerMat.dispose();
+          return;
+        }
+        const pulse = Math.sin(t * Math.PI);
+        shell.scaling.set(1 + pulse * 0.22, 0.5 + pulse * 0.85, 1 + pulse * 0.22);
+        shell.position.y = 8 + (invert ? -1 : 1) * pulse * 2.4;
+        innerRing.position.y = 4.2 + (invert ? -1 : 1) * pulse * 1.6;
+        innerRing.rotation.y += 0.08 * (invert ? -1 : 1);
+        shellMat.alpha = Math.max(0, 0.2 - t * 0.14);
+        innerMat.alpha = Math.max(0, 0.8 - t * 0.72);
+      });
+    };
+
     burstAt(fromX, fromZ, true);
     burstAt(toX, toZ, false);
+    rippleAt(fromX, fromZ, 0.9);
+    rippleAt(toX, toZ, 1.15);
+    portalAt(fromX, fromZ, true, 0.95);
+    portalAt(toX, toZ, false, 1.15);
   }
 
   /** @private */

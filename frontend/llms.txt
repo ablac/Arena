@@ -32,13 +32,13 @@ Client: {"type": "action", "tick": 1, "action": "move", "direction": [1, 0]}
 ### Weapons
 | Weapon  | Damage | Range | Cooldown | Special          |
 |---------|--------|-------|----------|------------------|
-| Sword   | 25     | 2.5   | 0.5s     | Cleave           |
-| Bow     | 12     | 15.0  | 1.4s     | Projectile       |
-| Daggers | 12     | 1.5   | 0.3s     | Double Strike    |
-| Staff   | 18     | 12.0  | 1.3s     | Area (3.0 radius)|
-| Spear   | 20     | 3.5   | 0.7s     | Knockback (2.0)  |
-| Shield  | 15     | 1.8   | 0.7s     | Block (50%)      |
-| Grapple | 15     | 4     | 0.8s     | Grapple weapon (pull attacker to target) |
+| Sword   | 21     | 2.5   | 0.55s    | Cleave           |
+| Bow     | 16     | 15.0  | 1.05s    | Charged Shot     |
+| Daggers | 11     | 1.5   | 0.35s    | Backstab         |
+| Staff   | 17     | 12.0  | 1.65s    | Burn Field       |
+| Spear   | 17     | 3.5   | 0.75s    | Brace + Knockback|
+| Shield  | 14     | 1.8   | 0.8s     | Bash (50% passive DR) |
+| Grapple | 14     | 4     | 1.05s    | Slam / pull-in   |
 
 > **Grapple Ability (Universal)**: ALL bots get 2 grapple charges per round. Map-wide range, 3s cooldown, 15 damage, pulls target to 1 cell from you, stuns for 5 ticks. Use the `grapple` action (separate from weapon attacks).
 
@@ -47,7 +47,7 @@ Client: {"type": "action", "tick": 1, "action": "move", "direction": [1, 0]}
 |----------|-----------------------------------------------|---------------------------|
 | move     | direction: [x, y]                             | Move in direction         |
 | move_to  | target_position: [x, y]                       | Pathfind to position      |
-| attack   | target: "bot_id", direction: [x, y]           | Attack a bot              |
+| attack   | target: "bot_id", charged?: bool              | Attack a bot (bow may spend stored charge) |
 | dodge    | direction: [x, y]                             | Dodge (invuln frames)     |
 | shove    | target: "bot_id"                              | Knockback + stun          |
 | use_item | item_id: "pickup_id"                          | Collect a pickup          |
@@ -56,11 +56,11 @@ Client: {"type": "action", "tick": 1, "action": "move", "direction": [1, 0]}
 | grapple  | target: "bot_id"                              | Grapple pull (universal, 2 charges/round) |
 
 ### Tick State (your_state fields)
-position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive, kill_streak, round_kills, dodge_cooldown, invuln_ticks, stun_ticks, shield_absorb, effects, hits_received, kill_feed, in_safe_zone, distance_to_zone_edge, zone_radius, zone_center, zone_target_center, zone_target_radius, grapple_charges, grapple_cooldown
+position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive, kill_streak, round_kills, dodge_cooldown, invuln_ticks, stun_ticks, facing, recently_disrupted_ticks, brace_ready, bow_charge_ticks, bow_charge_level, charged_shot_ready, shield_absorb, effects, hits_received, kill_feed, in_safe_zone, distance_to_zone_edge, zone_radius, zone_center, zone_target_center, zone_target_radius, grapple_charges, grapple_cooldown, bounty_token_bonus
 
 ### Nearby Entities (in nearby_entities array)
 - Bots: type, id, bot_id, name, position, hp, max_hp, weapon, is_alive, is_dodging, is_stunned, has_los, attack_range, can_attack, threat_score
-- Pickups: type, id, pickup_id, pickup_type (health_pack|speed_boost|damage_boost|shield_bubble|gravity_well), position
+- Pickups: type, id, pickup_id, pickup_type (health_pack|speed_boost|damage_boost|shield_bubble|gravity_well|cooldown_shard|bounty_token), position
 - Obstacles: type, x, y, width, height
 
 ### Hints (entities outside view radius)
@@ -69,6 +69,8 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 ### Arena Features
 - **Landmines**: `place_mine` action, max 3/bot, arms after 1s, invisible to enemies, 1.5-tile blast radius, 40 damage
 - **Gravity Wells**: collect `gravity_well` pickup, deploy with `use_gravity_well` at target position, pulls enemies within 4 tiles for 3s
+- **Cooldown Shards**: instantly refund a large chunk of weapon cooldown plus dodge/shove/grapple cooldowns
+- **Bounty Tokens**: next kill within the token window grants bonus score; read `bounty_token_bonus` in `your_state`
 - **Teleport Pads**: 3 linked pairs/round, step on to teleport to partner pad, 5s cooldown per pad
 - **Hazard Zones**: 6 pulsing damage zones/round, 2 HP/tick, 3s on / 2s off cycle
 - **Sudden Death**: random void tiles appear when zone hits min radius, 10 HP/tick on void tiles

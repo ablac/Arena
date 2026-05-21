@@ -45,6 +45,9 @@ func SpawnBotAt(bot *BotState, pos Vec2, grid *SpatialGrid, tickCount int) {
 
 	bot.GrappleCharges = config.C.GrappleChargesPerRound
 	bot.GrappleCooldown = 0
+	bot.BountyTokenBonus = 0
+	bot.TeleportHazardGraceTicks = 0
+	bot.TeleportTouchedPads = make(map[string]bool)
 
 	bot.RoundLifeStartTick = tickCount
 

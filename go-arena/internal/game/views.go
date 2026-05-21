@@ -20,6 +20,43 @@ func botTargetID(bot *BotState) string {
 	return ""
 }
 
+func botTargetPosition(bot *BotState) *Vec2 {
+	if bot.PendingAction != nil && bot.PendingAction.TargetPosition != nil {
+		pos := *bot.PendingAction.TargetPosition
+		return &pos
+	}
+	return nil
+}
+
+func bowChargeLevel(bot *BotState) float64 {
+	if bot == nil || bot.Weapon != "bow" {
+		return 0
+	}
+	maxTicks := config.C.BowChargeMaxTicks
+	if maxTicks <= 0 {
+		maxTicks = 6
+	}
+	ticks := bot.BowChargeTicks
+	if ticks < 0 {
+		ticks = 0
+	}
+	if ticks > maxTicks {
+		ticks = maxTicks
+	}
+	return round1(float64(ticks) / float64(maxTicks))
+}
+
+func chargedShotReady(bot *BotState) bool {
+	if bot == nil || bot.Weapon != "bow" {
+		return false
+	}
+	readyTicks := config.C.BowChargeReadyTicks
+	if readyTicks <= 0 {
+		readyTicks = 1
+	}
+	return bot.BowChargeTicks >= readyTicks
+}
+
 // posToGrid converts a Vec2 to grid coordinates [col, row].
 // Returns [0, 0] if no terrain grid is active.
 func posToGrid(pos Vec2) [2]int {
@@ -65,6 +102,12 @@ func BuildBotNearbyView(bot *BotState, observerPos Vec2) map[string]interface{} 
 		"target_id":    botTargetID(bot),
 		"is_dodging":   bot.InvulnTicks > 0,
 		"is_stunned":   bot.StunTicks > 0,
+		"facing":       bot.Facing,
+		"recently_disrupted_ticks": bot.RecentlyDisruptedTicks,
+		"brace_ready":  bot.Weapon == "spear" && isBraceReady(bot),
+		"bow_charge_ticks": bot.BowChargeTicks,
+		"bow_charge_level": bowChargeLevel(bot),
+		"charged_shot_ready": chargedShotReady(bot),
 		"has_los":      hasLOS,
 		"attack_range": wc.GridRange,
 		"can_attack":   bot.CooldownRemaining <= 0,
@@ -165,6 +208,12 @@ func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCoun
 		"dodge_cooldown":     bot.DodgeCooldown,
 		"invuln_ticks":       bot.InvulnTicks,
 		"stun_ticks":         bot.StunTicks,
+		"facing":             bot.Facing,
+		"recently_disrupted_ticks": bot.RecentlyDisruptedTicks,
+		"brace_ready":        bot.Weapon == "spear" && isBraceReady(bot),
+		"bow_charge_ticks":   bot.BowChargeTicks,
+		"bow_charge_level":   bowChargeLevel(bot),
+		"charged_shot_ready": chargedShotReady(bot),
 		"shield_absorb":      bot.ShieldAbsorb,
 		"effects":            effects,
 		"last_action_result": lastActionResult,
@@ -179,6 +228,7 @@ func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCoun
 		"zone_target_radius":    zoneTargetRadiusTiles,
 		// New gameplay state.
 		"is_bounty_target":    bot.IsBountyTarget,
+		"bounty_token_bonus":  bot.BountyTokenBonus,
 		"mine_count":          bot.MineCount,
 		"gravity_well_charge": bot.GravityWellCharge,
 		"grapple_charges":     bot.GrappleCharges,
@@ -212,9 +262,16 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 			"last_action":  lastAction,
 			"action":       lastAction,
 			"target_id":    botTargetID(bot),
+			"target_position": botTargetPosition(bot),
 			"is_dodging":   bot.InvulnTicks > 0,
 			"is_stunned":   bot.StunTicks > 0,
 			"cooldown_remaining": round1(bot.CooldownRemaining),
+			"facing":       bot.Facing,
+			"recently_disrupted_ticks": bot.RecentlyDisruptedTicks,
+			"brace_ready":  bot.Weapon == "spear" && isBraceReady(bot),
+			"bow_charge_ticks": bot.BowChargeTicks,
+			"bow_charge_level": bowChargeLevel(bot),
+			"charged_shot_ready": chargedShotReady(bot),
 			"kill_streak":        bot.KillStreak,
 			"round_kills":        bot.RoundKills,
 			"shield_absorb":      round1(bot.ShieldAbsorb),
@@ -223,6 +280,7 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 			"grapple_cooldown":   round1(bot.GrappleCooldown),
 			"gravity_well_charge": bot.GravityWellCharge,
 			"is_bounty_target":   bot.IsBountyTarget,
+			"bounty_token_bonus": bot.BountyTokenBonus,
 		})
 	}
 	sort.Slice(botViews, func(i, j int) bool {

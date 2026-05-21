@@ -124,7 +124,7 @@ func BotSetup() http.HandlerFunc {
 					},
 					"tick": map[string]interface{}{
 						"description": fmt.Sprintf("Sent every tick (%d times per second) with full game state visible to your bot", c.TickRate),
-						"fields":      "tick, your_state{bot_id,position,hp,max_hp,speed,weapon,cooldown_remaining,weapon_ready,is_alive,kill_streak,round_kills,dodge_cooldown,invuln_ticks,stun_ticks,shield_absorb,effects,last_action_result,hits_received,kill_feed,in_safe_zone,distance_to_zone_edge,zone_radius,zone_center,grapple_charges,grapple_cooldown}, nearby_entities[{type,id,name,position,hp,max_hp,weapon,is_alive,has_los,attack_range,can_attack,threat_score} | {type,pickup_id,pickup_type,position}], safe_zone{center,radius,target_center,target_radius}, fog_radius, hints, nearby_mines",
+						"fields":      "tick, your_state{bot_id,position,hp,max_hp,speed,weapon,cooldown_remaining,weapon_ready,is_alive,kill_streak,round_kills,dodge_cooldown,invuln_ticks,stun_ticks,shield_absorb,effects,last_action_result,hits_received,kill_feed,in_safe_zone,distance_to_zone_edge,zone_radius,zone_center,grapple_charges,grapple_cooldown,bounty_token_bonus}, nearby_entities[{type,id,name,position,hp,max_hp,weapon,is_alive,has_los,attack_range,can_attack,threat_score} | {type,pickup_id,pickup_type,position}], safe_zone{center,radius,target_center,target_radius}, fog_radius, hints, nearby_mines",
 					},
 					"death": map[string]interface{}{
 						"description": "Sent when your bot dies",
@@ -173,7 +173,7 @@ func BotSetup() http.HandlerFunc {
 			"actions": []map[string]interface{}{
 				{"name": "move", "description": "Move in a direction (dx, dy normalized)", "fields": map[string]string{"direction": "[dx, dy] — e.g. [1, 0] for right, [0, -1] for up"}},
 				{"name": "move_to", "description": "Pathfind to a target position (server handles A* pathfinding)", "fields": map[string]string{"target_position": "[x, y] in grid coordinates"}},
-				{"name": "attack", "description": "Attack a target bot (must be in weapon range)", "fields": map[string]string{"target": "bot_id of the target"}},
+				{"name": "attack", "description": "Attack a target bot (must be in weapon range). Bow users may optionally set charged=true to spend stored charge on a faster stronger arrow.", "fields": map[string]string{"target": "bot_id of the target", "charged": "optional bow-only flag for charged shots"}},
 				{"name": "dodge", "description": fmt.Sprintf("Dash in a direction with %d ticks of invulnerability (cooldown: %d ticks)", c.DodgeInvulnTicks, c.DodgeCooldownTicks), "fields": map[string]string{"direction": "[dx, dy] — direction to dodge toward"}},
 				{"name": "shove", "description": fmt.Sprintf("Push a nearby bot away (range: %.1f tiles, knockback: %.1f, stun: %d ticks, cooldown: %.1fs)", c.ShoveRange, c.ShoveKnockback, c.ShoveStunTicks, c.ShoveCooldown), "fields": map[string]string{"target": "bot_id of the target"}},
 				{"name": "use_item", "description": "Pick up a nearby item (must be within collect radius)", "fields": map[string]string{"item_id": "pickup_id of the item"}},
@@ -229,6 +229,8 @@ func BotSetup() http.HandlerFunc {
 						{"type": "damage_boost", "effect": fmt.Sprintf("%.1fx damage for %d ticks", c.PickupDamageBoostMult, c.PickupDamageBoostTicks)},
 						{"type": "shield_bubble", "effect": fmt.Sprintf("Absorbs %.0f damage", c.PickupShieldBubbleHP)},
 						{"type": "gravity_well", "effect": "Grants 1 gravity well charge (deploy with use_gravity_well action)"},
+						{"type": "cooldown_shard", "effect": fmt.Sprintf("Instantly refunds %.0f%% weapon cooldown and %.0f%% dodge/shove/grapple cooldowns", c.PickupCooldownShardWeaponPct*100, c.PickupCooldownShardAbilityPct*100)},
+						{"type": "bounty_token", "effect": fmt.Sprintf("Stores +%d bonus score on your next kill for %d ticks", c.PickupBountyTokenPoints, c.PickupBountyTokenTicks)},
 					},
 					"collect_radius_tiles": c.PickupCollectRadius,
 					"spawn_interval_ticks": c.PickupSpawnIntervalTicks,
@@ -368,17 +370,17 @@ func weaponDescription(wc game.WeaponConfig) string {
 	case "cleave":
 		return "Melee weapon that hits all adjacent enemies in range (area cleave)"
 	case "projectile":
-		return "Ranged weapon that fires arrows — long range but slower cooldown"
-	case "double_strike":
-		return fmt.Sprintf("Fast dual-wield melee — second hit deals %.0f%% damage", wc.Param*100)
-	case "block":
-		return fmt.Sprintf("Melee weapon with passive %.0f%% damage block chance", wc.Param*100)
+		return "Ranged weapon that fires arrows — can store charge while ready, then spend it on a faster harder-hitting shot"
+	case "backstab":
+		return "Fast dual-wield melee — gains bonus damage from the rear arc"
+	case "bash":
+		return fmt.Sprintf("Melee tank weapon with passive %.0f%% damage reduction and bonus bash damage on disrupted targets", wc.Param*100)
 	case "knockback":
-		return fmt.Sprintf("Extended-reach melee that knocks enemies back %.0f tiles", wc.Param)
+		return fmt.Sprintf("Extended-reach melee that knocks enemies back %.0f tiles, with a brace bonus after holding ground", wc.Param)
 	case "area":
-		return fmt.Sprintf("Ranged AoE — impacts a %d-tile radius after a short delay", wc.GridParam)
+		return fmt.Sprintf("Ranged AoE — impacts a %d-tile radius after a short delay and leaves a lingering burn field", wc.GridParam)
 	case "grapple":
-		return "Medium-range hook that pulls attacker to target on hit — great for closing gaps"
+		return "Medium-range hook that pulls attacker to target on hit — can slam enemies near walls or edges for bonus impact"
 	default:
 		return "Standard weapon"
 	}

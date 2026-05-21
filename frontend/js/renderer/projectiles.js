@@ -7,7 +7,7 @@
  */
 
 const CONFIGS = {
-  bow:   { meshType: 'arrow', color: [0.9, 0.85, 0.7], arc: 2.2, worldSpeed: 220, trailRate: 18 },
+  bow:   { meshType: 'arrow', color: [0.9, 0.85, 0.7], arc: 1.8, worldSpeed: 300, trailRate: 22 },
   staff: { meshType: 'bolt',  color: [0.5, 0.2, 1.0],  arc: 3.5, worldSpeed: 140, trailRate: 28 },
 };
 
@@ -30,8 +30,10 @@ export class ProjectileRenderer {
    * @param {string} weapon - 'bow' or 'staff'
    * @param {string} hexColor - attacker's avatar color
    * @param {Function} [onImpact] - called when projectile reaches target
+   * @param {Object} [options]
+   * @param {number} [options.travelTime] - override travel time in seconds
    */
-  spawn(fromX, fromZ, toX, toZ, weapon, hexColor, onImpact) {
+  spawn(fromX, fromZ, toX, toZ, weapon, hexColor, onImpact, options = {}) {
     const cfg = CONFIGS[weapon];
     if (!cfg) return;
 
@@ -53,6 +55,12 @@ export class ProjectileRenderer {
     mat.emissiveColor = new B.Color3(cfg.color[0], cfg.color[1], cfg.color[2]);
     mat.disableLighting = true;
     mesh.material = mat;
+    const intensity = Number.isFinite(options.intensity) ? options.intensity : 1;
+    if (intensity > 1 && weapon === 'bow') {
+      const scale = Math.min(1.55, 1 + (intensity - 1) * 0.45);
+      mesh.scaling.set(scale, scale, scale);
+      mat.emissiveColor = mat.emissiveColor.scale(1 + Math.min(0.5, (intensity - 1) * 0.35));
+    }
 
     mesh.position.set(fromX, 12, fromZ);
 
@@ -63,7 +71,10 @@ export class ProjectileRenderer {
     if (cfg.meshType === 'arrow') mesh.rotation.x = Math.PI / 2;
 
     const distance = Math.hypot(dx, dz);
-    const travelTime = Math.max(0.18, distance / Math.max(cfg.worldSpeed || 30, 1));
+    const travelTime = Math.max(
+      0.12,
+      Number.isFinite(options.travelTime) ? options.travelTime : distance / Math.max(cfg.worldSpeed || 30, 1),
+    );
     const totalFrames = Math.max(12, Math.round(travelTime * 60));
     const midFrame = Math.round(totalFrames / 2);
     const midX = (fromX + toX) / 2;
@@ -91,6 +102,11 @@ export class ProjectileRenderer {
     trail.minSize = weapon === 'staff' ? 1.8 : 1.0;
     trail.maxSize = weapon === 'staff' ? 3.6 : 2.2;
     trail.emitRate = cfg.trailRate;
+    if (weapon === 'bow' && intensity > 1) {
+      trail.minSize *= Math.min(1.45, 1 + (intensity - 1) * 0.25);
+      trail.maxSize *= Math.min(1.55, 1 + (intensity - 1) * 0.3);
+      trail.emitRate = Math.round(trail.emitRate * Math.min(1.35, 1 + (intensity - 1) * 0.2));
+    }
     trail.minEmitPower = 0.1;
     trail.maxEmitPower = 0.8;
     trail.color1 = new B.Color4(cfg.color[0], cfg.color[1], cfg.color[2], weapon === 'staff' ? 0.8 : 0.55);

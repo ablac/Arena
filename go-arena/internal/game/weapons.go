@@ -9,7 +9,7 @@ type WeaponConfig struct {
 	Range     float64 // float range (computed from GridRange * CellSize)
 	GridRange int     // range in grid tiles (Chebyshev distance)
 	Cooldown  float64 // seconds
-	Special   string  // "cleave", "projectile", "double_strike", "block", "knockback", "area"
+	Special   string  // "cleave", "projectile", "backstab", "bash", "knockback", "area"
 	Param     float64 // special-specific parameter
 	GridParam int     // special param in grid tiles (e.g. staff area radius)
 }

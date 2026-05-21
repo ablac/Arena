@@ -21,13 +21,14 @@ const MOVE_TILT = 0.15;
  * lunge/bob control body tilt and vertical offset during the strike.
  */
 const WEAPON_ANIMS = {
-  sword:   { duration: 0.45, windupPct: 0.20, activePct: 0.50, restZ: -0.4, windupZ: -1.2, swingZ: 2.0,  lunge: 0.25, bob: 2 },
-  bow:     { duration: 0.85, windupPct: 0.30, activePct: 0.15, restZ: 0,    windupZ: 0.3,  swingZ: -0.5, lunge: -0.1, bob: 1 },
-  daggers: { duration: 0.25, windupPct: 0.15, activePct: 0.55, restZ: 0,    windupZ: -0.3, swingZ: 1.5,  lunge: 0.3,  bob: 1.5 },
-  spear:   { duration: 0.60, windupPct: 0.25, activePct: 0.40, restZ: -0.3, windupZ: -0.8, swingZ: 0.5,  lunge: 0.35, bob: 3 },
-  staff:   { duration: 1.00, windupPct: 0.40, activePct: 0.30, restZ: 0,    windupZ: 0.5,  swingZ: -0.3, lunge: 0.15, bob: 4 },
-  shield:  { duration: 0.70, windupPct: 0.25, activePct: 0.35, restZ: 0,    windupZ: 0.4,  swingZ: -0.8, lunge: 0.3,  bob: 2 },
-  shove:   { duration: 0.35, windupPct: 0.15, activePct: 0.50, restZ: 0, windupZ: -0.2, swingZ: 0.3, lunge: 0.4, bob: 3 },
+  sword:   { duration: 0.42, windupPct: 0.18, activePct: 0.48, restZ: -0.4, windupZ: -1.35, swingZ: 2.25, lunge: 0.28, bob: 2.4, weaponX: 0.75, weaponY: 0.65, pitch: 0.18, yaw: 0.10, glow: 0.0 },
+  bow:     { duration: 0.78, windupPct: 0.34, activePct: 0.12, restZ: 0.02, windupZ: 0.42, swingZ: -0.62, lunge: -0.08, bob: 0.7, weaponX: -0.25, weaponY: 0.85, pitch: -0.12, yaw: -0.08, glow: 0.0 },
+  daggers: { duration: 0.24, windupPct: 0.14, activePct: 0.56, restZ: 0.05, windupZ: -0.48, swingZ: 1.75, lunge: 0.34, bob: 1.8, weaponX: 0.55, weaponY: 0.45, pitch: 0.12, yaw: 0.16, glow: 0.0 },
+  spear:   { duration: 0.56, windupPct: 0.24, activePct: 0.42, restZ: -0.26, windupZ: -0.92, swingZ: 0.62, lunge: 0.38, bob: 3.1, weaponX: 1.6, weaponY: 0.32, pitch: -0.08, yaw: 0.12, glow: 0.0 },
+  staff:   { duration: 0.96, windupPct: 0.42, activePct: 0.26, restZ: 0.05, windupZ: 0.72, swingZ: -0.36, lunge: 0.16, bob: 4.2, weaponX: 0.28, weaponY: 1.1, pitch: -0.12, yaw: 0.18, glow: 1.0 },
+  shield:  { duration: 0.64, windupPct: 0.24, activePct: 0.34, restZ: 0.08, windupZ: 0.52, swingZ: -1.02, lunge: 0.32, bob: 2.2, weaponX: -0.95, weaponY: 0.28, pitch: 0.08, yaw: -0.18, glow: 0.25 },
+  grapple: { duration: 0.48, windupPct: 0.18, activePct: 0.36, restZ: -0.10, windupZ: -0.58, swingZ: 0.94, lunge: 0.26, bob: 1.8, weaponX: 0.9, weaponY: 0.28, pitch: -0.04, yaw: 0.2, glow: 0.2 },
+  shove:   { duration: 0.35, windupPct: 0.15, activePct: 0.50, restZ: 0, windupZ: -0.2, swingZ: 0.3, lunge: 0.4, bob: 3, weaponX: 0.45, weaponY: 0.15, pitch: 0.0, yaw: 0.0, glow: 0.0 },
 };
 
 const DODGE_DURATION = 0.3;
@@ -66,6 +67,74 @@ export class BotAnimState {
     this.smoothRotX = 0;
     this.smoothRotZ = 0;
     this.targetRotY = null; // set externally when facing target
+  }
+}
+
+function updateBowDraw(weapon, drawT = 0) {
+  if (!weapon || !weapon._bowString || !weapon._bowStringBasePath) return;
+  const B = window.BABYLON;
+  const base = weapon._bowStringBasePath;
+  const pull = Math.max(0, Math.min(1, drawT)) * 3.2;
+  const path = [
+    base[0].clone(),
+    new B.Vector3(base[1].x - pull, base[1].y, base[1].z),
+    base[2].clone(),
+  ];
+  B.MeshBuilder.CreateTube(null, {
+    path,
+    radius: 0.15,
+    tessellation: 4,
+    cap: B.Mesh.CAP_ALL,
+    instance: weapon._bowString,
+  });
+  if (weapon._bowLimb) {
+    const s = 1 + Math.max(0, Math.min(1, drawT)) * 0.03;
+    weapon._bowLimb.scaling.set(s, 1, s);
+  }
+}
+
+function applyWeaponPose(weapon, cfg, swingT = 0, glowT = 0) {
+  if (!weapon) return;
+  weapon.position.x = (cfg.weaponX || 0) * swingT;
+  weapon.position.y = (cfg.weaponY || 0) * swingT;
+  weapon.rotation.x = (cfg.pitch || 0) * swingT;
+  weapon.rotation.y = (cfg.yaw || 0) * swingT;
+  weapon.scaling.set(1, 1, 1);
+
+  if (weapon._children?.length) {
+    for (const child of weapon._children) {
+      const mat = child?.material;
+      if (!mat || !mat.emissiveColor) continue;
+      if (child.name?.includes('staff-orb')) {
+        child.scaling.set(1 + glowT * 0.16, 1 + glowT * 0.16, 1 + glowT * 0.16);
+        mat.emissiveColor.set(0.4 + glowT * 0.45, 0.15 + glowT * 0.18, 0.9 + glowT * 0.05);
+      } else if (child.name?.includes('staff-halo')) {
+        child.scaling.set(1 + glowT * 0.14, 1 + glowT * 0.14, 1 + glowT * 0.14);
+        child.rotation.z += glowT * 0.035;
+        mat.alpha = 1;
+        mat.emissiveColor.set(0.78 + glowT * 0.15, 0.5 + glowT * 0.18, 1.0);
+      } else if (child.name?.includes('shield-rim')) {
+        child.scaling.set(1 + glowT * 0.05, 1 + glowT * 0.05, 1 + glowT * 0.05);
+      } else if (child.name?.includes('shield-boss')) {
+        child.scaling.set(1 + glowT * 0.08, 1 + glowT * 0.08, 1 + glowT * 0.08);
+      }
+    }
+  }
+}
+
+function resetWeaponPose(weapon) {
+  if (!weapon) return;
+  weapon.position.x = 0;
+  weapon.position.y = 0;
+  weapon.rotation.x = 0;
+  weapon.rotation.y = 0;
+  weapon.scaling.set(1, 1, 1);
+
+  if (weapon._children?.length) {
+    for (const child of weapon._children) {
+      if (!child?.scaling) continue;
+      child.scaling.set(1, 1, 1);
+    }
   }
 }
 
@@ -169,7 +238,7 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat) {
     const windupEnd = cfg.windupPct;
     const activeEnd = windupEnd + cfg.activePct;
 
-    let weaponZ, targetRotX, targetY;
+    let weaponZ, targetRotX, targetY, bowDraw = 0, weaponPoseT = 0, glowT = 0;
 
     if (progress < windupEnd) {
       // Windup: anticipation — weapon pulls back, body braces
@@ -178,6 +247,9 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat) {
       weaponZ = cfg.restZ + (cfg.windupZ - cfg.restZ) * ease;
       targetRotX = -cfg.lunge * 0.3 * ease;
       targetY = 10;
+      weaponPoseT = ease * 0.75;
+      glowT = ease * (cfg.glow || 0);
+      if (anim.attackType === 'bow') bowDraw = ease;
     } else if (progress < activeEnd) {
       // Active: the strike — weapon sweeps through, body lunges
       const t = (progress - windupEnd) / cfg.activePct;
@@ -185,6 +257,9 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat) {
       weaponZ = cfg.windupZ + (cfg.swingZ - cfg.windupZ) * ease;
       targetRotX = cfg.lunge * ease;
       targetY = 10 + cfg.bob * ease;
+      weaponPoseT = 0.75 + ease * 0.55;
+      glowT = (0.45 + ease * 0.55) * (cfg.glow || 0);
+      if (anim.attackType === 'bow') bowDraw = 1 - ease * 0.92;
     } else {
       // Recovery: follow-through — weapon returns, body settles
       const t = (progress - activeEnd) / (1 - activeEnd);
@@ -192,6 +267,9 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat) {
       weaponZ = cfg.swingZ + (cfg.restZ - cfg.swingZ) * ease;
       targetRotX = cfg.lunge * (1 - ease);
       targetY = 10 + cfg.bob * (1 - ease);
+      weaponPoseT = Math.max(0, 1 - ease);
+      glowT = Math.max(0, 1 - ease * 1.15) * (cfg.glow || 0);
+      if (anim.attackType === 'bow') bowDraw = Math.max(0, 0.08 - ease * 0.08);
     }
 
     // Daggers special: rapid oscillating double-slash during active phase
@@ -200,7 +278,11 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat) {
       weaponZ = cfg.windupZ + Math.sin(t * Math.PI * 3) * 1.5;
     }
 
-    if (weapon) weapon.rotation.z = weaponZ;
+    if (weapon) {
+      weapon.rotation.z = weaponZ;
+      applyWeaponPose(weapon, cfg, weaponPoseT, glowT);
+    }
+    if (anim.attackType === 'bow') updateBowDraw(weapon, bowDraw);
     anim.smoothRotX = lerp(anim.smoothRotX, targetRotX, 8, dt);
     anim.smoothY = lerp(anim.smoothY, targetY, 12, dt);
     body.rotation.x = anim.smoothRotX;
@@ -209,6 +291,8 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat) {
     if (anim.attackTimer > duration) {
       anim.attackTimer = -1;
       anim.attackType = null;
+      updateBowDraw(weapon, 0);
+      resetWeaponPose(weapon);
       // Let smoothing handle return — no hard snap
     }
     return;
@@ -233,6 +317,8 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat) {
   body.position.y = anim.smoothY;
   body.rotation.x = anim.smoothRotX;
   body.rotation.z = anim.smoothRotZ;
+  updateBowDraw(weapon, 0);
+  resetWeaponPose(weapon);
 }
 
 /**

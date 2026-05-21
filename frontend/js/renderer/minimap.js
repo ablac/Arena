@@ -131,7 +131,13 @@ export class Minimap {
   /** @private */
   _pickupColor(type) {
     const colors = {
-      health_pack: '#00ff4c', speed_boost: '#ffff00', damage_boost: '#ff3333', shield_bubble: '#3388ff',
+      health_pack: '#00ff4c',
+      speed_boost: '#ffff00',
+      damage_boost: '#ff3333',
+      shield_bubble: '#3388ff',
+      gravity_well: '#a855f7',
+      cooldown_shard: '#22d3ee',
+      bounty_token: '#f59e0b',
     };
     return colors[type] || '#ffffff';
   }

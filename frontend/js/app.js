@@ -5,10 +5,10 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js';
+import { ArenaEngine } from './renderer/engine.js?v=20260521m';
 import { HudRenderer } from './renderer/hud.js';
 import { SpectatorSocket } from './spectator-ws.js';
-import { initLeaderboardWidget } from './leaderboard.js?v=20260520ar';
+import { initLeaderboardWidget } from './leaderboard.js?v=20260521m';
 import { initKeyGenerator } from './key-generator.js';
 
 const ARENA_WIDTH = 2000;
