@@ -123,6 +123,7 @@ type Projectile struct {
 	Position  Vec2
 	Direction Vec2
 	Speed     float64
+	HitRadius float64
 	Damage    float64
 	Weapon    string
 	AgeTicks  int

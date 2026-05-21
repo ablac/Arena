@@ -87,6 +87,23 @@ body::after {
   z-index: -2;
 }
 
+.overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 75;
+  pointer-events: none;
+  opacity: 0;
+  background: rgba(4, 10, 16, 0.08);
+  backdrop-filter: blur(0px);
+  transition: opacity 0.42s ease, backdrop-filter 0.42s ease, background 0.42s ease;
+}
+
+.overlay-backdrop.active {
+  opacity: 1;
+  background: rgba(4, 10, 16, 0.12);
+  backdrop-filter: blur(4px);
+}
+
 .aurora {
   position: absolute;
   border-radius: 999px;
@@ -277,7 +294,7 @@ body.arena-fullscreen .site-header {
   position: fixed;
   right: 18px;
   top: 50%;
-  z-index: 70;
+  z-index: 110;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -316,6 +333,10 @@ body.arena-fullscreen .site-header {
   border-radius: 0 0 18px 18px;
 }
 
+.onboarding-rail-mid {
+  border-radius: 0;
+}
+
 .onboarding-rail-bottom {
   border-radius: 18px 18px 0 0;
 }
@@ -325,10 +346,17 @@ body.arena-fullscreen .site-header {
   inset: 0;
   z-index: 80;
   display: flex;
-  justify-content: flex-end;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.34s ease;
+}
+
+.onboarding-overlay[data-overlay-side="right"] {
+  justify-content: flex-end;
+}
+
+.onboarding-overlay[data-overlay-side="left"] {
+  justify-content: flex-start;
 }
 
 .onboarding-overlay.open {
@@ -339,8 +367,12 @@ body.arena-fullscreen .site-header {
 .onboarding-scrim {
   position: absolute;
   inset: 0;
-  background: rgba(4, 10, 16, 0.28);
-  backdrop-filter: blur(10px);
+  opacity: 1;
+  background: transparent;
+}
+
+.onboarding-overlay.open .onboarding-scrim {
+  opacity: 1;
 }
 
 .onboarding-drawer {
@@ -349,8 +381,10 @@ body.arena-fullscreen .site-header {
   margin-left: auto;
   width: min(1180px, calc(100vw - 112px));
   height: calc(100% - 68px);
-  padding: 30px 30px 38px;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 30px 0 0;
+  overflow: hidden;
   background:
     radial-gradient(circle at top right, rgba(71, 215, 255, 0.12), transparent 28%),
     radial-gradient(circle at bottom left, rgba(255, 206, 84, 0.08), transparent 26%),
@@ -367,12 +401,157 @@ body.arena-fullscreen .site-header {
   transform: translateX(0);
 }
 
+.onboarding-overlay.overlay-secondary[data-overlay-side="right"] .onboarding-drawer {
+  margin-right: 108px;
+  width: min(1080px, calc(100vw - 212px));
+}
+
+.dashboard-drawer {
+  display: flex;
+  flex-direction: column;
+  margin: 34px 28px;
+  margin-right: auto;
+  width: min(1180px, calc(100vw - 112px));
+  height: calc(100% - 68px);
+  padding: 30px 30px 38px;
+  overflow: hidden;
+  box-shadow: 24px 0 70px rgba(0, 0, 0, 0.32);
+  transform: translateX(-100%);
+}
+
+.dashboard-overlay.open .dashboard-drawer {
+  transform: translateX(0);
+}
+
+.onboarding-overlay.overlay-secondary[data-overlay-side="left"] .dashboard-drawer {
+  margin-left: 108px;
+  width: min(1080px, calc(100vw - 212px));
+}
+
+.dashboard-header {
+  justify-content: flex-end;
+  margin-bottom: 12px;
+  padding: 0;
+}
+
+.onboarding-overlay[data-overlay-side="right"] .onboarding-header {
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.onboarding-drawer-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 0 30px 38px;
+}
+
+.drawer-shell-label {
+  margin: 0 0 16px;
+  color: var(--accent-blue);
+  font-family: var(--font-sans);
+  font-size: clamp(1.8rem, 3.8vw, 2.7rem);
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  line-height: 0.98;
+}
+
+.dashboard-drawer .drawer-shell-label {
+  text-align: right;
+}
+
+.dashboard-frame-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  border-radius: 26px;
+  overflow: hidden;
+  border: 1px solid rgba(126, 166, 207, 0.14);
+  background:
+    radial-gradient(circle at top left, rgba(71, 215, 255, 0.1), transparent 24%),
+    linear-gradient(180deg, rgba(6, 12, 20, 0.76), rgba(6, 11, 18, 0.92));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.dashboard-frame-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(71, 215, 255, 0.28), rgba(255, 206, 84, 0.1), rgba(255, 138, 61, 0.18));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.onboarding-flow-shell {
+  position: relative;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  border-radius: 26px;
+  overflow: hidden;
+  border: 1px solid rgba(126, 166, 207, 0.14);
+  background:
+    radial-gradient(circle at top left, rgba(71, 215, 255, 0.1), transparent 24%),
+    linear-gradient(180deg, rgba(6, 12, 20, 0.76), rgba(6, 11, 18, 0.92));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.onboarding-flow-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(71, 215, 255, 0.28), rgba(255, 206, 84, 0.1), rgba(255, 138, 61, 0.18));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+#onboarding-overlay .onboarding-drawer-scroll {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.onboarding-flow-shell-scroll {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 24px;
+}
+
+.onboarding-flow-shell .onboarding-flow {
+  margin: 0;
+}
+
+.dashboard-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: calc(100vh - 248px);
+  border: 0;
+  background: transparent;
+}
+
 .onboarding-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
   margin-bottom: 26px;
+  padding: 0 30px;
 }
 
 .onboarding-header h2 {
@@ -422,7 +601,30 @@ body.arena-fullscreen .site-header {
 }
 
 .onboarding-flow-standings {
+  width: min(100%, 1320px);
   max-width: 1320px;
+  min-height: 0;
+  height: auto;
+  flex: 1;
+}
+
+.onboarding-flow-standings,
+.onboarding-section-boards,
+.onboarding-section-boards > .card,
+.onboarding-section-boards .leaderboard-widget-overlay {
+  height: 100%;
+}
+
+#standings-boards > .card:hover {
+  transform: none;
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-color);
+}
+
+.overlay-standings .onboarding-drawer-scroll {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .onboarding-section {
@@ -607,6 +809,50 @@ body.arena-fullscreen .site-header {
 
 .onboarding-api-slot .api-body .code-block {
   border-radius: 18px;
+}
+
+.drawer-code-scroll-shell,
+.drawer-table-scroll-shell {
+  overflow: hidden;
+  border-radius: 18px;
+  margin: 8px 0;
+}
+
+.drawer-code-scroll-shell {
+  background: rgba(4, 9, 16, 0.72);
+  border: 1px solid rgba(126, 166, 207, 0.12);
+}
+
+.drawer-code-scroll-inner {
+  overflow: auto;
+  max-height: 400px;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+.drawer-code-scroll-shell .code-block {
+  margin: 0;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.drawer-table-scroll-shell {
+  border: 1px solid rgba(126, 166, 207, 0.12);
+  background: rgba(4, 9, 16, 0.58);
+}
+
+.drawer-table-scroll-inner {
+  overflow: auto;
+  max-width: 100%;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+.drawer-table-scroll-shell .api-table {
+  margin: 0;
+  min-width: 100%;
 }
 
 .onboarding-api-slot #api-quick-ref {
@@ -859,15 +1105,43 @@ body.arena-fullscreen .site-header {
     transform: translateY(-2px);
   }
 
+  .onboarding-rail-mid {
+    border-radius: 999px;
+  }
+
   .onboarding-drawer {
     width: 100vw;
     height: 100%;
     margin: 0;
     border-radius: 0;
+    padding: 22px 0 0;
+  }
+
+  .dashboard-drawer {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    width: 100vw;
     padding: 22px 18px 30px;
+  }
+
+  .onboarding-drawer-scroll {
+    padding: 0 18px 30px;
+  }
+
+  .dashboard-frame-shell {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+    border-radius: 22px;
   }
 
   .onboarding-header {
     flex-direction: column;
+    padding: 0 18px;
+  }
+
+  .dashboard-header {
+    padding: 0;
   }
 }

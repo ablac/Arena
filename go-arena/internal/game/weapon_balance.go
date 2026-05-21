@@ -21,10 +21,83 @@ type WeaponBalanceState struct {
 }
 
 type weaponRoundPerformance struct {
-	weapon string
-	bots   int
-	wins   int
-	score  float64
+	weapon           string
+	bots             int
+	wins             int
+	score            float64
+	totalKills       int
+	totalDamage      float64
+	totalStreak      int
+	totalLifeSecs    float64
+	totalShotsFired  int
+	totalShotsHit    int
+	totalDamageTaken float64
+}
+
+func (p *weaponRoundPerformance) avgDamage() float64 {
+	if p == nil || p.bots == 0 {
+		return 0
+	}
+	return p.totalDamage / float64(p.bots)
+}
+
+func (p *weaponRoundPerformance) avgLifeSecs() float64 {
+	if p == nil || p.bots == 0 {
+		return 0
+	}
+	return p.totalLifeSecs / float64(p.bots)
+}
+
+func (p *weaponRoundPerformance) hitRate() float64 {
+	if p == nil || p.totalShotsFired <= 0 {
+		return 0
+	}
+	return float64(p.totalShotsHit) / float64(p.totalShotsFired)
+}
+
+func (p *weaponRoundPerformance) damagePerShot() float64 {
+	if p == nil || p.totalShotsFired <= 0 {
+		return 0
+	}
+	return p.totalDamage / float64(p.totalShotsFired)
+}
+
+func (p *weaponRoundPerformance) damagePerHit() float64 {
+	if p == nil || p.totalShotsHit <= 0 {
+		return 0
+	}
+	return p.totalDamage / float64(p.totalShotsHit)
+}
+
+func (p *weaponRoundPerformance) shotsPerLife() float64 {
+	if p == nil || p.totalLifeSecs <= 0 {
+		return 0
+	}
+	return float64(p.totalShotsFired) / p.totalLifeSecs
+}
+
+func (p *weaponRoundPerformance) killsPerHit() float64 {
+	if p == nil || p.totalShotsHit <= 0 {
+		return 0
+	}
+	return float64(p.totalKills) / float64(p.totalShotsHit)
+}
+
+func (p *weaponRoundPerformance) damagePerLife() float64 {
+	if p == nil || p.totalLifeSecs <= 0 {
+		return 0
+	}
+	return p.totalDamage / p.totalLifeSecs
+}
+
+func (p *weaponRoundPerformance) confidence() float64 {
+	if p == nil {
+		return 0.35
+	}
+	botFactor := clampFloat(float64(p.bots)/2.0, 0.35, 1.0)
+	volumeFactor := clampFloat(float64(p.totalShotsFired)/18.0, 0.2, 1.0)
+	damageFactor := clampFloat(p.totalDamage/160.0, 0.2, 1.0)
+	return clampFloat(botFactor*0.35+volumeFactor*0.4+damageFactor*0.25, 0.25, 1.0)
 }
 
 var (
@@ -37,7 +110,7 @@ func init() {
 	baseWeaponConfigs = map[string]WeaponConfig{
 		"sword": {
 			Name:      "sword",
-			Damage:    24,
+			Damage:    21,
 			GridRange: 1,
 			Cooldown:  0.55,
 			Special:   "cleave",
@@ -67,7 +140,7 @@ func init() {
 		},
 		"spear": {
 			Name:      "spear",
-			Damage:    19,
+			Damage:    17,
 			GridRange: 2,
 			Cooldown:  0.75,
 			Special:   "knockback",
@@ -75,9 +148,9 @@ func init() {
 		},
 		"staff": {
 			Name:      "staff",
-			Damage:    16,
+			Damage:    17,
 			GridRange: 5,
-			Cooldown:  1.8,
+			Cooldown:  1.65,
 			Special:   "area",
 			GridParam: 2,
 		},
@@ -353,6 +426,13 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, winnerID
 		streakScore := float64(bot.BestKillStreak) * 14
 		survivalScore := lifeSecs * 0.3
 		entry.score += killScore + damageScore + streakScore + survivalScore
+		entry.totalKills += bot.RoundKills
+		entry.totalDamage += bot.RoundDamageDealt
+		entry.totalStreak += bot.BestKillStreak
+		entry.totalLifeSecs += lifeSecs
+		entry.totalShotsFired += bot.RoundShotsFired
+		entry.totalShotsHit += bot.RoundShotsHit
+		entry.totalDamageTaken += bot.RoundDamageTaken
 		if bot.BotID == winnerID {
 			entry.score += 60
 		}
@@ -362,6 +442,12 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, winnerID
 	}
 
 	globalMean := 0.0
+	meanAvgDamage := 0.0
+	meanHitRate := 0.0
+	meanDamagePerHit := 0.0
+	meanShotsPerLife := 0.0
+	meanDamagePerLife := 0.0
+	meanKillsPerHit := 0.0
 	participants := 0
 	for _, entry := range perf {
 		if entry.bots == 0 {
@@ -369,12 +455,24 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, winnerID
 		}
 		entry.score /= float64(entry.bots)
 		globalMean += entry.score
+		meanAvgDamage += entry.avgDamage()
+		meanHitRate += entry.hitRate()
+		meanDamagePerHit += entry.damagePerHit()
+		meanShotsPerLife += entry.shotsPerLife()
+		meanDamagePerLife += entry.damagePerLife()
+		meanKillsPerHit += entry.killsPerHit()
 		participants++
 	}
 	if participants < 2 {
 		return
 	}
 	globalMean /= float64(participants)
+	meanAvgDamage /= float64(participants)
+	meanHitRate /= float64(participants)
+	meanDamagePerHit /= float64(participants)
+	meanShotsPerLife /= float64(participants)
+	meanDamagePerLife /= float64(participants)
+	meanKillsPerHit /= float64(participants)
 	if globalMean <= 0 {
 		return
 	}
@@ -410,7 +508,7 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, winnerID
 			continue
 		}
 
-		magnitude := state.AdjustmentScale * math.Min(1, math.Abs(diffRatio))
+		magnitude := state.AdjustmentScale * math.Min(1, math.Abs(diffRatio)) * entry.confidence()
 		if magnitude < minStep {
 			magnitude = minStep
 		}
@@ -424,13 +522,47 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, winnerID
 		}
 		minDamageScale, maxDamageScale := damageScaleBounds()
 		minCooldownScale, maxCooldownScale := cooldownScaleBounds()
+		axisDeadzone := math.Max(0.02, currentDeadzone(state)*0.85)
 
+		damagePressure := weightedRelative(
+			relativeDelta(entry.damagePerHit(), meanDamagePerHit), 0.5,
+			relativeDelta(entry.killsPerHit(), meanKillsPerHit), 0.3,
+			relativeDelta(entry.avgDamage(), meanAvgDamage), 0.2,
+		)
+		cooldownPressure := weightedRelative(
+			relativeDelta(entry.shotsPerLife(), meanShotsPerLife), 0.55,
+			relativeDelta(entry.hitRate(), meanHitRate), 0.2,
+			relativeDelta(entry.damagePerLife(), meanDamagePerLife), 0.25,
+		)
+
+		adjustDamage := false
+		adjustCooldown := false
 		if diffRatio > 0 {
-			state.DamageScale = clampFloat(state.DamageScale*(1-magnitude*damageWeight), minDamageScale, maxDamageScale)
-			state.CooldownScale = clampFloat(state.CooldownScale*(1+magnitude*cooldownWeight), minCooldownScale, maxCooldownScale)
+			adjustDamage = damagePressure > axisDeadzone
+			adjustCooldown = cooldownPressure > axisDeadzone
 		} else {
-			state.DamageScale = clampFloat(state.DamageScale*(1+magnitude*damageWeight), minDamageScale, maxDamageScale)
-			state.CooldownScale = clampFloat(state.CooldownScale*(1-magnitude*cooldownWeight), minCooldownScale, maxCooldownScale)
+			adjustDamage = damagePressure < -axisDeadzone
+			adjustCooldown = cooldownPressure < -axisDeadzone && entry.hitRate() >= meanHitRate*0.9
+		}
+		if !adjustDamage && !adjustCooldown {
+			if math.Abs(damagePressure) >= math.Abs(cooldownPressure) {
+				adjustDamage = true
+			} else {
+				adjustCooldown = true
+			}
+		}
+
+		damageAxisScale := axisMagnitudeScale(damagePressure, axisDeadzone)
+		cooldownAxisScale := axisMagnitudeScale(cooldownPressure, axisDeadzone)
+		if adjustDamage && diffRatio > 0 {
+			state.DamageScale = clampFloat(state.DamageScale*(1-magnitude*damageWeight*damageAxisScale), minDamageScale, maxDamageScale)
+		} else if adjustDamage {
+			state.DamageScale = clampFloat(state.DamageScale*(1+magnitude*damageWeight*damageAxisScale), minDamageScale, maxDamageScale)
+		}
+		if adjustCooldown && diffRatio > 0 {
+			state.CooldownScale = clampFloat(state.CooldownScale*(1+magnitude*cooldownWeight*cooldownAxisScale), minCooldownScale, maxCooldownScale)
+		} else if adjustCooldown {
+			state.CooldownScale = clampFloat(state.CooldownScale*(1-magnitude*cooldownWeight*cooldownAxisScale), minCooldownScale, maxCooldownScale)
 		}
 
 		state.RoundsTracked++
@@ -445,6 +577,11 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, winnerID
 			"mean_score", round1(globalMean),
 			"damage_scale", round1(state.DamageScale),
 			"cooldown_scale", round1(state.CooldownScale),
+			"damage_pressure", round1(damagePressure),
+			"cooldown_pressure", round1(cooldownPressure),
+			"adjust_damage", adjustDamage,
+			"adjust_cooldown", adjustCooldown,
+			"confidence", round1(entry.confidence()),
 			"next_step", round1(state.AdjustmentScale),
 			"participants", entry.bots,
 			"wins", entry.wins,
@@ -462,6 +599,39 @@ func clampFloat(v, minV, maxV float64) float64 {
 		return maxV
 	}
 	return v
+}
+
+func relativeDelta(value, mean float64) float64 {
+	if mean <= 0 {
+		return 0
+	}
+	return (value - mean) / mean
+}
+
+func weightedRelative(parts ...float64) float64 {
+	if len(parts)%2 != 0 {
+		return 0
+	}
+	totalWeight := 0.0
+	total := 0.0
+	for i := 0; i < len(parts); i += 2 {
+		value := parts[i]
+		weight := parts[i+1]
+		total += value * weight
+		totalWeight += weight
+	}
+	if totalWeight <= 0 {
+		return 0
+	}
+	return total / totalWeight
+}
+
+func axisMagnitudeScale(pressure, deadzone float64) float64 {
+	scale := math.Abs(pressure)
+	if scale <= deadzone {
+		return 0.85
+	}
+	return clampFloat(0.85+(scale-deadzone)*1.5, 0.85, 1.35)
 }
 
 func maxInt(a, b int) int {

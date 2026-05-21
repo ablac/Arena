@@ -32,48 +32,51 @@ func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles 
 		}
 
 		action := bot.PendingAction
-		targetID := action.TargetID
-
-		// Validate target.
-		target, ok := bots[targetID]
-		if !ok {
-			bot.LastActionResult = &ActionResult{
-				Action:  "attack",
-				Success: false,
-				Message: "target not found",
-			}
-			continue
-		}
-		if !target.IsAlive {
-			bot.LastActionResult = &ActionResult{
-				Action:  "attack",
-				Success: false,
-				Target:  targetID,
-				Message: "target is dead",
-			}
-			continue
-		}
-		if targetID == bot.BotID {
-			bot.LastActionResult = &ActionResult{
-				Action:  "attack",
-				Success: false,
-				Message: "cannot attack self",
-			}
-			continue
-		}
+		wc := GetWeaponConfig(bot.Weapon)
 
 		// Check weapon ready.
 		if !IsWeaponReady(bot.CooldownRemaining) {
 			bot.LastActionResult = &ActionResult{
 				Action:  "attack",
 				Success: false,
-				Target:  targetID,
+				Target:  action.TargetID,
 				Message: "weapon on cooldown",
 			}
 			continue
 		}
 
-		wc := GetWeaponConfig(bot.Weapon)
+		targetID := action.TargetID
+		var target *BotState
+		if wc.Special != "area" || targetID != "" {
+			// Validate target for direct-target weapons and targeted staff casts.
+			var ok bool
+			target, ok = bots[targetID]
+			if !ok {
+				bot.LastActionResult = &ActionResult{
+					Action:  "attack",
+					Success: false,
+					Message: "target not found",
+				}
+				continue
+			}
+			if !target.IsAlive {
+				bot.LastActionResult = &ActionResult{
+					Action:  "attack",
+					Success: false,
+					Target:  targetID,
+					Message: "target is dead",
+				}
+				continue
+			}
+			if targetID == bot.BotID {
+				bot.LastActionResult = &ActionResult{
+					Action:  "attack",
+					Success: false,
+					Message: "cannot attack self",
+				}
+				continue
+			}
+		}
 
 		switch wc.Special {
 		case "projectile":
@@ -114,16 +117,28 @@ func processProjectileAttack(bot, target *BotState, wc *WeaponConfig, obstacles 
 		return
 	}
 
-	dir := target.Position.Sub(bot.Position).Normalized()
-
 	speed := config.C.ProjectileSpeed
 	if speed <= 0 {
 		speed = 240
 	}
+	if wc.Name == "bow" {
+		speed *= 1.25
+	}
+
+	aimPos := estimateProjectileAimPoint(bot, target, obstacles, speed, wc)
+	dir := aimPos.Sub(bot.Position).Normalized()
+	if dir.Length() <= 0 {
+		dir = target.Position.Sub(bot.Position).Normalized()
+	}
+
 	maxAge := int(math.Ceil((wc.Range+2*config.C.BotRadius)/speed*float64(config.C.TickRate))) + 1
 	fallbackAge := int(config.C.ProjectileMaxAgeSecs * float64(config.C.TickRate))
 	if maxAge < fallbackAge {
 		maxAge = fallbackAge
+	}
+	hitRadius := config.C.ProjectileHitRadius
+	if wc.Name == "bow" {
+		hitRadius += 1.5
 	}
 
 	proj := Projectile{
@@ -132,6 +147,7 @@ func processProjectileAttack(bot, target *BotState, wc *WeaponConfig, obstacles 
 		Position:  bot.Position,
 		Direction: dir,
 		Speed:     speed,
+		HitRadius: hitRadius,
 		Damage:    CalculateDamage(float64(wc.Damage), bot.AttackMultiplier, 0),
 		Weapon:    wc.Name,
 		AgeTicks:  0,
@@ -150,14 +166,104 @@ func processProjectileAttack(bot, target *BotState, wc *WeaponConfig, obstacles 
 	}
 }
 
+func estimateProjectileAimPoint(bot, target *BotState, obstacles []Obstacle, projectileSpeed float64, wc *WeaponConfig) Vec2 {
+	if projectileSpeed <= 0 {
+		return target.Position
+	}
+
+	distance := bot.Position.DistanceTo(target.Position)
+	travelTime := distance / projectileSpeed
+	if travelTime <= 0 {
+		return target.Position
+	}
+	if travelTime > 0.55 {
+		travelTime = 0.55
+	}
+
+	velocity := estimateBotVelocity(target)
+	if velocity.Length() <= 0 {
+		return target.Position
+	}
+
+	predicted := clampAimToArena(target.Position.Add(velocity.Scale(travelTime)))
+	if !IsInRange(bot.Position, predicted, wc.GridRange) {
+		return target.Position
+	}
+	if CombatLineBlocked(bot.Position, predicted, obstacles) {
+		return target.Position
+	}
+	return predicted
+}
+
+func estimateBotVelocity(bot *BotState) Vec2 {
+	if bot == nil || bot.PendingAction == nil {
+		return Vec2{}
+	}
+
+	cells := 1.0
+	for _, eff := range bot.ActiveEffects {
+		if eff.Name == "speed_boost" {
+			cells = 2.0
+			break
+		}
+	}
+	moveUnitsPerSecond := config.C.PathfindingCellSize * cells * float64(config.C.TickRate) / 2.0
+
+	switch bot.PendingAction.Type {
+	case ActionMove:
+		dir := Vec2{float64(SnapDirection(bot.PendingAction.Direction.X())), float64(SnapDirection(bot.PendingAction.Direction.Y()))}.Normalized()
+		return dir.Scale(moveUnitsPerSecond)
+	case ActionMoveTo:
+		if bot.PendingAction.TargetPosition == nil {
+			return Vec2{}
+		}
+		dir := bot.PendingAction.TargetPosition.Sub(bot.Position).Normalized()
+		return dir.Scale(moveUnitsPerSecond)
+	case ActionDodge:
+		dir := Vec2{float64(SnapDirection(bot.PendingAction.Direction.X())), float64(SnapDirection(bot.PendingAction.Direction.Y()))}.Normalized()
+		if dir.Length() <= 0 {
+			return Vec2{}
+		}
+		return dir.Scale(moveUnitsPerSecond * config.C.DodgeSpeedMult)
+	default:
+		return Vec2{}
+	}
+}
+
+func clampAimToArena(pos Vec2) Vec2 {
+	x := pos.X()
+	y := pos.Y()
+	r := config.C.BotRadius
+	if x < r {
+		x = r
+	}
+	if x > config.C.ArenaWidth-r {
+		x = config.C.ArenaWidth - r
+	}
+	if y < r {
+		y = r
+	}
+	if y > config.C.ArenaHeight-r {
+		y = config.C.ArenaHeight - r
+	}
+	return Vec2{x, y}
+}
+
 // processStaffAttack handles staff attacks by creating a delayed area impact.
 func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig, obstacles []Obstacle, staffImpacts *[]StaffImpact, tickCount int) {
 	// Determine target position: prefer explicit TargetPosition, fall back to target bot position.
 	var targetPos Vec2
 	if action.TargetPosition != nil {
-		targetPos = *action.TargetPosition
-	} else {
+		targetPos = normalizeActionTargetPosition(*action.TargetPosition)
+	} else if target != nil {
 		targetPos = target.Position
+	} else {
+		bot.LastActionResult = &ActionResult{
+			Action:  "attack",
+			Success: false,
+			Message: "target position required",
+		}
+		return
 	}
 
 	// Check range (grid-based).
@@ -198,7 +304,7 @@ func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig,
 	bot.LastActionResult = &ActionResult{
 		Action:  "attack",
 		Success: true,
-		Target:  target.BotID,
+		Target:  action.TargetID,
 		Message: "staff impact placed",
 	}
 }

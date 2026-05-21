@@ -125,6 +125,7 @@ type WeaponStatsEntry struct {
 	RecentRoundScore float64   `json:"recent_round_score"`
 	RecentDiffPct    float64   `json:"recent_diff_pct"`
 	RecentRounds     int       `json:"recent_rounds"`
+	RecentConfidence float64   `json:"recent_confidence"`
 	BalanceDirection string    `json:"balance_direction"`
 	Kills            int       `json:"kills"`
 	Kills24h         int       `json:"kills_24h"`
@@ -147,6 +148,13 @@ type WeaponStatsEntry struct {
 	LastCooldownMove string    `json:"last_cooldown_move"`
 	DamageShiftPct   float64   `json:"damage_shift_pct"`
 	CooldownShiftPct float64   `json:"cooldown_shift_pct"`
+	ShotsFired       int       `json:"shots_fired"`
+	ShotsHit         int       `json:"shots_hit"`
+	HitRate          float64   `json:"hit_rate"`
+	DamagePerShot    float64   `json:"damage_per_shot"`
+	DamagePerHit     float64   `json:"damage_per_hit"`
+	ShotsPerLife     float64   `json:"shots_per_life"`
+	KillsPerHit      float64   `json:"kills_per_hit"`
 	RoundsTracked    int       `json:"rounds_tracked"`
 	LastBalanceAt    time.Time `json:"last_balance_at"`
 	History          []WeaponBalanceHistoryPoint `json:"history,omitempty"`

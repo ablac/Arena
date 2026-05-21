@@ -238,8 +238,8 @@ function renderWeaponStatsBoard(data, podiumEl, tbody, updatedEl) {
       <td>${renderBalanceSignal(entry.balance_direction, entry.recent_diff_pct, entry.recent_rounds, entry.history || [], entry.weapon)}</td>
       <td>${entry.kills}</td>
       <td>${entry.kills_24h}</td>
-      <td>${renderWeaponStatValue(entry.damage_exact.toFixed(2), entry.last_damage_move || entry.damage_trend, entry.damage_shift_pct, 'damage', entry.history || [], entry.weapon)}</td>
-      <td>${renderWeaponStatValue(`${entry.cooldown.toFixed(2)}s`, entry.last_cooldown_move || entry.cooldown_trend, entry.cooldown_shift_pct, 'cooldown', entry.history || [], entry.weapon)}</td>
+      <td>${renderWeaponStatValue(entry.damage_exact.toFixed(2), entry.last_damage_move || entry.damage_trend, entry.damage_shift_pct, 'damage', entry.history || [], entry.weapon, entry.base_damage, `base ${entry.base_damage}`)}</td>
+      <td>${renderWeaponStatValue(`${entry.cooldown.toFixed(2)}s`, entry.last_cooldown_move || entry.cooldown_trend, entry.cooldown_shift_pct, 'cooldown', entry.history || [], entry.weapon, entry.base_cooldown, `base ${entry.base_cooldown.toFixed(2)}s`)}</td>
       <td>${entry.grid_range} tiles</td>`;
     tbody.appendChild(tr);
   });
@@ -316,7 +316,7 @@ function getStatValue(entry, sort) {
       return kd.toFixed(2);
     }
     case 'streak':
-      return entry.best_streak;
+      return entry.best_streak ?? entry.current_streak ?? entry.kills ?? 0;
     default:
       return entry.elo;
   }
@@ -340,17 +340,20 @@ function formatScore(value) {
   return Number(value || 0).toFixed(1);
 }
 
-function renderWeaponStatValue(value, trend, shiftPct, type, history = [], weapon = '') {
+function renderWeaponStatValue(value, trend, shiftPct, type, history = [], weapon = '', baseValue = null, baseLabel = '') {
   const trendClass = ` ${trendTone(trend, type)}`;
   const arrow = trendArrow(trend, type);
   const delta = Number(shiftPct || 0);
   const deltaLabel = Math.abs(delta) < 0.01 ? 'base' : `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%`;
   const tooltipSide = type === 'damage' || type === 'cooldown' ? 'left' : 'right';
   return `<span class="weapon-stat-value${trendClass} tooltip-${tooltipSide}">
-    <span class="weapon-stat-main">${value}</span>
-    <span class="weapon-stat-trend">${arrow}</span>
-    <span class="weapon-stat-delta">${deltaLabel}</span>
-    ${renderHistoryTooltip(history, type, weapon)}
+    <span class="weapon-stat-primary">
+      <span class="weapon-stat-main">${value}</span>
+      <span class="weapon-stat-trend">${arrow}</span>
+      <span class="weapon-stat-delta">${deltaLabel}</span>
+    </span>
+    ${baseLabel ? `<span class="weapon-stat-base">${baseLabel}</span>` : ''}
+    ${renderHistoryTooltip(history, type, weapon, baseValue)}
   </span>`;
 }
 
@@ -364,11 +367,11 @@ function renderBalanceSignal(direction, diffPct, rounds, history = [], weapon = 
     <span class="weapon-balance-label">${label}</span>
     <span class="weapon-balance-delta">${deltaLabel}</span>
     <span class="weapon-balance-rounds">${roundsLabel}</span>
-    ${renderHistoryTooltip(history, 'balance', weapon)}
+    ${renderHistoryTooltip(history, 'balance', weapon, 0)}
   </span>`;
 }
 
-function renderHistoryTooltip(history, metric, weapon) {
+function renderHistoryTooltip(history, metric, weapon, baselineValue = null) {
   if (!Array.isArray(history) || history.length < 1) return '';
   const title = metric === 'damage'
     ? `Damage across ${history.length} balance rounds`
@@ -382,17 +385,30 @@ function renderHistoryTooltip(history, metric, weapon) {
   });
   const values = series.map((value) => Number.isFinite(value) ? value : 0);
   if (values.length === 1) values.push(values[0]);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const hasBaseline = Number.isFinite(Number(baselineValue));
+  const baseline = hasBaseline ? Number(baselineValue) : null;
+  const extentValues = hasBaseline ? [...values, baseline] : values;
+  const min = Math.min(...extentValues);
+  const max = Math.max(...extentValues);
   const width = 216;
   const height = 72;
   const pad = 8;
   const rawSpan = max - min;
   const minSpan = metric === 'balance' ? 4 : metric === 'cooldown' ? 0.04 : 0.08;
   const span = Math.max(rawSpan, minSpan);
-  const center = (min + max) / 2;
-  const chartMin = center - span * 0.62;
-  const chartMax = center + span * 0.62;
+  let chartMin;
+  let chartMax;
+  if (hasBaseline) {
+    const above = Math.max(0, max - baseline);
+    const below = Math.max(0, baseline - min);
+    const halfSpan = Math.max(minSpan / 2, above, below) * 1.15;
+    chartMin = baseline - halfSpan;
+    chartMax = baseline + halfSpan;
+  } else {
+    const center = (min + max) / 2;
+    chartMin = center - span * 0.62;
+    chartMax = center + span * 0.62;
+  }
   const chartSpan = Math.max(minSpan, chartMax - chartMin);
   const step = values.length > 1 ? (width - pad * 2) / (values.length - 1) : 0;
   const points = values.map((value, index) => {
@@ -400,6 +416,8 @@ function renderHistoryTooltip(history, metric, weapon) {
     const y = height - pad - ((value - chartMin) / chartSpan) * (height - pad * 2);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(' ');
+  const baselineYValue = hasBaseline ? baseline : 0;
+  const baselineY = height - pad - ((baselineYValue - chartMin) / chartSpan) * (height - pad * 2);
   const latest = values[values.length - 1];
   const firstX = pad;
   const lastX = pad + step * (values.length - 1);
@@ -410,7 +428,7 @@ function renderHistoryTooltip(history, metric, weapon) {
   return `<span class="weapon-history-tooltip" role="tooltip">
     <span class="weapon-history-title">${escapeHtml(toTitleCase(weapon))} · ${title}</span>
     <svg class="weapon-history-chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
-      <line class="weapon-history-baseline" x1="${pad}" y1="${(height / 2).toFixed(1)}" x2="${(width - pad)}" y2="${(height / 2).toFixed(1)}" />
+      <line class="weapon-history-baseline" x1="${pad}" y1="${baselineY.toFixed(1)}" x2="${(width - pad)}" y2="${baselineY.toFixed(1)}" />
       <polygon class="weapon-history-area" points="${areaPoints}" />
       <polyline points="${points}" />
       <circle class="weapon-history-point" cx="${latestX.toFixed(1)}" cy="${latestY.toFixed(1)}" r="3.4" />
@@ -418,6 +436,7 @@ function renderHistoryTooltip(history, metric, weapon) {
     <span class="weapon-history-meta">
       <span>${history.length} rounds</span>
       <span>${formatTooltipValue(metric, starting)} -> ${formatTooltipValue(metric, latest)}</span>
+      ${hasBaseline ? `<span>Base ${formatTooltipValue(metric, baseline)}</span>` : ''}
       <span>Now ${formatTooltipValue(metric, latest)}</span>
     </span>
   </span>`;

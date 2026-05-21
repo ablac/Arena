@@ -7,6 +7,21 @@ import (
 	"arena-server/internal/config"
 )
 
+// normalizeActionTargetPosition accepts either grid coordinates or world
+// coordinates and returns a snapped world-space position.
+func normalizeActionTargetPosition(tp Vec2) Vec2 {
+	if ActiveTerrain == nil {
+		return tp
+	}
+	if tp.X() < float64(ActiveTerrain.Width) && tp.Y() < float64(ActiveTerrain.Height) &&
+		tp.X() >= 0 && tp.Y() >= 0 {
+		cell := [2]int{int(math.Round(tp.X())), int(math.Round(tp.Y()))}
+		return ActiveTerrain.GridToWorld(cell)
+	}
+	cell := ActiveTerrain.WorldToGrid(tp)
+	return ActiveTerrain.GridToWorld(cell)
+}
+
 // ProcessMovement handles MOVE, MOVE_TO, and DODGE actions for all alive bots.
 // Movement is grid-based: bots move 1 cell per tick (2 with speed boost).
 func ProcessMovement(bots map[string]*BotState, obstacles []Obstacle, grid *SpatialGrid, navGrid *NavGrid, dt float64) {
@@ -188,22 +203,7 @@ func processMoveTo(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, navGr
 	// Determine the goal position.
 	var goal Vec2
 	if action.TargetPosition != nil {
-		tp := *action.TargetPosition
-		if ActiveTerrain != nil {
-			// If both coords are within grid dimensions, treat as grid coordinates.
-			// If either coord exceeds grid dimensions, treat as world coordinates.
-			if tp.X() < float64(ActiveTerrain.Width) && tp.Y() < float64(ActiveTerrain.Height) &&
-				tp.X() >= 0 && tp.Y() >= 0 {
-				cell := [2]int{int(tp.X()), int(tp.Y())}
-				goal = ActiveTerrain.GridToWorld(cell)
-			} else {
-				// World coordinates — convert to nearest grid cell center.
-				cell := ActiveTerrain.WorldToGrid(tp)
-				goal = ActiveTerrain.GridToWorld(cell)
-			}
-		} else {
-			goal = tp
-		}
+		goal = normalizeActionTargetPosition(*action.TargetPosition)
 	} else {
 		return
 	}

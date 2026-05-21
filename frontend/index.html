@@ -7,13 +7,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/arena.css?v=20260520p">
-  <link rel="stylesheet" href="css/sections.css?v=20260520p">
+  <link rel="stylesheet" href="css/arena.css?v=20260520ar">
+  <link rel="stylesheet" href="css/sections.css?v=20260520ar">
   <script src="https://cdn.babylonjs.com/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
   <script src="https://cdn.babylonjs.com/materialsLibrary/babylonjs.materials.min.js"></script>
   <script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
-  <script type="module" src="js/app.js?v=20260520p"></script>
+  <script type="module" src="js/app.js?v=20260520ar"></script>
 </head>
 <body>
   <div class="page-backdrop">
@@ -22,6 +22,7 @@
     <div class="aurora aurora-c"></div>
     <div class="grid-haze"></div>
   </div>
+  <div class="overlay-backdrop" id="overlay-backdrop" aria-hidden="true"></div>
 
   <header class="site-header">
     <a href="#hero" class="site-brand">
@@ -30,8 +31,10 @@
     </a>
     <nav class="site-nav">
       <a href="#arena">Arena</a>
-      <button type="button" class="site-nav-action" data-overlay-open="standings-overlay">Standings</button>
       <button type="button" class="site-nav-action" data-overlay-open="onboarding-overlay">Get Started</button>
+      <button type="button" class="site-nav-action" data-overlay-open="standings-overlay">Standings</button>
+      <button type="button" class="site-nav-action" data-overlay-open="toolkit-overlay">Toolkit</button>
+      <button type="button" class="site-nav-action" data-overlay-open="dashboard-overlay">Dashboard</button>
       <button type="button" class="site-nav-action" data-overlay-open="onboarding-overlay" data-overlay-target="#api-reference">API</button>
     </nav>
     <div class="site-live-pill" id="site-live-pill"><span class="dot"></span> Spectator syncing</div>
@@ -48,7 +51,7 @@
         <p class="subtitle">Deploy a bot, stream live combat, and iterate against a scoreboard that is always moving.</p>
         <div class="cta-group">
           <button type="button" class="btn btn-gold" data-overlay-open="onboarding-overlay">Get Started</button>
-          <a href="/dashboard/" class="btn btn-secondary">Dashboard</a>
+          <button type="button" class="btn btn-secondary" data-overlay-open="dashboard-overlay">Dashboard</button>
         </div>
         <div class="hero-ticker" aria-hidden="true">
           <span>Live spectator feed</span>
@@ -1272,173 +1275,205 @@ wss://arena.angel-serv.com/ws/spectator
   </main>
 
   <div class="onboarding-rail-stack">
-    <button type="button" class="onboarding-rail onboarding-rail-top onboarding-rail-secondary" data-overlay-open="standings-overlay">Standings</button>
-    <button type="button" class="onboarding-rail onboarding-rail-bottom" id="onboarding-rail" data-overlay-open="onboarding-overlay">Get Started</button>
+    <button type="button" class="onboarding-rail onboarding-rail-top" id="onboarding-rail" data-overlay-open="onboarding-overlay">Get Started</button>
+    <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="standings-overlay">Standings</button>
+    <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="toolkit-overlay">Toolkit</button>
+    <button type="button" class="onboarding-rail onboarding-rail-bottom onboarding-rail-secondary" data-overlay-open="dashboard-overlay">Dashboard</button>
   </div>
 
-  <div class="onboarding-overlay overlay-standings" id="standings-overlay" aria-hidden="true">
-    <div class="onboarding-scrim" data-close-overlay="standings-overlay"></div>
-    <aside class="onboarding-drawer" aria-labelledby="standings-title" role="dialog" aria-modal="true">
-      <div class="onboarding-header">
-        <div>
-          <p class="onboarding-kicker">Live Boards</p>
-          <h2 id="standings-title">Standings</h2>
-          <p class="onboarding-subtitle">Track the main ladder, monitor bounty pressure, and compare the bots driving the current arena meta.</p>
-        </div>
-        <button type="button" class="onboarding-close" data-close-overlay="standings-overlay">Close</button>
-      </div>
-
-      <div class="onboarding-flow onboarding-flow-standings">
-        <section class="onboarding-section onboarding-section-boards" id="standings-boards">
-          <div class="card">
-            <div class="leaderboard-widget leaderboard-widget-overlay">
-              <div class="leaderboard-mode-tabs" id="standings-mode-tabs">
-                <button class="active" data-board="leaderboard">Leaderboard</button>
-                <button data-board="bounty">Bounty Board</button>
-                <button data-board="stats">Stats</button>
-              </div>
-              <div class="leaderboard-panels">
-                <div class="leaderboard-panel active" data-board="leaderboard">
-                  <div class="leaderboard-podium" id="standings-podium"></div>
-                  <div class="leaderboard-tabs" id="standings-tabs"></div>
-                  <div class="leaderboard-scroll">
-                    <table class="leaderboard-table">
-                      <thead>
-                        <tr><th>Rank</th><th>Bot</th><th>Score</th><th>K/D</th><th>ELO</th></tr>
-                      </thead>
-                      <tbody id="standings-body"></tbody>
-                    </table>
-                  </div>
-                </div>
-                <div class="leaderboard-panel" data-board="bounty">
-                  <div class="bounty-board-intro">Bots that chain round wins build a bounty. Killing one claims a small bonus and clears their board spot.</div>
-                  <div class="leaderboard-scroll">
-                    <table class="leaderboard-table">
-                      <thead>
-                        <tr><th>Rank</th><th>Bot</th><th>Bounty</th><th>Win Streak</th><th>Status</th></tr>
-                      </thead>
-                      <tbody id="standings-bounty-body"></tbody>
-                    </table>
-                  </div>
-                </div>
-                <div class="leaderboard-panel" data-board="stats">
-                  <div class="weapon-stats-header">
-                    <div class="bounty-board-intro">Live weapon telemetry from kill history and the last 10 scored rounds. Hover damage, cooldown, or balance to inspect recent balance rounds.</div>
-                    <div class="weapon-stats-updated" id="standings-weapon-updated">Syncing weapon stats...</div>
-                  </div>
-                  <div class="weapon-stats-podium" id="standings-weapon-podium"></div>
-                  <div class="leaderboard-scroll weapon-stats-scroll">
-                    <table class="leaderboard-table weapon-stats-table">
-                      <thead>
-                        <tr><th>Tier</th><th>Weapon</th><th>Live Score</th><th>Recent Form</th><th>Balance</th><th>Kills</th><th>24h</th><th>Damage</th><th>Cooldown</th><th>Range</th></tr>
-                      </thead>
-                      <tbody id="standings-weapon-body"></tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+  <div class="onboarding-overlay dashboard-overlay" id="dashboard-overlay" aria-hidden="true" data-overlay-side="left">
+    <div class="onboarding-scrim" data-close-overlay="dashboard-overlay"></div>
+    <aside class="onboarding-drawer dashboard-drawer" aria-labelledby="dashboard-title" role="dialog" aria-modal="true">
+      <div class="drawer-shell-label">//Dashboard</div>
+      <div class="dashboard-frame-shell">
+        <iframe
+          id="dashboard-frame"
+          class="dashboard-frame"
+          data-src="/dashboard/?view=private"
+          title="Arena Bot Dashboard"
+          loading="lazy"
+          referrerpolicy="same-origin"></iframe>
       </div>
     </aside>
   </div>
 
-  <div class="onboarding-overlay" id="onboarding-overlay" aria-hidden="true">
+  <div class="onboarding-overlay dashboard-overlay toolkit-overlay" id="toolkit-overlay" aria-hidden="true" data-overlay-side="left">
+    <div class="onboarding-scrim" data-close-overlay="toolkit-overlay"></div>
+    <aside class="onboarding-drawer dashboard-drawer" aria-labelledby="toolkit-title" role="dialog" aria-modal="true">
+      <div class="drawer-shell-label">//Toolkit</div>
+      <div class="dashboard-frame-shell">
+        <iframe
+          id="toolkit-frame"
+          class="dashboard-frame"
+          data-src="/dashboard/?view=public"
+          title="Arena Toolkit"
+          loading="lazy"
+          referrerpolicy="same-origin"></iframe>
+      </div>
+    </aside>
+  </div>
+
+  <div class="onboarding-overlay overlay-standings" id="standings-overlay" aria-hidden="true" data-overlay-side="right">
+    <div class="onboarding-scrim" data-close-overlay="standings-overlay"></div>
+    <aside class="onboarding-drawer" aria-labelledby="standings-title" role="dialog" aria-modal="true">
+      <div class="onboarding-drawer-scroll">
+        <div class="drawer-shell-label">//Standings</div>
+        <div class="onboarding-flow onboarding-flow-standings">
+          <section class="onboarding-section onboarding-section-boards" id="standings-boards">
+            <div class="card">
+              <div class="leaderboard-widget leaderboard-widget-overlay">
+                <div class="leaderboard-mode-tabs" id="standings-mode-tabs">
+                  <button class="active" data-board="leaderboard">Leaderboard</button>
+                  <button data-board="bounty">Bounty Board</button>
+                  <button data-board="stats">Stats</button>
+                </div>
+                <div class="leaderboard-panels">
+                  <div class="leaderboard-panel active" data-board="leaderboard">
+                    <div class="leaderboard-podium" id="standings-podium"></div>
+                    <div class="leaderboard-tabs" id="standings-tabs"></div>
+                    <div class="leaderboard-scroll">
+                      <div class="leaderboard-scroll-inner">
+                        <table class="leaderboard-table">
+                          <thead>
+                            <tr><th>Rank</th><th>Bot</th><th>Score</th><th>K/D</th><th>ELO</th></tr>
+                          </thead>
+                          <tbody id="standings-body"></tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="leaderboard-panel" data-board="bounty">
+                    <div class="bounty-board-intro">Bots that chain round wins build a bounty. Killing one claims a small bonus and clears their board spot.</div>
+                    <div class="leaderboard-scroll">
+                      <div class="leaderboard-scroll-inner">
+                        <table class="leaderboard-table">
+                          <thead>
+                            <tr><th>Rank</th><th>Bot</th><th>Bounty</th><th>Win Streak</th><th>Status</th></tr>
+                          </thead>
+                          <tbody id="standings-bounty-body"></tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="leaderboard-panel" data-board="stats">
+                    <div class="weapon-stats-header">
+                      <div class="bounty-board-intro">Live weapon telemetry from kill history and the last 10 scored rounds. Hover damage, cooldown, or balance to inspect recent balance rounds.</div>
+                      <div class="weapon-stats-updated" id="standings-weapon-updated">Syncing weapon stats...</div>
+                    </div>
+                    <div class="weapon-stats-podium" id="standings-weapon-podium"></div>
+                    <div class="leaderboard-scroll weapon-stats-scroll">
+                      <div class="leaderboard-scroll-inner">
+                        <table class="leaderboard-table weapon-stats-table">
+                          <thead>
+                            <tr><th>Tier</th><th>Weapon</th><th>Live Score</th><th>Recent Form</th><th>Balance</th><th>Kills</th><th>24h</th><th>Damage</th><th>Cooldown</th><th>Range</th></tr>
+                          </thead>
+                          <tbody id="standings-weapon-body"></tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="onboarding-overlay" id="onboarding-overlay" aria-hidden="true" data-overlay-side="right">
     <div class="onboarding-scrim" data-close-overlay="onboarding-overlay"></div>
     <aside class="onboarding-drawer" aria-labelledby="onboarding-title" role="dialog" aria-modal="true">
-      <div class="onboarding-header">
-        <div>
-          <p class="onboarding-kicker">Guided Launch</p>
-          <h2 id="onboarding-title">Get Started</h2>
-          <p class="onboarding-subtitle">Generate a key, configure a bot, and launch into the arena without leaving the live broadcast.</p>
-        </div>
-        <button type="button" class="onboarding-close" data-close-overlay="onboarding-overlay">Close</button>
-      </div>
+      <div class="onboarding-drawer-scroll">
+        <div class="drawer-shell-label">//Get Started</div>
+        <div class="onboarding-flow-shell">
+          <div class="onboarding-flow-shell-scroll">
+            <div class="onboarding-flow">
+              <section class="onboarding-section onboarding-section-keygen" id="onboarding-keygen">
+              <div class="keygen-shell" id="keygen-card">
+                <div class="keygen-brief">
+                  <p class="keygen-kicker">Fast Onboarding</p>
+                  <h3 class="onboarding-section-title" id="keygen">Generate API key</h3>
+                  <p class="subtitle">Create a bot credential instantly, copy it once, and move straight into the arena loop without account setup.</p>
+                  <div class="keygen-traits">
+                    <div class="keygen-trait">
+                      <span class="keygen-trait-label">Auth model</span>
+                      <strong>Single issued key</strong>
+                    </div>
+                    <div class="keygen-trait">
+                      <span class="keygen-trait-label">Setup cost</span>
+                      <strong>No signup required</strong>
+                    </div>
+                    <div class="keygen-trait">
+                      <span class="keygen-trait-label">Next step</span>
+                      <strong>Configure your bot and connect over WebSocket</strong>
+                    </div>
+                  </div>
+                </div>
+                <div class="card keygen-panel">
+                  <div class="keygen-orbit keygen-orbit-a"></div>
+                  <div class="keygen-orbit keygen-orbit-b"></div>
+                  <div class="keygen-panel-inner">
+                    <p class="keygen-panel-kicker">Arena Access</p>
+                    <h3>Mint a fresh credential</h3>
+                    <p class="keygen-panel-copy">The key is shown once. Generate it, copy it, then drop it into your bot config.</p>
+                    <button class="btn btn-gold keygen-btn">Generate API key</button>
+                    <div class="keygen-result"></div>
+                  </div>
+                </div>
+              </div>
+              </section>
 
-      <div class="onboarding-flow">
-        <section class="onboarding-section onboarding-section-keygen" id="onboarding-keygen">
-          <div class="keygen-shell" id="keygen-card">
-            <div class="keygen-brief">
-              <p class="keygen-kicker">Fast Onboarding</p>
-              <h3 class="onboarding-section-title" id="keygen">Generate API key</h3>
-              <p class="subtitle">Create a bot credential instantly, copy it once, and move straight into the arena loop without account setup.</p>
-              <div class="keygen-traits">
-                <div class="keygen-trait">
-                  <span class="keygen-trait-label">Auth model</span>
-                  <strong>Single issued key</strong>
-                </div>
-                <div class="keygen-trait">
-                  <span class="keygen-trait-label">Setup cost</span>
-                  <strong>No signup required</strong>
-                </div>
-                <div class="keygen-trait">
-                  <span class="keygen-trait-label">Next step</span>
-                  <strong>Configure your bot and connect over WebSocket</strong>
-                </div>
-              </div>
-            </div>
-            <div class="card keygen-panel">
-              <div class="keygen-orbit keygen-orbit-a"></div>
-              <div class="keygen-orbit keygen-orbit-b"></div>
-              <div class="keygen-panel-inner">
-                <p class="keygen-panel-kicker">Arena Access</p>
-                <h3>Mint a fresh credential</h3>
-                <p class="keygen-panel-copy">The key is shown once. Generate it, copy it, then drop it into your bot config.</p>
-                <button class="btn btn-gold keygen-btn">Generate API key</button>
-                <div class="keygen-result"></div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="onboarding-section onboarding-section-guide" id="onboarding-setup">
-          <details class="card onboarding-card-details">
-            <summary class="onboarding-card-summary">
-              <div>
-                <p class="onboarding-kicker">Launch Path</p>
-                <h3 class="onboarding-section-title">Getting Started</h3>
-              </div>
-              <span class="onboarding-card-toggle">Toggle</span>
-            </summary>
-            <div class="onboarding-card-body">
-              <ol class="steps">
-                <li><a href="#keygen" style="color:var(--accent-blue)">Generate your API key</a> in this drawer</li>
-                <li>Configure your bot:
-                  <pre class="code-block">curl -X PUT https://arena.angel-serv.com/api/v1/bot/config \
+              <section class="onboarding-section onboarding-section-guide" id="onboarding-setup">
+              <details class="card onboarding-card-details">
+                <summary class="onboarding-card-summary">
+                  <div>
+                    <p class="onboarding-kicker">Launch Path</p>
+                    <h3 class="onboarding-section-title">Getting Started</h3>
+                  </div>
+                  <span class="onboarding-card-toggle">Toggle</span>
+                </summary>
+                <div class="onboarding-card-body">
+                  <ol class="steps">
+                    <li><a href="#keygen" style="color:var(--accent-blue)">Generate your API key</a> in this drawer</li>
+                    <li>Configure your bot:
+                      <pre class="code-block">curl -X PUT https://arena.angel-serv.com/api/v1/bot/config \
   -H "X-Arena-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"MyBot","avatar_color":"#00d4ff"}'</pre>
-                </li>
-                <li>Connect via WebSocket: <code style="color:var(--accent-blue)">wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY</code></li>
-                <li>Respond to tick events with actions</li>
-                <li>Climb the leaderboard!</li>
-              </ol>
-            </div>
-          </details>
-        </section>
+                    </li>
+                    <li>Connect via WebSocket: <code style="color:var(--accent-blue)">wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY</code></li>
+                    <li>Respond to tick events with actions</li>
+                    <li>Climb the leaderboard!</li>
+                  </ol>
+                </div>
+              </details>
+              </section>
 
-        <section class="onboarding-section onboarding-section-example" id="onboarding-example">
-          <details class="card onboarding-card-details">
-            <summary class="onboarding-card-summary">
-              <div>
-                <p class="onboarding-kicker">Starter Code</p>
-                <h3 class="onboarding-section-title">Example Bot</h3>
-              </div>
-              <span class="onboarding-card-toggle">Toggle</span>
-            </summary>
-            <div class="onboarding-card-body">
-              <div class="code-copy-wrapper">
-                <button class="copy-btn" onclick="copyBlock('example-code')">Copy</button>
-                <pre class="code-block" id="example-code"></pre>
-              </div>
-            </div>
-          </details>
-        </section>
+              <section class="onboarding-section onboarding-section-example" id="onboarding-example">
+              <details class="card onboarding-card-details">
+                <summary class="onboarding-card-summary">
+                  <div>
+                    <p class="onboarding-kicker">Starter Code</p>
+                    <h3 class="onboarding-section-title">Example Bot</h3>
+                  </div>
+                  <span class="onboarding-card-toggle">Toggle</span>
+                </summary>
+                <div class="onboarding-card-body">
+                  <div class="code-copy-wrapper">
+                    <button class="copy-btn" onclick="copyBlock('example-code')">Copy</button>
+                    <pre class="code-block" id="example-code"></pre>
+                  </div>
+                </div>
+              </details>
+              </section>
 
-        <section class="onboarding-section onboarding-section-api" id="onboarding-api">
-          <div class="onboarding-api-slot" id="onboarding-api-slot"></div>
-        </section>
+              <section class="onboarding-section onboarding-section-api" id="onboarding-api">
+              <div class="onboarding-api-slot" id="onboarding-api-slot"></div>
+              </section>
+            </div>
+          </div>
+        </div>
       </div>
     </aside>
   </div>

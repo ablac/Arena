@@ -122,8 +122,18 @@ export class BotRenderer {
       // Attack detection BEFORE animation so triggerAttack takes effect this frame
       const weaponType = bot.weapon || 'sword';
       const botAction = bot.action || bot.last_action; // server sends last_action
-      if (botAction === 'attack' && bot.is_alive && entry._wasAlive) {
-        const liveCooldown = Number(bot.cooldown_remaining || 0);
+      const liveCooldown = Number(bot.cooldown_remaining || 0);
+      const prevCooldown = Number(entry._lastCooldown ?? 0);
+      const attackJustStarted =
+        botAction === 'attack' &&
+        bot.is_alive &&
+        entry._wasAlive &&
+        (
+          liveCooldown > prevCooldown + 0.35 ||
+          (entry._lastAction !== 'attack' && liveCooldown > 0.05)
+        );
+
+      if (attackJustStarted) {
         if (entry.isSwordsman) {
           triggerSwordsmanAttack(entry.anim, liveCooldown);
         } else {
@@ -195,6 +205,8 @@ export class BotRenderer {
       }
       entry._wasAlive = bot.is_alive;
       entry.isAlive = bot.is_alive;
+      entry._lastCooldown = liveCooldown;
+      entry._lastAction = botAction;
     }
 
     for (const [id, entry] of this.entries) {

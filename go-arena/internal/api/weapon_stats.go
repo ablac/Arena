@@ -151,6 +151,7 @@ func GetWeaponStats(w http.ResponseWriter, r *http.Request) {
 				RecentRoundScore: roundMetaScore(recent.AvgScore),
 				RecentDiffPct:    roundMetaScore(recentDiffPct),
 				RecentRounds:     recent.Rounds,
+				RecentConfidence: roundMetaScore(recentConfidenceScore(recent)),
 				BalanceDirection: balanceDirection(recentDiffPct),
 				Kills:            kills.Kills,
 				Kills24h:         kills.Kills24h,
@@ -173,6 +174,13 @@ func GetWeaponStats(w http.ResponseWriter, r *http.Request) {
 				LastCooldownMove: lastCooldownMove,
 				DamageShiftPct:   roundMetaScore((balance.DamageScale - 1) * 100),
 				CooldownShiftPct: roundMetaScore((balance.CooldownScale - 1) * 100),
+				ShotsFired:       recent.ShotsFired,
+				ShotsHit:         recent.ShotsHit,
+				HitRate:          roundMetaScore(recent.HitRate * 100),
+				DamagePerShot:    roundMetaScore(recent.DamagePerShot),
+				DamagePerHit:     roundMetaScore(recent.DamagePerHit),
+				ShotsPerLife:     roundMetaScore(recent.ShotsPerLife),
+				KillsPerHit:      roundMetaScore(recent.KillsPerHit),
 				RoundsTracked:    balance.RoundsTracked,
 				LastBalanceAt:    balance.UpdatedAt,
 				History:          history,
@@ -273,6 +281,14 @@ func clampMetaScore(v, minV, maxV float64) float64 {
 		return maxV
 	}
 	return v
+}
+
+func recentConfidenceScore(entry db.WeaponRecentPerformance) float64 {
+	botFactor := clampMetaScore(float64(entry.Bots)/6.0, 0, 1)
+	roundFactor := clampMetaScore(float64(entry.Rounds)/10.0, 0, 1)
+	volumeFactor := clampMetaScore(float64(entry.ShotsFired)/60.0, 0, 1)
+	damageFactor := clampMetaScore(entry.AvgDamage/120.0, 0, 1)
+	return (botFactor * 0.25) + (roundFactor * 0.25) + (volumeFactor * 0.3) + (damageFactor * 0.2)
 }
 
 func weaponTierForRank(rank int) string {

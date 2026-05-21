@@ -235,6 +235,8 @@ func GetBotLive(engine *game.GameEngine) http.HandlerFunc {
 			"active_effects":     detail["active_effects"],
 			"dodge_cooldown":     detail["dodge_cooldown"],
 			"cooldown_remaining": detail["cooldown_remaining"],
+			"current_action":     detail["current_action"],
+			"last_action_result": detail["last_action_result"],
 			"frozen":             detail["frozen"],
 			"action_counts":      actionCounts,
 		})
