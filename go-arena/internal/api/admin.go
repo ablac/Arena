@@ -1741,12 +1741,17 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 
 	// Weapon max damage lookup: baseDmg * maxAttackMult(2.0)
 	weaponMaxDmg := map[string]float64{
-		"sword": 25 * 2.0, "bow": 12 * 2.0, "daggers": 12 * 2.0 * 2, // double strike
-		"shield": 15 * 2.0, "spear": 20 * 2.0, "staff": 18 * 2.0,
+		"sword": 21 * 2.0,
+		"bow": 16 * 2.0 * (1 + float64(config.C.BowChargeMaxTicks)*config.C.BowChargeDamagePerTick),
+		"daggers": 11 * 2.0 * config.C.DaggerBackstabBonusMultiplier,
+		"shield": 14 * 2.0 * config.C.ShieldBashBonusMultiplier,
+		"spear": 17 * 2.0 * config.C.SpearBraceBonusMultiplier,
+		"staff": 17 * 2.0,
+		"grapple": 14 * 2.0 * config.C.GrappleSlamBonusMultiplier,
 	}
 	weaponCooldowns := map[string]float64{
-		"sword": 0.5, "bow": 1.4, "daggers": 0.3,
-		"shield": 0.7, "spear": 0.7, "staff": 1.3,
+		"sword": 0.55, "bow": 1.05, "daggers": 0.35,
+		"shield": 0.8, "spear": 0.75, "staff": 1.65, "grapple": 1.05,
 	}
 
 	allBots := h.Engine.ListAllBots()

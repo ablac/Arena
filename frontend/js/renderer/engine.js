@@ -6,14 +6,14 @@
  */
 
 import { CameraController } from './camera.js';
-import { BotRenderer } from './bots.js';
-import { EnvironmentRenderer } from './environment.js';
-import { ObstacleRenderer } from './obstacles.js';
-import { PickupRenderer } from './pickups.js';
-import { EffectRenderer } from './effects.js';
+import { BotRenderer } from './bots.js?v=20260521l';
+import { EnvironmentRenderer } from './environment.js?v=20260521i';
+import { ObstacleRenderer } from './obstacles.js?v=20260521h';
+import { PickupRenderer } from './pickups.js?v=20260521m';
+import { EffectRenderer } from './effects.js?v=20260521l';
 import { TrailRenderer } from './trails.js';
-import { ProjectileRenderer } from './projectiles.js';
-import { GameplayRenderer } from './gameplay.js';
+import { ProjectileRenderer } from './projectiles.js?v=20260521l';
+import { GameplayRenderer } from './gameplay.js?v=20260521l';
 
 // Bot positions are smoothed via exponential lerp each frame,
 // so no tick-interval-based alpha is needed.
@@ -87,6 +87,20 @@ export class ArenaEngine {
     this.trailRenderer = new TrailRenderer(scene);
     this.projectileRenderer = new ProjectileRenderer(scene);
     this.gameplayRenderer = new GameplayRenderer(scene);
+    this.gameplayRenderer.onStaffImpactCreated = (impact) => {
+      const owner = (this.state?.bots || []).find((bot) => (bot.bot_id || bot.id) === impact.ownerId);
+      if (!owner || !impact?.position) return;
+      this.projectileRenderer.spawn(
+        owner.position[0],
+        owner.position[1],
+        impact.position[0],
+        impact.position[1],
+        'staff',
+        owner.avatar_color || '#8d4dff',
+        undefined,
+        { travelTime: Math.max(0.16, (impact.ticksLeft || 1) / 10) }
+      );
+    };
     this.botRenderer.onSelectionChange = (botId) => {
       if (this.onSelectBot) this.onSelectBot(botId);
     };
@@ -99,15 +113,13 @@ export class ArenaEngine {
       }
     });
 
-    // Wire up attack → per-weapon hit effects + projectiles for ranged
+    // Wire up attack → direct combat effects for non-event-driven weapons.
     this.botRenderer.onAttack = (ax, az, tx, tz, color, weapon) => {
       if (weapon === 'bow' || weapon === 'staff') {
-        // Ranged: projectile travels to target, hit sparks on impact
-        this.projectileRenderer.spawn(ax, az, tx, tz, weapon, color, () => {
-          this.effectRenderer.spawnHitSparks(tx, tz, color, weapon);
-        });
+        return;
       } else {
-        // Melee: immediate hit sparks at target
+        // Melee/control weapons: immediate impact sparks plus a fast strike read.
+        this.effectRenderer.spawnWeaponStrike(ax, az, tx, tz, color, weapon);
         this.effectRenderer.spawnHitSparks(tx, tz, color, weapon);
       }
     };
@@ -125,16 +137,13 @@ export class ArenaEngine {
     this._addLights();
     this.envRenderer.setupShadows(this.sunLight);
 
-    // DefaultRenderingPipeline: FXAA, sharpen, tone mapping (no bloom/glow)
+    // DefaultRenderingPipeline: stable FXAA + tone mapping, light sharpen only.
     const pipeline = new B.DefaultRenderingPipeline('defaultPipeline', true, this.scene, [this.camera.camera]);
     if (pipeline.isSupported) {
-      // FXAA anti-aliasing
       pipeline.fxaaEnabled = true;
-      // Sharpen to counteract FXAA softening
       pipeline.sharpenEnabled = true;
       pipeline.sharpen.edgeAmount = 0.15;
       pipeline.sharpen.colorAmount = 1.0;
-      // ACES filmic tone mapping
       pipeline.imageProcessingEnabled = true;
       pipeline.imageProcessing.toneMappingEnabled = true;
       pipeline.imageProcessing.toneMappingType = B.ImageProcessingConfiguration.TONEMAPPING_ACES;
@@ -172,16 +181,16 @@ export class ArenaEngine {
     const B = window.BABYLON;
     const dir = new B.DirectionalLight('sun', new B.Vector3(-0.4, -1, 0.3), this.scene);
     dir.position = new B.Vector3(0, 80, -40);
-    dir.intensity = 0.7;
+    dir.intensity = 0.82;
     dir.diffuse = new B.Color3(1, 0.95, 0.85);
-    dir.specular = new B.Color3(0.3, 0.3, 0.3);
+    dir.specular = new B.Color3(0.34, 0.34, 0.34);
     this.sunLight = dir;
 
     const hemi = new B.HemisphericLight('hemi', new B.Vector3(0, 1, 0), this.scene);
-    hemi.intensity = 0.4;
-    hemi.diffuse = new B.Color3(0.6, 0.65, 0.8);
+    hemi.intensity = 0.46;
+    hemi.diffuse = new B.Color3(0.66, 0.72, 0.88);
     hemi.specular = B.Color3.Black();
-    hemi.groundColor = new B.Color3(0.15, 0.12, 0.1);
+    hemi.groundColor = new B.Color3(0.09, 0.1, 0.12);
   }
 
   /**
@@ -217,6 +226,52 @@ export class ArenaEngine {
           ev.to_position[0], ev.to_position[1],
           ev.color || '#00ffff'
         );
+      } else if (ev.type === 'bow_fired' && ev.from_position && ev.to_position) {
+        this.projectileRenderer.spawn(
+          ev.from_position[0], ev.from_position[1],
+          ev.to_position[0], ev.to_position[1],
+          'bow',
+          ev.color || '#f0e6c9',
+          undefined,
+          { intensity: ev.intensity || 1 },
+        );
+      } else if (ev.type === 'bow_impact' && ev.position) {
+        this.effectRenderer.spawnBowImpact(
+          ev.position[0], ev.position[1],
+          ev.color || '#f0e6c9',
+          !!ev.target_id,
+          ev.intensity || 1
+        );
+        if (ev.target_id && this.botRenderer) {
+          this.botRenderer.playImpactReaction(ev.target_id);
+        }
+      } else if (ev.type === 'spear_brace' && ev.from_position && ev.position) {
+        this.effectRenderer.spawnSpearBrace(
+          ev.from_position[0], ev.from_position[1],
+          ev.position[0], ev.position[1],
+          ev.color || '#ffe38a'
+        );
+        if (ev.target_id && this.botRenderer) {
+          this.botRenderer.playImpactReaction(ev.target_id);
+        }
+      } else if (ev.type === 'shield_bash' && ev.from_position && ev.position) {
+        this.effectRenderer.spawnShieldBash(
+          ev.from_position[0], ev.from_position[1],
+          ev.position[0], ev.position[1],
+          ev.color || '#bfe3ff'
+        );
+        if (ev.target_id && this.botRenderer) {
+          this.botRenderer.playImpactReaction(ev.target_id);
+        }
+      } else if (ev.type === 'backstab' && ev.from_position && ev.position) {
+        this.effectRenderer.spawnBackstab(
+          ev.from_position[0], ev.from_position[1],
+          ev.position[0], ev.position[1],
+          ev.color || '#ff8f47'
+        );
+        if (ev.target_id && this.botRenderer) {
+          this.botRenderer.playImpactReaction(ev.target_id);
+        }
       } else if ((ev.type === 'grapple_pull' || ev.type === 'grapple_anchor') && ev.from_position && ev.to_position) {
         const owner = (state?.bots || []).find((b) => b.bot_id === ev.owner_id || b.id === ev.owner_id);
         const anchor = ev.position || ev.to_position;
@@ -233,10 +288,25 @@ export class ArenaEngine {
             { mode: 'anchor', endX: ev.to_position[0], endZ: ev.to_position[1], color: ev.color || '#59f1ff' }
           );
         }
+      } else if (ev.type === 'grapple_slam' && ev.from_position && ev.position) {
+        this.effectRenderer.spawnGrappleSlam(
+          ev.from_position[0], ev.from_position[1],
+          ev.position[0], ev.position[1],
+          ev.color || '#59f1ff'
+        );
+        if (ev.target_id && this.botRenderer) {
+          this.botRenderer.playImpactReaction(ev.target_id);
+        }
       } else if (ev.type === 'mine_detonated' && ev.position) {
         this.effectRenderer.spawnMineExplosion(
           ev.position[0], ev.position[1],
           (ev.radius || 1) * 20
+        );
+      } else if (ev.type === 'staff_detonated' && ev.position) {
+        this.effectRenderer.spawnStaffExplosion(
+          ev.position[0], ev.position[1],
+          (ev.radius || 1) * 20,
+          ev.color || '#8d4dff'
         );
       }
     }

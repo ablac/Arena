@@ -24,21 +24,21 @@ export class ObstacleRenderer {
   /** @private Create shared materials. */
   _initMaterials() {
     const B = window.BABYLON;
-    // Dark metallic body with subtle blue emissive
+    // Dark alloy body with restrained cool highlights.
     this._mat = new B.StandardMaterial('obsMat', this.scene);
-    this._mat.diffuseColor = new B.Color3(0.08, 0.08, 0.12);
-    this._mat.emissiveColor = new B.Color3(0.02, 0.05, 0.1);
-    this._mat.specularColor = new B.Color3(0.15, 0.2, 0.35);
-    this._mat.specularPower = 64;
+    this._mat.diffuseColor = new B.Color3(0.07, 0.085, 0.11);
+    this._mat.emissiveColor = new B.Color3(0.015, 0.03, 0.05);
+    this._mat.specularColor = new B.Color3(0.12, 0.16, 0.24);
+    this._mat.specularPower = 96;
     this._mat.backFaceCulling = false;
     this._mat.freeze();
 
-    // Bright cyan edge glow
+    // Cleaner edge accent, less debug-neon.
     this._edgeMat = new B.StandardMaterial('obsEdgeMat', this.scene);
     this._edgeMat.diffuseColor = B.Color3.Black();
-    this._edgeMat.emissiveColor = new B.Color3(0.15, 0.5, 0.9);
+    this._edgeMat.emissiveColor = new B.Color3(0.08, 0.34, 0.62);
     this._edgeMat.disableLighting = true;
-    this._edgeMat.alpha = 0.7;
+    this._edgeMat.alpha = 0.58;
     this._edgeMat.freeze();
   }
 

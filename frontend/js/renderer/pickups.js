@@ -26,6 +26,8 @@ const COLORS = {
   damage_boost:   [1.0, 0.25, 0.2],
   shield_bubble:  [0.25, 0.5, 1.0],
   gravity_well:   [0.5, 0.0, 1.0],
+  cooldown_shard: [0.2, 0.95, 1.0],
+  bounty_token:   [1.0, 0.72, 0.18],
 };
 
 /** @type {Map<string, {shapeMat: BABYLON.StandardMaterial}>} */
@@ -99,6 +101,20 @@ export class PickupRenderer {
       mesh = B.MeshBuilder.CreateCylinder(`pum-${id}`, { diameterTop: 0, diameterBottom: 7, height: 10, tessellation: 3 }, this.scene);
       mesh.parent = root;
       mesh.material = mats.shapeMat;
+    } else if (type === 'cooldown_shard') {
+      mesh = B.MeshBuilder.CreateTorusKnot(`pum-${id}`, { radius: 3.2, tube: 0.9, radialSegments: 64, tubularSegments: 12, p: 2, q: 3 }, this.scene);
+      mesh.parent = root;
+      mesh.material = mats.shapeMat;
+      mesh.rotation.x = Math.PI / 2;
+    } else if (type === 'bounty_token') {
+      mesh = B.MeshBuilder.CreateCylinder(`pum-${id}`, { diameter: 7, height: 1.4, tessellation: 24 }, this.scene);
+      mesh.parent = root;
+      mesh.material = mats.shapeMat;
+      const ring = B.MeshBuilder.CreateTorus(`pur-${id}`, { diameter: 9, thickness: 0.5, tessellation: 32 }, this.scene);
+      ring.parent = root;
+      ring.material = mats.shapeMat;
+      ring.position.y = 0.2;
+      mesh._sibling = ring;
     } else {
       // damage_boost and fallback — diamond
       mesh = B.MeshBuilder.CreatePolyhedron(`pum-${id}`, { type: 1, size: 4 }, this.scene);

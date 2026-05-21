@@ -22,6 +22,8 @@ export class GameplayRenderer {
     this.gravityWells = new Map();
     /** @type {Map<string, object>} */
     this.staffImpacts = new Map();
+    /** @type {Map<string, object>} */
+    this.burnFields = new Map();
     /** @type {Map<string, BABYLON.Mesh>} */
     this.voidTiles = new Map();
     /** @type {object|null} */
@@ -30,6 +32,7 @@ export class GameplayRenderer {
     this.bountyBots = [];
     this._tick = 0;
     this._glowTex = null;
+    this.onStaffImpactCreated = null;
     this._initGlowTexture();
   }
 
@@ -52,6 +55,7 @@ export class GameplayRenderer {
     this._tick++;
     this._updateTeleportPads(state.teleport_pads || []);
     this._updateHazardZones(state.hazard_zones || []);
+    this._updateBurnFields(state.burn_fields || []);
     this._updateStaffImpacts(state.staff_impacts || []);
     this._updateLandmines(state.landmines || []);
     this._updateGravityWells(state.gravity_wells || []);
@@ -62,7 +66,7 @@ export class GameplayRenderer {
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  // TELEPORT PADS — glowing platform + beam column + particles
+  // TELEPORT PADS — glowing platform + soft portal well + particles
   // ═══════════════════════════════════════════════════════════════════
   _updateTeleportPads(pads) {
     const B = window.BABYLON;
@@ -99,24 +103,24 @@ export class GameplayRenderer {
         ring.material = ringMat;
         ring.isPickable = false;
 
-        // Vertical beam column
+        // Vertical portal mist
         const beam = new B.ParticleSystem(`tp-beam-${pad.id}`, 40, this.scene);
         beam.particleTexture = this._glowTex;
-        beam.emitter = new B.Vector3(0, 1, 0);
-        beam.minEmitBox = new B.Vector3(-3, 0, -3);
-        beam.maxEmitBox = new B.Vector3(3, 0, 3);
-        beam.direction1 = new B.Vector3(-0.1, 1, -0.1);
-        beam.direction2 = new B.Vector3(0.1, 1, 0.1);
-        beam.minEmitPower = 15;
-        beam.maxEmitPower = 30;
-        beam.minLifeTime = 0.8;
-        beam.maxLifeTime = 1.5;
-        beam.minSize = 4;
-        beam.maxSize = 10;
-        beam.emitRate = 20;
-        beam.gravity = new B.Vector3(0, 5, 0);
-        beam.color1 = new B.Color4(color.r, color.g, color.b, 0.7);
-        beam.color2 = new B.Color4(color.r * 0.5, color.g * 0.5, color.b * 0.5, 0.3);
+        beam.emitter = new B.Vector3(0, 2.2, 0);
+        beam.minEmitBox = new B.Vector3(-2.4, 0, -2.4);
+        beam.maxEmitBox = new B.Vector3(2.4, 0, 2.4);
+        beam.direction1 = new B.Vector3(-0.08, 0.18, -0.08);
+        beam.direction2 = new B.Vector3(0.08, 0.55, 0.08);
+        beam.minEmitPower = 2;
+        beam.maxEmitPower = 7;
+        beam.minLifeTime = 0.7;
+        beam.maxLifeTime = 1.25;
+        beam.minSize = 5;
+        beam.maxSize = 11;
+        beam.emitRate = 16;
+        beam.gravity = new B.Vector3(0, 1.5, 0);
+        beam.color1 = new B.Color4(color.r, color.g, color.b, 0.4);
+        beam.color2 = new B.Color4(color.r * 0.45, color.g * 0.45, color.b * 0.45, 0.18);
         beam.colorDead = new B.Color4(color.r * 0.2, color.g * 0.2, color.b * 0.2, 0);
         beam.blendMode = B.ParticleSystem.BLENDMODE_ADD;
         beam.start();
@@ -139,7 +143,21 @@ export class GameplayRenderer {
         swirl.blendMode = B.ParticleSystem.BLENDMODE_ADD;
         swirl.start();
 
-        entry = { platform, ring, beam, swirl, color };
+        const halo = B.MeshBuilder.CreateDisc(`tp-halo-${pad.id}`, {
+          radius: 9.5,
+          tessellation: 34,
+        }, this.scene);
+        halo.rotation.x = Math.PI / 2;
+        halo.position.y = 0.18;
+        halo.isPickable = false;
+        const haloMat = new B.StandardMaterial(`tp-halo-mat-${pad.id}`, this.scene);
+        haloMat.diffuseColor = B.Color3.Black();
+        haloMat.emissiveColor = color.scale(0.95);
+        haloMat.disableLighting = true;
+        haloMat.alpha = 0.16;
+        halo.material = haloMat;
+
+        entry = { platform, ring, beam, swirl, halo, haloMat, color };
         this.teleportPads.set(pad.id, entry);
       }
 
@@ -157,12 +175,14 @@ export class GameplayRenderer {
       entry.beam.emitter.z = z;
       entry.swirl.emitter.x = x;
       entry.swirl.emitter.z = z;
+      entry.halo.position.set(x, 0.18, z);
       entry.platform.material.emissiveColor.copyFrom(emissive);
       entry.ring.material.emissiveColor.copyFrom(emissive);
-      entry.beam.color1 = new B.Color4(emissive.r, emissive.g, emissive.b, ready ? 0.7 : 0.18);
-      entry.beam.color2 = new B.Color4(emissive.r * 0.5, emissive.g * 0.5, emissive.b * 0.5, ready ? 0.3 : 0.06);
+      entry.haloMat.emissiveColor.copyFrom(emissive);
+      entry.beam.color1 = new B.Color4(emissive.r, emissive.g, emissive.b, ready ? 0.4 : 0.11);
+      entry.beam.color2 = new B.Color4(emissive.r * 0.5, emissive.g * 0.5, emissive.b * 0.5, ready ? 0.16 : 0.04);
       entry.swirl.color1 = new B.Color4(emissive.r, emissive.g, emissive.b, ready ? 0.5 : 0.12);
-      entry.beam.emitRate = ready ? 20 : 4;
+      entry.beam.emitRate = ready ? 16 : 3;
       entry.swirl.emitRate = ready ? 12 : 2;
 
       // Pulse the platform glow
@@ -170,6 +190,11 @@ export class GameplayRenderer {
         ? 0.4 + 0.15 * Math.sin(this._tick * 0.06)
         : 0.2 + 0.04 * Math.sin(this._tick * 0.03);
       entry.ring.material.alpha = ready ? 0.8 : 0.28;
+      entry.haloMat.alpha = ready
+        ? 0.14 + 0.07 * Math.sin(this._tick * 0.05)
+        : 0.06 + 0.02 * Math.sin(this._tick * 0.03);
+      const haloScale = ready ? 1.0 + Math.sin(this._tick * 0.04) * 0.04 : 0.94;
+      entry.halo.scaling.set(haloScale, haloScale, 1);
     }
 
     for (const [id, entry] of this.teleportPads) {
@@ -178,6 +203,8 @@ export class GameplayRenderer {
         entry.ring.dispose();
         entry.beam.dispose();
         entry.swirl.dispose();
+        entry.halo.dispose();
+        entry.haloMat.dispose();
         this.teleportPads.delete(id);
       }
     }
@@ -223,20 +250,39 @@ export class GameplayRenderer {
         discMat.alpha = 0.16;
         disc.material = discMat;
 
-        entry = { outer, outerMat, disc, discMat };
+        entry = {
+          outer,
+          outerMat,
+          disc,
+          discMat,
+          initialTicks: Math.max(impact.ticks_left || 1, 1),
+        };
         this.staffImpacts.set(id, entry);
+        if (this.onStaffImpactCreated) {
+          this.onStaffImpactCreated({
+            id,
+            ownerId: impact.owner_id || null,
+            position: [pos[0], pos[1]],
+            radius: impact.radius || 1,
+            ticksLeft: Math.max(impact.ticks_left || 1, 1),
+          });
+        }
       }
 
-      const urgency = Math.min(1, 1 / Math.max(impact.ticks_left || 1, 1));
-      const scale = 1 + urgency * 0.14 + Math.sin(this._tick * 0.15) * 0.04;
+      entry.initialTicks = Math.max(entry.initialTicks || 1, impact.ticks_left || 1);
+      const ticksLeft = Math.max(impact.ticks_left || 1, 1);
+      const progress = 1 - Math.min(1, ticksLeft / Math.max(entry.initialTicks, 1));
+      const urgency = Math.min(1, 1 / ticksLeft);
+      const reveal = Math.max(0, Math.min(1, (progress - 0.18) / 0.82));
+      const scale = 0.88 + reveal * 0.22 + Math.sin(this._tick * 0.15) * (0.015 + reveal * 0.025);
       entry.outer.position.set(pos[0], 1.2, pos[1]);
       entry.disc.position.set(pos[0], 0.2, pos[1]);
       entry.outer.scaling.set(scale, scale, 1);
-      entry.disc.scaling.set(1 + urgency * 0.08, 1 + urgency * 0.08, 1);
-      entry.outerMat.emissiveColor.set(0.5 + urgency * 0.5, 0.2 + urgency * 0.35, 1.0);
-      entry.discMat.emissiveColor.set(0.3 + urgency * 0.4, 0.1 + urgency * 0.2, 0.75 + urgency * 0.2);
-      entry.outerMat.alpha = 0.35 + urgency * 0.45;
-      entry.discMat.alpha = 0.10 + urgency * 0.22;
+      entry.disc.scaling.set(0.9 + reveal * 0.18, 0.9 + reveal * 0.18, 1);
+      entry.outerMat.emissiveColor.set(0.24 + reveal * 0.52, 0.08 + reveal * 0.28, 0.46 + urgency * 0.5);
+      entry.discMat.emissiveColor.set(0.14 + reveal * 0.32, 0.05 + reveal * 0.14, 0.30 + urgency * 0.45);
+      entry.outerMat.alpha = 0.04 + reveal * 0.28 + urgency * 0.18;
+      entry.discMat.alpha = 0.015 + reveal * 0.11 + urgency * 0.10;
     }
 
     for (const [id, entry] of this.staffImpacts) {
@@ -246,6 +292,71 @@ export class GameplayRenderer {
         entry.outerMat.dispose();
         entry.discMat.dispose();
         this.staffImpacts.delete(id);
+      }
+    }
+  }
+
+  _updateBurnFields(fields) {
+    const B = window.BABYLON;
+    const seen = new Set();
+
+    for (const field of fields) {
+      seen.add(field.id);
+      let entry = this.burnFields.get(field.id);
+      if (!entry) {
+        const radius = Math.max(8, (field.radius || 1) * 20);
+        const disc = B.MeshBuilder.CreateDisc(`burn-disc-${field.id}`, {
+          radius,
+          tessellation: 34,
+        }, this.scene);
+        disc.rotation.x = Math.PI / 2;
+        disc.position.y = 0.18;
+        disc.isPickable = false;
+        const discMat = new B.StandardMaterial(`burn-disc-mat-${field.id}`, this.scene);
+        discMat.diffuseColor = B.Color3.Black();
+        discMat.emissiveColor = new B.Color3(1.0, 0.46, 0.16);
+        discMat.disableLighting = true;
+        discMat.alpha = 0.18;
+        disc.material = discMat;
+
+        const ring = B.MeshBuilder.CreateTorus(`burn-ring-${field.id}`, {
+          diameter: radius * 2.05,
+          thickness: Math.max(1.2, radius * 0.08),
+          tessellation: 32,
+        }, this.scene);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = 0.75;
+        ring.isPickable = false;
+        const ringMat = new B.StandardMaterial(`burn-ring-mat-${field.id}`, this.scene);
+        ringMat.diffuseColor = B.Color3.Black();
+        ringMat.emissiveColor = new B.Color3(1.0, 0.58, 0.22);
+        ringMat.disableLighting = true;
+        ringMat.alpha = 0.42;
+        ring.material = ringMat;
+
+        entry = { disc, discMat, ring, ringMat, baseRadius: radius };
+        this.burnFields.set(field.id, entry);
+      }
+
+      const pos = field.position || [0, 0];
+      const ticksLeft = Math.max(field.ticks_left || 1, 1);
+      const life = Math.min(1, ticksLeft / 12);
+      const pulse = 1 + Math.sin(this._tick * 0.16) * 0.06;
+      entry.disc.position.set(pos[0], 0.18, pos[1]);
+      entry.ring.position.set(pos[0], 0.8 + Math.sin(this._tick * 0.08) * 0.18, pos[1]);
+      entry.disc.scaling.set(pulse, pulse, 1);
+      entry.ring.scaling.set(0.96 + pulse * 0.08, 0.96 + pulse * 0.08, 1);
+      entry.discMat.alpha = 0.08 + life * 0.14;
+      entry.ringMat.alpha = 0.14 + life * 0.28;
+    }
+
+    for (const [id, entry] of this.burnFields) {
+      if (!seen.has(id)) {
+        entry.disc.dispose();
+        entry.ring.dispose();
+        entry.discMat.dispose();
+        entry.ringMat.dispose();
+        this.burnFields.delete(id);
       }
     }
   }
@@ -586,9 +697,10 @@ export class GameplayRenderer {
 
   dispose() {
     for (const [, e] of this.teleportPads) {
-      e.platform.dispose(); e.ring.dispose(); e.beam.dispose(); e.swirl.dispose();
+      e.platform.dispose(); e.ring.dispose(); e.beam.dispose(); e.swirl.dispose(); e.halo.dispose(); e.haloMat.dispose();
     }
     for (const [, e] of this.hazardZones) { e.edges.forEach(m => m.dispose()); e.parent.dispose(); e.zaps.dispose(); e.sparks.dispose(); }
+    for (const [, e] of this.burnFields) { e.disc.dispose(); e.ring.dispose(); e.discMat.dispose(); e.ringMat.dispose(); }
     for (const m of this.landmines.values()) m.dispose();
     for (const [, e] of this.gravityWells) { e.ring.dispose(); e.inner.dispose(); e.vortex.dispose(); }
     for (const [, e] of this.staffImpacts) { e.outer.dispose(); e.disc.dispose(); e.outerMat.dispose(); e.discMat.dispose(); }
@@ -596,6 +708,7 @@ export class GameplayRenderer {
     if (this.bountyGroup) this.bountyGroup.ring.dispose();
     this.teleportPads.clear();
     this.hazardZones.clear();
+    this.burnFields.clear();
     this.landmines.clear();
     this.gravityWells.clear();
     this.staffImpacts.clear();

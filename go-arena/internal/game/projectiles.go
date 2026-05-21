@@ -8,7 +8,7 @@ import (
 // UpdateProjectiles advances all projectiles, checks for collisions with
 // obstacles and bots, applies damage on hit, and removes expired or collided
 // projectiles.
-func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obstacles []Obstacle, tickCount int, dt float64) {
+func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obstacles []Obstacle, arenaEvents *[]ArenaEvent, tickCount int, dt float64) {
 	alive := (*projectiles)[:0]
 
 	for i := range *projectiles {
@@ -21,6 +21,9 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 
 		// 2. Check max age.
 		if proj.AgeTicks >= proj.MaxAge {
+			if proj.Weapon == "bow" && arenaEvents != nil {
+				*arenaEvents = append(*arenaEvents, buildBowImpactEvent(proj.ID, proj.OwnerID, proj.Color, proj.Position, tickCount, "", proj.Intensity))
+			}
 			continue // Remove: expired
 		}
 
@@ -61,9 +64,15 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 				}
 			}
 			if hitWall {
+				if proj.Weapon == "bow" && arenaEvents != nil {
+					*arenaEvents = append(*arenaEvents, buildBowImpactEvent(proj.ID, proj.OwnerID, proj.Color, proj.Position, tickCount, "", proj.Intensity))
+				}
 				continue // Remove: hit wall
 			}
 		} else if CollidesWithObstacle(proj.Position.X(), proj.Position.Y(), obstacles, 0.5) != nil {
+			if proj.Weapon == "bow" && arenaEvents != nil {
+				*arenaEvents = append(*arenaEvents, buildBowImpactEvent(proj.ID, proj.OwnerID, proj.Color, proj.Position, tickCount, "", proj.Intensity))
+			}
 			continue // Remove: hit obstacle
 		}
 
@@ -90,6 +99,9 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 
 			if bot.InvulnTicks > 0 {
 				// Invulnerable: consume projectile, no damage.
+				if proj.Weapon == "bow" && arenaEvents != nil {
+					*arenaEvents = append(*arenaEvents, buildBowImpactEvent(proj.ID, proj.OwnerID, proj.Color, bot.Position, tickCount, bot.BotID, proj.Intensity))
+				}
 				hit = true
 				break
 			}
@@ -98,6 +110,9 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 				ApplyDamage(bot, owner, proj.Damage, proj.Weapon, tickCount)
 				ApplyGridKnockback(bot, proj.Position.Sub(proj.Direction.Scale(proj.Speed*dt)), 1, obstacles)
 				owner.RoundShotsHit++
+			}
+			if proj.Weapon == "bow" && arenaEvents != nil {
+				*arenaEvents = append(*arenaEvents, buildBowImpactEvent(proj.ID, proj.OwnerID, proj.Color, bot.Position, tickCount, bot.BotID, proj.Intensity))
 			}
 
 			hit = true
@@ -111,6 +126,9 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 		// 5. Check out of bounds.
 		if proj.Position.X() < 0 || proj.Position.X() > config.C.ArenaWidth ||
 			proj.Position.Y() < 0 || proj.Position.Y() > config.C.ArenaHeight {
+			if proj.Weapon == "bow" && arenaEvents != nil {
+				*arenaEvents = append(*arenaEvents, buildBowImpactEvent(proj.ID, proj.OwnerID, proj.Color, proj.Position, tickCount, "", proj.Intensity))
+			}
 			continue // Remove: out of arena
 		}
 

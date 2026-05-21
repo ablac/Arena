@@ -17,7 +17,7 @@ var WeaponRanges = map[string]float64{
 	"daggers": 1,
 	"shield":  1,
 	"spear":   2,
-	"staff":   5,
+	"staff":   6,
 	"grapple": 4,
 }
 

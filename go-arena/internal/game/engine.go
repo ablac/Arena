@@ -25,6 +25,7 @@ type GameEngine struct {
 	Pickups      []Pickup
 	Projectiles  []Projectile
 	StaffImpacts []StaffImpact
+	BurnFields   []BurnField
 	Round        RoundState
 	Arena        *ArenaMap
 	Grid         *SpatialGrid
@@ -251,8 +252,10 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 			prevCell := ActiveTerrain.WorldToGrid(bot.LastValidPosition)
 			if cell == prevCell {
 				bot.StuckTicks++
+				bot.StillTicks++
 			} else {
 				bot.StuckTicks = 0
+				bot.StillTicks = 0
 			}
 			if bot.StuckTicks >= 10 {
 				// Try each direction randomly until we find a passable cell
@@ -262,6 +265,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 						bot.Position = ActiveTerrain.GridToWorld(nc)
 						bot.LastValidPosition = bot.Position
 						bot.StuckTicks = 0
+						bot.StillTicks = 0
 						e.Grid.Update(bot.BotID, bot.Position)
 						break
 					}
@@ -284,10 +288,11 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	}
 
 	// Projectiles.
-	UpdateProjectiles(&e.Projectiles, e.Bots, e.Arena.Obstacles, e.TickCount, dt)
+	UpdateProjectiles(&e.Projectiles, e.Bots, e.Arena.Obstacles, &e.RecentEvents, e.TickCount, dt)
 
 	// Staff area impacts.
-	ProcessStaffImpacts(&e.StaffImpacts, e.Bots, e.TickCount)
+	e.appendArenaEvents(ProcessStaffImpacts(&e.StaffImpacts, &e.BurnFields, e.Bots, e.TickCount)...)
+	ProcessBurnFields(&e.BurnFields, e.Bots, e.TickCount)
 
 	// Zone shrink.
 	e.Arena.UpdateZone(e.TickCount, e.Round.StartTick)
@@ -473,6 +478,7 @@ func (e *GameEngine) startRound() {
 	e.Pickups = nil
 	e.Projectiles = nil
 	e.StaffImpacts = nil
+	e.BurnFields = nil
 	e.DeathEvents = nil
 	e.KillEvents = nil
 	e.Landmines = nil
@@ -521,6 +527,9 @@ func (e *GameEngine) startRound() {
 		bot.ResetRoundStats()
 		bot.KillStreak = 0
 		bot.LastActionTick = 0 // Reset AFK timer so bots aren't kicked at round start
+		bot.StillTicks = 0
+		bot.BowChargeTicks = 0
+		setFacingToward(bot, e.Arena.ZoneCenter)
 	}
 
 	// Send round_start to every bot.
@@ -1109,6 +1118,7 @@ func (e *GameEngine) processGrappleAbility(bot *BotState) {
 		stunTicks = 3
 	}
 	target.StunTicks = stunTicks
+	markDisrupted(target, config.C.ShieldDisruptWindowTicks)
 
 	bot.GrappleCharges--
 	bot.GrappleCooldown = config.C.GrappleAbilityCooldownSecs
@@ -1246,6 +1256,12 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 				ApplyEloChange(killer, victim)
 				// Bounty bonus for killing the bounty target.
 				e.Bounty.OnKill(killer, victim)
+				if killer.BountyTokenBonus > 0 {
+					killer.Elo += killer.BountyTokenBonus
+					killer.RoundDamageDealt += float64(killer.BountyTokenBonus)
+					killer.BountyTokenBonus = 0
+					killer.ActiveEffects = removeEffectByName(killer.ActiveEffects, "bounty_token")
+				}
 				e.persistBountyBoardAsync()
 			}
 		} else if victimOk {
@@ -1414,6 +1430,19 @@ func (e *GameEngine) sendBotTickUpdates() {
 			}
 		}
 
+		// Include staff burn fields within fog radius.
+		for _, field := range e.BurnFields {
+			if ActiveTerrain != nil {
+				botCell := ActiveTerrain.WorldToGrid(bot.Position)
+				fieldCell := ActiveTerrain.WorldToGrid(field.Position)
+				if GridDistance(botCell, fieldCell) <= fogRadius+2 {
+					nearby = append(nearby, BuildBurnFieldView(field, true))
+				}
+			} else if bot.Position.DistanceTo(field.Position) <= viewRadius {
+				nearby = append(nearby, BuildBurnFieldView(field, true))
+			}
+		}
+
 		// Include gravity wells within fog radius.
 		for _, well := range e.GravityWells {
 			if ActiveTerrain != nil {
@@ -1560,6 +1589,9 @@ func (e *GameEngine) sendSpectatorUpdate() {
 	}
 	for _, impact := range e.StaffImpacts {
 		state.StaffImpacts = append(state.StaffImpacts, BuildStaffImpactView(impact, false))
+	}
+	for _, field := range e.BurnFields {
+		state.BurnFields = append(state.BurnFields, BuildBurnFieldView(field, false))
 	}
 	state.VoidTiles = e.SuddenDeath.GetAllVoidTiles()
 	state.SuddenDeath = e.SuddenDeath.Active

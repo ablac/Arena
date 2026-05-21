@@ -33,6 +33,10 @@ type tickState struct {
 	LastActionOK     bool
 	HasSpeedBoost    bool
 	HasDmgBoost      bool
+	BraceReady       bool
+	BowChargeTicks   int
+	BowChargeLevel   float64
+	ChargedShotReady bool
 	MineCount         int
 	NearbyMines       int
 	GravityWellCharge int
@@ -58,6 +62,7 @@ type entity struct {
 	Stunned  bool
 	Dodging  bool
 	TargetID string
+	Facing   [2]float64
 	Radius   float64
 	LinkedID string
 	Color    string
@@ -66,6 +71,10 @@ type entity struct {
 	HasLOS   bool
 	CanAttack bool
 	Active   bool
+	DisruptedTicks int
+	BraceReady bool
+	BowChargeLevel float64
+	ChargedShotReady bool
 }
 
 type hint struct {
@@ -363,6 +372,7 @@ type actionResult struct {
 	Direction      *[2]float64 `json:"direction,omitempty"`
 	TargetPosition *[2]float64 `json:"target_position,omitempty"`
 	ItemID         string      `json:"item_id,omitempty"`
+	Charged        bool        `json:"charged,omitempty"`
 }
 
 func moveDir(d [2]float64) actionResult {
@@ -425,6 +435,13 @@ func grapple(id string) actionResult {
 
 func grapplePos(pos [2]float64) actionResult {
 	return actionResult{Action: "grapple", TargetPosition: &pos}
+}
+
+func chargeAttack(a actionResult) actionResult {
+	if a.Action == "attack" {
+		a.Charged = true
+	}
+	return a
 }
 
 // === Tick Parsing ===
@@ -528,6 +545,18 @@ func parseTick(msg map[string]interface{}) tickState {
 		if v, ok := ys["is_bounty_target"].(bool); ok {
 			ts.IsBountyTarget = v
 		}
+		if v, ok := ys["brace_ready"].(bool); ok {
+			ts.BraceReady = v
+		}
+		if v, ok := ys["bow_charge_ticks"].(float64); ok {
+			ts.BowChargeTicks = int(v)
+		}
+		if v, ok := ys["bow_charge_level"].(float64); ok {
+			ts.BowChargeLevel = v
+		}
+		if v, ok := ys["charged_shot_ready"].(bool); ok {
+			ts.ChargedShotReady = v
+		}
 		if v, ok := ys["mine_count"].(float64); ok {
 			ts.MineCount = int(v)
 		}
@@ -589,6 +618,9 @@ func parseTick(msg map[string]interface{}) tickState {
 			if v, ok := e["target_id"].(string); ok {
 				ent.TargetID = v
 			}
+			if v, ok := e["facing"]; ok {
+				ent.Facing = parsePos(v)
+			}
 			if v, ok := e["pickup_type"].(string); ok {
 				ent.SubType = v
 			}
@@ -620,6 +652,18 @@ func parseTick(msg map[string]interface{}) tickState {
 			if v, ok := e["active"].(bool); ok {
 				ent.Active = v
 			}
+			if v, ok := e["recently_disrupted_ticks"].(float64); ok {
+				ent.DisruptedTicks = int(v)
+			}
+			if v, ok := e["brace_ready"].(bool); ok {
+				ent.BraceReady = v
+			}
+			if v, ok := e["bow_charge_level"].(float64); ok {
+				ent.BowChargeLevel = v
+			}
+			if v, ok := e["charged_shot_ready"].(bool); ok {
+				ent.ChargedShotReady = v
+			}
 			switch ent.Type {
 			case "bot":
 				if ent.IsAlive {
@@ -632,6 +676,8 @@ func parseTick(msg map[string]interface{}) tickState {
 			case "teleport_pad", "teleporter":
 				ts.Teleporters = append(ts.Teleporters, ent)
 			case "hazard_zone":
+				ts.HazardZones = append(ts.HazardZones, ent)
+			case "burn_field":
 				ts.HazardZones = append(ts.HazardZones, ent)
 			}
 		}
@@ -756,6 +802,141 @@ func bestTarget(pos [2]float64, enemies []entity, wrange float64) *entity {
 		}
 	}
 	return best
+}
+
+func isRearArc(attackerPos [2]float64, target entity) bool {
+	fx, fy := target.Facing[0], target.Facing[1]
+	if math.Abs(fx)+math.Abs(fy) < 0.01 {
+		return false
+	}
+	dx := attackerPos[0] - target.Position[0]
+	dy := attackerPos[1] - target.Position[1]
+	dist := math.Hypot(dx, dy)
+	if dist < 0.01 {
+		return false
+	}
+	dx /= dist
+	dy /= dist
+	dot := fx*dx + fy*dy
+	return dot <= -0.35
+}
+
+func bestBackstabTarget(pos [2]float64, enemies []entity, wrange float64) *entity {
+	var best *entity
+	bestScore := -math.Inf(1)
+	for i := range enemies {
+		e := &enemies[i]
+		if !e.IsAlive || !e.HasLOS || e.Dodging {
+			continue
+		}
+		d := chebyshev(pos, e.Position)
+		if d > wrange {
+			continue
+		}
+		score := 100 - e.HP - d*4
+		if isRearArc(pos, *e) {
+			score += 65
+		}
+		if e.Stunned || e.DisruptedTicks > 0 {
+			score += 30
+		}
+		if score > bestScore {
+			bestScore = score
+			best = e
+		}
+	}
+	return best
+}
+
+func bestShieldBashTarget(pos [2]float64, enemies []entity, wrange float64) *entity {
+	var best *entity
+	bestScore := -math.Inf(1)
+	for i := range enemies {
+		e := &enemies[i]
+		if !e.IsAlive || !e.HasLOS || e.Dodging {
+			continue
+		}
+		d := chebyshev(pos, e.Position)
+		if d > wrange {
+			continue
+		}
+		score := 100 - e.HP - d*5
+		if e.DisruptedTicks > 0 || e.Stunned {
+			score += 80
+		}
+		if e.Weapon == "bow" || e.Weapon == "staff" {
+			score += 12
+		}
+		if score > bestScore {
+			bestScore = score
+			best = e
+		}
+	}
+	return best
+}
+
+func terrainBlocked(col, row int) bool {
+	terrainMu.RLock()
+	t := cachedTerrain
+	terrainMu.RUnlock()
+	if t == nil {
+		return false
+	}
+	if col < 0 || row < 0 || col >= t.Width || row >= t.Height {
+		return true
+	}
+	return t.Cells[col][row] != 0
+}
+
+func nearImpactSurface(pos [2]float64) bool {
+	col, row := int(math.Round(pos[0])), int(math.Round(pos[1]))
+	if terrainBlocked(col-1, row) || terrainBlocked(col+1, row) || terrainBlocked(col, row-1) || terrainBlocked(col, row+1) {
+		return true
+	}
+	return false
+}
+
+func bestGrappleSlamTarget(pos [2]float64, enemies []entity, wrange float64) *entity {
+	var best *entity
+	bestScore := -math.Inf(1)
+	for i := range enemies {
+		e := &enemies[i]
+		if !e.IsAlive || !e.HasLOS || e.Dodging {
+			continue
+		}
+		d := chebyshev(pos, e.Position)
+		if d < 3 || d > wrange {
+			continue
+		}
+		if !nearImpactSurface(e.Position) {
+			continue
+		}
+		score := 100 - e.HP - d*4
+		if e.Weapon == "bow" || e.Weapon == "staff" {
+			score += 18
+		}
+		if score > bestScore {
+			bestScore = score
+			best = e
+		}
+	}
+	return best
+}
+
+func shouldUseChargedBow(ts tickState, target *entity, dist, wrange float64) bool {
+	if target == nil || ts.BowChargeTicks <= 0 {
+		return false
+	}
+	if target.Stunned {
+		return true
+	}
+	if ts.ChargedShotReady && dist >= math.Max(4, wrange-2) {
+		return true
+	}
+	if ts.BowChargeTicks >= 4 && (target.Weapon == "staff" || target.Weapon == "bow") {
+		return true
+	}
+	return ts.BowChargeTicks >= 5
 }
 
 func visibleEnemiesInRange(pos [2]float64, enemies []entity, wrange float64) []entity {
@@ -955,6 +1136,19 @@ func bestStaffCast(pos [2]float64, enemies []entity, wrange float64) (*actionRes
 }
 
 func finalizeWeaponAction(ts tickState, weapon string, wrange float64, action actionResult) actionResult {
+	if weapon == "bow" && action.Action == "attack" {
+		var target *entity
+		for i := range ts.Enemies {
+			if ts.Enemies[i].ID == action.Target {
+				target = &ts.Enemies[i]
+				break
+			}
+		}
+		if target != nil && shouldUseChargedBow(ts, target, chebyshev(ts.Position, target.Position), wrange) {
+			return chargeAttack(action)
+		}
+		return action
+	}
 	if weapon != "staff" || action.Action != "attack" {
 		return action
 	}
@@ -1011,10 +1205,26 @@ func trySmartPickup(ts tickState, strategy string) *actionResult {
 		return &a
 	}
 
+	// Cooldown shard: prioritize when a major combat tool is currently unavailable.
+	cd, cdD := nearestPickupOfType(pos, ts.Pickups, "cooldown_shard")
+	if cd != nil && cdD <= 7 {
+		if ts.Cooldown > 0 || ts.DodgeCool > 0 || ts.GrappleCooldown > 0 || ts.StunTicks > 0 {
+			a := moveTo(pos, cd.Position)
+			return &a
+		}
+	}
+
 	// Damage boost: grab if there is a realistic fight to use it in.
 	dmg, dmgD := nearestPickupOfType(pos, ts.Pickups, "damage_boost")
 	if dmg != nil && dmgD <= 6 && (visibleEnemies > 0 || strategy == "aggressive" || strategy == "assassin") {
 		a := moveTo(pos, dmg.Position)
+		return &a
+	}
+
+	// Bounty token: worth contesting when we can realistically convert a fight soon.
+	bt, btD := nearestPickupOfType(pos, ts.Pickups, "bounty_token")
+	if bt != nil && btD <= 7 && (visibleEnemies > 0 || ts.IsBountyTarget || strategy == "aggressive" || strategy == "assassin") {
+		a := moveTo(pos, bt.Position)
 		return &a
 	}
 
@@ -1509,6 +1719,39 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 
 	isAggStrat := strategy == "aggressive" || strategy == "berserker" || strategy == "assassin"
 	canShv := ts.ShoveCool <= 0
+
+	if weapon == "shield" {
+		if canAtk {
+			if target := bestShieldBashTarget(pos, ts.Enemies, wrange); target != nil {
+				return finalizeWeaponAction(ts, weapon, wrange, atk(target, weapon))
+			}
+		}
+		if near != nil && nearD <= 1 && canShv && near.DisruptedTicks <= 0 && !near.Stunned {
+			return shove(near.ID)
+		}
+	}
+
+	if weapon == "daggers" && canAtk {
+		if target := bestBackstabTarget(pos, ts.Enemies, wrange); target != nil {
+			return finalizeWeaponAction(ts, weapon, wrange, atk(target, weapon))
+		}
+	}
+
+	if weapon == "spear" {
+		if canAtk && near != nil && nearD <= wrange && ts.BraceReady {
+			return finalizeWeaponAction(ts, weapon, wrange, atk(near, weapon))
+		}
+		if near != nil && nearD > wrange && nearD <= wrange+1 && !ts.BraceReady &&
+			(strategy == "territorial" || strategy == "defensive") {
+			return idle()
+		}
+	}
+
+	if weapon == "grapple" && canAtk {
+		if target := bestGrappleSlamTarget(pos, ts.Enemies, wrange); target != nil {
+			return finalizeWeaponAction(ts, weapon, wrange, atk(target, weapon))
+		}
+	}
 
 	// === GRAVITY WELL: Deploy if 3+ enemies nearby ===
 	if gw := tryGravityWell(ts, botID); gw != nil {

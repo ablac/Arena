@@ -80,6 +80,9 @@ func UpdateHazards(zones []HazardZone, bots map[string]*BotState, tickCount int)
 			if !bot.IsAlive {
 				continue
 			}
+			if bot.TeleportHazardGraceTicks > 0 {
+				continue
+			}
 			if isBotInHazardZone(bot.Position, zone) {
 				bot.HP -= zone.DamagePerTick
 				bot.RoundDamageTaken += zone.DamagePerTick

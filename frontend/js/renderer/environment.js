@@ -510,7 +510,7 @@ export class EnvironmentRenderer {
     });
   }
 
-  /** @private GPU-rendered grid floor using GridMaterial. */
+  /** @private Transparent arena floor with soft ambient energy motion. */
   _createFloor() {
     const B = window.BABYLON;
     const ground = B.MeshBuilder.CreateGround('ground', {
@@ -519,14 +519,52 @@ export class EnvironmentRenderer {
     ground.position.x = this.w / 2;
     ground.position.z = this.h / 2;
 
-    // Energy shield / lightbridge floor — transparent with glowing grid
-    const mat = new B.GridMaterial('floorMat', this.scene);
-    mat.mainColor = new B.Color3(0.0, 0.02, 0.06);     // near-transparent dark blue base
-    mat.lineColor = new B.Color3(0.15, 0.5, 0.9);       // bright cyan-blue grid lines
-    mat.gridRatio = 100;
-    mat.majorUnitFrequency = 5;
-    mat.minorUnitVisibility = 0.4;
-    mat.opacity = 0.35;                                  // semi-transparent — see stars through it
+    const floorCanvas = document.createElement('canvas');
+    floorCanvas.width = 1024;
+    floorCanvas.height = 1024;
+    const ctx = floorCanvas.getContext('2d');
+    const grad = ctx.createRadialGradient(512, 512, 90, 512, 512, 640);
+    grad.addColorStop(0, 'rgba(10,20,38,0.35)');
+    grad.addColorStop(0.55, 'rgba(6,12,22,0.2)');
+    grad.addColorStop(1, 'rgba(2,4,8,0.05)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 1024, 1024);
+
+    for (let i = 0; i < 2600; i++) {
+      const x = Math.random() * 1024;
+      const y = Math.random() * 1024;
+      const r = 0.6 + Math.random() * 2.2;
+      const a = 0.018 + Math.random() * 0.05;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${80 + (Math.random() * 50 | 0)},${130 + (Math.random() * 60 | 0)},255,${a.toFixed(3)})`;
+      ctx.fill();
+    }
+
+    for (let i = 0; i < 26; i++) {
+      const x = Math.random() * 1024;
+      const y = Math.random() * 1024;
+      const w = 80 + Math.random() * 180;
+      const h = 40 + Math.random() * 110;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(w, h));
+      g.addColorStop(0, 'rgba(40,120,255,0.08)');
+      g.addColorStop(0.45, 'rgba(80,180,255,0.03)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - w, y - h, w * 2, h * 2);
+    }
+
+    const floorTex = new B.DynamicTexture('floorDeckTex', { width: 1024, height: 1024 }, this.scene, false);
+    floorTex.getContext().drawImage(floorCanvas, 0, 0);
+    floorTex.update();
+
+    const mat = new B.StandardMaterial('floorMat', this.scene);
+    mat.diffuseTexture = floorTex;
+    mat.emissiveTexture = floorTex;
+    mat.diffuseColor = new B.Color3(0.12, 0.18, 0.28);
+    mat.emissiveColor = new B.Color3(0.08, 0.14, 0.24);
+    mat.specularColor = new B.Color3(0.05, 0.07, 0.1);
+    mat.alpha = 0.34;
     mat.backFaceCulling = false;
 
     ground.material = mat;
@@ -534,13 +572,12 @@ export class EnvironmentRenderer {
     ground.receiveShadows = true;
     ground.freezeWorldMatrix();
 
-    // Add a second layer — subtle energy pulse effect (slightly above)
+    // Add a second layer — very soft ambient energy motion with no grid structure.
     const glow = B.MeshBuilder.CreateGround('floorGlow', {
       width: this.w, height: this.h, subdivisions: 2
     }, this.scene);
-    glow.position.set(this.w / 2, 0.3, this.h / 2);
+    glow.position.set(this.w / 2, 0.24, this.h / 2);
 
-    // Shader for animated energy pulse ripples
     B.Effect.ShadersStore['energyFloorVertexShader'] = `
       precision highp float;
       attribute vec3 position;
@@ -557,25 +594,18 @@ export class EnvironmentRenderer {
       varying vec2 vUV;
       uniform float time;
       void main() {
-        // Hex-ish energy pattern
-        vec2 p = vUV * 20.0;
-        float hex = abs(sin(p.x * 3.14) * sin(p.y * 3.14));
-        hex = smoothstep(0.92, 1.0, hex);
+        vec2 p = vUV - 0.5;
+        float dist = length(p);
+        float swirl = 0.5 + 0.5 * sin((dist * 16.0 - time * 0.8) + sin(vUV.x * 5.5 + time * 0.16) * 1.5);
+        float cloud = 0.5 + 0.5 * sin(vUV.x * 9.0 + time * 0.1) * sin(vUV.y * 7.0 - time * 0.14);
+        float basin = smoothstep(0.92, 0.12, dist);
+        float edge = smoothstep(0.3, 0.5, abs(vUV.x - 0.5)) + smoothstep(0.3, 0.5, abs(vUV.y - 0.5));
 
-        // Ripple pulse from center
-        float dist = length(vUV - 0.5) * 2.0;
-        float ripple = sin(dist * 15.0 - time * 2.0) * 0.5 + 0.5;
-        ripple *= smoothstep(1.0, 0.3, dist); // fade at edges
+        float energy = basin * (swirl * 0.06 + cloud * 0.03);
+        vec3 color = vec3(0.04, 0.14, 0.34) * energy;
+        color += vec3(0.02, 0.06, 0.14) * edge * 0.05;
 
-        // Combine
-        float energy = hex * 0.3 + ripple * 0.08;
-        vec3 color = vec3(0.1, 0.4, 0.9) * energy;
-
-        // Edge glow — brighter near arena boundaries
-        float edge = smoothstep(0.35, 0.5, abs(vUV.x - 0.5)) + smoothstep(0.35, 0.5, abs(vUV.y - 0.5));
-        color += vec3(0.05, 0.2, 0.5) * edge * 0.15;
-
-        float alpha = energy * 0.6 + edge * 0.05;
+        float alpha = energy * 0.55 + edge * 0.018;
         gl_FragColor = vec4(color, alpha);
       }
     `;
@@ -610,17 +640,17 @@ export class EnvironmentRenderer {
 
     // Semi-transparent energy wall material
     const wallMat = new B.StandardMaterial('wallMat', this.scene);
-    wallMat.diffuseColor = new B.Color3(0.05, 0.15, 0.35);
-    wallMat.emissiveColor = new B.Color3(0.08, 0.25, 0.5);
-    wallMat.specularColor = new B.Color3(0.2, 0.4, 0.8);
-    wallMat.alpha = 0.6;
+    wallMat.diffuseColor = new B.Color3(0.04, 0.08, 0.16);
+    wallMat.emissiveColor = new B.Color3(0.05, 0.12, 0.26);
+    wallMat.specularColor = new B.Color3(0.12, 0.24, 0.46);
+    wallMat.alpha = 0.72;
     wallMat.backFaceCulling = false;
     wallMat.freeze();
 
     // Bright edge trim on top of walls
     const trimMat = new B.StandardMaterial('trimMat', this.scene);
     trimMat.diffuseColor = B.Color3.Black();
-    trimMat.emissiveColor = new B.Color3(0.2, 0.6, 1.0);
+    trimMat.emissiveColor = new B.Color3(0.24, 0.72, 1.0);
     trimMat.disableLighting = true;
     trimMat.freeze();
 

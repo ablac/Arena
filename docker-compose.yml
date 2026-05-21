@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: ${ARENA_DB_USER:-arena_user}
       POSTGRES_PASSWORD: ${ARENA_DB_PASSWORD:-changeme_arena_2026}
     ports:
-      - "127.0.0.1:5433:5432"
+      - "127.0.0.1:${ARENA_DB_HOST_PORT:-5433}:5432"
     volumes:
       - arena_pgdata:/var/lib/postgresql/data
     networks:
@@ -22,7 +22,7 @@ services:
     image: redis:7-alpine
     container_name: arena-redis
     ports:
-      - "127.0.0.1:6380:6379"
+      - "127.0.0.1:${ARENA_REDIS_HOST_PORT:-6380}:6379"
     volumes:
       - arena_redis_data:/data
     networks:
@@ -59,6 +59,3 @@ networks:
   arena_net:
     driver: bridge
     internal: false
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16

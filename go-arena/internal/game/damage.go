@@ -187,6 +187,10 @@ func TickTimers(bot *BotState, dt float64) {
 		bot.StunTicks--
 	}
 
+	if bot.RecentlyDisruptedTicks > 0 {
+		bot.RecentlyDisruptedTicks--
+	}
+
 	// Invulnerability ticks.
 	if bot.InvulnTicks > 0 {
 		bot.InvulnTicks--
@@ -208,16 +212,44 @@ func TickTimers(bot *BotState, dt float64) {
 	if bot.GrappleCooldown < 0 {
 		bot.GrappleCooldown = 0
 	}
+
+	// Bow charge builds while the weapon is ready and the bot is not firing.
+	if bot.Weapon == "bow" {
+		if bot.CooldownRemaining > 0 {
+			bot.BowChargeTicks = 0
+		} else if bot.PendingAction != nil && bot.PendingAction.Type == ActionAttack {
+			// Fired this tick or is actively committing an attack.
+			bot.BowChargeTicks = 0
+		} else {
+			bot.BowChargeTicks++
+			if maxTicks := config.C.BowChargeMaxTicks; maxTicks > 0 && bot.BowChargeTicks > maxTicks {
+				bot.BowChargeTicks = maxTicks
+			}
+		}
+	} else {
+		bot.BowChargeTicks = 0
+	}
+
+	if bot.TeleportHazardGraceTicks > 0 {
+		bot.TeleportHazardGraceTicks--
+	}
 }
 
 // TickEffects decrements effect timers and removes expired effects.
 func TickEffects(bot *BotState) {
 	alive := bot.ActiveEffects[:0]
+	hasBountyToken := false
 	for i := range bot.ActiveEffects {
 		bot.ActiveEffects[i].RemainingTicks--
 		if bot.ActiveEffects[i].RemainingTicks > 0 {
+			if bot.ActiveEffects[i].Name == "bounty_token" {
+				hasBountyToken = true
+			}
 			alive = append(alive, bot.ActiveEffects[i])
 		}
 	}
 	bot.ActiveEffects = alive
+	if !hasBountyToken {
+		bot.BountyTokenBonus = 0
+	}
 }

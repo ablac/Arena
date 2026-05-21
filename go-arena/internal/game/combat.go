@@ -3,7 +3,6 @@ package game
 import (
 	"fmt"
 	"math"
-	"math/rand"
 
 	"arena-server/internal/config"
 
@@ -80,7 +79,7 @@ func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles 
 
 		switch wc.Special {
 		case "projectile":
-			processProjectileAttack(bot, target, &wc, obstacles, projectiles, tickCount)
+			processProjectileAttack(bot, target, action, &wc, obstacles, projectiles, arenaEvents, tickCount)
 
 		case "area":
 			processStaffAttack(bot, target, action, &wc, obstacles, staffImpacts, tickCount)
@@ -89,13 +88,117 @@ func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles 
 			processGrappleAttack(bot, target, &wc, obstacles, arenaEvents, grid, tickCount)
 
 		default:
-			processMeleeAttack(bot, target, &wc, bots, obstacles, grid, tickCount)
+			processMeleeAttack(bot, target, &wc, bots, obstacles, arenaEvents, grid, tickCount)
 		}
 	}
 }
 
+func setFacingToward(bot *BotState, target Vec2) {
+	if bot == nil {
+		return
+	}
+	dir := target.Sub(bot.Position).Normalized()
+	if dir.Length() > 0 {
+		bot.Facing = dir
+	}
+}
+
+func markDisrupted(bot *BotState, ticks int) {
+	if bot == nil {
+		return
+	}
+	if ticks <= 0 {
+		ticks = config.C.ShieldDisruptWindowTicks
+	}
+	if ticks > bot.RecentlyDisruptedTicks {
+		bot.RecentlyDisruptedTicks = ticks
+	}
+}
+
+func isBackstab(attacker *BotState, target *BotState) bool {
+	if attacker == nil || target == nil {
+		return false
+	}
+	targetFacing := target.Facing.Normalized()
+	if targetFacing.Length() <= 0 {
+		return false
+	}
+	fromTarget := attacker.Position.Sub(target.Position).Normalized()
+	if fromTarget.Length() <= 0 {
+		return false
+	}
+	return targetFacing.X()*fromTarget.X()+targetFacing.Y()*fromTarget.Y() <= config.C.DaggerBackstabDotThreshold
+}
+
+func isBraceReady(bot *BotState) bool {
+	if bot == nil {
+		return false
+	}
+	minStill := config.C.SpearBraceStillTicks
+	if minStill <= 0 {
+		minStill = 1
+	}
+	return bot.StillTicks >= minStill
+}
+
+func isNearImpactSurface(pos Vec2, obstacles []Obstacle) bool {
+	if pos.X() <= config.C.BotRadius*2 || pos.X() >= config.C.ArenaWidth-config.C.BotRadius*2 {
+		return true
+	}
+	if pos.Y() <= config.C.BotRadius*2 || pos.Y() >= config.C.ArenaHeight-config.C.BotRadius*2 {
+		return true
+	}
+	if ActiveTerrain != nil {
+		cell := ActiveTerrain.WorldToGrid(pos)
+		for _, d := range directions {
+			nx, ny := cell[0]+d.dx, cell[1]+d.dy
+			if ActiveTerrain.IsBlocked(nx, ny) {
+				return true
+			}
+		}
+	}
+	for _, ob := range obstacles {
+		padded := config.C.PathfindingCellSize * 0.75
+		if pos.X() >= ob.X-padded && pos.X() <= ob.X+ob.Width+padded &&
+			pos.Y() >= ob.Y-padded && pos.Y() <= ob.Y+ob.Height+padded {
+			return true
+		}
+	}
+	return false
+}
+
+func bowChargeTicks(bot *BotState) int {
+	if bot == nil {
+		return 0
+	}
+	maxTicks := config.C.BowChargeMaxTicks
+	if maxTicks <= 0 {
+		maxTicks = 6
+	}
+	if bot.BowChargeTicks < 0 {
+		return 0
+	}
+	if bot.BowChargeTicks > maxTicks {
+		return maxTicks
+	}
+	return bot.BowChargeTicks
+}
+
+func effectiveAttackMultiplier(bot *BotState) float64 {
+	if bot == nil {
+		return 1
+	}
+	mult := bot.AttackMultiplier
+	for _, eff := range bot.ActiveEffects {
+		if eff.Name == "damage_boost" {
+			mult *= eff.Value
+		}
+	}
+	return mult
+}
+
 // processProjectileAttack handles bow attacks by spawning a projectile.
-func processProjectileAttack(bot, target *BotState, wc *WeaponConfig, obstacles []Obstacle, projectiles *[]Projectile, tickCount int) {
+func processProjectileAttack(bot, target *BotState, action *Action, wc *WeaponConfig, obstacles []Obstacle, projectiles *[]Projectile, arenaEvents *[]ArenaEvent, tickCount int) {
 	if !IsInRange(bot.Position, target.Position, wc.GridRange) {
 		bot.LastActionResult = &ActionResult{
 			Action:  "attack",
@@ -124,6 +227,19 @@ func processProjectileAttack(bot, target *BotState, wc *WeaponConfig, obstacles 
 	if wc.Name == "bow" {
 		speed *= 1.25
 	}
+	chargeTicks := 0
+	chargeIntensity := 1.0
+	damageBase := float64(wc.Damage)
+	cooldown := wc.Cooldown
+	if wc.Name == "bow" {
+		chargeTicks = bowChargeTicks(bot)
+		if action != nil && action.Charged && chargeTicks > 0 {
+			damageBase *= 1 + float64(chargeTicks)*config.C.BowChargeDamagePerTick
+			speed *= 1 + float64(chargeTicks)*config.C.BowChargeSpeedPerTick
+			cooldown *= 1 + float64(chargeTicks)*config.C.BowChargeCooldownPerTick
+			chargeIntensity = 1 + math.Min(0.9, 0.15*float64(chargeTicks))
+		}
+	}
 
 	aimPos := estimateProjectileAimPoint(bot, target, obstacles, speed, wc)
 	dir := aimPos.Sub(bot.Position).Normalized()
@@ -144,19 +260,26 @@ func processProjectileAttack(bot, target *BotState, wc *WeaponConfig, obstacles 
 	proj := Projectile{
 		ID:        uuid.New().String(),
 		OwnerID:   bot.BotID,
+		Color:     bot.AvatarColor,
 		Position:  bot.Position,
 		Direction: dir,
 		Speed:     speed,
 		HitRadius: hitRadius,
-		Damage:    CalculateDamage(float64(wc.Damage), bot.AttackMultiplier, 0),
+		Damage:    CalculateDamage(damageBase, effectiveAttackMultiplier(bot), 0),
 		Weapon:    wc.Name,
+		Intensity: chargeIntensity,
 		AgeTicks:  0,
 		MaxAge:    maxAge,
 	}
 	*projectiles = append(*projectiles, proj)
+	if wc.Name == "bow" && arenaEvents != nil {
+		*arenaEvents = append(*arenaEvents, buildBowShotEvent(bot.BotID, bot.AvatarColor, bot.Position, aimPos, tickCount, chargeIntensity))
+	}
 
-	bot.CooldownRemaining = wc.Cooldown
+	bot.CooldownRemaining = cooldown
+	bot.BowChargeTicks = 0
 	bot.RoundShotsFired++
+	setFacingToward(bot, aimPos)
 
 	bot.LastActionResult = &ActionResult{
 		Action:  "attack",
@@ -267,11 +390,15 @@ func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig,
 	}
 
 	// Check range (grid-based).
+	targetRef := action.TargetID
+	if targetRef == "" && target != nil {
+		targetRef = target.BotID
+	}
 	if !IsInRange(bot.Position, targetPos, wc.GridRange) {
 		bot.LastActionResult = &ActionResult{
 			Action:  "attack",
 			Success: false,
-			Target:  target.BotID,
+			Target:  targetRef,
 			Message: "out of range",
 		}
 		return
@@ -282,7 +409,7 @@ func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig,
 		bot.LastActionResult = &ActionResult{
 			Action:  "attack",
 			Success: false,
-			Target:  target.BotID,
+			Target:  targetRef,
 			Message: "no line of sight",
 		}
 		return
@@ -294,12 +421,13 @@ func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig,
 		Radius:     float64(wc.GridParam), // grid tiles for detonation radius
 		Damage:     float64(wc.Damage),
 		TicksLeft:  config.C.StaffDelayTicks,
-		AttackMult: bot.AttackMultiplier,
+		AttackMult: effectiveAttackMultiplier(bot),
 	}
 	*staffImpacts = append(*staffImpacts, impact)
 
 	bot.CooldownRemaining = wc.Cooldown
 	bot.RoundShotsFired++
+	setFacingToward(bot, targetPos)
 
 	bot.LastActionResult = &ActionResult{
 		Action:  "attack",
@@ -310,7 +438,7 @@ func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig,
 }
 
 // processMeleeAttack handles sword, daggers, shield, and spear attacks.
-func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string]*BotState, obstacles []Obstacle, grid *SpatialGrid, tickCount int) {
+func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string]*BotState, obstacles []Obstacle, arenaEvents *[]ArenaEvent, grid *SpatialGrid, tickCount int) {
 	// Check range (grid-based).
 	if !IsInRange(bot.Position, target.Position, wc.GridRange) {
 		bot.LastActionResult = &ActionResult{
@@ -334,7 +462,23 @@ func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string
 	}
 
 	// Calculate and apply damage.
-	rawDmg := CalculateDamage(float64(wc.Damage), bot.AttackMultiplier, target.DefenseReduction)
+	rawBaseDamage := float64(wc.Damage)
+	backstabbed := false
+	bashed := false
+	braced := false
+	if wc.Special == "backstab" && isBackstab(bot, target) {
+		rawBaseDamage *= config.C.DaggerBackstabBonusMultiplier
+		backstabbed = true
+	}
+	if wc.Special == "bash" && target.RecentlyDisruptedTicks > 0 {
+		rawBaseDamage *= config.C.ShieldBashBonusMultiplier
+		bashed = true
+	}
+	if wc.Special == "knockback" && isBraceReady(bot) {
+		rawBaseDamage *= config.C.SpearBraceBonusMultiplier
+		braced = true
+	}
+	rawDmg := CalculateDamage(rawBaseDamage, effectiveAttackMultiplier(bot), target.DefenseReduction)
 	dealt := ApplyDamage(target, bot, rawDmg, wc.Name, tickCount)
 
 	// Apply standard knockback (1 grid tile).
@@ -345,6 +489,7 @@ func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string
 	if dealt > 0 {
 		bot.RoundShotsHit++
 	}
+	setFacingToward(bot, target.Position)
 
 	bot.LastActionResult = &ActionResult{
 		Action:  "attack",
@@ -354,19 +499,29 @@ func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string
 		Message: fmt.Sprintf("hit with %s", wc.Name),
 	}
 
+	if backstabbed && arenaEvents != nil {
+		*arenaEvents = append(*arenaEvents, buildBackstabEvent(bot, target, tickCount))
+	}
+	if bashed && arenaEvents != nil {
+		*arenaEvents = append(*arenaEvents, buildShieldBashEvent(bot, target, tickCount))
+	}
+	if braced && arenaEvents != nil {
+		*arenaEvents = append(*arenaEvents, buildSpearBraceEvent(bot, target, tickCount))
+	}
+
 	// Handle weapon specials.
 	switch wc.Special {
 	case "cleave":
 		processCleave(bot, target, wc, bots, obstacles, grid, tickCount)
 
-	case "double_strike":
-		processDoubleStrike(bot, target, wc, tickCount)
-
-	case "block":
-		processBlock(target)
+	case "bash":
+		processShieldBash(target)
 
 	case "knockback":
-		processExtraKnockback(target, bot.Position, wc, obstacles)
+		processExtraKnockback(target, bot.Position, wc, obstacles, braced)
+	}
+	if braced {
+		bot.StillTicks = 0
 	}
 }
 
@@ -393,30 +548,26 @@ func processCleave(bot, primaryTarget *BotState, wc *WeaponConfig, bots map[stri
 			continue
 		}
 
-		cleaveDmg := CalculateDamage(float64(wc.Damage), bot.AttackMultiplier, other.DefenseReduction) * 0.5
+		cleaveDmg := CalculateDamage(float64(wc.Damage), effectiveAttackMultiplier(bot), other.DefenseReduction) * 0.5
 		ApplyDamage(other, bot, cleaveDmg, wc.Name, tickCount)
 		ApplyGridKnockback(other, bot.Position, 1, obstacles)
 		cleaveCount++
 	}
 }
 
-// processDoubleStrike has a 20% chance to deal a second full-damage hit.
-func processDoubleStrike(bot, target *BotState, wc *WeaponConfig, tickCount int) {
-	if rand.Float64() < wc.Param { // Param = 0.2
-		secondDmg := CalculateDamage(float64(wc.Damage), bot.AttackMultiplier, target.DefenseReduction)
-		ApplyDamage(target, bot, secondDmg, wc.Name, tickCount)
-	}
-}
-
-// processBlock applies a stun to the target.
-func processBlock(target *BotState) {
+// processShieldBash applies a short stun and refreshes the disrupt window.
+func processShieldBash(target *BotState) {
 	target.StunTicks = config.C.StunDurationTicks
+	markDisrupted(target, config.C.ShieldDisruptWindowTicks)
 }
 
 // processExtraKnockback applies additional knockback from spear hits.
-func processExtraKnockback(target *BotState, attackerPos Vec2, wc *WeaponConfig, obstacles []Obstacle) {
+func processExtraKnockback(target *BotState, attackerPos Vec2, wc *WeaponConfig, obstacles []Obstacle, braced bool) {
 	// Spear knockback: push 1 additional tile.
 	ApplyGridKnockback(target, attackerPos, 1, obstacles)
+	if braced && config.C.SpearBraceBonusKnockback > 0 {
+		ApplyGridKnockback(target, attackerPos, config.C.SpearBraceBonusKnockback, obstacles)
+	}
 }
 
 // processGrappleAttack handles grapple weapon: ranged hit that pulls attacker to target.
@@ -441,8 +592,10 @@ func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []O
 		return
 	}
 
+	initialDist := GridDistance(posToGrid(bot.Position), posToGrid(target.Position))
+
 	// Deal damage
-	rawDmg := CalculateDamage(float64(wc.Damage), bot.AttackMultiplier, target.DefenseReduction)
+	rawDmg := CalculateDamage(float64(wc.Damage), effectiveAttackMultiplier(bot), target.DefenseReduction)
 	dealt := ApplyDamage(target, bot, rawDmg, wc.Name, tickCount)
 
 	from := bot.Position
@@ -484,25 +637,49 @@ func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []O
 	if dealt > 0 {
 		bot.RoundShotsHit++
 	}
+	setFacingToward(bot, target.Position)
+
+	slammed := initialDist >= maxInt(1, config.C.GrappleSlamMinRange) && isNearImpactSurface(target.Position, obstacles)
+	if slammed {
+		bonusBase := float64(wc.Damage) * math.Max(0, config.C.GrappleSlamBonusMultiplier-1)
+		if bonusBase > 0 {
+			bonusDmg := CalculateDamage(bonusBase, effectiveAttackMultiplier(bot), target.DefenseReduction)
+			ApplyDamage(target, bot, bonusDmg, "grapple_slam", tickCount)
+		}
+		if config.C.GrappleSlamStunTicks > target.StunTicks {
+			target.StunTicks = config.C.GrappleSlamStunTicks
+		}
+		markDisrupted(target, config.C.ShieldDisruptWindowTicks)
+		if arenaEvents != nil {
+			*arenaEvents = append(*arenaEvents, buildGrappleSlamEvent(bot, target, tickCount))
+		}
+	}
 
 	bot.LastActionResult = &ActionResult{
 		Action:  "attack",
 		Success: true,
 		Target:  target.BotID,
 		Damage:  dealt,
-		Message: "grappled target",
+		Message: func() string {
+			if slammed {
+				return "grapple slam"
+			}
+			return "grappled target"
+		}(),
 	}
 }
 
 // ProcessStaffImpacts ticks down staff impacts and applies damage when they detonate.
-func ProcessStaffImpacts(staffImpacts *[]StaffImpact, bots map[string]*BotState, tickCount int) {
+func ProcessStaffImpacts(staffImpacts *[]StaffImpact, burnFields *[]BurnField, bots map[string]*BotState, tickCount int) []ArenaEvent {
 	active := (*staffImpacts)[:0]
+	var events []ArenaEvent
 
 	for i := range *staffImpacts {
 		impact := &(*staffImpacts)[i]
 		impact.TicksLeft--
 
 		if impact.TicksLeft <= 0 {
+			events = append(events, buildStaffDetonationEvent(*impact, tickCount))
 			// Detonate: damage all bots within grid radius except the owner.
 			impactGridRadius := int(impact.Radius) // Radius stores grid tiles
 			for _, bot := range bots {
@@ -525,6 +702,24 @@ func ProcessStaffImpacts(staffImpacts *[]StaffImpact, bots map[string]*BotState,
 					attacker.RoundShotsHit++
 				}
 			}
+			burnTicks := config.C.StaffBurnFieldTicks
+			if burnTicks > 0 && burnFields != nil {
+				radius := float64(config.C.StaffBurnFieldRadius)
+				if radius <= 0 {
+					radius = 1
+				}
+				field := BurnField{
+					ID:           fmt.Sprintf("burn:%s:%d:%0.0f:%0.0f", impact.OwnerID, tickCount, impact.Position.X(), impact.Position.Y()),
+					OwnerID:      impact.OwnerID,
+					Position:     impact.Position,
+					Radius:       radius,
+					Damage:       config.C.StaffBurnFieldDamage,
+					TicksLeft:    burnTicks,
+					TickInterval: maxInt(1, config.C.StaffBurnFieldTickInterval),
+				}
+				*burnFields = append(*burnFields, field)
+				events = append(events, buildBurnFieldSpawnEvent(field, tickCount))
+			}
 			// Impact is consumed; do not keep it.
 		} else {
 			active = append(active, *impact)
@@ -532,6 +727,40 @@ func ProcessStaffImpacts(staffImpacts *[]StaffImpact, bots map[string]*BotState,
 	}
 
 	*staffImpacts = active
+	return events
+}
+
+func ProcessBurnFields(burnFields *[]BurnField, bots map[string]*BotState, tickCount int) {
+	if burnFields == nil {
+		return
+	}
+	active := (*burnFields)[:0]
+	for i := range *burnFields {
+		field := &(*burnFields)[i]
+		field.TicksLeft--
+		field.PulseTick++
+		if field.TicksLeft <= 0 {
+			continue
+		}
+
+		if field.Damage > 0 && field.TickInterval > 0 && field.PulseTick%field.TickInterval == 0 {
+			attacker := bots[field.OwnerID]
+			if attacker != nil {
+				for _, bot := range bots {
+					if !bot.IsAlive || bot.BotID == field.OwnerID {
+						continue
+					}
+					if !IsInRange(bot.Position, field.Position, int(field.Radius)) {
+						continue
+					}
+					ApplyDamage(bot, attacker, field.Damage, "staff_burn", tickCount)
+				}
+			}
+		}
+
+		active = append(active, *field)
+	}
+	*burnFields = active
 }
 
 // BuildStaffImpactView creates a protocol-compatible view of a pending staff blast.
@@ -547,6 +776,24 @@ func BuildStaffImpactView(impact StaffImpact, useGridPos bool) map[string]interf
 		view["position"] = [2]int{gridPos[0], gridPos[1]}
 	} else {
 		view["position"] = impact.Position
+	}
+	return view
+}
+
+func BuildBurnFieldView(field BurnField, useGridPos bool) map[string]interface{} {
+	view := map[string]interface{}{
+		"type":       "burn_field",
+		"id":         field.ID,
+		"owner_id":   field.OwnerID,
+		"radius":     field.Radius,
+		"ticks_left": field.TicksLeft,
+		"active":     true,
+	}
+	if useGridPos {
+		gridPos := posToGrid(field.Position)
+		view["position"] = [2]int{gridPos[0], gridPos[1]}
+	} else {
+		view["position"] = field.Position
 	}
 	return view
 }
@@ -619,8 +866,10 @@ func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle) {
 		if config.C.ShoveStunTicks > target.StunTicks {
 			target.StunTicks = config.C.ShoveStunTicks
 		}
+		markDisrupted(target, config.C.ShieldDisruptWindowTicks)
 
 		bot.ShoveCooldown = config.C.ShoveCooldown
+		setFacingToward(bot, target.Position)
 
 		bot.LastActionResult = &ActionResult{
 			Action:  "shove",

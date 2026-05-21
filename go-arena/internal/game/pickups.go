@@ -21,7 +21,18 @@ func MaybeSpawnPickup(pickups *[]Pickup, arena *ArenaMap, tickCount int) {
 	}
 
 	// Choose a random pickup type.
-	types := []PickupType{PickupHealthPack, PickupSpeedBoost, PickupDamageBoost, PickupShieldBubble, PickupGravityWell}
+	types := []PickupType{
+		PickupHealthPack,
+		PickupHealthPack,
+		PickupSpeedBoost,
+		PickupDamageBoost,
+		PickupDamageBoost,
+		PickupShieldBubble,
+		PickupGravityWell,
+		PickupCooldownShard,
+		PickupCooldownShard,
+		PickupBountyToken,
+	}
 	pType := types[rand.Intn(len(types))]
 
 	pos := arena.GetSpawnPoint()
@@ -50,6 +61,10 @@ func MaybeSpawnPickup(pickups *[]Pickup, arena *ArenaMap, tickCount int) {
 		value = c.PickupShieldBubbleHP
 	case PickupGravityWell:
 		value = 1 // 1 charge
+	case PickupCooldownShard:
+		value = c.PickupCooldownShardWeaponPct
+	case PickupBountyToken:
+		value = float64(c.PickupBountyTokenPoints)
 	}
 
 	*pickups = append(*pickups, Pickup{
@@ -128,9 +143,60 @@ func applyPickupEffect(bot *BotState, pickup Pickup) {
 		bot.ShieldAbsorb += pickup.Value
 	case PickupGravityWell:
 		bot.GravityWellCharge++
+	case PickupCooldownShard:
+		applyCooldownShard(bot)
+	case PickupBountyToken:
+		bot.BountyTokenBonus = int(pickup.Value)
+		bot.ActiveEffects = removeEffectByName(bot.ActiveEffects, "bounty_token")
+		bot.ActiveEffects = append(bot.ActiveEffects, Effect{
+			Name:           "bounty_token",
+			RemainingTicks: c.PickupBountyTokenTicks,
+			Value:          pickup.Value,
+		})
 	}
 
 	bot.RoundPickups++
+}
+
+func applyCooldownShard(bot *BotState) {
+	reducePct := clamp01(config.C.PickupCooldownShardWeaponPct)
+	if bot.CooldownRemaining > 0 {
+		bot.CooldownRemaining *= (1.0 - reducePct)
+		if bot.CooldownRemaining < 0 {
+			bot.CooldownRemaining = 0
+		}
+	}
+
+	abilityPct := clamp01(config.C.PickupCooldownShardAbilityPct)
+	if bot.ShoveCooldown > 0 {
+		bot.ShoveCooldown *= (1.0 - abilityPct)
+		if bot.ShoveCooldown < 0 {
+			bot.ShoveCooldown = 0
+		}
+	}
+	if bot.GrappleCooldown > 0 {
+		bot.GrappleCooldown *= (1.0 - abilityPct)
+		if bot.GrappleCooldown < 0 {
+			bot.GrappleCooldown = 0
+		}
+	}
+	if bot.DodgeCooldown > 0 {
+		newTicks := int(float64(bot.DodgeCooldown) * (1.0 - abilityPct))
+		if newTicks < 0 {
+			newTicks = 0
+		}
+		bot.DodgeCooldown = newTicks
+	}
+}
+
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }
 
 // removeEffectByName filters out all effects with the given name.

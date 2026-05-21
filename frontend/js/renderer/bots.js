@@ -6,8 +6,8 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js';
-import { updateBotAnim, triggerAttack, triggerDodge, triggerShove } from './animations.js';
+import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260521f';
+import { updateBotAnim, triggerAttack, triggerDodge, triggerShove } from './animations.js?v=20260521f';
 import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance } from './swordsman-anims.js';
 
 export class BotRenderer {
@@ -141,7 +141,8 @@ export class BotRenderer {
         }
 
         // Face toward target (smoothed via anim.targetRotY)
-        const targetPos = bot.target_id ? getPosMap().get(bot.target_id) : null;
+        const explicitTargetPos = Array.isArray(bot.target_position) ? bot.target_position : null;
+        const targetPos = explicitTargetPos || (bot.target_id ? getPosMap().get(bot.target_id) : null);
         if (targetPos) {
           const adx = targetPos[0] - bot.position[0];
           const adz = targetPos[1] - bot.position[1];
@@ -151,7 +152,10 @@ export class BotRenderer {
           // Notify effects system with weapon type
           if (this.onAttack) {
             this.onAttack(bot.position[0], bot.position[1],
-                          targetPos[0], targetPos[1], bot.avatar_color, weaponType);
+                          targetPos[0], targetPos[1], bot.avatar_color, weaponType, {
+                            targetId: bot.target_id || null,
+                            targetPosition: explicitTargetPos,
+                          });
           }
         }
       }
@@ -306,6 +310,40 @@ export class BotRenderer {
 
     this.scene.beginDirectAnimation(entry.bodyMat, [bodyAnim], 0, 30, false);
     this.scene.beginDirectAnimation(entry.headMat, [headAnim], 0, 30, false);
+  }
+
+  playImpactReaction(botId) {
+    const entry = this.entries.get(botId);
+    if (!entry || !entry.bodyMat || !entry.headMat) return;
+    const B = window.BABYLON;
+    const bodyOrig = entry.bodyMat.emissiveColor.clone();
+    const headOrig = entry.headMat.emissiveColor.clone();
+
+    const bodyAnim = new B.Animation('bowHitBody', 'emissiveColor', 100,
+      B.Animation.ANIMATIONTYPE_COLOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
+    bodyAnim.setKeys([
+      { frame: 0, value: new B.Color3(1, 1, 1) },
+      { frame: 10, value: bodyOrig.clone() }
+    ]);
+
+    const headAnim = new B.Animation('bowHitHead', 'emissiveColor', 100,
+      B.Animation.ANIMATIONTYPE_COLOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
+    headAnim.setKeys([
+      { frame: 0, value: new B.Color3(1, 1, 1) },
+      { frame: 10, value: headOrig.clone() }
+    ]);
+
+    const scaleAnim = new B.Animation('bowHitScale', 'scaling', 100,
+      B.Animation.ANIMATIONTYPE_VECTOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
+    scaleAnim.setKeys([
+      { frame: 0, value: new B.Vector3(1.08, 0.92, 1.08) },
+      { frame: 10, value: new B.Vector3(1, 1, 1) }
+    ]);
+
+    this.scene.beginDirectAnimation(entry.bodyMat, [bodyAnim], 0, 10, false);
+    this.scene.beginDirectAnimation(entry.headMat, [headAnim], 0, 10, false);
+    this.scene.beginDirectAnimation(entry.body, [scaleAnim], 0, 10, false);
+    this.scene.beginDirectAnimation(entry.head, [scaleAnim], 0, 10, false);
   }
 
   handlePick(mesh) {

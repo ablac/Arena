@@ -119,7 +119,7 @@ func init() {
 			Name:      "bow",
 			Damage:    16,
 			GridRange: 8,
-			Cooldown:  1.15,
+			Cooldown:  1.05,
 			Special:   "projectile",
 		},
 		"daggers": {
@@ -127,15 +127,14 @@ func init() {
 			Damage:    11,
 			GridRange: 1,
 			Cooldown:  0.35,
-			Special:   "double_strike",
-			Param:     0.25,
+			Special:   "backstab",
 		},
 		"shield": {
 			Name:      "shield",
 			Damage:    14,
 			GridRange: 1,
 			Cooldown:  0.8,
-			Special:   "block",
+			Special:   "bash",
 			Param:     0.5,
 		},
 		"spear": {
@@ -149,7 +148,7 @@ func init() {
 		"staff": {
 			Name:      "staff",
 			Damage:    17,
-			GridRange: 5,
+			GridRange: 6,
 			Cooldown:  1.65,
 			Special:   "area",
 			GridParam: 2,
