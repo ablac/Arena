@@ -187,7 +187,7 @@ func processDodge(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, dt flo
 	bot.LastValidPosition = bot.Position
 	bot.Facing = Vec2{float64(dx), float64(dy)}.Normalized()
 	bot.InvulnTicks = config.C.DodgeInvulnTicks
-	bot.DodgeCooldown = config.C.DodgeCooldownTicks
+	bot.DodgeCooldown = scaledCooldownTicks(config.C.DodgeCooldownTicks, effectCooldownMultiplier(bot))
 
 	grid.Update(bot.BotID, bot.Position)
 

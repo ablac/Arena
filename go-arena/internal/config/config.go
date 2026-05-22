@@ -126,8 +126,8 @@ type Config struct {
 	PickupDamageBoostMult    float64 `envconfig:"ARENA_PICKUP_DAMAGE_BOOST_MULT" default:"1.5"`
 	PickupDamageBoostTicks   int     `envconfig:"ARENA_PICKUP_DAMAGE_BOOST_TICKS" default:"50"`
 	PickupShieldBubbleHP     float64 `envconfig:"ARENA_PICKUP_SHIELD_BUBBLE_HP" default:"50"`
-	PickupCooldownShardWeaponPct float64 `envconfig:"ARENA_PICKUP_COOLDOWN_SHARD_WEAPON_PCT" default:"0.7"`
-	PickupCooldownShardAbilityPct float64 `envconfig:"ARENA_PICKUP_COOLDOWN_SHARD_ABILITY_PCT" default:"0.5"`
+	PickupCooldownShardTicks   int     `envconfig:"ARENA_PICKUP_COOLDOWN_SHARD_TICKS" default:"100"`
+	PickupCooldownShardMult    float64 `envconfig:"ARENA_PICKUP_COOLDOWN_SHARD_MULT" default:"0.6"`
 	PickupBountyTokenPoints  int     `envconfig:"ARENA_PICKUP_BOUNTY_TOKEN_POINTS" default:"18"`
 	PickupBountyTokenTicks   int     `envconfig:"ARENA_PICKUP_BOUNTY_TOKEN_TICKS" default:"90"`
 	PickupCollectRadius      float64 `envconfig:"ARENA_PICKUP_COLLECT_RADIUS" default:"2.0"`

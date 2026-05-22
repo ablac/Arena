@@ -229,7 +229,7 @@ func BotSetup() http.HandlerFunc {
 						{"type": "damage_boost", "effect": fmt.Sprintf("%.1fx damage for %d ticks", c.PickupDamageBoostMult, c.PickupDamageBoostTicks)},
 						{"type": "shield_bubble", "effect": fmt.Sprintf("Absorbs %.0f damage", c.PickupShieldBubbleHP)},
 						{"type": "gravity_well", "effect": "Grants 1 gravity well charge (deploy with use_gravity_well action)"},
-						{"type": "cooldown_shard", "effect": fmt.Sprintf("Instantly refunds %.0f%% weapon cooldown and %.0f%% dodge/shove/grapple cooldowns", c.PickupCooldownShardWeaponPct*100, c.PickupCooldownShardAbilityPct*100)},
+						{"type": "cooldown_shard", "effect": fmt.Sprintf("Reduces weapon, dodge, shove, and grapple cooldowns to %.0f%% for %d ticks", c.PickupCooldownShardMult*100, c.PickupCooldownShardTicks)},
 						{"type": "bounty_token", "effect": fmt.Sprintf("Stores +%d bonus score on your next kill for %d ticks", c.PickupBountyTokenPoints, c.PickupBountyTokenTicks)},
 					},
 					"collect_radius_tiles": c.PickupCollectRadius,
