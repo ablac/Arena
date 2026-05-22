@@ -131,6 +131,10 @@ type Config struct {
 	PickupBountyTokenPoints  int     `envconfig:"ARENA_PICKUP_BOUNTY_TOKEN_POINTS" default:"18"`
 	PickupBountyTokenTicks   int     `envconfig:"ARENA_PICKUP_BOUNTY_TOKEN_TICKS" default:"90"`
 	PickupHazardKeyTicks     int     `envconfig:"ARENA_PICKUP_HAZARD_KEY_TICKS" default:"80"`
+	PickupOverdriveTicks     int     `envconfig:"ARENA_PICKUP_OVERDRIVE_TICKS" default:"60"`
+	PickupOverdriveDamageMult float64 `envconfig:"ARENA_PICKUP_OVERDRIVE_DAMAGE_MULT" default:"1.25"`
+	PickupOverdriveCooldownMult float64 `envconfig:"ARENA_PICKUP_OVERDRIVE_COOLDOWN_MULT" default:"0.75"`
+	PickupGrappleChargeAmount int     `envconfig:"ARENA_PICKUP_GRAPPLE_CHARGE_AMOUNT" default:"1"`
 	PickupCollectRadius      float64 `envconfig:"ARENA_PICKUP_COLLECT_RADIUS" default:"2.0"`
 
 	// Network / persistence

@@ -232,6 +232,8 @@ func BotSetup() http.HandlerFunc {
 						{"type": "cooldown_shard", "effect": fmt.Sprintf("Reduces weapon, dodge, shove, and grapple cooldowns to %.0f%% for %d ticks", c.PickupCooldownShardMult*100, c.PickupCooldownShardTicks)},
 						{"type": "bounty_token", "effect": fmt.Sprintf("Stores +%d bonus score on your next kill for %d ticks", c.PickupBountyTokenPoints, c.PickupBountyTokenTicks)},
 						{"type": "hazard_key", "effect": fmt.Sprintf("Hazard immunity for %d ticks. Negates hazard zones and burn fields, and doubles capture-pad progress while active", c.PickupHazardKeyTicks)},
+						{"type": "overdrive_core", "effect": fmt.Sprintf("%.2fx damage and %.0f%% cooldowns for %d ticks", c.PickupOverdriveDamageMult, c.PickupOverdriveCooldownMult*100, c.PickupOverdriveTicks)},
+						{"type": "grapple_charge", "effect": fmt.Sprintf("Grants +%d grapple charge and immediately clears grapple cooldown", c.PickupGrappleChargeAmount)},
 					},
 					"collect_radius_tiles": c.PickupCollectRadius,
 					"spawn_interval_ticks": c.PickupSpawnIntervalTicks,

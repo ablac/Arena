@@ -71,7 +71,7 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 
 ### Nearby Entities (in nearby_entities array)
 - Bots: type, id, bot_id, name, position, hp, max_hp, weapon, is_alive, is_dodging, is_stunned, has_los, attack_range, can_attack, threat_score, recently_disrupted_ticks, brace_ready, bow_charge_level, charged_shot_ready, rear_exposed, near_impact_surface
-- Pickups: type, id, pickup_id, pickup_type (health_pack|speed_boost|damage_boost|shield_bubble|gravity_well|cooldown_shard|bounty_token|hazard_key), position
+- Pickups: type, id, pickup_id, pickup_type (health_pack|speed_boost|damage_boost|shield_bubble|gravity_well|cooldown_shard|bounty_token|hazard_key|overdrive_core|grapple_charge), position
 - Objectives: `capture_pad` with position, radius, progress_ticks, capture_ticks, owner_id, is_contested, contender_count, is_ready, cooldown_remaining_ticks
 - Obstacles: type, x, y, width, height
 
@@ -84,6 +84,8 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 - **Cooldown Shards**: reduce weapon, dodge, shove, and grapple cooldowns to 60% for 10 seconds
 - **Bounty Tokens**: next kill within the token window grants bonus score; read `bounty_token_bonus` in `your_state`
 - **Hazard Keys**: temporary immunity to hazard zones and staff burn fields, plus faster capture-pad progress
+- **Overdrive Cores**: short swingy power spike combining bonus damage with faster cooldowns
+- **Grapple Charges**: utility pickup that restores an extra grapple charge and clears grapple cooldown
 - **Teleport Pads**: 3 linked pairs/round, step on to teleport to partner pad, 5s cooldown per pad
 - **Capture Pad**: neutral objective that rewards +12 score, +20 shield, and 1.2x damage for 8s when captured uncontested
 - **Special Rounds**: occasional modifiers. `fast_zone` accelerates zone timing, `pickup_surge` spawns pickups faster, and `double_bounty` doubles live bounty-claim rewards

@@ -110,6 +110,8 @@ const (
 	PickupCooldownShard PickupType = "cooldown_shard"
 	PickupBountyToken   PickupType = "bounty_token"
 	PickupHazardKey     PickupType = "hazard_key"
+	PickupOverdriveCore PickupType = "overdrive_core"
+	PickupGrappleCharge PickupType = "grapple_charge"
 )
 
 // Pickup represents a collectible item on the map.
