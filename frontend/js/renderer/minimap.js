@@ -138,6 +138,7 @@ export class Minimap {
       gravity_well: '#a855f7',
       cooldown_shard: '#22d3ee',
       bounty_token: '#f59e0b',
+      hazard_key: '#b6ff4d',
     };
     return colors[type] || '#ffffff';
   }

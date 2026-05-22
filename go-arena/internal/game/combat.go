@@ -749,6 +749,9 @@ func ProcessBurnFields(burnFields *[]BurnField, bots map[string]*BotState, tickC
 					if !bot.IsAlive || bot.BotID == field.OwnerID {
 						continue
 					}
+					if hasEffectByName(bot.ActiveEffects, "hazard_key") {
+						continue
+					}
 					if !IsInRange(bot.Position, field.Position, int(field.Radius)) {
 						continue
 					}

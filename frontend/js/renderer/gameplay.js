@@ -269,9 +269,12 @@ export class GameplayRenderer {
       const x = pos[0], z = pos[1];
       const ready = pad.is_ready !== false;
       const progress = Math.max(0, Math.min(1, (pad.progress_ticks || 0) / Math.max(1, pad.capture_ticks || 1)));
+      const contested = !!pad.is_contested;
+      const contenderCount = pad.contender_count || 0;
       const ownerColor = parseColor(pad.color || '#7ef7ff');
       const neutral = new B.Color3(0.44, 0.62, 0.74);
       const locked = new B.Color3(0.36, 0.36, 0.4);
+      const contestedColor = new B.Color3(1.0, 0.42, 0.2);
       const targetColor = ready ? neutral : locked;
 
       entry.base.position.set(x, 0.7, z);
@@ -287,6 +290,9 @@ export class GameplayRenderer {
           Math.min(1, ownerColor.b + 0.08)
         );
       }
+      if (contested) {
+        captureColor = contestedColor;
+      }
 
       const emissive = B.Color3.Lerp(targetColor, captureColor, Math.max(progress, pad.owner_id ? 1 : 0));
       entry.baseMat.emissiveColor.copyFrom(emissive.scale(0.72));
@@ -297,9 +303,14 @@ export class GameplayRenderer {
       entry.ringMat.alpha = ready ? 0.48 + 0.22 * progress : 0.2;
       entry.innerMat.alpha = ready ? 0.10 + 0.18 * progress : 0.06;
 
-      const pulse = 1 + Math.sin(this._tick * 0.05) * (0.02 + progress * 0.03);
+      const pulse = 1 + Math.sin(this._tick * 0.05) * (0.02 + progress * 0.03 + contenderCount * 0.01);
       entry.ring.scaling.set(pulse, pulse, 1);
       entry.inner.scaling.set(0.84 + progress * 0.38, 0.84 + progress * 0.38, 1);
+      if (contested) {
+        entry.ring.rotation.y += 0.03;
+        entry.baseMat.alpha = Math.max(entry.baseMat.alpha, 0.32);
+        entry.ringMat.alpha = Math.max(entry.ringMat.alpha, 0.66);
+      }
     }
 
     for (const [id, entry] of this.capturePads) {

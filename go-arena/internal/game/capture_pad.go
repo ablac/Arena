@@ -19,6 +19,8 @@ type CapturePad struct {
 	CapturingBotID       string
 	LastCapturedBy       string
 	CooldownUntilTick    int
+	ContenderCount       int
+	Contested            bool
 }
 
 // SpawnCapturePads creates objective pads at valid terrain positions.
@@ -86,6 +88,8 @@ func UpdateCapturePads(pads []CapturePad, bots map[string]*BotState, tickCount i
 		}
 
 		contenders := capturePadContenders(*pad, bots)
+		pad.ContenderCount = len(contenders)
+		pad.Contested = len(contenders) > 1
 		switch len(contenders) {
 		case 0:
 			if pad.ProgressTicks > 0 {
@@ -97,13 +101,17 @@ func UpdateCapturePads(pads []CapturePad, bots map[string]*BotState, tickCount i
 			continue
 		case 1:
 			contender := contenders[0]
+			progressStep := capturePadProgressPerTick(contender)
+			if progressStep < 1 {
+				progressStep = 1
+			}
 			if pad.CapturingBotID == "" || pad.CapturingBotID == contender.BotID {
 				pad.CapturingBotID = contender.BotID
-				pad.ProgressTicks++
+				pad.ProgressTicks += progressStep
 			} else {
-				pad.ProgressTicks--
+				pad.ProgressTicks -= progressStep
 				if pad.ProgressTicks <= 0 {
-					pad.ProgressTicks = 1
+					pad.ProgressTicks = progressStep
 					pad.CapturingBotID = contender.BotID
 				}
 			}
@@ -136,6 +144,16 @@ func capturePadContenders(pad CapturePad, bots map[string]*BotState) []*BotState
 	return contenders
 }
 
+func capturePadProgressPerTick(bot *BotState) int {
+	if bot == nil {
+		return 1
+	}
+	if hasEffectByName(bot.ActiveEffects, "hazard_key") {
+		return 2
+	}
+	return 1
+}
+
 func applyCapturePadReward(bot *BotState) {
 	if bot == nil {
 		return
@@ -164,6 +182,8 @@ func BuildCapturePadView(pad CapturePad, tickCount int, useGridPos bool) map[str
 		"progress_ticks":           pad.ProgressTicks,
 		"capturing_bot_id":         pad.CapturingBotID,
 		"owner_id":                 pad.LastCapturedBy,
+		"contender_count":          pad.ContenderCount,
+		"is_contested":             pad.Contested,
 		"is_ready":                 remaining == 0,
 		"cooldown_remaining_ticks": remaining,
 	}

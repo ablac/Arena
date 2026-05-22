@@ -38,6 +38,7 @@ func MaybeSpawnPickupAtInterval(pickups *[]Pickup, arena *ArenaMap, tickCount in
 		PickupCooldownShard,
 		PickupCooldownShard,
 		PickupBountyToken,
+		PickupHazardKey,
 	}
 	pType := types[rand.Intn(len(types))]
 
@@ -71,6 +72,8 @@ func MaybeSpawnPickupAtInterval(pickups *[]Pickup, arena *ArenaMap, tickCount in
 		value = c.PickupCooldownShardMult
 	case PickupBountyToken:
 		value = float64(c.PickupBountyTokenPoints)
+	case PickupHazardKey:
+		value = 1
 	}
 
 	*pickups = append(*pickups, Pickup{
@@ -164,6 +167,13 @@ func applyPickupEffect(bot *BotState, pickup Pickup) {
 			RemainingTicks: c.PickupBountyTokenTicks,
 			Value:          pickup.Value,
 		})
+	case PickupHazardKey:
+		bot.ActiveEffects = removeEffectByName(bot.ActiveEffects, "hazard_key")
+		bot.ActiveEffects = append(bot.ActiveEffects, Effect{
+			Name:           "hazard_key",
+			RemainingTicks: c.PickupHazardKeyTicks,
+			Value:          1,
+		})
 	}
 
 	bot.RoundPickups++
@@ -178,4 +188,22 @@ func removeEffectByName(effects []Effect, name string) []Effect {
 		}
 	}
 	return result
+}
+
+func hasEffectByName(effects []Effect, name string) bool {
+	for _, e := range effects {
+		if e.Name == name && e.RemainingTicks > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func effectRemainingTicks(effects []Effect, name string) int {
+	for _, e := range effects {
+		if e.Name == name && e.RemainingTicks > 0 {
+			return e.RemainingTicks
+		}
+	}
+	return 0
 }

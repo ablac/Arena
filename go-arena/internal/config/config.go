@@ -130,6 +130,7 @@ type Config struct {
 	PickupCooldownShardMult    float64 `envconfig:"ARENA_PICKUP_COOLDOWN_SHARD_MULT" default:"0.6"`
 	PickupBountyTokenPoints  int     `envconfig:"ARENA_PICKUP_BOUNTY_TOKEN_POINTS" default:"18"`
 	PickupBountyTokenTicks   int     `envconfig:"ARENA_PICKUP_BOUNTY_TOKEN_TICKS" default:"90"`
+	PickupHazardKeyTicks     int     `envconfig:"ARENA_PICKUP_HAZARD_KEY_TICKS" default:"80"`
 	PickupCollectRadius      float64 `envconfig:"ARENA_PICKUP_COLLECT_RADIUS" default:"2.0"`
 
 	// Network / persistence

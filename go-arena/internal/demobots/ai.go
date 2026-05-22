@@ -35,6 +35,7 @@ type tickState struct {
 	LastActionOK     bool
 	HasSpeedBoost    bool
 	HasDmgBoost      bool
+	HasHazardKey     bool
 	BraceReady       bool
 	BowChargeTicks   int
 	BowChargeLevel   float64
@@ -76,11 +77,14 @@ type entity struct {
 	Ready    bool
 	Cooldown int
 	OwnerID  string
+	CapturingBotID string
 	ProgressTicks int
 	CaptureTicks int
+	ContenderCount int
 	HasLOS   bool
 	CanAttack bool
 	Active   bool
+	Contested bool
 	DisruptedTicks int
 	BraceReady bool
 	BowChargeLevel float64
@@ -115,6 +119,7 @@ var (
 	mineCount   = make(map[string]int) // botID -> mines placed this life
 	mineCountMu sync.Mutex
 	currentHazards []entity
+	currentHazardImmunity bool
 )
 
 func getMineCount(botID string) int {
@@ -547,6 +552,9 @@ func parseTick(msg map[string]interface{}) tickState {
 						if name == "damage_boost" {
 							ts.HasDmgBoost = true
 						}
+						if name == "hazard_key" {
+							ts.HasHazardKey = true
+						}
 					}
 				}
 			}
@@ -662,11 +670,17 @@ func parseTick(msg map[string]interface{}) tickState {
 			if v, ok := e["owner_id"].(string); ok {
 				ent.OwnerID = v
 			}
+			if v, ok := e["capturing_bot_id"].(string); ok {
+				ent.CapturingBotID = v
+			}
 			if v, ok := e["progress_ticks"].(float64); ok {
 				ent.ProgressTicks = int(v)
 			}
 			if v, ok := e["capture_ticks"].(float64); ok {
 				ent.CaptureTicks = int(v)
+			}
+			if v, ok := e["contender_count"].(float64); ok {
+				ent.ContenderCount = int(v)
 			}
 			if v, ok := e["has_los"].(bool); ok {
 				ent.HasLOS = v
@@ -678,6 +692,9 @@ func parseTick(msg map[string]interface{}) tickState {
 			}
 			if v, ok := e["active"].(bool); ok {
 				ent.Active = v
+			}
+			if v, ok := e["is_contested"].(bool); ok {
+				ent.Contested = v
 			}
 			if v, ok := e["recently_disrupted_ticks"].(float64); ok {
 				ent.DisruptedTicks = int(v)
@@ -1114,7 +1131,7 @@ func nearestCapturePad(pos [2]float64, pads []entity) (*entity, float64) {
 	return best, bestD
 }
 
-func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD float64) *actionResult {
+func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD float64, botID string) *actionResult {
 	if len(ts.CapturePads) == 0 || !ts.InZone {
 		return nil
 	}
@@ -1127,7 +1144,7 @@ func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD f
 	hpRatio := ts.HP / math.Max(ts.MaxHP, 1)
 	pressure := enemiesWithinRange(ts.Position, ts.Enemies, 4)
 	objectiveBias := strategy == "territorial" || strategy == "defensive" || strategy == "aggressive"
-	enemyOwned := pad.OwnerID != "" && pad.OwnerID != "self"
+	enemyOwned := pad.OwnerID != "" && pad.OwnerID != botID
 
 	if hpRatio < 0.35 && pressure > 0 {
 		return nil
@@ -1141,8 +1158,16 @@ func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD f
 	if near != nil && nearD <= 2 && ts.WeaponReady {
 		return nil
 	}
-	if padD <= 1 {
+	if padD <= 1 && !pad.Contested {
 		return nil
+	}
+	if pad.Contested && padD <= 8 && (objectiveBias || ts.HasHazardKey || ts.IsBountyTarget) {
+		a := moveTo(ts.Position, pad.Position)
+		return &a
+	}
+	if pad.CapturingBotID != "" && pad.CapturingBotID != botID && padD <= 8 {
+		a := moveTo(ts.Position, pad.Position)
+		return &a
 	}
 	if padD <= 9 && (pressure == 0 || objectiveBias || enemyOwned || ts.IsBountyTarget) {
 		a := moveTo(ts.Position, pad.Position)
@@ -1171,6 +1196,9 @@ func inHazardZone(pos [2]float64, hazards []entity) bool {
 }
 
 func pickupBlockedByActiveHazard(pos [2]float64) bool {
+	if currentHazardImmunity {
+		return false
+	}
 	return inHazardZone(pos, currentHazards)
 }
 
@@ -1324,6 +1352,23 @@ func trySmartPickup(ts tickState, strategy string) *actionResult {
 	if cd != nil && cdD <= 7+pickupReachBonus {
 		if ts.Cooldown > 0 || ts.DodgeCool > 0 || ts.GrappleCooldown > 0 || ts.StunTicks > 0 || ts.FastZone || ts.DoubleBounty {
 			a := moveTo(pos, cd.Position)
+			return &a
+		}
+	}
+
+	// Hazard key: strongest when hazards are relevant to the current route or objective.
+	hk, hkD := nearestPickupOfType(pos, ts.Pickups, "hazard_key")
+	if hk != nil && hkD <= 8+pickupReachBonus && !ts.HasHazardKey {
+		if pad, padD := nearestCapturePad(pos, ts.CapturePads); pad != nil && padD <= 9 && (pad.Contested || pad.ContenderCount > 0 || !pad.Ready) {
+			a := moveTo(pos, hk.Position)
+			return &a
+		}
+		if visibleEnemies > 0 && (rangedThreat || ts.IsBountyTarget || hpRatio < 0.7) {
+			a := moveTo(pos, hk.Position)
+			return &a
+		}
+		if !ts.InZone || inHazardZone(ts.ZoneTargetCenter, ts.HazardZones) {
+			a := moveTo(pos, hk.Position)
 			return &a
 		}
 	}
@@ -1791,6 +1836,7 @@ func tryPlaceMineAdvanced(ts tickState, strategy, weapon string, near *entity, n
 func PickAction(strategy string, msg map[string]interface{}, weapon string, attackRange int, botID string) actionResult {
 	ts := parseTick(msg)
 	currentHazards = ts.HazardZones
+	currentHazardImmunity = ts.HasHazardKey
 	pos := ts.Position
 	hpRatio := ts.HP / ts.MaxHP
 	wrange := float64(attackRange)
@@ -1811,7 +1857,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	}
 
 	// === HAZARD ZONE: Get out immediately (highest priority after stun) ===
-	if inHazardZone(pos, ts.HazardZones) {
+	if !ts.HasHazardKey && inHazardZone(pos, ts.HazardZones) {
 		// Move away from nearest hazard center
 		if len(ts.HazardZones) > 0 {
 			nearest := ts.HazardZones[0]
@@ -1992,7 +2038,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	}
 
 	// === OBJECTIVE PLAY: contest or claim the capture pad when the fight allows it ===
-	if pad := tryCapturePadObjective(ts, strategy, near, nearD); pad != nil {
+	if pad := tryCapturePadObjective(ts, strategy, near, nearD, botID); pad != nil {
 		return *pad
 	}
 
