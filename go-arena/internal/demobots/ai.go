@@ -4,6 +4,8 @@ import (
 	"math"
 	"math/rand"
 	"sync"
+
+	"arena-server/internal/config"
 )
 
 // === Types ===
@@ -83,6 +85,8 @@ type entity struct {
 	BraceReady bool
 	BowChargeLevel float64
 	ChargedShotReady bool
+	RearExposed bool
+	NearImpactSurface bool
 }
 
 type hint struct {
@@ -687,6 +691,12 @@ func parseTick(msg map[string]interface{}) tickState {
 			if v, ok := e["charged_shot_ready"].(bool); ok {
 				ent.ChargedShotReady = v
 			}
+			if v, ok := e["rear_exposed"].(bool); ok {
+				ent.RearExposed = v
+			}
+			if v, ok := e["near_impact_surface"].(bool); ok {
+				ent.NearImpactSurface = v
+			}
 			switch ent.Type {
 			case "bot":
 				if ent.IsAlive {
@@ -859,7 +869,7 @@ func bestBackstabTarget(pos [2]float64, enemies []entity, wrange float64) *entit
 			continue
 		}
 		score := 100 - e.HP - d*4
-		if isRearArc(pos, *e) {
+		if e.RearExposed || isRearArc(pos, *e) {
 			score += 65
 		}
 		if e.Stunned || e.DisruptedTicks > 0 {
@@ -933,7 +943,7 @@ func bestGrappleSlamTarget(pos [2]float64, enemies []entity, wrange float64) *en
 		if d < 3 || d > wrange {
 			continue
 		}
-		if !nearImpactSurface(e.Position) {
+		if !(e.NearImpactSurface || nearImpactSurface(e.Position)) {
 			continue
 		}
 		score := 100 - e.HP - d*4
@@ -962,6 +972,31 @@ func shouldUseChargedBow(ts tickState, target *entity, dist, wrange float64) boo
 		return true
 	}
 	return ts.BowChargeTicks >= 5
+}
+
+func shouldHoldBowCharge(ts tickState, target *entity, dist, wrange float64) bool {
+	if target == nil || !target.HasLOS {
+		return false
+	}
+	if ts.ChargedShotReady {
+		return false
+	}
+	if ts.BowChargeTicks >= config.C.BowChargeReadyTicks {
+		return false
+	}
+	if dist <= 2 {
+		return false
+	}
+	if enemiesWithinRange(ts.Position, ts.Enemies, 2) >= 2 {
+		return false
+	}
+	if target.Stunned {
+		return true
+	}
+	if target.Weapon == "bow" || target.Weapon == "staff" {
+		return true
+	}
+	return dist >= math.Max(4, wrange-2)
 }
 
 func visibleEnemiesInRange(pos [2]float64, enemies []entity, wrange float64) []entity {
@@ -1845,6 +1880,19 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	if weapon == "grapple" && canAtk {
 		if target := bestGrappleSlamTarget(pos, ts.Enemies, wrange); target != nil {
 			return finalizeWeaponAction(ts, weapon, wrange, atk(target, weapon))
+		}
+	}
+
+	if weapon == "bow" && canAtk {
+		target := bestTarget(pos, ts.Enemies, wrange)
+		if target != nil {
+			dist := chebyshev(pos, target.Position)
+			if shouldHoldBowCharge(ts, target, dist, wrange) {
+				if near != nil && nearD <= 2 && canDodge {
+					return dodge(gridDirAway(ts.Position, near.Position))
+				}
+				return moveDir(perpDir(gridDir(ts.Position, target.Position)))
+			}
 		}
 	}
 
