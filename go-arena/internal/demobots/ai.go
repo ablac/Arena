@@ -43,6 +43,10 @@ type tickState struct {
 	GrappleCharges    int
 	GrappleCooldown   float64
 	IsBountyTarget    bool
+	RoundModifier     string
+	FastZone          bool
+	PickupSurge       bool
+	DoubleBounty      bool
 	Enemies          []entity
 	Pickups          []entity
 	Teleporters      []entity
@@ -461,6 +465,12 @@ func parseTick(msg map[string]interface{}) tickState {
 	}
 	if v, ok := msg["round_tick"].(float64); ok {
 		ts.RoundTick = int(v)
+	}
+	if v, ok := msg["round_modifier"].(string); ok {
+		ts.RoundModifier = v
+		ts.FastZone = v == "fast_zone"
+		ts.PickupSurge = v == "pickup_surge"
+		ts.DoubleBounty = v == "double_bounty"
 	}
 	if ys, ok := msg["your_state"].(map[string]interface{}); ok {
 		ts.Position = parsePos(ys["position"])
@@ -1090,6 +1100,9 @@ func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD f
 	if pressure >= 2 && hpRatio < 0.6 && !objectiveBias {
 		return nil
 	}
+	if ts.FastZone && (ts.ZoneDist < 4 || padD > 6) {
+		return nil
+	}
 	if near != nil && nearD <= 2 && ts.WeaponReady {
 		return nil
 	}
@@ -1254,6 +1267,10 @@ func trySmartPickup(ts tickState, strategy string) *actionResult {
 	hpRatio := ts.HP / ts.MaxHP
 	visibleEnemies := countVisibleEnemies(ts.Enemies)
 	rangedThreat := hasVisibleRangedThreat(ts.Enemies)
+	pickupReachBonus := 0.0
+	if ts.PickupSurge {
+		pickupReachBonus = 2
+	}
 
 	if any, anyD := nearestPickup(pos, ts.Pickups); any != nil && anyD <= 1 && any.ID != "" {
 		a := useItem(any.ID)
@@ -1262,15 +1279,15 @@ func trySmartPickup(ts tickState, strategy string) *actionResult {
 
 	// Gravity well: grab only if we do not already have a charge.
 	gw, gwD := nearestPickupOfType(pos, ts.Pickups, "gravity_well")
-	if gw != nil && gwD <= 8 && ts.GravityWellCharge <= 0 {
+	if gw != nil && gwD <= 8+pickupReachBonus && ts.GravityWellCharge <= 0 {
 		a := moveTo(pos, gw.Position)
 		return &a
 	}
 
 	// Cooldown shard: prioritize when a major combat tool is currently unavailable.
 	cd, cdD := nearestPickupOfType(pos, ts.Pickups, "cooldown_shard")
-	if cd != nil && cdD <= 7 {
-		if ts.Cooldown > 0 || ts.DodgeCool > 0 || ts.GrappleCooldown > 0 || ts.StunTicks > 0 {
+	if cd != nil && cdD <= 7+pickupReachBonus {
+		if ts.Cooldown > 0 || ts.DodgeCool > 0 || ts.GrappleCooldown > 0 || ts.StunTicks > 0 || ts.FastZone || ts.DoubleBounty {
 			a := moveTo(pos, cd.Position)
 			return &a
 		}
@@ -1278,40 +1295,40 @@ func trySmartPickup(ts tickState, strategy string) *actionResult {
 
 	// Damage boost: grab if there is a realistic fight to use it in.
 	dmg, dmgD := nearestPickupOfType(pos, ts.Pickups, "damage_boost")
-	if dmg != nil && dmgD <= 6 && (visibleEnemies > 0 || strategy == "aggressive" || strategy == "assassin") {
+	if dmg != nil && dmgD <= 6+pickupReachBonus && (visibleEnemies > 0 || strategy == "aggressive" || strategy == "assassin" || ts.DoubleBounty) {
 		a := moveTo(pos, dmg.Position)
 		return &a
 	}
 
 	// Bounty token: worth contesting when we can realistically convert a fight soon.
 	bt, btD := nearestPickupOfType(pos, ts.Pickups, "bounty_token")
-	if bt != nil && btD <= 7 && (visibleEnemies > 0 || ts.IsBountyTarget || strategy == "aggressive" || strategy == "assassin") {
+	if bt != nil && btD <= 7+pickupReachBonus && (visibleEnemies > 0 || ts.IsBountyTarget || strategy == "aggressive" || strategy == "assassin" || ts.DoubleBounty) {
 		a := moveTo(pos, bt.Position)
 		return &a
 	}
 
 	// Speed boost: useful for mobility styles and zone recovery.
 	spd, spdD := nearestPickupOfType(pos, ts.Pickups, "speed_boost")
-	if spd != nil && spdD <= 6 && (strategy == "assassin" || strategy == "kite" || !ts.InZone) {
+	if spd != nil && spdD <= 6+pickupReachBonus && (strategy == "assassin" || strategy == "kite" || !ts.InZone || ts.FastZone) {
 		a := moveTo(pos, spd.Position)
 		return &a
 	}
 
 	// Shield bubble: grab aggressively when ranged LOS is on us.
 	sb, sbD := nearestPickupOfType(pos, ts.Pickups, "shield_bubble")
-	if sb != nil && sbD <= 5 && (hpRatio < 0.9 || rangedThreat) {
+	if sb != nil && sbD <= 5+pickupReachBonus && (hpRatio < 0.9 || rangedThreat || ts.IsBountyTarget) {
 		a := moveTo(pos, sb.Position)
 		return &a
 	}
 
 	// Health pack: be more willing to stabilize before losing initiative.
 	hp, hpD := nearestHealthPickup(pos, ts.Pickups)
-	if hp != nil && hpD <= 6 && hpRatio < 0.8 {
+	if hp != nil && hpD <= 6+pickupReachBonus && hpRatio < 0.8 {
 		a := moveTo(pos, hp.Position)
 		return &a
 	}
 
-	if any, anyD := nearestPickup(pos, ts.Pickups); any != nil && visibleEnemies == 0 && anyD <= 6 {
+	if any, anyD := nearestPickup(pos, ts.Pickups); any != nil && visibleEnemies == 0 && anyD <= 6+pickupReachBonus {
 		a := moveTo(pos, any.Position)
 		return &a
 	}
@@ -1782,6 +1799,22 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	isAggStrat := strategy == "aggressive" || strategy == "berserker" || strategy == "assassin"
 	canShv := ts.ShoveCool <= 0
 
+	if ts.DoubleBounty {
+		for i := range ts.Enemies {
+			target := &ts.Enemies[i]
+			if target.Type != "bounty_target" || !target.IsAlive {
+				continue
+			}
+			d := chebyshev(pos, target.Position)
+			if canAtk && d <= wrange {
+				return finalizeWeaponAction(ts, weapon, wrange, atk(target, weapon))
+			}
+			if d <= wrange+4 {
+				return moveTo(pos, target.Position)
+			}
+		}
+	}
+
 	if weapon == "shield" {
 		if canAtk {
 			if target := bestShieldBashTarget(pos, ts.Enemies, wrange); target != nil {
@@ -1895,6 +1928,10 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 			return finalizeWeaponAction(ts, weapon, wrange, atk(near, weapon))
 		}
 		return moveTo(pos, ts.ZoneCenter)
+	}
+
+	if ts.FastZone && ts.ZoneDist <= 3 && near == nil {
+		return moveTo(pos, ts.ZoneTargetCenter)
 	}
 
 	// === ZONE EDGE TACTICS: Shove enemies out of zone ===

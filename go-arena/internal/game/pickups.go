@@ -11,9 +11,15 @@ import (
 // MaybeSpawnPickup spawns a random pickup inside the safe zone at regular
 // intervals, up to the configured maximum number of active pickups.
 func MaybeSpawnPickup(pickups *[]Pickup, arena *ArenaMap, tickCount int) {
+	MaybeSpawnPickupAtInterval(pickups, arena, tickCount, config.C.PickupSpawnIntervalTicks)
+}
+
+// MaybeSpawnPickupAtInterval spawns a random pickup using the provided spawn
+// cadence instead of the global default.
+func MaybeSpawnPickupAtInterval(pickups *[]Pickup, arena *ArenaMap, tickCount int, intervalTicks int) {
 	c := &config.C
 
-	if c.PickupSpawnIntervalTicks <= 0 || tickCount%c.PickupSpawnIntervalTicks != 0 {
+	if intervalTicks <= 0 || tickCount%intervalTicks != 0 {
 		return
 	}
 	if len(*pickups) >= c.PickupMaxActive {

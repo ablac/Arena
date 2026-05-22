@@ -311,11 +311,35 @@ const (
 	PhaseIntermission
 )
 
+// RoundModifier is an occasional special ruleset applied to a round.
+type RoundModifier string
+
+const (
+	RoundModifierNone         RoundModifier = ""
+	RoundModifierFastZone     RoundModifier = "fast_zone"
+	RoundModifierPickupSurge  RoundModifier = "pickup_surge"
+	RoundModifierDoubleBounty RoundModifier = "double_bounty"
+)
+
+func (m RoundModifier) Label() string {
+	switch m {
+	case RoundModifierFastZone:
+		return "Fast Zone"
+	case RoundModifierPickupSurge:
+		return "Pickup Surge"
+	case RoundModifierDoubleBounty:
+		return "Double Bounty"
+	default:
+		return "Normal"
+	}
+}
+
 // RoundState tracks current round info.
 type RoundState struct {
 	RoundNumber       int
 	StartTick         int
 	Phase             RoundPhase
+	Modifier          RoundModifier
 	TimeRemaining     float64
 	IntermissionTicks int
 	LobbyCountdownTicks int
@@ -387,6 +411,7 @@ type SpectatorState struct {
 	VoidTiles    [][2]int                 `json:"void_tiles,omitempty"`
 	SuddenDeath  bool                     `json:"sudden_death"`
 	BountyTarget string                   `json:"bounty_target,omitempty"`
+	RoundModifier string                  `json:"round_modifier,omitempty"`
 	Events       []ArenaEvent             `json:"events,omitempty"`
 }
 

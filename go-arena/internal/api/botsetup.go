@@ -120,11 +120,11 @@ func BotSetup() http.HandlerFunc {
 					},
 					"round_start": map[string]interface{}{
 						"description": "Sent when a new round begins",
-						"fields":      "round_number, position, bots_in_round, all_positions, safe_zone",
+						"fields":      "round_number, round_modifier, round_modifier_label, position, bots_in_round, all_positions, safe_zone",
 					},
 					"tick": map[string]interface{}{
 						"description": fmt.Sprintf("Sent every tick (%d times per second) with full game state visible to your bot", c.TickRate),
-						"fields":      "tick, your_state{bot_id,position,hp,max_hp,speed,weapon,cooldown_remaining,weapon_ready,is_alive,kill_streak,round_kills,dodge_cooldown,invuln_ticks,stun_ticks,shield_absorb,effects,last_action_result,hits_received,kill_feed,in_safe_zone,distance_to_zone_edge,zone_radius,zone_center,grapple_charges,grapple_cooldown,bounty_token_bonus}, nearby_entities[{type,id,name,position,hp,max_hp,weapon,is_alive,has_los,attack_range,can_attack,threat_score} | {type,pickup_id,pickup_type,position} | {type:'teleport_pad'|'hazard_zone'|'burn_field'|'capture_pad',position,...}], safe_zone{center,radius,target_center,target_radius}, fog_radius, hints, nearby_mines",
+						"fields":      "tick, round_tick, round_modifier, your_state{bot_id,position,hp,max_hp,speed,weapon,cooldown_remaining,weapon_ready,is_alive,kill_streak,round_kills,dodge_cooldown,invuln_ticks,stun_ticks,shield_absorb,effects,last_action_result,hits_received,kill_feed,in_safe_zone,distance_to_zone_edge,zone_radius,zone_center,grapple_charges,grapple_cooldown,bounty_token_bonus}, nearby_entities[{type,id,name,position,hp,max_hp,weapon,is_alive,has_los,attack_range,can_attack,threat_score} | {type,pickup_id,pickup_type,position} | {type:'teleport_pad'|'hazard_zone'|'burn_field'|'capture_pad',position,...}], safe_zone{center,radius,target_center,target_radius}, fog_radius, hints, nearby_mines",
 					},
 					"death": map[string]interface{}{
 						"description": "Sent when your bot dies",
@@ -235,6 +235,7 @@ func BotSetup() http.HandlerFunc {
 					"collect_radius_tiles": c.PickupCollectRadius,
 					"spawn_interval_ticks": c.PickupSpawnIntervalTicks,
 					"max_active":           c.PickupMaxActive,
+					"pickup_surge_note":    fmt.Sprintf("During Pickup Surge rounds, spawn cadence accelerates to %.0f%% of normal", c.RoundModifierPickupSurgeIntervalMult*100),
 				},
 				"rounds": map[string]interface{}{
 					"duration_secs":    c.RoundDuration,
@@ -259,6 +260,7 @@ func BotSetup() http.HandlerFunc {
 					"environmental_hazards": "6 pulsing damage zones placed around the arena. They cycle 3 seconds on / 2 seconds off. Avoid the glow!",
 					"sudden_death": "Activates when the safe zone reaches minimum radius. Random tiles become void (instant death). Keep moving!",
 					"bounty_system": "Consecutive round winners build a public bounty board. The live bounty target is exposed in ticks, and the full board is available via GET /api/v1/bounties.",
+					"special_round_modifiers": "Occasional rounds roll a modifier and expose it as round_modifier in round_start/tick. fast_zone accelerates the safe zone, pickup_surge spawns pickups faster, and double_bounty doubles bounty-target claim rewards.",
 					"landmines": "Use the place_mine action to plant a landmine at your current position. Max 3 per bot. Mines arm after 1 second and punish choke points, teleporter lanes, and retreat paths.",
 					"gravity_well": "Pick up a gravity_well pickup to gain 1 charge. Use the use_gravity_well action to deploy it at a target position. Pulls nearby enemies toward its center for 3 seconds.",
 					"grappling_hook": "Grapple is a universal ability ALL bots get (not just a weapon). Every bot starts with 2 grapple charges per round. Use the 'grapple' action with a target bot_id to yank an enemy within 12 tiles, or use target_position to anchor-pull yourself to a valid landing. Cooldown 4s, 15 damage on enemy pulls, 3-tick stun. The grapple weapon still exists as a separate loadout.",

@@ -240,7 +240,7 @@ func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCoun
 
 // BuildSpectatorState builds the full arena snapshot for spectator clients.
 // Spectators still receive float positions for smooth rendering.
-func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []Pickup, killFeed *KillFeed, tickCount int, roundStartTick int, waitingBots map[string]*BotState) SpectatorState {
+func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []Pickup, killFeed *KillFeed, tickCount int, roundStartTick int, waitingBots map[string]*BotState, roundModifier RoundModifier) SpectatorState {
 	botViews := make([]map[string]interface{}, 0, len(bots))
 	for _, bot := range bots {
 		// Spectators get float positions for smooth canvas rendering.
@@ -363,6 +363,7 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 		Type:        "arena_state",
 		Tick:        tickCount,
 		RoundTick:   tickCount - roundStartTick,
+		RoundModifier: string(roundModifier),
 		Bots:        botViews,
 		SafeZone:    safeZone,
 		Pickups:     pickupViews,

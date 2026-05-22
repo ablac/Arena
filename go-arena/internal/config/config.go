@@ -232,6 +232,13 @@ type Config struct {
 	BountyBoardStepPoints    int     `envconfig:"ARENA_BOUNTY_BOARD_STEP_POINTS" default:"4"`
 	BountyBoardMaxPoints     int     `envconfig:"ARENA_BOUNTY_BOARD_MAX_POINTS" default:"18"`
 
+	// Occasional special round modifiers
+	RoundModifierChance                 float64 `envconfig:"ARENA_ROUND_MODIFIER_CHANCE" default:"0.30"`
+	RoundModifierFastZoneDelayMult      float64 `envconfig:"ARENA_ROUND_MOD_FAST_ZONE_DELAY_MULT" default:"0.55"`
+	RoundModifierFastZoneIntervalMult   float64 `envconfig:"ARENA_ROUND_MOD_FAST_ZONE_INTERVAL_MULT" default:"0.65"`
+	RoundModifierPickupSurgeIntervalMult float64 `envconfig:"ARENA_ROUND_MOD_PICKUP_SURGE_INTERVAL_MULT" default:"0.50"`
+	RoundModifierDoubleBountyMult       float64 `envconfig:"ARENA_ROUND_MOD_DOUBLE_BOUNTY_MULT" default:"2.0"`
+
 	// Landmines
 	MineMaxPerBot     int     `envconfig:"ARENA_MINE_MAX_PER_BOT" default:"3"`
 	MineDamage        float64 `envconfig:"ARENA_MINE_DAMAGE" default:"40"`

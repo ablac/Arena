@@ -143,6 +143,8 @@ func SendRoundStart(bot *BotState, round RoundState, bots map[string]*BotState, 
 	msg := map[string]interface{}{
 		"type":           "round_start",
 		"round_number":   round.RoundNumber,
+		"round_modifier": string(round.Modifier),
+		"round_modifier_label": round.Modifier.Label(),
 		"position":       [2]int{gridPos[0], gridPos[1]},
 		"bots_in_round":  len(bots),
 		"all_positions":  allPositions,

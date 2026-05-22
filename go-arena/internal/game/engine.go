@@ -232,6 +232,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 		remainingTicks = 0
 	}
 	e.Round.TimeRemaining = float64(remainingTicks) / float64(c.TickRate)
+	zoneDelayTicks, zoneIntervalTicks, zoneShrinkPercent, roundTotalTicks := effectiveZoneProfile(e.Round.Modifier)
 
 	// Apply fallback AI actions for bots without pending actions.
 	e.applyFallbacks()
@@ -296,7 +297,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	ProcessBurnFields(&e.BurnFields, e.Bots, e.TickCount)
 
 	// Zone shrink.
-	e.Arena.UpdateZone(e.TickCount, e.Round.StartTick)
+	e.Arena.UpdateZoneProfile(e.TickCount, e.Round.StartTick, zoneDelayTicks, zoneIntervalTicks, zoneShrinkPercent, roundTotalTicks)
 
 	// Zone damage.
 	e.applyZoneDamage()
@@ -399,7 +400,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	e.Bounty.Update(e.Bots)
 
 	// Pickups (include gravity_well type).
-	MaybeSpawnPickup(&e.Pickups, e.Arena, e.TickCount)
+	MaybeSpawnPickupAtInterval(&e.Pickups, e.Arena, e.TickCount, effectivePickupSpawnInterval(e.Round.Modifier))
 	CheckAutoCollect(e.Bots, &e.Pickups)
 
 	// Tick effects and timers for all bots.
@@ -505,8 +506,10 @@ func (e *GameEngine) startRound() {
 	// Set round state.
 	e.Round.Phase = PhaseActive
 	e.Round.StartTick = e.TickCount
+	e.Round.Modifier = rollRoundModifier()
 	e.Round.TimeRemaining = c.RoundDuration
 	e.Round.RoundID = uuid.New().String()
+	e.Bounty.RewardMultiplier = effectiveBountyRewardMultiplier(e.Round.Modifier)
 
 	if db.Pool != nil {
 		round := &db.Round{
@@ -548,12 +551,14 @@ func (e *GameEngine) startRound() {
 	slog.Info("round started",
 		"round", e.Round.RoundNumber,
 		"bots", len(e.Bots),
+		"modifier", e.Round.Modifier,
 		"obstacles", len(obstacles),
 	)
 
 	if GameEventHook != nil {
 		GameEventHook("round_start", map[string]interface{}{
 			"round_number": e.Round.RoundNumber,
+			"modifier":     string(e.Round.Modifier),
 			"bots":         len(e.Bots),
 			"obstacles":    len(obstacles),
 		})
@@ -580,8 +585,10 @@ func (e *GameEngine) endRound() {
 	e.Bounty.OnRoundEnd(e.Bots, winnerID)
 	e.persistBountyBoardAsync()
 	e.Round.Phase = PhaseIntermission
+	e.Round.Modifier = RoundModifierNone
 	e.Round.IntermissionTicks = int(config.C.IntermissionTime * float64(config.C.TickRate))
 	e.Round.TimeRemaining = config.C.IntermissionTime
+	e.Bounty.RewardMultiplier = 1
 	AutoBalanceWeapons(context.Background(), e.Bots, winnerID)
 
 	if db.Pool != nil {
@@ -793,7 +800,7 @@ func (e *GameEngine) GetState() SpectatorState {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	return BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.WaitingBots)
+	return BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.WaitingBots, e.Round.Modifier)
 }
 
 // ArenaSnapshot holds read-only arena state for the REST API.
@@ -1524,6 +1531,7 @@ func (e *GameEngine) sendBotTickUpdates() {
 			"bounty_target": e.Bounty.TargetID,
 			"nearby_mines":  nearbyMineCount,
 			"round_tick":    e.TickCount - e.Round.StartTick,
+			"round_modifier": string(e.Round.Modifier),
 		}
 
 		SendTickUpdate(bot, yourState, nearby, e.TickCount, e.Arena, hints, fogRadius, tickExtra)
@@ -1593,7 +1601,7 @@ func (e *GameEngine) sendLobbyStateUpdate() {
 
 // sendSpectatorUpdate broadcasts the full arena state to all spectators.
 func (e *GameEngine) sendSpectatorUpdate() {
-	state := BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.WaitingBots)
+	state := BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.WaitingBots, e.Round.Modifier)
 
 	// Add new gameplay entities to spectator state.
 	for _, pad := range e.TeleportPads {
