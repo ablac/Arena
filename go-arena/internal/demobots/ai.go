@@ -1325,7 +1325,7 @@ func finalizeWeaponAction(ts tickState, weapon string, wrange float64, action ac
 
 // trySmartPickup checks for high-value pickups and grabs them if worthwhile.
 // Returns an action if a pickup should be grabbed, nil otherwise.
-func trySmartPickup(ts tickState, strategy string) *actionResult {
+func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult {
 	pos := ts.Position
 	hpRatio := ts.HP / ts.MaxHP
 	visibleEnemies := countVisibleEnemies(ts.Enemies)
@@ -1369,6 +1369,22 @@ func trySmartPickup(ts tickState, strategy string) *actionResult {
 		}
 		if !ts.InZone || inHazardZone(ts.ZoneTargetCenter, ts.HazardZones) {
 			a := moveTo(pos, hk.Position)
+			return &a
+		}
+	}
+
+	// Overdrive core: strongest swing pickup when a fight is imminent.
+	od, odD := nearestPickupOfType(pos, ts.Pickups, "overdrive_core")
+	if od != nil && odD <= 8+pickupReachBonus && (visibleEnemies > 0 || ts.IsBountyTarget || ts.DoubleBounty || strategy == "aggressive" || strategy == "berserker" || strategy == "assassin") {
+		a := moveTo(pos, od.Position)
+		return &a
+	}
+
+	// Grapple charge: lightweight utility, especially valuable to grapple users and ranged kiting bots.
+	gc, gcD := nearestPickupOfType(pos, ts.Pickups, "grapple_charge")
+	if gc != nil && gcD <= 7+pickupReachBonus {
+		if ts.GrappleCharges <= 0 || ts.GrappleCooldown > 0 || weapon == "grapple" || strategy == "kite" || strategy == "assassin" {
+			a := moveTo(pos, gc.Position)
 			return &a
 		}
 	}
@@ -2043,7 +2059,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	}
 
 	// === SMART PICKUPS ===
-	if pickup := trySmartPickup(ts, strategy); pickup != nil {
+	if pickup := trySmartPickup(ts, strategy, weapon); pickup != nil {
 		return *pickup
 	}
 
@@ -2052,7 +2068,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 
 	// === NO ENEMIES VISIBLE: Hunt them down ===
 	if visibleEnemies == 0 {
-		if pickup := trySmartPickup(ts, strategy); pickup != nil {
+		if pickup := trySmartPickup(ts, strategy, weapon); pickup != nil {
 			return *pickup
 		}
 		for _, h := range ts.Hints {

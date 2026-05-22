@@ -139,6 +139,8 @@ export class Minimap {
       cooldown_shard: '#22d3ee',
       bounty_token: '#f59e0b',
       hazard_key: '#b6ff4d',
+      overdrive_core: '#ff4fd8',
+      grapple_charge: '#55dfff',
     };
     return colors[type] || '#ffffff';
   }

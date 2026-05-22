@@ -29,6 +29,8 @@ const COLORS = {
   cooldown_shard: [0.2, 0.95, 1.0],
   bounty_token:   [1.0, 0.72, 0.18],
   hazard_key:     [0.72, 1.0, 0.32],
+  overdrive_core: [1.0, 0.25, 0.85],
+  grapple_charge: [0.30, 0.90, 1.0],
 };
 
 /** @type {Map<string, {shapeMat: BABYLON.StandardMaterial}>} */
@@ -126,6 +128,20 @@ export class PickupRenderer {
       stem.material = mats.shapeMat;
       stem.position.y = -1.5;
       mesh._sibling = stem;
+    } else if (type === 'overdrive_core') {
+      mesh = B.MeshBuilder.CreateOctahedron(`pum-${id}`, { size: 4.8 }, this.scene);
+      mesh.parent = root;
+      mesh.material = mats.shapeMat;
+      const ring = B.MeshBuilder.CreateTorus(`pur-${id}`, { diameter: 10, thickness: 0.65, tessellation: 36 }, this.scene);
+      ring.parent = root;
+      ring.material = mats.shapeMat;
+      ring.rotation.x = Math.PI / 2;
+      mesh._sibling = ring;
+    } else if (type === 'grapple_charge') {
+      mesh = B.MeshBuilder.CreateTorusKnot(`pum-${id}`, { radius: 2.7, tube: 0.7, radialSegments: 56, tubularSegments: 12, p: 2, q: 5 }, this.scene);
+      mesh.parent = root;
+      mesh.material = mats.shapeMat;
+      mesh.rotation.x = Math.PI / 2;
     } else {
       // damage_boost and fallback — diamond
       mesh = B.MeshBuilder.CreatePolyhedron(`pum-${id}`, { type: 1, size: 4 }, this.scene);

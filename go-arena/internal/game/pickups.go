@@ -39,6 +39,8 @@ func MaybeSpawnPickupAtInterval(pickups *[]Pickup, arena *ArenaMap, tickCount in
 		PickupCooldownShard,
 		PickupBountyToken,
 		PickupHazardKey,
+		PickupOverdriveCore,
+		PickupGrappleCharge,
 	}
 	pType := types[rand.Intn(len(types))]
 
@@ -74,6 +76,10 @@ func MaybeSpawnPickupAtInterval(pickups *[]Pickup, arena *ArenaMap, tickCount in
 		value = float64(c.PickupBountyTokenPoints)
 	case PickupHazardKey:
 		value = 1
+	case PickupOverdriveCore:
+		value = c.PickupOverdriveDamageMult
+	case PickupGrappleCharge:
+		value = float64(c.PickupGrappleChargeAmount)
 	}
 
 	*pickups = append(*pickups, Pickup{
@@ -174,6 +180,16 @@ func applyPickupEffect(bot *BotState, pickup Pickup) {
 			RemainingTicks: c.PickupHazardKeyTicks,
 			Value:          1,
 		})
+	case PickupOverdriveCore:
+		bot.ActiveEffects = removeEffectByName(bot.ActiveEffects, "overdrive_core")
+		bot.ActiveEffects = append(bot.ActiveEffects, Effect{
+			Name:           "overdrive_core",
+			RemainingTicks: c.PickupOverdriveTicks,
+			Value:          pickup.Value,
+		})
+	case PickupGrappleCharge:
+		bot.GrappleCharges += int(pickup.Value)
+		bot.GrappleCooldown = 0
 	}
 
 	bot.RoundPickups++
