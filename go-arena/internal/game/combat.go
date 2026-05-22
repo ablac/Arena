@@ -188,13 +188,7 @@ func effectiveAttackMultiplier(bot *BotState) float64 {
 	if bot == nil {
 		return 1
 	}
-	mult := bot.AttackMultiplier
-	for _, eff := range bot.ActiveEffects {
-		if eff.Name == "damage_boost" {
-			mult *= eff.Value
-		}
-	}
-	return mult
+	return bot.AttackMultiplier * effectDamageMultiplier(bot)
 }
 
 // processProjectileAttack handles bow attacks by spawning a projectile.

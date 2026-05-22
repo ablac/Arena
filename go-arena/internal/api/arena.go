@@ -52,8 +52,8 @@ func GetArenaMap(engine *game.GameEngine) http.HandlerFunc {
 
 		snap := engine.GetArenaSnapshot()
 
-		// Get teleport pads and hazard zones from engine
-		pads, zones := engine.GetMapFeatures()
+		// Get teleport pads, hazard zones, and capture pads from engine.
+		pads, zones, capturePads := engine.GetMapFeatures()
 
 		// Also provide detailed metadata for bots that want extra info
 		padViews := make([]map[string]interface{}, 0, len(pads))
@@ -66,18 +66,25 @@ func GetArenaMap(engine *game.GameEngine) http.HandlerFunc {
 			zoneViews = append(zoneViews, game.BuildHazardZoneView(zone, true))
 		}
 
+		captureViews := make([]map[string]interface{}, 0, len(capturePads))
+		for _, pad := range capturePads {
+			captureViews = append(captureViews, game.BuildCapturePadView(pad, snap.Tick, true))
+		}
+
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"status":        "ok",
 			"width":         terrain.Width,
 			"height":        terrain.Height,
 			"cell_size":     terrain.CellSize,
-			"terrain":       terrain.ToCompactJSONWithFeatures(pads, zones),
+			"terrain":       terrain.ToCompactJSONWithFeatures(pads, zones, capturePads),
 			"teleport_pads": padViews,
+			"capture_pads":  captureViews,
 			"hazard_zones":  zoneViews,
 			"legend": map[string]string{
 				".": "ground (passable)",
 				"#": "wall (blocked)",
 				"T": "teleport pad",
+				"C": "capture pad objective",
 				"H": "hazard zone (damage when active)",
 			},
 		})

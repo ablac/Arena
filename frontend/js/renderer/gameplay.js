@@ -15,6 +15,8 @@ export class GameplayRenderer {
     /** @type {Map<string, object>} */
     this.teleportPads = new Map();
     /** @type {Map<string, object>} */
+    this.capturePads = new Map();
+    /** @type {Map<string, object>} */
     this.hazardZones = new Map();
     /** @type {Map<string, BABYLON.Mesh>} */
     this.landmines = new Map();
@@ -54,6 +56,7 @@ export class GameplayRenderer {
   update(state) {
     this._tick++;
     this._updateTeleportPads(state.teleport_pads || []);
+    this._updateCapturePads(state.capture_pads || []);
     this._updateHazardZones(state.hazard_zones || []);
     this._updateBurnFields(state.burn_fields || []);
     this._updateStaffImpacts(state.staff_impacts || []);
@@ -206,6 +209,108 @@ export class GameplayRenderer {
         entry.halo.dispose();
         entry.haloMat.dispose();
         this.teleportPads.delete(id);
+      }
+    }
+  }
+
+  _updateCapturePads(pads) {
+    const B = window.BABYLON;
+    const seen = new Set();
+
+    for (const pad of pads) {
+      seen.add(pad.id);
+      let entry = this.capturePads.get(pad.id);
+      if (!entry || entry.base.isDisposed()) {
+        const base = B.MeshBuilder.CreateCylinder(`cp-${pad.id}`, {
+          height: 1.3, diameter: 26, tessellation: 36,
+        }, this.scene);
+        base.position.y = 0.7;
+        base.isPickable = false;
+        const baseMat = new B.StandardMaterial(`cp-mat-${pad.id}`, this.scene);
+        baseMat.diffuseColor = B.Color3.Black();
+        baseMat.emissiveColor = new B.Color3(0.24, 0.34, 0.42);
+        baseMat.disableLighting = true;
+        baseMat.alpha = 0.42;
+        base.material = baseMat;
+
+        const ring = B.MeshBuilder.CreateTorus(`cp-ring-${pad.id}`, {
+          diameter: 24,
+          thickness: 1.3,
+          tessellation: 36,
+        }, this.scene);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = 1.8;
+        ring.isPickable = false;
+        const ringMat = new B.StandardMaterial(`cp-ring-mat-${pad.id}`, this.scene);
+        ringMat.diffuseColor = B.Color3.Black();
+        ringMat.emissiveColor = new B.Color3(0.45, 0.65, 0.78);
+        ringMat.disableLighting = true;
+        ring.material = ringMat;
+
+        const inner = B.MeshBuilder.CreateDisc(`cp-inner-${pad.id}`, {
+          radius: 8.2,
+          tessellation: 30,
+        }, this.scene);
+        inner.rotation.x = Math.PI / 2;
+        inner.position.y = 0.22;
+        inner.isPickable = false;
+        const innerMat = new B.StandardMaterial(`cp-inner-mat-${pad.id}`, this.scene);
+        innerMat.diffuseColor = B.Color3.Black();
+        innerMat.emissiveColor = new B.Color3(0.18, 0.26, 0.34);
+        innerMat.disableLighting = true;
+        innerMat.alpha = 0.16;
+        inner.material = innerMat;
+
+        entry = { base, baseMat, ring, ringMat, inner, innerMat };
+        this.capturePads.set(pad.id, entry);
+      }
+
+      const pos = pad.position;
+      const x = pos[0], z = pos[1];
+      const ready = pad.is_ready !== false;
+      const progress = Math.max(0, Math.min(1, (pad.progress_ticks || 0) / Math.max(1, pad.capture_ticks || 1)));
+      const ownerColor = parseColor(pad.color || '#7ef7ff');
+      const neutral = new B.Color3(0.44, 0.62, 0.74);
+      const locked = new B.Color3(0.36, 0.36, 0.4);
+      const targetColor = ready ? neutral : locked;
+
+      entry.base.position.set(x, 0.7, z);
+      entry.ring.position.set(x, 1.8 + Math.sin(this._tick * 0.035) * 0.18, z);
+      entry.inner.position.set(x, 0.22, z);
+      entry.ring.rotation.y += ready ? 0.016 : 0.004;
+
+      let captureColor = targetColor;
+      if (pad.owner_id || pad.capturing_bot_id) {
+        captureColor = new B.Color3(
+          Math.min(1, ownerColor.r + 0.08),
+          Math.min(1, ownerColor.g + 0.08),
+          Math.min(1, ownerColor.b + 0.08)
+        );
+      }
+
+      const emissive = B.Color3.Lerp(targetColor, captureColor, Math.max(progress, pad.owner_id ? 1 : 0));
+      entry.baseMat.emissiveColor.copyFrom(emissive.scale(0.72));
+      entry.ringMat.emissiveColor.copyFrom(emissive);
+      entry.innerMat.emissiveColor.copyFrom(emissive.scale(0.55));
+
+      entry.baseMat.alpha = ready ? 0.34 + 0.08 * progress : 0.22;
+      entry.ringMat.alpha = ready ? 0.48 + 0.22 * progress : 0.2;
+      entry.innerMat.alpha = ready ? 0.10 + 0.18 * progress : 0.06;
+
+      const pulse = 1 + Math.sin(this._tick * 0.05) * (0.02 + progress * 0.03);
+      entry.ring.scaling.set(pulse, pulse, 1);
+      entry.inner.scaling.set(0.84 + progress * 0.38, 0.84 + progress * 0.38, 1);
+    }
+
+    for (const [id, entry] of this.capturePads) {
+      if (!seen.has(id)) {
+        entry.base.dispose();
+        entry.baseMat.dispose();
+        entry.ring.dispose();
+        entry.ringMat.dispose();
+        entry.inner.dispose();
+        entry.innerMat.dispose();
+        this.capturePads.delete(id);
       }
     }
   }

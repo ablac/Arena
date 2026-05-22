@@ -46,6 +46,7 @@ type tickState struct {
 	Enemies          []entity
 	Pickups          []entity
 	Teleporters      []entity
+	CapturePads      []entity
 	HazardZones      []entity
 	Hints            []hint
 }
@@ -68,6 +69,9 @@ type entity struct {
 	Color    string
 	Ready    bool
 	Cooldown int
+	OwnerID  string
+	ProgressTicks int
+	CaptureTicks int
 	HasLOS   bool
 	CanAttack bool
 	Active   bool
@@ -641,6 +645,15 @@ func parseTick(msg map[string]interface{}) tickState {
 			if v, ok := e["cooldown_remaining_ticks"].(float64); ok {
 				ent.Cooldown = int(v)
 			}
+			if v, ok := e["owner_id"].(string); ok {
+				ent.OwnerID = v
+			}
+			if v, ok := e["progress_ticks"].(float64); ok {
+				ent.ProgressTicks = int(v)
+			}
+			if v, ok := e["capture_ticks"].(float64); ok {
+				ent.CaptureTicks = int(v)
+			}
 			if v, ok := e["has_los"].(bool); ok {
 				ent.HasLOS = v
 			} else {
@@ -675,6 +688,8 @@ func parseTick(msg map[string]interface{}) tickState {
 				ts.Pickups = append(ts.Pickups, ent)
 			case "teleport_pad", "teleporter":
 				ts.Teleporters = append(ts.Teleporters, ent)
+			case "capture_pad":
+				ts.CapturePads = append(ts.CapturePads, ent)
 			case "hazard_zone":
 				ts.HazardZones = append(ts.HazardZones, ent)
 			case "burn_field":
@@ -1039,6 +1054,53 @@ func nearestPickupOfType(pos [2]float64, pickups []entity, subType string) (*ent
 		}
 	}
 	return best, bestD
+}
+
+func nearestCapturePad(pos [2]float64, pads []entity) (*entity, float64) {
+	var best *entity
+	bestD := math.Inf(1)
+	for i := range pads {
+		d := chebyshev(pos, pads[i].Position)
+		if d < bestD {
+			bestD = d
+			best = &pads[i]
+		}
+	}
+	return best, bestD
+}
+
+func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD float64) *actionResult {
+	if len(ts.CapturePads) == 0 || !ts.InZone {
+		return nil
+	}
+
+	pad, padD := nearestCapturePad(ts.Position, ts.CapturePads)
+	if pad == nil || !pad.Ready {
+		return nil
+	}
+
+	hpRatio := ts.HP / math.Max(ts.MaxHP, 1)
+	pressure := enemiesWithinRange(ts.Position, ts.Enemies, 4)
+	objectiveBias := strategy == "territorial" || strategy == "defensive" || strategy == "aggressive"
+	enemyOwned := pad.OwnerID != "" && pad.OwnerID != "self"
+
+	if hpRatio < 0.35 && pressure > 0 {
+		return nil
+	}
+	if pressure >= 2 && hpRatio < 0.6 && !objectiveBias {
+		return nil
+	}
+	if near != nil && nearD <= 2 && ts.WeaponReady {
+		return nil
+	}
+	if padD <= 1 {
+		return nil
+	}
+	if padD <= 9 && (pressure == 0 || objectiveBias || enemyOwned || ts.IsBountyTarget) {
+		a := moveTo(ts.Position, pad.Position)
+		return &a
+	}
+	return nil
 }
 
 // === Hazard Zone Helpers ===
@@ -1842,6 +1904,11 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		if enemyZoneDist > -2 { // enemy near zone edge
 			return shove(near.ID)
 		}
+	}
+
+	// === OBJECTIVE PLAY: contest or claim the capture pad when the fight allows it ===
+	if pad := tryCapturePadObjective(ts, strategy, near, nearD); pad != nil {
+		return *pad
 	}
 
 	// === SMART PICKUPS ===

@@ -20,6 +20,22 @@ func effectCooldownMultiplier(bot *BotState) float64 {
 	return mult
 }
 
+func effectDamageMultiplier(bot *BotState) float64 {
+	if bot == nil {
+		return 1
+	}
+	mult := 1.0
+	for _, eff := range bot.ActiveEffects {
+		switch eff.Name {
+		case "damage_boost", "capture_pad_power":
+			if eff.Value > 0 {
+				mult *= eff.Value
+			}
+		}
+	}
+	return mult
+}
+
 func scaledCooldownTicks(base int, mult float64) int {
 	value := int(float64(base) * mult)
 	if value < 1 {

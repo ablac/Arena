@@ -1508,11 +1508,12 @@ async function renderSkills() {
   await ensureToolkitData().catch(() => {});
   const actionOrder = ['dodge','shove','place_mine','grapple','use_item','use_gravity_well','move_to'];
   const actions = actionOrder.map(name => TOOLKIT_STATE.actionsByName[name]).filter(Boolean);
-  const featureLabels = {
-    teleport_pads:'Teleport Pads',
-    environmental_hazards:'Damage Zones',
-    sudden_death:'Sudden Death',
-    bounty_system:'Bounty Board',
+    const featureLabels = {
+      teleport_pads:'Teleport Pads',
+      capture_pad:'Capture Pad',
+      environmental_hazards:'Damage Zones',
+      sudden_death:'Sudden Death',
+      bounty_system:'Bounty Board',
     landmines:'Landmines',
     gravity_well:'Gravity Well'
   };

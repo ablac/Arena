@@ -41,6 +41,7 @@ type GameEngine struct {
 
 	// New gameplay systems
 	TeleportPads []TeleportPad
+	CapturePads  []CapturePad
 	HazardZones  []HazardZone
 	SuddenDeath  *SuddenDeathSystem
 	Bounty       *BountySystem
@@ -303,6 +304,9 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Teleport pads.
 	e.appendArenaEvents(ProcessTeleports(e.Bots, e.TeleportPads, e.Grid, e.TickCount)...)
 
+	// Capture pad objective.
+	e.appendArenaEvents(UpdateCapturePads(e.CapturePads, e.Bots, e.TickCount)...)
+
 	// Environmental hazards.
 	UpdateHazards(e.HazardZones, e.Bots, e.TickCount)
 
@@ -495,6 +499,7 @@ func (e *GameEngine) startRound() {
 	e.SuddenDeath.Clear()
 	e.Bounty.ResetRoundState(e.Bots)
 	e.TeleportPads = SpawnTeleportPads(e.Arena, config.C.TeleportPadPairs)
+	e.CapturePads = SpawnCapturePads(e.Arena, config.C.CapturePadCount)
 	e.HazardZones = SpawnHazardZones(e.Arena, config.C.HazardZoneCount)
 
 	// Set round state.
@@ -832,16 +837,19 @@ func (e *GameEngine) GetArenaSnapshot() ArenaSnapshot {
 	return snap
 }
 
-// GetMapFeatures returns a copy of the current teleport pads and hazard zones
+// GetMapFeatures returns copies of the current teleport pads, hazard zones,
+// and capture pads under the read lock. Used by the /api/v1/arena/map endpoint.
 // under the read lock. Used by the /api/v1/arena/map endpoint.
-func (e *GameEngine) GetMapFeatures() ([]TeleportPad, []HazardZone) {
+func (e *GameEngine) GetMapFeatures() ([]TeleportPad, []HazardZone, []CapturePad) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	pads := make([]TeleportPad, len(e.TeleportPads))
 	copy(pads, e.TeleportPads)
 	zones := make([]HazardZone, len(e.HazardZones))
 	copy(zones, e.HazardZones)
-	return pads, zones
+	capturePads := make([]CapturePad, len(e.CapturePads))
+	copy(capturePads, e.CapturePads)
+	return pads, zones, capturePads
 }
 
 // ConnectedBotCount returns the number of connected bots (active + waiting)
@@ -1417,6 +1425,19 @@ func (e *GameEngine) sendBotTickUpdates() {
 			}
 		}
 
+		// Include capture pads within fog radius.
+		for _, pad := range e.CapturePads {
+			if ActiveTerrain != nil {
+				botCell := ActiveTerrain.WorldToGrid(bot.Position)
+				padCell := ActiveTerrain.WorldToGrid(pad.Position)
+				if GridDistance(botCell, padCell) <= fogRadius+3 {
+					nearby = append(nearby, BuildCapturePadView(pad, e.TickCount, true))
+				}
+			} else if bot.Position.DistanceTo(pad.Position) <= viewRadius {
+				nearby = append(nearby, BuildCapturePadView(pad, e.TickCount, true))
+			}
+		}
+
 		// Include hazard zones within fog radius.
 		for _, zone := range e.HazardZones {
 			if ActiveTerrain != nil {
@@ -1577,6 +1598,9 @@ func (e *GameEngine) sendSpectatorUpdate() {
 	// Add new gameplay entities to spectator state.
 	for _, pad := range e.TeleportPads {
 		state.TeleportPads = append(state.TeleportPads, BuildTeleportPadView(pad, e.TickCount, false))
+	}
+	for _, pad := range e.CapturePads {
+		state.CapturePads = append(state.CapturePads, BuildCapturePadView(pad, e.TickCount, false))
 	}
 	for _, zone := range e.HazardZones {
 		state.HazardZones = append(state.HazardZones, BuildHazardZoneView(zone, false))

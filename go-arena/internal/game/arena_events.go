@@ -183,3 +183,15 @@ func buildGrappleSlamEvent(attacker, target *BotState, tick int) ArenaEvent {
 		Intensity:    1.25,
 	}
 }
+
+func buildCapturePadCaptureEvent(pad CapturePad, bot *BotState, tick int) ArenaEvent {
+	return ArenaEvent{
+		ID:       fmt.Sprintf("capture-pad:%s:%s:%d", pad.ID, bot.BotID, tick),
+		Type:     "capture_pad_captured",
+		Tick:     tick,
+		Position: pad.Position,
+		OwnerID:  bot.BotID,
+		Color:    bot.AvatarColor,
+		Radius:   float64(pad.Radius),
+	}
+}
