@@ -50,6 +50,8 @@ type tickState struct {
 	FastZone          bool
 	PickupSurge       bool
 	DoubleBounty      bool
+	TeleportSurge     bool
+	HazardStorm       bool
 	Enemies          []entity
 	Pickups          []entity
 	Teleporters      []entity
@@ -480,6 +482,8 @@ func parseTick(msg map[string]interface{}) tickState {
 		ts.FastZone = v == "fast_zone"
 		ts.PickupSurge = v == "pickup_surge"
 		ts.DoubleBounty = v == "double_bounty"
+		ts.TeleportSurge = v == "teleport_surge"
+		ts.HazardStorm = v == "hazard_storm"
 	}
 	if ys, ok := msg["your_state"].(map[string]interface{}); ok {
 		ts.Position = parsePos(ys["position"])
@@ -1350,7 +1354,7 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	// Cooldown shard: prioritize when a major combat tool is currently unavailable.
 	cd, cdD := nearestPickupOfType(pos, ts.Pickups, "cooldown_shard")
 	if cd != nil && cdD <= 7+pickupReachBonus {
-		if ts.Cooldown > 0 || ts.DodgeCool > 0 || ts.GrappleCooldown > 0 || ts.StunTicks > 0 || ts.FastZone || ts.DoubleBounty {
+		if ts.Cooldown > 0 || ts.DodgeCool > 0 || ts.GrappleCooldown > 0 || ts.StunTicks > 0 || ts.FastZone || ts.DoubleBounty || ts.TeleportSurge {
 			a := moveTo(pos, cd.Position)
 			return &a
 		}
@@ -1359,11 +1363,11 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	// Hazard key: strongest when hazards are relevant to the current route or objective.
 	hk, hkD := nearestPickupOfType(pos, ts.Pickups, "hazard_key")
 	if hk != nil && hkD <= 8+pickupReachBonus && !ts.HasHazardKey {
-		if pad, padD := nearestCapturePad(pos, ts.CapturePads); pad != nil && padD <= 9 && (pad.Contested || pad.ContenderCount > 0 || !pad.Ready) {
+		if pad, padD := nearestCapturePad(pos, ts.CapturePads); pad != nil && padD <= 9 && (pad.Contested || pad.ContenderCount > 0 || !pad.Ready || ts.HazardStorm) {
 			a := moveTo(pos, hk.Position)
 			return &a
 		}
-		if visibleEnemies > 0 && (rangedThreat || ts.IsBountyTarget || hpRatio < 0.7) {
+		if visibleEnemies > 0 && (rangedThreat || ts.IsBountyTarget || hpRatio < 0.7 || ts.HazardStorm) {
 			a := moveTo(pos, hk.Position)
 			return &a
 		}
@@ -1637,7 +1641,7 @@ func tryTeleporterEngage(ts tickState, target *entity, wrange float64) *actionRe
 	if target == nil || len(ts.Teleporters) < 2 {
 		return nil
 	}
-	if ts.RoundTick < 45 {
+	if ts.RoundTick < 45 && !ts.TeleportSurge {
 		return nil
 	}
 
@@ -1658,7 +1662,11 @@ func tryTeleporterEngage(ts tickState, target *entity, wrange float64) *actionRe
 	for i := range ts.Teleporters {
 		tp := &ts.Teleporters[i]
 		dToPad := chebyshev(ts.Position, tp.Position)
-		if dToPad > 3 || tp.LinkedID == "" || !isReadyTeleporter(*tp) {
+		maxPadDist := 3.0
+		if ts.TeleportSurge {
+			maxPadDist = 5
+		}
+		if dToPad > maxPadDist || tp.LinkedID == "" || !isReadyTeleporter(*tp) {
 			continue
 		}
 		linked, ok := pads[tp.LinkedID]
@@ -1683,13 +1691,20 @@ func tryTeleporterEngage(ts tickState, target *entity, wrange float64) *actionRe
 		if pressure >= 2 {
 			score += 6
 		}
+		if ts.TeleportSurge {
+			score += 8
+		}
 		if score > bestScore {
 			bestScore = score
 			bestPad = tp
 		}
 	}
 
-	if bestPad == nil || bestScore < 20 {
+	minScore := 20.0
+	if ts.TeleportSurge {
+		minScore = 14
+	}
+	if bestPad == nil || bestScore < minScore {
 		return nil
 	}
 	a := moveTo(ts.Position, bestPad.Position)
@@ -1713,7 +1728,11 @@ func tryTeleporterEscape(ts tickState) *actionResult {
 		if !isReadyTeleporter(tp) {
 			continue
 		}
-		if chebyshev(ts.Position, tp.Position) <= 6 {
+		escapeReach := 6.0
+		if ts.TeleportSurge {
+			escapeReach = 8
+		}
+		if chebyshev(ts.Position, tp.Position) <= escapeReach {
 			a := moveTo(ts.Position, tp.Position)
 			return &a
 		}
@@ -1739,7 +1758,11 @@ func tryTeleporterPressureEscape(ts tickState, strategy string, near *entity, ne
 		if !isReadyTeleporter(tp) {
 			continue
 		}
-		if chebyshev(ts.Position, tp.Position) <= 8 {
+		escapeReach := 8.0
+		if ts.TeleportSurge {
+			escapeReach = 10
+		}
+		if chebyshev(ts.Position, tp.Position) <= escapeReach {
 			a := moveTo(ts.Position, tp.Position)
 			return &a
 		}
@@ -1762,7 +1785,11 @@ func tryTeleporterZoneShortcut(ts tickState) *actionResult {
 	for i := range ts.Teleporters {
 		tp := &ts.Teleporters[i]
 		dToPad := chebyshev(ts.Position, tp.Position)
-		if dToPad > 8 || tp.LinkedID == "" || !isReadyTeleporter(*tp) {
+		maxPadDist := 8.0
+		if ts.TeleportSurge {
+			maxPadDist = 10
+		}
+		if dToPad > maxPadDist || tp.LinkedID == "" || !isReadyTeleporter(*tp) {
 			continue
 		}
 		linked, ok := pads[tp.LinkedID]
@@ -1776,6 +1803,9 @@ func tryTeleporterZoneShortcut(ts tickState) *actionResult {
 		score := (currentDist-exitDist)*5 - dToPad
 		if chebyshev(linked.Position, ts.ZoneCenter) <= ts.ZoneRadius {
 			score += 10
+		}
+		if ts.TeleportSurge {
+			score += 6
 		}
 		if score > bestScore {
 			bestScore = score
@@ -1819,7 +1849,7 @@ func tryPlaceMineAdvanced(ts tickState, strategy, weapon string, near *entity, n
 		}
 	}
 
-	if earlyRound && pressure == 0 && !onStrategicTile {
+	if earlyRound && pressure == 0 && !onStrategicTile && !ts.TeleportSurge {
 		return nil
 	}
 	if earlyRound && near == nil && distToCenter > 4 {
@@ -2040,7 +2070,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		return moveTo(pos, ts.ZoneCenter)
 	}
 
-	if ts.FastZone && ts.ZoneDist <= 3 && near == nil {
+	if (ts.FastZone || ts.HazardStorm) && ts.ZoneDist <= 3 && near == nil {
 		return moveTo(pos, ts.ZoneTargetCenter)
 	}
 

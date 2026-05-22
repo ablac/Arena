@@ -72,14 +72,13 @@ func findValidPadPosition(arena *ArenaMap) Vec2 {
 // ProcessTeleports checks if any alive bot is standing on a teleport pad and
 // teleports them to the linked pad. Respects per-bot cooldowns and returns
 // transient spectator events for visible teleport bursts.
-func ProcessTeleports(bots map[string]*BotState, pads []TeleportPad, grid *SpatialGrid, tickCount int) []ArenaEvent {
+func ProcessTeleports(bots map[string]*BotState, pads []TeleportPad, grid *SpatialGrid, tickCount int, mod RoundModifier) []ArenaEvent {
 	if len(pads) == 0 {
 		return nil
 	}
 
 	collectRadius := config.C.TeleportCollectRadius
-	cooldownTicks := config.C.TeleportCooldownTicks
-	lockTicks := config.C.TeleportPadLockTicks
+	cooldownTicks, lockTicks := effectiveTeleportProfile(mod)
 	var events []ArenaEvent
 
 	// Build a lookup of pad ID -> pad.

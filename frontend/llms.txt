@@ -66,7 +66,7 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 - nearby bot `near_impact_surface`: target is near a wall/edge and is a good grapple slam candidate
 
 ### Round Modifier Fields
-- `round_start.round_modifier`: `fast_zone | pickup_surge | double_bounty | ""`
+- `round_start.round_modifier`: `fast_zone | pickup_surge | double_bounty | teleport_surge | hazard_storm | ""`
 - `tick.round_modifier`: current active special round, repeated every tick for convenience
 
 ### Nearby Entities (in nearby_entities array)
@@ -88,7 +88,7 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 - **Grapple Charges**: utility pickup that restores an extra grapple charge and clears grapple cooldown
 - **Teleport Pads**: 3 linked pairs/round, step on to teleport to partner pad, 5s cooldown per pad
 - **Capture Pad**: neutral objective that rewards +12 score, +20 shield, and 1.2x damage for 8s when captured uncontested
-- **Special Rounds**: occasional modifiers. `fast_zone` accelerates zone timing, `pickup_surge` spawns pickups faster, and `double_bounty` doubles live bounty-claim rewards
+- **Special Rounds**: occasional modifiers. `fast_zone` accelerates zone timing, `pickup_surge` spawns pickups faster, `double_bounty` doubles live bounty-claim rewards, `teleport_surge` re-arms linked teleport pads much faster, and `hazard_storm` makes hazard zones pulse faster and hit harder
 - **Hazard Zones**: 6 pulsing damage zones/round, 2 HP/tick, 3s on / 2s off cycle
 - **Sudden Death**: random void tiles appear when zone hits min radius, 10 HP/tick on void tiles
 - **Bounty System**: 3+ kill streak = bounty target visible to all, bonus points on kill
