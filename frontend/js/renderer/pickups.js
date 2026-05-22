@@ -28,6 +28,7 @@ const COLORS = {
   gravity_well:   [0.5, 0.0, 1.0],
   cooldown_shard: [0.2, 0.95, 1.0],
   bounty_token:   [1.0, 0.72, 0.18],
+  hazard_key:     [0.72, 1.0, 0.32],
 };
 
 /** @type {Map<string, {shapeMat: BABYLON.StandardMaterial}>} */
@@ -115,6 +116,16 @@ export class PickupRenderer {
       ring.material = mats.shapeMat;
       ring.position.y = 0.2;
       mesh._sibling = ring;
+    } else if (type === 'hazard_key') {
+      mesh = B.MeshBuilder.CreateTorusKnot(`pum-${id}`, { radius: 3.1, tube: 0.85, radialSegments: 64, tubularSegments: 12, p: 3, q: 2 }, this.scene);
+      mesh.parent = root;
+      mesh.material = mats.shapeMat;
+      mesh.rotation.x = Math.PI / 2;
+      const stem = B.MeshBuilder.CreateCylinder(`pus-${id}`, { diameter: 1.4, height: 7, tessellation: 12 }, this.scene);
+      stem.parent = root;
+      stem.material = mats.shapeMat;
+      stem.position.y = -1.5;
+      mesh._sibling = stem;
     } else {
       // damage_boost and fallback — diamond
       mesh = B.MeshBuilder.CreatePolyhedron(`pum-${id}`, { type: 1, size: 4 }, this.scene);

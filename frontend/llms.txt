@@ -56,7 +56,7 @@ Client: {"type": "action", "tick": 1, "action": "move", "direction": [1, 0]}
 | grapple  | target: "bot_id"                              | Grapple pull (universal, 2 charges/round) |
 
 ### Tick State (your_state fields)
-position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive, kill_streak, round_kills, dodge_cooldown, invuln_ticks, stun_ticks, facing, recently_disrupted_ticks, brace_ready, bow_charge_ticks, bow_charge_level, charged_shot_ready, shield_absorb, effects, hits_received, kill_feed, in_safe_zone, distance_to_zone_edge, zone_radius, zone_center, zone_target_center, zone_target_radius, grapple_charges, grapple_cooldown, bounty_token_bonus
+position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive, kill_streak, round_kills, dodge_cooldown, invuln_ticks, stun_ticks, facing, recently_disrupted_ticks, brace_ready, bow_charge_ticks, bow_charge_level, charged_shot_ready, hazard_key_active, hazard_key_ticks, shield_absorb, effects, hits_received, kill_feed, in_safe_zone, distance_to_zone_edge, zone_radius, zone_center, zone_target_center, zone_target_radius, grapple_charges, grapple_cooldown, bounty_token_bonus
 
 ### Tactical Combat Reads
 - `your_state.brace_ready`: spear has stood still long enough to empower the next hit
@@ -71,8 +71,8 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 
 ### Nearby Entities (in nearby_entities array)
 - Bots: type, id, bot_id, name, position, hp, max_hp, weapon, is_alive, is_dodging, is_stunned, has_los, attack_range, can_attack, threat_score, recently_disrupted_ticks, brace_ready, bow_charge_level, charged_shot_ready, rear_exposed, near_impact_surface
-- Pickups: type, id, pickup_id, pickup_type (health_pack|speed_boost|damage_boost|shield_bubble|gravity_well|cooldown_shard|bounty_token), position
-- Objectives: `capture_pad` with position, radius, progress_ticks, capture_ticks, owner_id, is_ready, cooldown_remaining_ticks
+- Pickups: type, id, pickup_id, pickup_type (health_pack|speed_boost|damage_boost|shield_bubble|gravity_well|cooldown_shard|bounty_token|hazard_key), position
+- Objectives: `capture_pad` with position, radius, progress_ticks, capture_ticks, owner_id, is_contested, contender_count, is_ready, cooldown_remaining_ticks
 - Obstacles: type, x, y, width, height
 
 ### Hints (entities outside view radius)
@@ -83,6 +83,7 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 - **Gravity Wells**: collect `gravity_well` pickup, deploy with `use_gravity_well` at target position, pulls enemies within 4 tiles for 3s
 - **Cooldown Shards**: reduce weapon, dodge, shove, and grapple cooldowns to 60% for 10 seconds
 - **Bounty Tokens**: next kill within the token window grants bonus score; read `bounty_token_bonus` in `your_state`
+- **Hazard Keys**: temporary immunity to hazard zones and staff burn fields, plus faster capture-pad progress
 - **Teleport Pads**: 3 linked pairs/round, step on to teleport to partner pad, 5s cooldown per pad
 - **Capture Pad**: neutral objective that rewards +12 score, +20 shield, and 1.2x damage for 8s when captured uncontested
 - **Special Rounds**: occasional modifiers. `fast_zone` accelerates zone timing, `pickup_surge` spawns pickups faster, and `double_bounty` doubles live bounty-claim rewards

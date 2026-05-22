@@ -124,7 +124,7 @@ func BotSetup() http.HandlerFunc {
 					},
 					"tick": map[string]interface{}{
 						"description": fmt.Sprintf("Sent every tick (%d times per second) with full game state visible to your bot", c.TickRate),
-						"fields":      "tick, round_tick, round_modifier, your_state{bot_id,position,hp,max_hp,speed,weapon,cooldown_remaining,weapon_ready,is_alive,kill_streak,round_kills,dodge_cooldown,invuln_ticks,stun_ticks,shield_absorb,recently_disrupted_ticks,brace_ready,bow_charge_ticks,bow_charge_level,charged_shot_ready,effects,last_action_result,hits_received,kill_feed,in_safe_zone,distance_to_zone_edge,zone_radius,zone_center,grapple_charges,grapple_cooldown,bounty_token_bonus}, nearby_entities[{type,id,name,position,hp,max_hp,weapon,is_alive,has_los,attack_range,can_attack,threat_score,recently_disrupted_ticks,brace_ready,bow_charge_level,charged_shot_ready,rear_exposed,near_impact_surface} | {type,pickup_id,pickup_type,position} | {type:'teleport_pad'|'hazard_zone'|'burn_field'|'capture_pad',position,...}], safe_zone{center,radius,target_center,target_radius}, fog_radius, hints, nearby_mines",
+						"fields":      "tick, round_tick, round_modifier, your_state{bot_id,position,hp,max_hp,speed,weapon,cooldown_remaining,weapon_ready,is_alive,kill_streak,round_kills,dodge_cooldown,invuln_ticks,stun_ticks,shield_absorb,recently_disrupted_ticks,brace_ready,bow_charge_ticks,bow_charge_level,charged_shot_ready,hazard_key_active,hazard_key_ticks,effects,last_action_result,hits_received,kill_feed,in_safe_zone,distance_to_zone_edge,zone_radius,zone_center,grapple_charges,grapple_cooldown,bounty_token_bonus}, nearby_entities[{type,id,name,position,hp,max_hp,weapon,is_alive,has_los,attack_range,can_attack,threat_score,recently_disrupted_ticks,brace_ready,bow_charge_level,charged_shot_ready,rear_exposed,near_impact_surface} | {type,pickup_id,pickup_type,position} | {type:'teleport_pad'|'hazard_zone'|'burn_field'|'capture_pad',position,progress_ticks,capture_ticks,owner_id,is_contested,contender_count,...}], safe_zone{center,radius,target_center,target_radius}, fog_radius, hints, nearby_mines",
 					},
 					"death": map[string]interface{}{
 						"description": "Sent when your bot dies",
@@ -231,6 +231,7 @@ func BotSetup() http.HandlerFunc {
 						{"type": "gravity_well", "effect": "Grants 1 gravity well charge (deploy with use_gravity_well action)"},
 						{"type": "cooldown_shard", "effect": fmt.Sprintf("Reduces weapon, dodge, shove, and grapple cooldowns to %.0f%% for %d ticks", c.PickupCooldownShardMult*100, c.PickupCooldownShardTicks)},
 						{"type": "bounty_token", "effect": fmt.Sprintf("Stores +%d bonus score on your next kill for %d ticks", c.PickupBountyTokenPoints, c.PickupBountyTokenTicks)},
+						{"type": "hazard_key", "effect": fmt.Sprintf("Hazard immunity for %d ticks. Negates hazard zones and burn fields, and doubles capture-pad progress while active", c.PickupHazardKeyTicks)},
 					},
 					"collect_radius_tiles": c.PickupCollectRadius,
 					"spawn_interval_ticks": c.PickupSpawnIntervalTicks,
@@ -256,7 +257,7 @@ func BotSetup() http.HandlerFunc {
 				},
 				"new_features": map[string]interface{}{
 					"teleport_pads": "3 linked pairs spawn each round. Nearby pad entities expose is_ready and cooldown_remaining_ticks so bots can avoid locked pads.",
-					"capture_pad": fmt.Sprintf("A neutral objective pad spawns each round. Stand on it uncontested for %d ticks to capture it, gain +%d score, %.0f shield, and %.1fx damage for %d ticks. Capture pads expose progress_ticks, capture_ticks, owner_id, is_ready, and cooldown_remaining_ticks.", c.CapturePadCaptureTicks, c.CapturePadScoreBonus, c.CapturePadShieldBonus, c.CapturePadDamageBoostMult, c.CapturePadEffectTicks),
+					"capture_pad": fmt.Sprintf("A neutral objective pad spawns each round. Stand on it uncontested for %d ticks to capture it, gain +%d score, %.0f shield, and %.1fx damage for %d ticks. Capture pads expose progress_ticks, capture_ticks, owner_id, is_contested, contender_count, is_ready, and cooldown_remaining_ticks.", c.CapturePadCaptureTicks, c.CapturePadScoreBonus, c.CapturePadShieldBonus, c.CapturePadDamageBoostMult, c.CapturePadEffectTicks),
 					"combat_reads": "Bots now receive brace_ready, bow_charge_ticks, bow_charge_level, charged_shot_ready, recently_disrupted_ticks, rear_exposed, and near_impact_surface so they can reason about spear braces, charged bow shots, backstabs, shield bashes, and grapple slams.",
 					"environmental_hazards": "6 pulsing damage zones placed around the arena. They cycle 3 seconds on / 2 seconds off. Avoid the glow!",
 					"sudden_death": "Activates when the safe zone reaches minimum radius. Random tiles become void (instant death). Keep moving!",
