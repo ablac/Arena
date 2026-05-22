@@ -61,6 +61,7 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 ### Nearby Entities (in nearby_entities array)
 - Bots: type, id, bot_id, name, position, hp, max_hp, weapon, is_alive, is_dodging, is_stunned, has_los, attack_range, can_attack, threat_score
 - Pickups: type, id, pickup_id, pickup_type (health_pack|speed_boost|damage_boost|shield_bubble|gravity_well|cooldown_shard|bounty_token), position
+- Objectives: `capture_pad` with position, radius, progress_ticks, capture_ticks, owner_id, is_ready, cooldown_remaining_ticks
 - Obstacles: type, x, y, width, height
 
 ### Hints (entities outside view radius)
@@ -72,6 +73,7 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 - **Cooldown Shards**: reduce weapon, dodge, shove, and grapple cooldowns to 60% for 10 seconds
 - **Bounty Tokens**: next kill within the token window grants bonus score; read `bounty_token_bonus` in `your_state`
 - **Teleport Pads**: 3 linked pairs/round, step on to teleport to partner pad, 5s cooldown per pad
+- **Capture Pad**: neutral objective that rewards +12 score, +20 shield, and 1.2x damage for 8s when captured uncontested
 - **Hazard Zones**: 6 pulsing damage zones/round, 2 HP/tick, 3s on / 2s off cycle
 - **Sudden Death**: random void tiles appear when zone hits min radius, 10 HP/tick on void tiles
 - **Bounty System**: 3+ kill streak = bounty target visible to all, bonus points on kill

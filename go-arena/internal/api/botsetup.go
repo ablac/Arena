@@ -75,7 +75,7 @@ func BotSetup() http.HandlerFunc {
 					{"method": "POST", "path": "/api/v1/keys/generate", "description": "Generate a new API key and bot (rate-limited)"},
 					{"method": "GET", "path": "/api/v1/leaderboard", "description": "Get leaderboard (supports ?limit=N&offset=N)"},
 					{"method": "GET", "path": "/api/v1/arena/status", "description": "Current arena status: round number, bots alive, safe zone"},
-					{"method": "GET", "path": "/api/v1/arena/map", "description": "Current terrain grid (width, height, cell_size, compact terrain). The next round's map is pre-generated during intermission, so you can fetch and analyze it before the round starts."},
+					{"method": "GET", "path": "/api/v1/arena/map", "description": "Current terrain grid (width, height, cell_size, compact terrain) plus teleport pads, capture pads, and hazard zones. The next round's map is pre-generated during intermission, so you can fetch and analyze it before the round starts."},
 				{"method": "GET", "path": "/api/v1/bot-setup", "description": "This endpoint — full bot-building reference"},
 				},
 				"authenticated": []map[string]interface{}{
@@ -124,7 +124,7 @@ func BotSetup() http.HandlerFunc {
 					},
 					"tick": map[string]interface{}{
 						"description": fmt.Sprintf("Sent every tick (%d times per second) with full game state visible to your bot", c.TickRate),
-						"fields":      "tick, your_state{bot_id,position,hp,max_hp,speed,weapon,cooldown_remaining,weapon_ready,is_alive,kill_streak,round_kills,dodge_cooldown,invuln_ticks,stun_ticks,shield_absorb,effects,last_action_result,hits_received,kill_feed,in_safe_zone,distance_to_zone_edge,zone_radius,zone_center,grapple_charges,grapple_cooldown,bounty_token_bonus}, nearby_entities[{type,id,name,position,hp,max_hp,weapon,is_alive,has_los,attack_range,can_attack,threat_score} | {type,pickup_id,pickup_type,position}], safe_zone{center,radius,target_center,target_radius}, fog_radius, hints, nearby_mines",
+						"fields":      "tick, your_state{bot_id,position,hp,max_hp,speed,weapon,cooldown_remaining,weapon_ready,is_alive,kill_streak,round_kills,dodge_cooldown,invuln_ticks,stun_ticks,shield_absorb,effects,last_action_result,hits_received,kill_feed,in_safe_zone,distance_to_zone_edge,zone_radius,zone_center,grapple_charges,grapple_cooldown,bounty_token_bonus}, nearby_entities[{type,id,name,position,hp,max_hp,weapon,is_alive,has_los,attack_range,can_attack,threat_score} | {type,pickup_id,pickup_type,position} | {type:'teleport_pad'|'hazard_zone'|'burn_field'|'capture_pad',position,...}], safe_zone{center,radius,target_center,target_radius}, fog_radius, hints, nearby_mines",
 					},
 					"death": map[string]interface{}{
 						"description": "Sent when your bot dies",
@@ -255,6 +255,7 @@ func BotSetup() http.HandlerFunc {
 				},
 				"new_features": map[string]interface{}{
 					"teleport_pads": "3 linked pairs spawn each round. Nearby pad entities expose is_ready and cooldown_remaining_ticks so bots can avoid locked pads.",
+					"capture_pad": fmt.Sprintf("A neutral objective pad spawns each round. Stand on it uncontested for %d ticks to capture it, gain +%d score, %.0f shield, and %.1fx damage for %d ticks. Capture pads expose progress_ticks, capture_ticks, owner_id, is_ready, and cooldown_remaining_ticks.", c.CapturePadCaptureTicks, c.CapturePadScoreBonus, c.CapturePadShieldBonus, c.CapturePadDamageBoostMult, c.CapturePadEffectTicks),
 					"environmental_hazards": "6 pulsing damage zones placed around the arena. They cycle 3 seconds on / 2 seconds off. Avoid the glow!",
 					"sudden_death": "Activates when the safe zone reaches minimum radius. Random tiles become void (instant death). Keep moving!",
 					"bounty_system": "Consecutive round winners build a public bounty board. The live bounty target is exposed in ticks, and the full board is available via GET /api/v1/bounties.",

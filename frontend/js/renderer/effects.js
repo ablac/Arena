@@ -858,6 +858,75 @@ export class EffectRenderer {
     });
   }
 
+  spawnCapturePadPulse(x, z, radius = 36, hexColor = '#7ef7ff') {
+    const B = window.BABYLON;
+    const c = parseColor(hexColor);
+    const baseRadius = Math.max(18, radius);
+
+    const ring = B.MeshBuilder.CreateTorus(`cap-ring-${++_psCounter}`, {
+      diameter: baseRadius * 1.4,
+      thickness: Math.max(1.4, baseRadius * 0.06),
+      tessellation: 38,
+    }, this.scene);
+    ring.position.set(x, 1.6, z);
+    ring.rotation.x = Math.PI / 2;
+    const ringMat = new B.StandardMaterial(`cap-ring-mat-${_psCounter}`, this.scene);
+    ringMat.diffuseColor = B.Color3.Black();
+    ringMat.emissiveColor = new B.Color3(
+      Math.min(1, c.r + 0.25),
+      Math.min(1, c.g + 0.25),
+      Math.min(1, c.b + 0.15),
+    );
+    ringMat.disableLighting = true;
+    ring.material = ringMat;
+
+    const disc = B.MeshBuilder.CreateDisc(`cap-disc-${++_psCounter}`, {
+      radius: baseRadius * 0.55,
+      tessellation: 36,
+    }, this.scene);
+    disc.rotation.x = Math.PI / 2;
+    disc.position.set(x, 0.24, z);
+    const discMat = new B.StandardMaterial(`cap-disc-mat-${_psCounter}`, this.scene);
+    discMat.diffuseColor = B.Color3.Black();
+    discMat.emissiveColor = new B.Color3(c.r * 0.95, c.g * 0.95, c.b * 0.85);
+    discMat.disableLighting = true;
+    discMat.alpha = 0.26;
+    disc.material = discMat;
+
+    const ps = new B.ParticleSystem(`cap-ps-${++_psCounter}`, 26, this.scene);
+    ps.emitter = new B.Vector3(x, 2.2, z);
+    ps.createPointEmitter(new B.Vector3(-2.5, 1.0, -2.5), new B.Vector3(2.5, 5.5, 2.5));
+    ps.color1 = new B.Color4(Math.min(1, c.r + 0.18), Math.min(1, c.g + 0.18), Math.min(1, c.b + 0.18), 1);
+    ps.color2 = new B.Color4(1, 1, 1, 0.8);
+    ps.colorDead = new B.Color4(c.r * 0.25, c.g * 0.25, c.b * 0.25, 0);
+    ps.minSize = 1.4; ps.maxSize = 4.2;
+    ps.minLifeTime = 0.14; ps.maxLifeTime = 0.24;
+    ps.emitRate = 220;
+    ps.minEmitPower = 12; ps.maxEmitPower = 28;
+    ps.gravity = new B.Vector3(0, -12, 0);
+    ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
+    ps.targetStopDuration = 0.08;
+    ps.disposeOnStop = true;
+    ps.start();
+
+    const start = performance.now();
+    const obs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - start) / 320;
+      if (t >= 1) {
+        this.scene.onBeforeRenderObservable.remove(obs);
+        ring.dispose();
+        ringMat.dispose();
+        disc.dispose();
+        discMat.dispose();
+        return;
+      }
+      ring.scaling.set(1 + t * 1.7, 1 + t * 1.7, 1);
+      disc.scaling.set(1 + t * 0.8, 1 + t * 0.8, 1);
+      ringMat.alpha = 1 - t;
+      discMat.alpha = Math.max(0, 0.26 - t * 0.18);
+    });
+  }
+
   /**
    * Spawn matching bursts at teleport entry and exit.
    * @param {number} fromX

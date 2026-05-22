@@ -134,10 +134,11 @@ func (g *TerrainGrid) ToCompactJSON() []string {
 	return result
 }
 
-// ToCompactJSONWithFeatures returns the terrain with teleport pads and hazard
-// zones stamped directly onto the grid: 'T' for teleport pads, 'H' for hazard zones.
+// ToCompactJSONWithFeatures returns the terrain with active round features
+// stamped directly onto the grid: 'T' teleport pads, 'H' hazard zones, and
+// 'C' capture pads.
 // Overlays are drawn on top of ground cells only (walls are preserved).
-func (g *TerrainGrid) ToCompactJSONWithFeatures(pads []TeleportPad, zones []HazardZone) []string {
+func (g *TerrainGrid) ToCompactJSONWithFeatures(pads []TeleportPad, zones []HazardZone, capturePads []CapturePad) []string {
 	// Start with a mutable copy
 	grid := make([][]byte, g.Height)
 	for y := 0; y < g.Height; y++ {
@@ -169,6 +170,15 @@ func (g *TerrainGrid) ToCompactJSONWithFeatures(pads []TeleportPad, zones []Haza
 					grid[y][x] = 'H'
 				}
 			}
+		}
+	}
+
+	// Stamp capture pads (single cell at pad position).
+	for _, pad := range capturePads {
+		cell := g.WorldToGrid(pad.Position)
+		x, y := cell[0], cell[1]
+		if x >= 0 && x < g.Width && y >= 0 && y < g.Height && grid[y][x] == '.' {
+			grid[y][x] = 'C'
 		}
 	}
 

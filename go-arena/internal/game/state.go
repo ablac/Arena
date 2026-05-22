@@ -378,6 +378,7 @@ type SpectatorState struct {
 	Obstacles    []Obstacle               `json:"obstacles"`
 	WaitingBots  []map[string]interface{} `json:"waiting_bots,omitempty"`
 	TeleportPads []map[string]interface{} `json:"teleport_pads,omitempty"`
+	CapturePads  []map[string]interface{} `json:"capture_pads,omitempty"`
 	HazardZones  []map[string]interface{} `json:"hazard_zones,omitempty"`
 	BurnFields   []map[string]interface{} `json:"burn_fields,omitempty"`
 	Landmines    []map[string]interface{} `json:"landmines,omitempty"`

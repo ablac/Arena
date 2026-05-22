@@ -10,10 +10,10 @@ import { BotRenderer } from './bots.js?v=20260521l';
 import { EnvironmentRenderer } from './environment.js?v=20260521i';
 import { ObstacleRenderer } from './obstacles.js?v=20260521h';
 import { PickupRenderer } from './pickups.js?v=20260521m';
-import { EffectRenderer } from './effects.js?v=20260521l';
+import { EffectRenderer } from './effects.js?v=20260521n';
 import { TrailRenderer } from './trails.js';
 import { ProjectileRenderer } from './projectiles.js?v=20260521l';
-import { GameplayRenderer } from './gameplay.js?v=20260521l';
+import { GameplayRenderer } from './gameplay.js?v=20260521n';
 
 // Bot positions are smoothed via exponential lerp each frame,
 // so no tick-interval-based alpha is needed.
@@ -307,6 +307,12 @@ export class ArenaEngine {
           ev.position[0], ev.position[1],
           (ev.radius || 1) * 20,
           ev.color || '#8d4dff'
+        );
+      } else if (ev.type === 'capture_pad_captured' && ev.position) {
+        this.effectRenderer.spawnCapturePadPulse(
+          ev.position[0], ev.position[1],
+          (ev.radius || 2) * 20,
+          ev.color || '#7ef7ff'
         );
       }
     }

@@ -202,6 +202,16 @@ type Config struct {
 	TeleportPadLockTicks   int `envconfig:"ARENA_TELEPORT_PAD_LOCK_TICKS" default:"30"`
 	TeleportHazardGraceTicks int `envconfig:"ARENA_TELEPORT_HAZARD_GRACE_TICKS" default:"2"`
 
+	// Capture Pad objective
+	CapturePadCount            int     `envconfig:"ARENA_CAPTURE_PAD_COUNT" default:"1"`
+	CapturePadRadius           int     `envconfig:"ARENA_CAPTURE_PAD_RADIUS" default:"2"`
+	CapturePadCaptureTicks     int     `envconfig:"ARENA_CAPTURE_PAD_CAPTURE_TICKS" default:"20"`
+	CapturePadCooldownTicks    int     `envconfig:"ARENA_CAPTURE_PAD_COOLDOWN_TICKS" default:"120"`
+	CapturePadScoreBonus       int     `envconfig:"ARENA_CAPTURE_PAD_SCORE_BONUS" default:"12"`
+	CapturePadShieldBonus      float64 `envconfig:"ARENA_CAPTURE_PAD_SHIELD_BONUS" default:"20"`
+	CapturePadDamageBoostMult  float64 `envconfig:"ARENA_CAPTURE_PAD_DAMAGE_BOOST_MULT" default:"1.2"`
+	CapturePadEffectTicks      int     `envconfig:"ARENA_CAPTURE_PAD_EFFECT_TICKS" default:"80"`
+
 	// Environmental Hazards
 	HazardZoneCount        int     `envconfig:"ARENA_HAZARD_ZONE_COUNT" default:"6"`
 	HazardMinWidth         int     `envconfig:"ARENA_HAZARD_MIN_WIDTH" default:"2"`
