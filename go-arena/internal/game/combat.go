@@ -276,7 +276,7 @@ func processProjectileAttack(bot, target *BotState, action *Action, wc *WeaponCo
 		*arenaEvents = append(*arenaEvents, buildBowShotEvent(bot.BotID, bot.AvatarColor, bot.Position, aimPos, tickCount, chargeIntensity))
 	}
 
-	bot.CooldownRemaining = cooldown
+	bot.CooldownRemaining = cooldown * effectCooldownMultiplier(bot)
 	bot.BowChargeTicks = 0
 	bot.RoundShotsFired++
 	setFacingToward(bot, aimPos)
@@ -425,7 +425,7 @@ func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig,
 	}
 	*staffImpacts = append(*staffImpacts, impact)
 
-	bot.CooldownRemaining = wc.Cooldown
+	bot.CooldownRemaining = wc.Cooldown * effectCooldownMultiplier(bot)
 	bot.RoundShotsFired++
 	setFacingToward(bot, targetPos)
 
@@ -484,7 +484,7 @@ func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string
 	// Apply standard knockback (1 grid tile).
 	ApplyGridKnockback(target, bot.Position, 1, obstacles)
 
-	bot.CooldownRemaining = wc.Cooldown
+	bot.CooldownRemaining = wc.Cooldown * effectCooldownMultiplier(bot)
 	bot.RoundShotsFired++
 	if dealt > 0 {
 		bot.RoundShotsHit++
@@ -868,7 +868,7 @@ func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle) {
 		}
 		markDisrupted(target, config.C.ShieldDisruptWindowTicks)
 
-		bot.ShoveCooldown = config.C.ShoveCooldown
+		bot.ShoveCooldown = config.C.ShoveCooldown * effectCooldownMultiplier(bot)
 		setFacingToward(bot, target.Position)
 
 		bot.LastActionResult = &ActionResult{

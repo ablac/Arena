@@ -4,6 +4,30 @@ import (
 	"arena-server/internal/config"
 )
 
+func effectCooldownMultiplier(bot *BotState) float64 {
+	if bot == nil {
+		return 1
+	}
+	mult := 1.0
+	for _, eff := range bot.ActiveEffects {
+		if eff.Name == "cooldown_shard" && eff.Value > 0 {
+			mult *= eff.Value
+		}
+	}
+	if mult < 0.1 {
+		return 0.1
+	}
+	return mult
+}
+
+func scaledCooldownTicks(base int, mult float64) int {
+	value := int(float64(base) * mult)
+	if value < 1 {
+		return 1
+	}
+	return value
+}
+
 // ApplyDamage applies damage from attacker to target, respecting invulnerability,
 // shield passive, and shield absorb. Returns the actual damage dealt.
 func ApplyDamage(target, attacker *BotState, baseDamage float64, weapon string, tickCount int) float64 {

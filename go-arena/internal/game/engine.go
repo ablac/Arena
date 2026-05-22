@@ -1059,7 +1059,7 @@ func (e *GameEngine) processGrappleAbility(bot *BotState) {
 		bot.LastValidPosition = landing
 		e.Grid.Update(bot.BotID, landing)
 		bot.GrappleCharges--
-		bot.GrappleCooldown = config.C.GrappleAbilityCooldownSecs
+		bot.GrappleCooldown = config.C.GrappleAbilityCooldownSecs * effectCooldownMultiplier(bot)
 		e.appendArenaEvents(buildGrappleEvent(bot.BotID, "", from, normalizedTarget, landing, true, e.TickCount))
 		bot.LastActionResult = &ActionResult{
 			Action:  "grapple",
@@ -1121,7 +1121,7 @@ func (e *GameEngine) processGrappleAbility(bot *BotState) {
 	markDisrupted(target, config.C.ShieldDisruptWindowTicks)
 
 	bot.GrappleCharges--
-	bot.GrappleCooldown = config.C.GrappleAbilityCooldownSecs
+	bot.GrappleCooldown = config.C.GrappleAbilityCooldownSecs * effectCooldownMultiplier(bot)
 	e.appendArenaEvents(buildGrappleEvent(bot.BotID, target.BotID, from, target.Position, target.Position, false, e.TickCount))
 
 	bot.LastActionResult = &ActionResult{

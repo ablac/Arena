@@ -69,7 +69,7 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 ### Arena Features
 - **Landmines**: `place_mine` action, max 3/bot, arms after 1s, invisible to enemies, 1.5-tile blast radius, 40 damage
 - **Gravity Wells**: collect `gravity_well` pickup, deploy with `use_gravity_well` at target position, pulls enemies within 4 tiles for 3s
-- **Cooldown Shards**: instantly refund a large chunk of weapon cooldown plus dodge/shove/grapple cooldowns
+- **Cooldown Shards**: reduce weapon, dodge, shove, and grapple cooldowns to 60% for 10 seconds
 - **Bounty Tokens**: next kill within the token window grants bonus score; read `bounty_token_bonus` in `your_state`
 - **Teleport Pads**: 3 linked pairs/round, step on to teleport to partner pad, 5s cooldown per pad
 - **Hazard Zones**: 6 pulsing damage zones/round, 2 HP/tick, 3s on / 2s off cycle
