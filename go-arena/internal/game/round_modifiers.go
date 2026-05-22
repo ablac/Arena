@@ -17,6 +17,8 @@ func rollRoundModifier() RoundModifier {
 		RoundModifierFastZone,
 		RoundModifierPickupSurge,
 		RoundModifierDoubleBounty,
+		RoundModifierTeleportSurge,
+		RoundModifierHazardStorm,
 	}
 	return options[rand.Intn(len(options))]
 }
@@ -64,4 +66,44 @@ func effectiveBountyRewardMultiplier(mod RoundModifier) float64 {
 		return config.C.RoundModifierDoubleBountyMult
 	}
 	return 1
+}
+
+func effectiveTeleportProfile(mod RoundModifier) (cooldownTicks, lockTicks int) {
+	c := &config.C
+	cooldownTicks = c.TeleportCooldownTicks
+	lockTicks = c.TeleportPadLockTicks
+	if mod == RoundModifierTeleportSurge {
+		cooldownTicks = int(math.Round(float64(cooldownTicks) * c.RoundModifierTeleportCooldownMult))
+		lockTicks = int(math.Round(float64(lockTicks) * c.RoundModifierTeleportLockMult))
+	}
+	if cooldownTicks < 1 {
+		cooldownTicks = 1
+	}
+	if lockTicks < 1 {
+		lockTicks = 1
+	}
+	return cooldownTicks, lockTicks
+}
+
+func effectiveHazardProfile(mod RoundModifier, zone HazardZone) (onTicks, offTicks int, damagePerTick float64) {
+	c := &config.C
+	onTicks = zone.PulseOnTicks
+	offTicks = zone.PulseOffTicks
+	damagePerTick = zone.DamagePerTick
+
+	if mod == RoundModifierHazardStorm {
+		onTicks = int(math.Round(float64(onTicks) * c.RoundModifierHazardStormOnMult))
+		offTicks = int(math.Round(float64(offTicks) * c.RoundModifierHazardStormOffMult))
+		damagePerTick *= c.RoundModifierHazardStormDamageMult
+	}
+	if onTicks < 1 {
+		onTicks = 1
+	}
+	if offTicks < 1 {
+		offTicks = 1
+	}
+	if damagePerTick < 0 {
+		damagePerTick = 0
+	}
+	return onTicks, offTicks, damagePerTick
 }

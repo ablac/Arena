@@ -96,6 +96,7 @@ type Effect struct {
 	Name           string  `json:"name"`
 	RemainingTicks int     `json:"remaining_ticks"`
 	Value          float64 `json:"value"`
+	AuxValue       float64 `json:"aux_value,omitempty"`
 }
 
 // PickupType enumerates pickup types.
@@ -322,6 +323,8 @@ const (
 	RoundModifierFastZone     RoundModifier = "fast_zone"
 	RoundModifierPickupSurge  RoundModifier = "pickup_surge"
 	RoundModifierDoubleBounty RoundModifier = "double_bounty"
+	RoundModifierTeleportSurge RoundModifier = "teleport_surge"
+	RoundModifierHazardStorm   RoundModifier = "hazard_storm"
 )
 
 func (m RoundModifier) Label() string {
@@ -332,6 +335,10 @@ func (m RoundModifier) Label() string {
 		return "Pickup Surge"
 	case RoundModifierDoubleBounty:
 		return "Double Bounty"
+	case RoundModifierTeleportSurge:
+		return "Teleport Surge"
+	case RoundModifierHazardStorm:
+		return "Hazard Storm"
 	default:
 		return "Normal"
 	}

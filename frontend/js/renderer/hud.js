@@ -131,6 +131,8 @@ export class HudRenderer {
       case 'fast_zone': return 'Fast Zone';
       case 'pickup_surge': return 'Pickup Surge';
       case 'double_bounty': return 'Double Bounty';
+      case 'teleport_surge': return 'Teleport Surge';
+      case 'hazard_storm': return 'Hazard Storm';
       default: return 'Normal';
     }
   }

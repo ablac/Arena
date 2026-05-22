@@ -303,13 +303,13 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	e.applyZoneDamage()
 
 	// Teleport pads.
-	e.appendArenaEvents(ProcessTeleports(e.Bots, e.TeleportPads, e.Grid, e.TickCount)...)
+	e.appendArenaEvents(ProcessTeleports(e.Bots, e.TeleportPads, e.Grid, e.TickCount, e.Round.Modifier)...)
 
 	// Capture pad objective.
 	e.appendArenaEvents(UpdateCapturePads(e.CapturePads, e.Bots, e.TickCount)...)
 
 	// Environmental hazards.
-	UpdateHazards(e.HazardZones, e.Bots, e.TickCount)
+	UpdateHazards(e.HazardZones, e.Bots, e.TickCount, e.Round.Modifier)
 
 	// Landmines.
 	e.appendArenaEvents(UpdateMines(&e.Landmines, e.Bots, e.TickCount)...)
@@ -806,6 +806,7 @@ func (e *GameEngine) GetState() SpectatorState {
 // ArenaSnapshot holds read-only arena state for the REST API.
 type ArenaSnapshot struct {
 	Phase              RoundPhase
+	Modifier           RoundModifier
 	Tick               int
 	BotsConnected      int
 	BotsAlive          int
@@ -823,6 +824,7 @@ func (e *GameEngine) GetArenaSnapshot() ArenaSnapshot {
 
 	snap := ArenaSnapshot{
 		Phase:              e.Round.Phase,
+		Modifier:           e.Round.Modifier,
 		Tick:               e.TickCount,
 		BotsConnected:      len(e.Bots),
 		RoundNumber:        e.Round.RoundNumber,
@@ -1451,10 +1453,10 @@ func (e *GameEngine) sendBotTickUpdates() {
 				botCell := ActiveTerrain.WorldToGrid(bot.Position)
 				zoneCell := ActiveTerrain.WorldToGrid(zone.Position)
 				if GridDistance(botCell, zoneCell) <= fogRadius+4 {
-					nearby = append(nearby, BuildHazardZoneView(zone, true))
+					nearby = append(nearby, BuildHazardZoneView(zone, true, e.Round.Modifier))
 				}
 			} else if bot.Position.DistanceTo(zone.Position) <= viewRadius {
-				nearby = append(nearby, BuildHazardZoneView(zone, true))
+				nearby = append(nearby, BuildHazardZoneView(zone, true, e.Round.Modifier))
 			}
 		}
 
@@ -1611,7 +1613,7 @@ func (e *GameEngine) sendSpectatorUpdate() {
 		state.CapturePads = append(state.CapturePads, BuildCapturePadView(pad, e.TickCount, false))
 	}
 	for _, zone := range e.HazardZones {
-		state.HazardZones = append(state.HazardZones, BuildHazardZoneView(zone, false))
+		state.HazardZones = append(state.HazardZones, BuildHazardZoneView(zone, false, e.Round.Modifier))
 	}
 	for _, mine := range e.Landmines {
 		state.Landmines = append(state.Landmines, BuildMineView(mine, false))

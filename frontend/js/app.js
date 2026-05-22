@@ -5,8 +5,8 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260521o';
-import { HudRenderer } from './renderer/hud.js?v=20260521o';
+import { ArenaEngine } from './renderer/engine.js?v=20260522a';
+import { HudRenderer } from './renderer/hud.js?v=20260522a';
 import { SpectatorSocket } from './spectator-ws.js';
 import { initLeaderboardWidget } from './leaderboard.js?v=20260521m';
 import { initKeyGenerator } from './key-generator.js';

@@ -54,18 +54,19 @@ func SpawnHazardZones(arena *ArenaMap, count int) []HazardZone {
 
 // UpdateHazards ticks all hazard zones, toggling their active state based on
 // pulse timing, and applies damage to bots standing in active zones.
-func UpdateHazards(zones []HazardZone, bots map[string]*BotState, tickCount int) {
+func UpdateHazards(zones []HazardZone, bots map[string]*BotState, tickCount int, mod RoundModifier) {
 	for i := range zones {
 		zone := &zones[i]
+		onTicks, offTicks, damagePerTick := effectiveHazardProfile(mod, *zone)
 		zone.TickCounter++
 
 		if zone.Active {
-			if zone.TickCounter >= zone.PulseOnTicks {
+			if zone.TickCounter >= onTicks {
 				zone.Active = false
 				zone.TickCounter = 0
 			}
 		} else {
-			if zone.TickCounter >= zone.PulseOffTicks {
+			if zone.TickCounter >= offTicks {
 				zone.Active = true
 				zone.TickCounter = 0
 			}
@@ -87,8 +88,8 @@ func UpdateHazards(zones []HazardZone, bots map[string]*BotState, tickCount int)
 				continue
 			}
 			if isBotInHazardZone(bot.Position, zone) {
-				bot.HP -= zone.DamagePerTick
-				bot.RoundDamageTaken += zone.DamagePerTick
+				bot.HP -= damagePerTick
+				bot.RoundDamageTaken += damagePerTick
 			}
 		}
 	}
@@ -111,16 +112,18 @@ func isBotInHazardZone(pos Vec2, zone *HazardZone) bool {
 }
 
 // BuildHazardZoneView creates a protocol-compatible view of a hazard zone.
-func BuildHazardZoneView(zone HazardZone, useGridPos bool) map[string]interface{} {
+func BuildHazardZoneView(zone HazardZone, useGridPos bool, mod RoundModifier) map[string]interface{} {
+	onTicks, offTicks, damagePerTick := effectiveHazardProfile(mod, zone)
 	view := map[string]interface{}{
 		"type":       "hazard_zone",
 		"id":         zone.ID,
 		"width":      zone.Width,
 		"height":     zone.Height,
 		"active":     zone.Active,
-		"on_ticks":   zone.PulseOnTicks,
-		"off_ticks":  zone.PulseOffTicks,
+		"on_ticks":   onTicks,
+		"off_ticks":  offTicks,
 		"tick_counter": zone.TickCounter,
+		"damage_per_tick": damagePerTick,
 	}
 	if useGridPos {
 		gridPos := posToGrid(zone.Position)

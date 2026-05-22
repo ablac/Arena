@@ -63,7 +63,7 @@ func GetArenaMap(engine *game.GameEngine) http.HandlerFunc {
 
 		zoneViews := make([]map[string]interface{}, 0, len(zones))
 		for _, zone := range zones {
-			zoneViews = append(zoneViews, game.BuildHazardZoneView(zone, true))
+			zoneViews = append(zoneViews, game.BuildHazardZoneView(zone, true, snap.Modifier))
 		}
 
 		captureViews := make([]map[string]interface{}, 0, len(capturePads))

@@ -185,7 +185,8 @@ func applyPickupEffect(bot *BotState, pickup Pickup) {
 		bot.ActiveEffects = append(bot.ActiveEffects, Effect{
 			Name:           "overdrive_core",
 			RemainingTicks: c.PickupOverdriveTicks,
-			Value:          pickup.Value,
+			Value:          c.PickupOverdriveDamageMult,
+			AuxValue:       c.PickupOverdriveCooldownMult,
 		})
 	case PickupGrappleCharge:
 		bot.GrappleCharges += int(pickup.Value)

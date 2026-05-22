@@ -10,8 +10,16 @@ func effectCooldownMultiplier(bot *BotState) float64 {
 	}
 	mult := 1.0
 	for _, eff := range bot.ActiveEffects {
-		if (eff.Name == "cooldown_shard" || eff.Name == "overdrive_core") && eff.Value > 0 {
+		if eff.Name == "cooldown_shard" && eff.Value > 0 {
 			mult *= eff.Value
+			continue
+		}
+		if eff.Name == "overdrive_core" {
+			if eff.AuxValue > 0 {
+				mult *= eff.AuxValue
+			} else if eff.Value > 0 {
+				mult *= eff.Value
+			}
 		}
 	}
 	if mult < 0.1 {

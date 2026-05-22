@@ -243,6 +243,11 @@ type Config struct {
 	RoundModifierFastZoneIntervalMult   float64 `envconfig:"ARENA_ROUND_MOD_FAST_ZONE_INTERVAL_MULT" default:"0.65"`
 	RoundModifierPickupSurgeIntervalMult float64 `envconfig:"ARENA_ROUND_MOD_PICKUP_SURGE_INTERVAL_MULT" default:"0.50"`
 	RoundModifierDoubleBountyMult       float64 `envconfig:"ARENA_ROUND_MOD_DOUBLE_BOUNTY_MULT" default:"2.0"`
+	RoundModifierTeleportCooldownMult   float64 `envconfig:"ARENA_ROUND_MOD_TELEPORT_COOLDOWN_MULT" default:"0.45"`
+	RoundModifierTeleportLockMult       float64 `envconfig:"ARENA_ROUND_MOD_TELEPORT_LOCK_MULT" default:"0.55"`
+	RoundModifierHazardStormOnMult      float64 `envconfig:"ARENA_ROUND_MOD_HAZARD_STORM_ON_MULT" default:"1.20"`
+	RoundModifierHazardStormOffMult     float64 `envconfig:"ARENA_ROUND_MOD_HAZARD_STORM_OFF_MULT" default:"0.45"`
+	RoundModifierHazardStormDamageMult  float64 `envconfig:"ARENA_ROUND_MOD_HAZARD_STORM_DAMAGE_MULT" default:"1.35"`
 
 	// Landmines
 	MineMaxPerBot     int     `envconfig:"ARENA_MINE_MAX_PER_BOT" default:"3"`
