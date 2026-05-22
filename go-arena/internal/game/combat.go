@@ -515,6 +515,9 @@ func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string
 		processExtraKnockback(target, bot.Position, wc, obstacles, braced)
 	}
 	if braced {
+		markDisrupted(target, config.C.ShieldDisruptWindowTicks)
+	}
+	if braced {
 		bot.StillTicks = 0
 	}
 }
@@ -591,6 +594,7 @@ func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []O
 	// Deal damage
 	rawDmg := CalculateDamage(float64(wc.Damage), effectiveAttackMultiplier(bot), target.DefenseReduction)
 	dealt := ApplyDamage(target, bot, rawDmg, wc.Name, tickCount)
+	totalDealt := dealt
 
 	from := bot.Position
 	// Pull attacker to within 1 tile of target
@@ -638,11 +642,12 @@ func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []O
 		bonusBase := float64(wc.Damage) * math.Max(0, config.C.GrappleSlamBonusMultiplier-1)
 		if bonusBase > 0 {
 			bonusDmg := CalculateDamage(bonusBase, effectiveAttackMultiplier(bot), target.DefenseReduction)
-			ApplyDamage(target, bot, bonusDmg, "grapple_slam", tickCount)
+			totalDealt += ApplyDamage(target, bot, bonusDmg, "grapple_slam", tickCount)
 		}
 		if config.C.GrappleSlamStunTicks > target.StunTicks {
 			target.StunTicks = config.C.GrappleSlamStunTicks
 		}
+		ApplyGridKnockback(target, bot.Position, 1, obstacles)
 		markDisrupted(target, config.C.ShieldDisruptWindowTicks)
 		if arenaEvents != nil {
 			*arenaEvents = append(*arenaEvents, buildGrappleSlamEvent(bot, target, tickCount))
@@ -653,7 +658,7 @@ func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []O
 		Action:  "attack",
 		Success: true,
 		Target:  target.BotID,
-		Damage:  dealt,
+		Damage:  totalDealt,
 		Message: func() string {
 			if slammed {
 				return "grapple slam"

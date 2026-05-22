@@ -598,6 +598,8 @@
       "weapon": "bow", "is_alive": true, "avatar_color": "#0000ff",
       "last_action": "attack", "is_dodging": false, "is_stunned": false,
       "facing": [1, 0], "recently_disrupted_ticks": 0,
+      "brace_ready": false, "bow_charge_level": 0.3, "charged_shot_ready": false,
+      "rear_exposed": true, "near_impact_surface": false,
       "has_los": true, "attack_range": 7, "can_attack": true, "threat_score": 85.4
     },
     {
@@ -614,7 +616,7 @@
     "target_center": [45, 55], "target_radius": 9
   }
 }</pre>
-          <p style="margin:4px 0 0;font-size:0.85em;color:var(--text-secondary)"><strong>Grid-based:</strong> No obstacle entities in ticks &mdash; use the cached terrain grid from <code>GET /api/v1/arena/map</code>. Fog radius = 7 tiles (visible area is 15&times;15).</p>
+          <p style="margin:4px 0 0;font-size:0.85em;color:var(--text-secondary)"><strong>Grid-based:</strong> No obstacle entities in ticks &mdash; use the cached terrain grid from <code>GET /api/v1/arena/map</code>. Fog radius = 7 tiles (visible area is 15&times;15). Nearby bots also expose tactical reads like <code>rear_exposed</code> and <code>near_impact_surface</code> for backstab/slam logic.</p>
           <h4>Hints (only when no bots in fog range)</h4>
           <p>When no enemy bots are within your <code>fog_radius</code>, a <code>hints</code> array is included with directions to the nearest 3 bots and the nearest pickup of each type.</p>
           <pre class="code-block">"hints": [
@@ -743,6 +745,7 @@
           <p style="margin:4px 0 8px;font-size:0.85em;color:var(--text-secondary)">Target must be within weapon range (Chebyshev/grid distance). For <strong>staff</strong>, you can optionally include <code>"target_position": [col, row]</code> to place the AoE at a specific grid position instead of tracking a bot target.</p>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "attack", "target": "enemy_bot_id", "charged": true}</pre>
           <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)"><strong>Bow only:</strong> <code>"charged": true</code> spends any stored bow charge for a faster, harder-hitting arrow. Build charge by staying weapon-ready and not firing. Read <code>your_state.bow_charge_ticks</code>, <code>your_state.bow_charge_level</code>, and <code>your_state.charged_shot_ready</code>.</p>
+          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)"><strong>Tactical fields:</strong> nearby bots expose <code>recently_disrupted_ticks</code> (shield follow-up), <code>rear_exposed</code> (dagger backstab angle), <code>brace_ready</code> (spear ready state), and <code>near_impact_surface</code> (good grapple slam target).</p>
           <h4>Dodge (2 tiles, 3 ticks invulnerable)</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "dodge", "direction": [0, -1]}</pre>
           <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Moves 2 tiles in the given direction with 3 ticks of invulnerability. 30-tick cooldown (~3s). Direction is -1/0/1 per axis. Can dodge through enemies but not through walls.</p>

@@ -57,6 +57,21 @@ func chargedShotReady(bot *BotState) bool {
 	return bot.BowChargeTicks >= readyTicks
 }
 
+func isRearExposedToObserver(observerPos Vec2, bot *BotState) bool {
+	if bot == nil {
+		return false
+	}
+	targetFacing := bot.Facing.Normalized()
+	if targetFacing.Length() <= 0 {
+		return false
+	}
+	fromTarget := observerPos.Sub(bot.Position).Normalized()
+	if fromTarget.Length() <= 0 {
+		return false
+	}
+	return targetFacing.X()*fromTarget.X()+targetFacing.Y()*fromTarget.Y() <= config.C.DaggerBackstabDotThreshold
+}
+
 // posToGrid converts a Vec2 to grid coordinates [col, row].
 // Returns [0, 0] if no terrain grid is active.
 func posToGrid(pos Vec2) [2]int {
@@ -111,6 +126,8 @@ func BuildBotNearbyView(bot *BotState, observerPos Vec2) map[string]interface{} 
 		"has_los":      hasLOS,
 		"attack_range": wc.GridRange,
 		"can_attack":   bot.CooldownRemaining <= 0,
+		"rear_exposed": isRearExposedToObserver(observerPos, bot),
+		"near_impact_surface": isNearImpactSurface(bot.Position, nil),
 		"threat_score": threatScore,
 	}
 }

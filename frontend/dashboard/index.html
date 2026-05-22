@@ -1073,7 +1073,8 @@ function renderCodebook() {
     {name:'move',desc:'Move in a direction',json:`{"type":"action","tick":N,"action":"move","direction":[dx,dy]}`},
     {name:'move_to',desc:'Pathfind to position (avoids obstacles)',json:`{"type":"action","tick":N,"action":"move_to","target_position":[x,y]}`},
     {name:'attack',desc:'Attack a target bot',json:`{"type":"action","tick":N,"action":"attack","target":"bot-uuid"}`},
-    {name:'attack (staff)',desc:'Staff area attack with direction',json:`{"type":"action","tick":N,"action":"attack","target":"bot-uuid","direction":[tx,ty]}`},
+    {name:'attack (charged bow)',desc:'Spend stored bow charge on a stronger arrow',json:`{"type":"action","tick":N,"action":"attack","target":"bot-uuid","charged":true}`},
+    {name:'attack (staff cast)',desc:'Place a delayed staff burst at a grid position',json:`{"type":"action","tick":N,"action":"attack","target_position":[x,y]}`},
     {name:'dodge',desc:'Dodge roll (3 tick invuln, 30 tick cd)',json:`{"type":"action","tick":N,"action":"dodge","direction":[dx,dy]}`},
     {name:'shove',desc:'Knockback + stun (separate cooldown)',json:`{"type":"action","tick":N,"action":"shove","target":"bot-uuid"}`},
     {name:'use_item',desc:'Collect a nearby pickup',json:`{"type":"action","tick":N,"action":"use_item","item_id":"pickup-uuid"}`},
@@ -1082,6 +1083,14 @@ function renderCodebook() {
   document.getElementById('codeRef').innerHTML=actions.map(a=>`<div style="margin-bottom:10px"><b style="color:var(--orange)">${a.name}</b> — ${a.desc}<div class="code-block">${esc(a.json)}</div></div>`).join('');
 
   document.getElementById('codeSnippets').innerHTML=`
+<h3>Tactical Reads</h3>
+<div class="code-block"># Nearby enemies expose extra combat hints:
+# enemy["rear_exposed"]           -> good dagger backstab angle
+# enemy["near_impact_surface"]    -> strong grapple slam candidate
+# enemy["recently_disrupted_ticks"] -> shield bash bonus window
+# state["your_state"]["brace_ready"] -> spear brace is primed
+# state["your_state"]["charged_shot_ready"] -> bow can cash out a charged arrow</div>
+
 <h3>Dodge When Hit</h3>
 <div class="code-block">hits = state["your_state"].get("hits_received", [])
 if hits and state["your_state"]["dodge_cooldown"] <= 0:
