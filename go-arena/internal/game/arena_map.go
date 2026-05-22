@@ -56,7 +56,7 @@ func (m *ArenaMap) Reset(obstacles []Obstacle) {
 	m.ShrinkStarted = false
 	m.ZoneLerpT = 0.0
 
-	// Random target centre — zone must still fit inside the arena.
+	// Random target centre; zone must still fit inside the arena.
 	margin := m.MinRadius
 	tx := margin + rand.Float64()*(m.Width-2*margin)
 	ty := margin + rand.Float64()*(m.Height-2*margin)
@@ -64,31 +64,32 @@ func (m *ArenaMap) Reset(obstacles []Obstacle) {
 	m.ZoneTargetRadius = m.MinRadius
 }
 
-// UpdateZone shrinks the safe zone based on how many ticks have elapsed since
-// the round started.
-//
-// Before the shrink delay expires the zone stays at its initial size. After
-// that it linearly interpolates from InitialRadius to MinRadius over the
-// remaining round duration, and the centre drifts toward ZoneTargetCenter.
+// UpdateZone shrinks the safe zone based on the configured timing profile.
 func (m *ArenaMap) UpdateZone(tickCount int, roundStartTick int) {
 	c := &config.C
+	roundTotalTicks := int(c.RoundDuration * float64(c.TickRate))
+	intervalTicks := int(c.ZoneShrinkInterval * float64(c.TickRate))
+	m.UpdateZoneProfile(tickCount, roundStartTick, m.ShrinkDelayTicks, intervalTicks, c.ZoneShrinkPercent, roundTotalTicks)
+}
 
+// UpdateZoneProfile shrinks the zone using explicit timing values. This lets
+// special rounds override shrink speed without mutating global config.
+func (m *ArenaMap) UpdateZoneProfile(tickCount int, roundStartTick int, delayTicks int, intervalTicks int, shrinkPercent float64, roundTotalTicks int) {
 	elapsed := tickCount - roundStartTick
 
-	// Still in the delay window — no shrinking yet.
-	if elapsed < m.ShrinkDelayTicks {
+	// Still in the delay window, no shrinking yet.
+	if elapsed < delayTicks {
 		return
 	}
 
 	m.ShrinkStarted = true
 
-	roundTotalTicks := int(c.RoundDuration * float64(c.TickRate))
-	shrinkTicks := roundTotalTicks - m.ShrinkDelayTicks
+	shrinkTicks := roundTotalTicks - delayTicks
 	if shrinkTicks <= 0 {
 		return
 	}
 
-	shrinkElapsed := elapsed - m.ShrinkDelayTicks
+	shrinkElapsed := elapsed - delayTicks
 	progress := float64(shrinkElapsed) / float64(shrinkTicks)
 	if progress < 0 {
 		progress = 0
@@ -98,12 +99,11 @@ func (m *ArenaMap) UpdateZone(tickCount int, roundStartTick int) {
 	}
 	m.ZoneLerpT = progress
 
-	intervalTicks := int(c.ZoneShrinkInterval * float64(c.TickRate))
 	if intervalTicks <= 0 {
 		intervalTicks = 1
 	}
 
-	shrinkFactor := 1.0 - c.ZoneShrinkPercent
+	shrinkFactor := 1.0 - shrinkPercent
 	if shrinkFactor < 0 {
 		shrinkFactor = 0
 	}
@@ -132,10 +132,9 @@ func (m *ArenaMap) UpdateZone(tickCount int, roundStartTick int) {
 
 	m.ZoneRadius = startRadius + (endRadius-startRadius)*stepProgress
 
-	// Drift centre from arena mid-point toward the random target.
+	c := &config.C
 	arenaCenter := NewVec2(c.ZoneCenterX, c.ZoneCenterY)
 	m.ZoneCenter = arenaCenter.Add(m.ZoneTargetCenter.Sub(arenaCenter).Scale(progress))
-
 	m.ZoneTargetRadius = m.MinRadius
 }
 
@@ -167,13 +166,13 @@ func (m *ArenaMap) GetSpawnPoints(count int) []Vec2 {
 		baseAngle := offset + (2*math.Pi*float64(i))/float64(count)
 		placed := false
 
-		// Try the ideal angle, then nudge up to ±30° to avoid obstacles.
+		// Try the ideal angle, then nudge up to +/-30 degrees to avoid obstacles.
 		for nudge := 0; nudge < 10; nudge++ {
 			sign := float64(1)
 			if nudge%2 == 1 {
 				sign = -1
 			}
-			angle := baseAngle + sign*float64((nudge+1)/2)*0.1 // ~5.7° increments
+			angle := baseAngle + sign*float64((nudge+1)/2)*0.1 // ~5.7 degree increments
 
 			x := m.ZoneCenter.X() + spawnRadius*math.Cos(angle)
 			y := m.ZoneCenter.Y() + spawnRadius*math.Sin(angle)

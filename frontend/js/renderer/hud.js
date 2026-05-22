@@ -105,8 +105,11 @@ export class HudRenderer {
     const totalBots = (state.bots || []).length;
     const roundLabel = state.round_number ? `Round ${state.round_number}` : 'Live Round';
     const zoneRadius = Math.round(state.safe_zone?.radius || 0);
-    const phase = botsAlive > 0 ? 'Broadcast' : 'Syncing';
-    const compactLabel = `${this._esc(roundLabel)} - ${botsAlive}/${totalBots}`;
+    const modifierLabel = this._modifierLabel(state.round_modifier);
+    const phase = botsAlive > 0 ? modifierLabel : 'Syncing';
+    const compactLabel = modifierLabel === 'Normal'
+      ? `${this._esc(roundLabel)} - ${botsAlive}/${totalBots}`
+      : `${this._esc(roundLabel)} - ${modifierLabel} - ${botsAlive}/${totalBots}`;
 
     if (this.roundCollapsed) {
       this._ensureCompactHud();
@@ -121,6 +124,15 @@ export class HudRenderer {
     this._roundRefs.metric2.textContent = `${botsAlive} / ${totalBots}`;
     this._roundRefs.metric3.textContent = String(zoneRadius);
     this._roundRefs.metric4.textContent = String((state.pickups || []).length);
+  }
+
+  _modifierLabel(modifier) {
+    switch (modifier) {
+      case 'fast_zone': return 'Fast Zone';
+      case 'pickup_surge': return 'Pickup Surge';
+      case 'double_bounty': return 'Double Bounty';
+      default: return 'Normal';
+    }
   }
 
   _updatePlayers(bots) {

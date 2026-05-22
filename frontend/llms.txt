@@ -18,8 +18,8 @@ Server: {"type": "connected", "bot_id": "...", "arena_size": [2000,2000], "avail
 Client: {"type": "select_loadout", "weapon": "staff", "stats": {"hp": 6, "speed": 5, "attack": 7, "defense": 2}}
 Server: {"type": "loadout_confirmed", "weapon": "staff", "computed": {"max_hp": 160, "move_speed": 5.5, ...}}
 Server: {"type": "lobby", "bots_connected": 3, "bots_needed": 2}
-Server: {"type": "round_start"}
-Server: {"type": "tick", "tick": 1, "your_state": {...}, "nearby_entities": [...], "hints": [...]}
+Server: {"type": "round_start", "round_modifier": "pickup_surge", "round_modifier_label": "Pickup Surge"}
+Server: {"type": "tick", "tick": 1, "round_modifier": "pickup_surge", "your_state": {...}, "nearby_entities": [...], "hints": [...]}
 Client: {"type": "action", "tick": 1, "action": "move", "direction": [1, 0]}
 ```
 
@@ -58,6 +58,10 @@ Client: {"type": "action", "tick": 1, "action": "move", "direction": [1, 0]}
 ### Tick State (your_state fields)
 position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive, kill_streak, round_kills, dodge_cooldown, invuln_ticks, stun_ticks, facing, recently_disrupted_ticks, brace_ready, bow_charge_ticks, bow_charge_level, charged_shot_ready, shield_absorb, effects, hits_received, kill_feed, in_safe_zone, distance_to_zone_edge, zone_radius, zone_center, zone_target_center, zone_target_radius, grapple_charges, grapple_cooldown, bounty_token_bonus
 
+### Round Modifier Fields
+- `round_start.round_modifier`: `fast_zone | pickup_surge | double_bounty | ""`
+- `tick.round_modifier`: current active special round, repeated every tick for convenience
+
 ### Nearby Entities (in nearby_entities array)
 - Bots: type, id, bot_id, name, position, hp, max_hp, weapon, is_alive, is_dodging, is_stunned, has_los, attack_range, can_attack, threat_score
 - Pickups: type, id, pickup_id, pickup_type (health_pack|speed_boost|damage_boost|shield_bubble|gravity_well|cooldown_shard|bounty_token), position
@@ -74,6 +78,7 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 - **Bounty Tokens**: next kill within the token window grants bonus score; read `bounty_token_bonus` in `your_state`
 - **Teleport Pads**: 3 linked pairs/round, step on to teleport to partner pad, 5s cooldown per pad
 - **Capture Pad**: neutral objective that rewards +12 score, +20 shield, and 1.2x damage for 8s when captured uncontested
+- **Special Rounds**: occasional modifiers. `fast_zone` accelerates zone timing, `pickup_surge` spawns pickups faster, and `double_bounty` doubles live bounty-claim rewards
 - **Hazard Zones**: 6 pulsing damage zones/round, 2 HP/tick, 3s on / 2s off cycle
 - **Sudden Death**: random void tiles appear when zone hits min radius, 10 HP/tick on void tiles
 - **Bounty System**: 3+ kill streak = bounty target visible to all, bonus points on kill

@@ -3,6 +3,7 @@ package game
 import (
 	"arena-server/internal/db"
 	"arena-server/internal/config"
+	"math"
 	"sort"
 )
 
@@ -22,13 +23,15 @@ type BountyEntry struct {
 type BountySystem struct {
 	TargetID   string
 	TargetName string
+	RewardMultiplier float64
 	entries    map[string]*BountyEntry
 }
 
 // NewBountySystem creates an empty bounty system.
 func NewBountySystem() *BountySystem {
 	return &BountySystem{
-		entries: make(map[string]*BountyEntry),
+		RewardMultiplier: 1,
+		entries:          make(map[string]*BountyEntry),
 	}
 }
 
@@ -36,6 +39,7 @@ func NewBountySystem() *BountySystem {
 func (bs *BountySystem) Clear() {
 	bs.TargetID = ""
 	bs.TargetName = ""
+	bs.RewardMultiplier = 1
 	bs.entries = make(map[string]*BountyEntry)
 }
 
@@ -44,6 +48,9 @@ func (bs *BountySystem) Clear() {
 func (bs *BountySystem) ResetRoundState(bots map[string]*BotState) {
 	bs.TargetID = ""
 	bs.TargetName = ""
+	if bs.RewardMultiplier <= 0 {
+		bs.RewardMultiplier = 1
+	}
 	for _, bot := range bots {
 		bot.IsBountyTarget = false
 	}
@@ -144,7 +151,11 @@ func (bs *BountySystem) OnKill(killer, victim *BotState) float64 {
 		return 0
 	}
 
-	bonus := entry.BountyPoints
+	mult := bs.RewardMultiplier
+	if mult <= 0 {
+		mult = 1
+	}
+	bonus := int(math.Round(float64(entry.BountyPoints) * mult))
 	if bonus > 0 && killer != nil {
 		killer.Elo += bonus
 		killer.RoundDamageDealt += float64(bonus)
