@@ -41,6 +41,7 @@ func MaybeSpawnPickupAtInterval(pickups *[]Pickup, arena *ArenaMap, tickCount in
 		PickupHazardKey,
 		PickupOverdriveCore,
 		PickupGrappleCharge,
+		PickupRelayBattery,
 	}
 	pType := types[rand.Intn(len(types))]
 
@@ -80,6 +81,8 @@ func MaybeSpawnPickupAtInterval(pickups *[]Pickup, arena *ArenaMap, tickCount in
 		value = c.PickupOverdriveDamageMult
 	case PickupGrappleCharge:
 		value = float64(c.PickupGrappleChargeAmount)
+	case PickupRelayBattery:
+		value = float64(c.PickupRelayBatteryBonusProgress)
 	}
 
 	*pickups = append(*pickups, Pickup{
@@ -191,6 +194,13 @@ func applyPickupEffect(bot *BotState, pickup Pickup) {
 	case PickupGrappleCharge:
 		bot.GrappleCharges += int(pickup.Value)
 		bot.GrappleCooldown = 0
+	case PickupRelayBattery:
+		bot.ActiveEffects = removeEffectByName(bot.ActiveEffects, "relay_battery")
+		bot.ActiveEffects = append(bot.ActiveEffects, Effect{
+			Name:           "relay_battery",
+			RemainingTicks: c.PickupRelayBatteryTicks,
+			Value:          pickup.Value,
+		})
 	}
 
 	bot.RoundPickups++
@@ -220,6 +230,15 @@ func effectRemainingTicks(effects []Effect, name string) int {
 	for _, e := range effects {
 		if e.Name == name && e.RemainingTicks > 0 {
 			return e.RemainingTicks
+		}
+	}
+	return 0
+}
+
+func effectValueByName(effects []Effect, name string) float64 {
+	for _, e := range effects {
+		if e.Name == name && e.RemainingTicks > 0 {
+			return e.Value
 		}
 	}
 	return 0

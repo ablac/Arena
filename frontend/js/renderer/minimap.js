@@ -141,6 +141,7 @@ export class Minimap {
       hazard_key: '#b6ff4d',
       overdrive_core: '#ff4fd8',
       grapple_charge: '#55dfff',
+      relay_battery: '#ffb347',
     };
     return colors[type] || '#ffffff';
   }

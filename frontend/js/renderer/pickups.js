@@ -31,6 +31,7 @@ const COLORS = {
   hazard_key:     [0.72, 1.0, 0.32],
   overdrive_core: [1.0, 0.25, 0.85],
   grapple_charge: [0.30, 0.90, 1.0],
+  relay_battery:  [1.0, 0.82, 0.36],
 };
 
 /** @type {Map<string, {shapeMat: BABYLON.StandardMaterial}>} */
@@ -142,6 +143,20 @@ export class PickupRenderer {
       mesh.parent = root;
       mesh.material = mats.shapeMat;
       mesh.rotation.x = Math.PI / 2;
+    } else if (type === 'relay_battery') {
+      mesh = B.MeshBuilder.CreateCylinder(`pum-${id}`, { diameter: 4.6, height: 8.5, tessellation: 16 }, this.scene);
+      mesh.parent = root;
+      mesh.material = mats.shapeMat;
+      const capTop = B.MeshBuilder.CreateSphere(`put-${id}`, { diameter: 3.2, segments: 10 }, this.scene);
+      capTop.parent = root;
+      capTop.material = mats.shapeMat;
+      capTop.position.y = 3.5;
+      const capBottom = B.MeshBuilder.CreateSphere(`pub-${id}`, { diameter: 3.2, segments: 10 }, this.scene);
+      capBottom.parent = root;
+      capBottom.material = mats.shapeMat;
+      capBottom.position.y = -3.5;
+      mesh._sibling = capTop;
+      mesh._extraSibling = capBottom;
     } else {
       // damage_boost and fallback — diamond
       mesh = B.MeshBuilder.CreatePolyhedron(`pum-${id}`, { type: 1, size: 4 }, this.scene);
@@ -155,6 +170,7 @@ export class PickupRenderer {
     hl.addMesh(mesh, hlColor);
     // For health_pack with sibling, add both
     if (mesh._sibling) hl.addMesh(mesh._sibling, hlColor);
+    if (mesh._extraSibling) hl.addMesh(mesh._extraSibling, hlColor);
 
     // Floating bob animation (Babylon Animation API — runs automatically)
     const bobAnim = new B.Animation('pickupBob', 'position.y', 30,
@@ -183,9 +199,11 @@ export class PickupRenderer {
     if (hl) {
       hl.removeMesh(entry.mesh);
       if (entry.mesh._sibling) hl.removeMesh(entry.mesh._sibling);
+      if (entry.mesh._extraSibling) hl.removeMesh(entry.mesh._extraSibling);
     }
     this.scene.stopAnimation(entry.root);
     if (entry.mesh._sibling) entry.mesh._sibling.dispose();
+    if (entry.mesh._extraSibling) entry.mesh._extraSibling.dispose();
     entry.mesh.dispose();
     entry.root.dispose();
     // Don't dispose shared materials

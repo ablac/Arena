@@ -7,13 +7,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/arena.css?v=20260522a">
-  <link rel="stylesheet" href="css/sections.css?v=20260522a">
+  <link rel="stylesheet" href="css/arena.css?v=20260523a">
+  <link rel="stylesheet" href="css/sections.css?v=20260523a">
   <script src="https://cdn.babylonjs.com/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
   <script src="https://cdn.babylonjs.com/materialsLibrary/babylonjs.materials.min.js"></script>
   <script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
-  <script type="module" src="js/app.js?v=20260522a"></script>
+  <script type="module" src="js/app.js?v=20260523a"></script>
 </head>
 <body>
   <div class="page-backdrop">
@@ -837,6 +837,7 @@
             <tr><td><code>hazard_key</code></td><td>Negates hazard zones and burn fields; doubles capture-pad progress while active</td><td>80 ticks (~8s)</td></tr>
             <tr><td><code>overdrive_core</code></td><td>1.25x damage and 75% cooldowns</td><td>60 ticks (~6s)</td></tr>
             <tr><td><code>grapple_charge</code></td><td>Grants +1 grapple charge and clears grapple cooldown</td><td>Instant</td></tr>
+            <tr><td><code>relay_battery</code></td><td>Adds +1 extra capture progress per tick while you are contesting a capture pad</td><td>90 ticks (~9s)</td></tr>
           </tbody>
         </table>
         <p style="margin-top:12px">Pickups in the same tile are auto-collected. Use <code>use_item</code> to collect from 1 tile away.</p>
@@ -882,7 +883,7 @@
             <tr><td>Landmines</td><td>Place up to 3 mines per bot. Arms after 1s. 1-tile blast radius, 40 damage.</td></tr>
             <tr><td>Gravity Wells</td><td>Collect <code>gravity_well</code> pickup, then deploy with <code>use_gravity_well</code>. Pulls enemies within 4 tiles toward center for 3 seconds.</td></tr>
             <tr><td>Teleport Pads</td><td>3 linked pairs per round. Pads report <code>is_ready</code> and <code>cooldown_remaining_ticks</code> in <code>nearby_entities</code>. A used pair locks briefly for everyone before it re-arms. During <code>teleport_surge</code>, the whole network re-arms much faster.</td></tr>
-            <tr><td>Capture Pad</td><td>Neutral objective pad. Stand on it uncontested to capture it, gain bonus score, shield, and a temporary damage buff. Exposed in <code>nearby_entities</code> as <code>capture_pad</code> with progress, contested, contender count, and cooldown fields.</td></tr>
+            <tr><td>Capture Pad</td><td>Neutral objective pad. Stand on it uncontested to capture it, gain bonus score, shield, and a temporary damage buff. While the pad is cooling down, the owner can keep holding it uncontested to earn small control pulses. Exposed in <code>nearby_entities</code> as <code>capture_pad</code> with progress, contested, contender count, cooldown, and next pulse fields.</td></tr>
             <tr><td>Special Rounds</td><td>Occasional rounds roll <code>fast_zone</code>, <code>pickup_surge</code>, <code>double_bounty</code>, <code>teleport_surge</code>, or <code>hazard_storm</code>. Read the active modifier from <code>round_start</code> and <code>tick.round_modifier</code>.</td></tr>
             <tr><td>Hazard Zones</td><td>6 pulsing damage zones per round. They expose <code>active</code>, <code>on_ticks</code>, <code>off_ticks</code>, and <code>damage_per_tick</code> in <code>nearby_entities</code>. During <code>hazard_storm</code>, they pulse faster and hit harder.</td></tr>
             <tr><td>Burn Fields</td><td>Lingering staff flames after a detonation. Short duration, visible in <code>nearby_entities</code> as <code>burn_field</code>.</td></tr>
@@ -1253,8 +1254,10 @@ wss://arena.angel-serv.com/ws/spectator
 # Teleport Pads: 3 linked pairs/round, exposed in nearby_entities with
 #                is_ready + cooldown_remaining_ticks
 # Capture Pad:   neutral objective, exposed in nearby_entities as capture_pad
+#                with progress_ticks, capture_ticks, owner_id, cooldown, and
+#                next_control_pulse_ticks for defensive hold rewards
 # Hazard Key:    hazard immunity + faster capture progress while the effect lasts
-#                with progress_ticks, capture_ticks, owner_id, and cooldown
+# Relay Battery: extra capture progress per tick while the effect lasts
 # Hazard Zones:  6 pulsing damage zones, 2 HP/tick, 3s on / 2s off cycle
 # Sudden Death:  random void tiles when zone hits min radius, 10 HP/tick on void
 # Bounty System: consecutive round winners build a public bounty board at

@@ -19,6 +19,7 @@ type CapturePad struct {
 	CapturingBotID       string
 	LastCapturedBy       string
 	CooldownUntilTick    int
+	NextControlPulseTick int
 	ContenderCount       int
 	Contested            bool
 }
@@ -76,20 +77,21 @@ func UpdateCapturePads(pads []CapturePad, bots map[string]*BotState, tickCount i
 	var events []ArenaEvent
 	for i := range pads {
 		pad := &pads[i]
-
-		if pad.CooldownUntilTick > tickCount {
-			continue
-		}
 		if pad.CooldownUntilTick > 0 && pad.CooldownUntilTick <= tickCount {
 			pad.CooldownUntilTick = 0
 			pad.ProgressTicks = 0
 			pad.CapturingBotID = ""
 			pad.LastCapturedBy = ""
+			pad.NextControlPulseTick = 0
 		}
 
 		contenders := capturePadContenders(*pad, bots)
 		pad.ContenderCount = len(contenders)
 		pad.Contested = len(contenders) > 1
+		if pad.CooldownUntilTick > tickCount {
+			maybeApplyCapturePadControlPulse(pad, contenders, tickCount)
+			continue
+		}
 		switch len(contenders) {
 		case 0:
 			if pad.ProgressTicks > 0 {
@@ -119,6 +121,7 @@ func UpdateCapturePads(pads []CapturePad, bots map[string]*BotState, tickCount i
 				pad.ProgressTicks = pad.CaptureTicksRequired
 				pad.LastCapturedBy = contender.BotID
 				pad.CooldownUntilTick = tickCount + config.C.CapturePadCooldownTicks
+				pad.NextControlPulseTick = tickCount + config.C.CapturePadControlPulseTicks
 				applyCapturePadReward(contender)
 				events = append(events, buildCapturePadCaptureEvent(*pad, contender, tickCount))
 			}
@@ -148,10 +151,17 @@ func capturePadProgressPerTick(bot *BotState) int {
 	if bot == nil {
 		return 1
 	}
+	progress := 1
 	if hasEffectByName(bot.ActiveEffects, "hazard_key") {
-		return 2
+		progress *= 2
 	}
-	return 1
+	if bonus := effectValueByName(bot.ActiveEffects, "relay_battery"); bonus > 0 {
+		progress += int(bonus)
+	}
+	if progress < 1 {
+		return 1
+	}
+	return progress
 }
 
 func applyCapturePadReward(bot *BotState) {
@@ -166,6 +176,22 @@ func applyCapturePadReward(bot *BotState) {
 		RemainingTicks: config.C.CapturePadEffectTicks,
 		Value:          config.C.CapturePadDamageBoostMult,
 	})
+}
+
+func maybeApplyCapturePadControlPulse(pad *CapturePad, contenders []*BotState, tickCount int) {
+	if pad == nil || pad.LastCapturedBy == "" || pad.NextControlPulseTick <= 0 || tickCount < pad.NextControlPulseTick {
+		return
+	}
+	if len(contenders) != 1 {
+		return
+	}
+	holder := contenders[0]
+	if holder == nil || !holder.IsAlive || holder.BotID != pad.LastCapturedBy {
+		return
+	}
+	holder.Elo += config.C.CapturePadControlPulseScore
+	holder.ShieldAbsorb += config.C.CapturePadControlPulseShield
+	pad.NextControlPulseTick = tickCount + config.C.CapturePadControlPulseTicks
 }
 
 // BuildCapturePadView creates a protocol-compatible view of a capture pad.
@@ -186,6 +212,7 @@ func BuildCapturePadView(pad CapturePad, tickCount int, useGridPos bool) map[str
 		"is_contested":             pad.Contested,
 		"is_ready":                 remaining == 0,
 		"cooldown_remaining_ticks": remaining,
+		"next_control_pulse_ticks": max(0, pad.NextControlPulseTick-tickCount),
 	}
 	if useGridPos {
 		gridPos := posToGrid(pad.Position)
