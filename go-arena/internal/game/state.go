@@ -113,6 +113,7 @@ const (
 	PickupHazardKey     PickupType = "hazard_key"
 	PickupOverdriveCore PickupType = "overdrive_core"
 	PickupGrappleCharge PickupType = "grapple_charge"
+	PickupRelayBattery  PickupType = "relay_battery"
 )
 
 // Pickup represents a collectible item on the map.

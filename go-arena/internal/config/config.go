@@ -135,6 +135,8 @@ type Config struct {
 	PickupOverdriveDamageMult float64 `envconfig:"ARENA_PICKUP_OVERDRIVE_DAMAGE_MULT" default:"1.25"`
 	PickupOverdriveCooldownMult float64 `envconfig:"ARENA_PICKUP_OVERDRIVE_COOLDOWN_MULT" default:"0.75"`
 	PickupGrappleChargeAmount int     `envconfig:"ARENA_PICKUP_GRAPPLE_CHARGE_AMOUNT" default:"1"`
+	PickupRelayBatteryTicks  int     `envconfig:"ARENA_PICKUP_RELAY_BATTERY_TICKS" default:"90"`
+	PickupRelayBatteryBonusProgress int `envconfig:"ARENA_PICKUP_RELAY_BATTERY_BONUS_PROGRESS" default:"1"`
 	PickupCollectRadius      float64 `envconfig:"ARENA_PICKUP_COLLECT_RADIUS" default:"2.0"`
 
 	// Network / persistence
@@ -216,6 +218,9 @@ type Config struct {
 	CapturePadShieldBonus      float64 `envconfig:"ARENA_CAPTURE_PAD_SHIELD_BONUS" default:"20"`
 	CapturePadDamageBoostMult  float64 `envconfig:"ARENA_CAPTURE_PAD_DAMAGE_BOOST_MULT" default:"1.2"`
 	CapturePadEffectTicks      int     `envconfig:"ARENA_CAPTURE_PAD_EFFECT_TICKS" default:"80"`
+	CapturePadControlPulseTicks int    `envconfig:"ARENA_CAPTURE_PAD_CONTROL_PULSE_TICKS" default:"15"`
+	CapturePadControlPulseScore int    `envconfig:"ARENA_CAPTURE_PAD_CONTROL_PULSE_SCORE" default:"2"`
+	CapturePadControlPulseShield float64 `envconfig:"ARENA_CAPTURE_PAD_CONTROL_PULSE_SHIELD" default:"4"`
 
 	// Environmental Hazards
 	HazardZoneCount        int     `envconfig:"ARENA_HAZARD_ZONE_COUNT" default:"6"`

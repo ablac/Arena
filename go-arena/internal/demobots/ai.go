@@ -36,6 +36,7 @@ type tickState struct {
 	HasSpeedBoost    bool
 	HasDmgBoost      bool
 	HasHazardKey     bool
+	HasRelayBattery  bool
 	BraceReady       bool
 	BowChargeTicks   int
 	BowChargeLevel   float64
@@ -558,6 +559,9 @@ func parseTick(msg map[string]interface{}) tickState {
 						}
 						if name == "hazard_key" {
 							ts.HasHazardKey = true
+						}
+						if name == "relay_battery" {
+							ts.HasRelayBattery = true
 						}
 					}
 				}
@@ -1162,6 +1166,15 @@ func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD f
 	if near != nil && nearD <= 2 && ts.WeaponReady {
 		return nil
 	}
+	if pad.OwnerID == botID && !pad.Ready && !pad.Contested && pressure <= 1 && hpRatio >= 0.45 {
+		if padD > 1 && padD <= 7 {
+			a := moveTo(ts.Position, pad.Position)
+			return &a
+		}
+		if padD <= 1 {
+			return nil
+		}
+	}
 	if padD <= 1 && !pad.Contested {
 		return nil
 	}
@@ -1373,6 +1386,16 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 		}
 		if !ts.InZone || inHazardZone(ts.ZoneTargetCenter, ts.HazardZones) {
 			a := moveTo(pos, hk.Position)
+			return &a
+		}
+	}
+
+	// Relay battery: strongest when a capture pad is nearby, contested, or enemy-owned.
+	rb, rbD := nearestPickupOfType(pos, ts.Pickups, "relay_battery")
+	if rb != nil && rbD <= 8+pickupReachBonus && !ts.HasRelayBattery {
+		if pad, padD := nearestCapturePad(pos, ts.CapturePads); pad != nil && padD <= 10 &&
+			(pad.Contested || pad.CapturingBotID != "" || pad.OwnerID != "" || !pad.Ready) {
+			a := moveTo(pos, rb.Position)
 			return &a
 		}
 	}
