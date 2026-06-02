@@ -558,6 +558,9 @@ func DeleteAdminToken(ctx context.Context, id string) error {
 
 // GetAdminTokenHash returns the hash for a given token ID.
 func GetAdminTokenHash(ctx context.Context, id string) (string, error) {
+	if Pool == nil {
+		return "", ErrNoDatabase
+	}
 	var hash string
 	err := Pool.QueryRow(ctx, `SELECT token_hash FROM admin_tokens WHERE id = $1`, id).Scan(&hash)
 	if err != nil {
@@ -588,6 +591,9 @@ func GetAllAdminTokenHashes(ctx context.Context) ([]string, error) {
 
 // GetAPIKeyByPrefix retrieves an active API key by its prefix.
 func GetAPIKeyByPrefix(ctx context.Context, prefix string) (*ApiKey, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	k := &ApiKey{}
 	err := Pool.QueryRow(ctx,
 		`SELECT id, key_hash, key_prefix, created_at, last_seen, is_active, ip_created
@@ -628,6 +634,9 @@ func DeactivateAPIKey(ctx context.Context, id string) error {
 
 // UpdateAPIKeyLastSeen sets last_seen to NOW() for the given key.
 func UpdateAPIKeyLastSeen(ctx context.Context, id string) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`UPDATE api_keys SET last_seen = NOW() WHERE id = $1`, id,
 	)
@@ -694,6 +703,9 @@ func ListAllAPIKeys(ctx context.Context) ([]map[string]interface{}, error) {
 
 // GetBotByAPIKeyID retrieves a bot by its associated API key ID.
 func GetBotByAPIKeyID(ctx context.Context, apiKeyID string) (*Bot, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	b := &Bot{}
 	err := Pool.QueryRow(ctx,
 		`SELECT id, api_key_id, name, avatar_color, default_weapon, default_stats,
