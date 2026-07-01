@@ -24,10 +24,19 @@ func main() {
 	// Load configuration from environment variables.
 	config.Load()
 
-	// Connect to the database (optional -- the server runs without it).
+	// Connect to the database. By default the DB is required (auth and
+	// persistence depend on it): if it is still unreachable after retries we
+	// exit non-zero so the container restart policy retries from a clean
+	// start, rather than silently running in a broken degraded mode where
+	// every keyed bot join fails (the 2026-05-29 incident). Set
+	// ARENA_DB_OPTIONAL=true to allow running without a database.
 	ctx := context.Background()
 	if err := db.Connect(ctx); err != nil {
-		slog.Warn("database not available, running without persistence", "error", err)
+		if !config.C.DBOptional {
+			slog.Error("database required but unavailable after retries; exiting for restart", "error", err)
+			os.Exit(1)
+		}
+		slog.Warn("database not available, running without persistence (ARENA_DB_OPTIONAL=true)", "error", err)
 	}
 	defer db.Close()
 

@@ -170,6 +170,9 @@ func EnsureCoreSchema(ctx context.Context) error {
 // ---------- round_bot_stats (per-round per-bot performance for time-based leaderboards) ----------
 
 func EnsureRoundBotStatsTable(ctx context.Context) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`CREATE TABLE IF NOT EXISTS round_bot_stats (
 			id SERIAL PRIMARY KEY,
@@ -213,6 +216,9 @@ func EnsureRoundBotStatsTable(ctx context.Context) error {
 
 func InsertRoundBotStats(ctx context.Context, roundNumber int, botID, botName, weapon string,
 	kills, deaths int, dmgDealt, dmgTaken int64, longestLife, shotsFired, shotsHit, pickups int, distance float64, elo int, won bool) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO round_bot_stats (round_number, bot_id, bot_name, weapon, kills, deaths, damage_dealt, damage_taken, longest_life_secs, shots_fired, shots_hit, pickups, distance, elo, won)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
@@ -222,6 +228,9 @@ func InsertRoundBotStats(ctx context.Context, roundNumber int, botID, botName, w
 
 // ListRecentWeaponPerformance returns average per-weapon round score over the last N rounds.
 func ListRecentWeaponPerformance(ctx context.Context, roundLimit int) ([]WeaponRecentPerformance, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	rows, err := Pool.Query(ctx, `
 		WITH recent_rounds AS (
 			SELECT DISTINCT DATE_TRUNC('second', created_at) AS round_at
@@ -313,6 +322,9 @@ func ListRecentWeaponPerformance(ctx context.Context, roundLimit int) ([]WeaponR
 
 // InsertWeaponBalanceHistory stores one balance-decision snapshot.
 func InsertWeaponBalanceHistory(ctx context.Context, item *WeaponBalanceHistory) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO weapon_balance_history
 			(weapon, rounds_tracked, damage_scale, cooldown_scale, adjustment_scale, avg_score, mean_score, diff_pct, damage_delta, cooldown_delta, created_at)
@@ -328,6 +340,9 @@ func InsertWeaponBalanceHistory(ctx context.Context, item *WeaponBalanceHistory)
 
 // ListWeaponBalanceHistory returns up to N most recent history points per weapon.
 func ListWeaponBalanceHistory(ctx context.Context, perWeapon int) ([]WeaponBalanceHistory, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	rows, err := Pool.Query(ctx, `
 		WITH ranked AS (
 			SELECT
@@ -367,6 +382,9 @@ func ListWeaponBalanceHistory(ctx context.Context, perWeapon int) ([]WeaponBalan
 
 // GetTimeBasedLeaderboard returns aggregated stats for bots within a time window.
 func GetTimeBasedLeaderboard(ctx context.Context, since time.Time, sortBy string, limit int) ([]map[string]interface{}, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	validSorts := map[string]string{
 		"kills":      "SUM(r.kills) DESC",
 		"elo":        "MAX(r.elo) DESC",
@@ -438,6 +456,9 @@ func GetTimeBasedLeaderboard(ctx context.Context, since time.Time, sortBy string
 
 // EnsureDemoBotKeysTable creates the demo_bot_keys table if it doesn't exist.
 func EnsureDemoBotKeysTable(ctx context.Context) error {
+	if Pool == nil {
+		return nil
+	}
 	_, err := Pool.Exec(ctx,
 		`CREATE TABLE IF NOT EXISTS demo_bot_keys (
 			name TEXT PRIMARY KEY,
@@ -449,6 +470,9 @@ func EnsureDemoBotKeysTable(ctx context.Context) error {
 
 // GetDemoBotKey returns the stored API key for a demo bot by name, or empty if not found.
 func GetDemoBotKey(ctx context.Context, name string) (string, error) {
+	if Pool == nil {
+		return "", ErrNoDatabase
+	}
 	var key string
 	err := Pool.QueryRow(ctx,
 		`SELECT api_key FROM demo_bot_keys WHERE name = $1`, name,
@@ -464,6 +488,9 @@ func GetDemoBotKey(ctx context.Context, name string) (string, error) {
 
 // GetAllDemoBotKeys returns all demo bot name→key mappings.
 func GetAllDemoBotKeys(ctx context.Context) (map[string]string, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	rows, err := Pool.Query(ctx, `SELECT name, api_key FROM demo_bot_keys`)
 	if err != nil {
 		return nil, err
@@ -482,6 +509,9 @@ func GetAllDemoBotKeys(ctx context.Context) (map[string]string, error) {
 
 // SaveDemoBotKey upserts a demo bot's API key.
 func SaveDemoBotKey(ctx context.Context, name, apiKey string) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO demo_bot_keys (name, api_key) VALUES ($1, $2)
 		 ON CONFLICT (name) DO UPDATE SET api_key = $2`,
@@ -494,6 +524,9 @@ func SaveDemoBotKey(ctx context.Context, name, apiKey string) error {
 
 // EnsureAdminTokensTable creates the admin_tokens table if it doesn't exist.
 func EnsureAdminTokensTable(ctx context.Context) error {
+	if Pool == nil {
+		return nil
+	}
 	_, err := Pool.Exec(ctx,
 		`CREATE TABLE IF NOT EXISTS admin_tokens (
 			id TEXT PRIMARY KEY,
@@ -510,6 +543,9 @@ func EnsureAdminTokensTable(ctx context.Context) error {
 
 // ListAdminTokens returns all admin tokens (without the actual token, just metadata).
 func ListAdminTokens(ctx context.Context) ([]map[string]interface{}, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	rows, err := Pool.Query(ctx,
 		`SELECT id, label, token_hint, created_at FROM admin_tokens ORDER BY created_at`)
 	if err != nil {
@@ -535,6 +571,9 @@ func ListAdminTokens(ctx context.Context) ([]map[string]interface{}, error) {
 
 // CreateAdminToken inserts a new admin token.
 func CreateAdminToken(ctx context.Context, id, label, tokenHash, tokenHint string) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO admin_tokens (id, label, token_hash, token_hint) VALUES ($1, $2, $3, $4)`,
 		id, label, tokenHash, tokenHint)
@@ -546,6 +585,9 @@ func CreateAdminToken(ctx context.Context, id, label, tokenHash, tokenHint strin
 
 // DeleteAdminToken deletes an admin token by ID.
 func DeleteAdminToken(ctx context.Context, id string) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	ct, err := Pool.Exec(ctx, `DELETE FROM admin_tokens WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("DeleteAdminToken: %w", err)
@@ -558,6 +600,9 @@ func DeleteAdminToken(ctx context.Context, id string) error {
 
 // GetAdminTokenHash returns the hash for a given token ID.
 func GetAdminTokenHash(ctx context.Context, id string) (string, error) {
+	if Pool == nil {
+		return "", ErrNoDatabase
+	}
 	var hash string
 	err := Pool.QueryRow(ctx, `SELECT token_hash FROM admin_tokens WHERE id = $1`, id).Scan(&hash)
 	if err != nil {
@@ -568,6 +613,9 @@ func GetAdminTokenHash(ctx context.Context, id string) (string, error) {
 
 // GetAllAdminTokenHashes returns all token hashes for auth checking.
 func GetAllAdminTokenHashes(ctx context.Context) ([]string, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	rows, err := Pool.Query(ctx, `SELECT token_hash FROM admin_tokens`)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllAdminTokenHashes: %w", err)
@@ -588,6 +636,9 @@ func GetAllAdminTokenHashes(ctx context.Context) ([]string, error) {
 
 // GetAPIKeyByPrefix retrieves an active API key by its prefix.
 func GetAPIKeyByPrefix(ctx context.Context, prefix string) (*ApiKey, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	k := &ApiKey{}
 	err := Pool.QueryRow(ctx,
 		`SELECT id, key_hash, key_prefix, created_at, last_seen, is_active, ip_created
@@ -604,6 +655,9 @@ func GetAPIKeyByPrefix(ctx context.Context, prefix string) (*ApiKey, error) {
 
 // CreateAPIKey inserts a new API key row.
 func CreateAPIKey(ctx context.Context, id, keyHash, keyPrefix, ipCreated string) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO api_keys (id, key_hash, key_prefix, created_at, is_active, ip_created)
 		 VALUES ($1, $2, $3, NOW(), true, $4)`,
@@ -617,6 +671,9 @@ func CreateAPIKey(ctx context.Context, id, keyHash, keyPrefix, ipCreated string)
 
 // DeactivateAPIKey sets is_active = false for the given key.
 func DeactivateAPIKey(ctx context.Context, id string) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`UPDATE api_keys SET is_active = false WHERE id = $1`, id,
 	)
@@ -628,6 +685,9 @@ func DeactivateAPIKey(ctx context.Context, id string) error {
 
 // UpdateAPIKeyLastSeen sets last_seen to NOW() for the given key.
 func UpdateAPIKeyLastSeen(ctx context.Context, id string) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`UPDATE api_keys SET last_seen = NOW() WHERE id = $1`, id,
 	)
@@ -639,6 +699,9 @@ func UpdateAPIKeyLastSeen(ctx context.Context, id string) error {
 
 // ListAllAPIKeys returns all API keys with their associated bot info.
 func ListAllAPIKeys(ctx context.Context) ([]map[string]interface{}, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	rows, err := Pool.Query(ctx,
 		`SELECT k.id, k.key_prefix, k.created_at, k.last_seen, k.is_active, k.ip_created,
 		        b.id AS bot_id, b.name AS bot_name, b.avatar_color,
@@ -694,6 +757,9 @@ func ListAllAPIKeys(ctx context.Context) ([]map[string]interface{}, error) {
 
 // GetBotByAPIKeyID retrieves a bot by its associated API key ID.
 func GetBotByAPIKeyID(ctx context.Context, apiKeyID string) (*Bot, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	b := &Bot{}
 	err := Pool.QueryRow(ctx,
 		`SELECT id, api_key_id, name, avatar_color, default_weapon, default_stats,
@@ -712,6 +778,9 @@ func GetBotByAPIKeyID(ctx context.Context, apiKeyID string) (*Bot, error) {
 
 // CreateBot inserts a new bot row.
 func CreateBot(ctx context.Context, bot *Bot) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO bots (id, api_key_id, name, avatar_color, default_weapon, default_stats,
 		                    default_fallback, created_at, updated_at)
@@ -727,6 +796,9 @@ func CreateBot(ctx context.Context, bot *Bot) error {
 
 // UpdateBot updates mutable fields on a bot row.
 func UpdateBot(ctx context.Context, bot *Bot) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`UPDATE bots SET name = $1, avatar_color = $2, default_weapon = $3,
 		                 default_stats = $4, default_fallback = $5, updated_at = $6
@@ -744,6 +816,9 @@ func UpdateBot(ctx context.Context, bot *Bot) error {
 
 // GetBotStats retrieves stats for a given bot.
 func GetBotStats(ctx context.Context, botID string) (*BotStats, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	s := &BotStats{}
 	err := Pool.QueryRow(ctx,
 		`SELECT bot_id, kills, deaths, assists, damage_dealt, damage_taken,
@@ -764,6 +839,9 @@ func GetBotStats(ctx context.Context, botID string) (*BotStats, error) {
 
 // UpsertBotStats inserts or updates bot_stats using ON CONFLICT.
 func UpsertBotStats(ctx context.Context, stats *BotStats) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO bot_stats (bot_id, kills, deaths, assists, damage_dealt, damage_taken,
 		                        current_streak, best_streak, elo, time_alive_seconds,
@@ -801,6 +879,9 @@ func UpsertBotStats(ctx context.Context, stats *BotStats) error {
 
 // InsertKillLog inserts a new kill log entry.
 func InsertKillLog(ctx context.Context, log *KillLog) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO kill_log (id, round_id, killer_id, victim_id, weapon, damage,
 		                       killer_hp, tick, created_at)
@@ -818,6 +899,9 @@ func InsertKillLog(ctx context.Context, log *KillLog) error {
 
 // CreateRound inserts a new round row.
 func CreateRound(ctx context.Context, round *Round) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO rounds (id, round_number, started_at, ended_at, bots_participated,
 		                     mvp_bot_id, status)
@@ -833,6 +917,9 @@ func CreateRound(ctx context.Context, round *Round) error {
 
 // UpdateRound updates a round's ended_at, status, and mvp_bot_id.
 func UpdateRound(ctx context.Context, round *Round) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`UPDATE rounds SET ended_at = $1, status = $2, mvp_bot_id = $3 WHERE id = $4`,
 		round.EndedAt, round.Status, round.MVPBotID, round.ID,
@@ -847,6 +934,9 @@ func UpdateRound(ctx context.Context, round *Round) error {
 
 // ListWeaponBalances returns every persisted weapon balance row.
 func ListWeaponBalances(ctx context.Context) ([]WeaponBalance, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	rows, err := Pool.Query(ctx,
 		`SELECT weapon, damage_scale, cooldown_scale, adjustment_scale, rounds_tracked, updated_at
 		 FROM weapon_balance ORDER BY weapon`)
@@ -874,6 +964,9 @@ func ListWeaponBalances(ctx context.Context) ([]WeaponBalance, error) {
 
 // UpsertWeaponBalance stores the adaptive balance state for a weapon.
 func UpsertWeaponBalance(ctx context.Context, wb *WeaponBalance) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO weapon_balance
 			(weapon, damage_scale, cooldown_scale, adjustment_scale, rounds_tracked, updated_at)
@@ -894,6 +987,9 @@ func UpsertWeaponBalance(ctx context.Context, wb *WeaponBalance) error {
 
 // ListWeaponKillStats returns per-weapon kill totals from the kill log.
 func ListWeaponKillStats(ctx context.Context) ([]WeaponKillStats, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	rows, err := Pool.Query(ctx, `
 		SELECT
 			weapon,
@@ -943,6 +1039,9 @@ var validSortColumns = map[string]string{
 
 // GetLeaderboard returns a paginated leaderboard with rank, sorted by the given column.
 func GetLeaderboard(ctx context.Context, sortBy string, limit, offset int) ([]LeaderboardEntry, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	orderClause, ok := validSortColumns[sortBy]
 	if !ok {
 		orderClause = validSortColumns["kills"]
@@ -988,6 +1087,9 @@ func GetLeaderboard(ctx context.Context, sortBy string, limit, offset int) ([]Le
 
 // GetLeaderboardCount returns the total number of entries in bot_stats.
 func GetLeaderboardCount(ctx context.Context) (int, error) {
+	if Pool == nil {
+		return 0, ErrNoDatabase
+	}
 	var count int
 	err := Pool.QueryRow(ctx, `
 		SELECT COUNT(*)
@@ -1006,6 +1108,9 @@ func GetLeaderboardCount(ctx context.Context) (int, error) {
 
 // ListBountyBoardEntries loads the persisted public bounty board.
 func ListBountyBoardEntries(ctx context.Context) ([]BountyBoardEntry, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	rows, err := Pool.Query(ctx, `
 		SELECT bot_id, name, avatar_color, weapon, win_streak, bounty_points, claims, is_target, updated_at
 		FROM bounty_board
@@ -1035,6 +1140,9 @@ func ListBountyBoardEntries(ctx context.Context) ([]BountyBoardEntry, error) {
 
 // ReplaceBountyBoardEntries rewrites the persisted bounty board to match the in-memory snapshot.
 func ReplaceBountyBoardEntries(ctx context.Context, entries []BountyBoardEntry) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
 	tx, err := Pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("ReplaceBountyBoardEntries begin: %w", err)
@@ -1069,6 +1177,9 @@ func ReplaceBountyBoardEntries(ctx context.Context, entries []BountyBoardEntry) 
 // recent consecutive completed round winners. It is used to repopulate the
 // bounty board after a restart if no persisted board state exists.
 func GetLatestWinnerBountySeed(ctx context.Context, threshold, base, step, maxPoints int) (*BountyBoardEntry, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
 	rows, err := Pool.Query(ctx, `
 		SELECT r.mvp_bot_id, b.name, b.avatar_color, b.default_weapon
 		FROM rounds r
@@ -1138,6 +1249,9 @@ func GetLatestWinnerBountySeed(ctx context.Context, threshold, base, step, maxPo
 
 // GetBotRank returns the 1-based rank of a bot for a given sort column.
 func GetBotRank(ctx context.Context, botID, sortBy string) (int, error) {
+	if Pool == nil {
+		return 0, ErrNoDatabase
+	}
 	orderClause, ok := validSortColumns[sortBy]
 	if !ok {
 		orderClause = validSortColumns["kills"]
@@ -1167,6 +1281,9 @@ func GetBotRank(ctx context.Context, botID, sortBy string) (int, error) {
 // It returns (allowed, remaining, error). If the current window has expired (>1 hour),
 // it resets the counter. If under the limit, it increments.
 func CheckRateLimit(ctx context.Context, ip string, maxPerHour int) (bool, int, error) {
+	if Pool == nil {
+		return false, 0, ErrNoDatabase
+	}
 	var rl RateLimit
 	err := Pool.QueryRow(ctx,
 		`SELECT ip_address, keys_generated, window_start
