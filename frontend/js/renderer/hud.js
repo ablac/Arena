@@ -374,8 +374,9 @@ export class HudRenderer {
   }
 
   _esc(str) {
-    const d = document.createElement('div');
-    d.textContent = str == null ? '???' : String(str);
-    return d.innerHTML;
+    const s = str == null ? '???' : String(str);
+    return s.replace(/[&<>"']/g, (ch) => _ESC_MAP[ch]);
   }
 }
+
+const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
