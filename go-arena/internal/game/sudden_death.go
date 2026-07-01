@@ -78,7 +78,7 @@ func (sd *SuddenDeathSystem) Update(bots map[string]*BotState, arena *ArenaMap) 
 
 	// Damage bots standing on void tiles
 	for _, bot := range bots {
-		if !bot.IsAlive {
+		if !bot.IsAlive || bot.InvulnTicks > 0 {
 			continue
 		}
 		cell := terrain.WorldToGrid(bot.Position)
