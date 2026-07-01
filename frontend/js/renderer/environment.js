@@ -704,7 +704,9 @@ export class EnvironmentRenderer {
     beaconMat.disableLighting = true;
     beaconMat.freeze();
 
-    // Glow circle particle texture
+    // Glow circle particle texture, shared across all 4 pylon beams; freed
+    // once in dispose() rather than per-beam (ParticleSystem.dispose()
+    // defaults to tearing down its texture, which would blank the rest).
     const glowTex = new B.DynamicTexture('pylonGlowTex', 32, this.scene, false);
     const gctx = glowTex.getContext();
     const grd = gctx.createRadialGradient(16, 16, 0, 16, 16, 16);
@@ -715,6 +717,7 @@ export class EnvironmentRenderer {
     gctx.fillRect(0, 0, 32, 32);
     glowTex.update();
     glowTex.hasAlpha = true;
+    this._pylonGlowTex = glowTex;
 
     this._pylons = [];
 
@@ -787,7 +790,8 @@ export class EnvironmentRenderer {
   _createUndersideThrusters() {
     const B = window.BABYLON;
 
-    // Glow texture for thruster particles
+    // Glow texture for thruster particles, shared across all jets; see
+    // note on glowTex above about deferring texture disposal.
     const thrustTex = new B.DynamicTexture('thrustTex', 32, this.scene, false);
     const tctx = thrustTex.getContext();
     const tgrd = tctx.createRadialGradient(16, 16, 0, 16, 16, 16);
@@ -799,6 +803,7 @@ export class EnvironmentRenderer {
     tctx.fillRect(0, 0, 32, 32);
     thrustTex.update();
     thrustTex.hasAlpha = true;
+    this._thrusterGlowTex = thrustTex;
 
     // Place 4 thrusters in a diamond pattern under the arena
     const positions = [
@@ -870,7 +875,8 @@ export class EnvironmentRenderer {
   _createEdgeWaterfalls() {
     const B = window.BABYLON;
 
-    // Particle texture — soft blue glow
+    // Particle texture — soft blue glow, shared across all waterfalls; see
+    // note on glowTex above about deferring texture disposal.
     const dropTex = new B.DynamicTexture('dropTex', 16, this.scene, false);
     const dctx = dropTex.getContext();
     const dgrd = dctx.createRadialGradient(8, 8, 0, 8, 8, 8);
@@ -881,6 +887,7 @@ export class EnvironmentRenderer {
     dctx.fillRect(0, 0, 16, 16);
     dropTex.update();
     dropTex.hasAlpha = true;
+    this._waterfallDropTex = dropTex;
 
     // One waterfall per edge, emitting from the wall top and falling down
     const edges = [
@@ -1196,17 +1203,20 @@ export class EnvironmentRenderer {
       this._spaceObjects = null;
     }
     if (this._pylons) {
-      for (const p of this._pylons) { p.pylon.dispose(); p.beacon.dispose(); p.beam.dispose(); p.ring.dispose(); }
+      for (const p of this._pylons) { p.pylon.dispose(); p.beacon.dispose(); p.beam.dispose(false); p.ring.dispose(); }
       this._pylons = null;
     }
+    if (this._pylonGlowTex) { this._pylonGlowTex.dispose(); this._pylonGlowTex = null; }
     if (this._thrusters) {
-      for (const t of this._thrusters) { t.nozzle.dispose(); t.glow.dispose(); t.jet.dispose(); }
+      for (const t of this._thrusters) { t.nozzle.dispose(); t.glow.dispose(); t.jet.dispose(false); }
       this._thrusters = null;
     }
+    if (this._thrusterGlowTex) { this._thrusterGlowTex.dispose(); this._thrusterGlowTex = null; }
     if (this._waterfalls) {
-      for (const w of this._waterfalls) w.dispose();
+      for (const w of this._waterfalls) w.dispose(false);
       this._waterfalls = null;
     }
+    if (this._waterfallDropTex) { this._waterfallDropTex.dispose(); this._waterfallDropTex = null; }
     if (this._pylonRings) {
       for (const pr of this._pylonRings) { pr.ring1.dispose(); pr.ring2.dispose(); }
       this._pylonRings = null;

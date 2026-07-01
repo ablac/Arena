@@ -3,7 +3,6 @@ package game
 import (
 	"encoding/json"
 	"math"
-	"sync"
 	"time"
 
 	"arena-server/internal/config"
@@ -304,7 +303,6 @@ type BotState struct {
 	// WebSocket (nil for AI-only bots)
 	Conn     *websocket.Conn
 	SendChan chan []byte
-	mu       sync.Mutex // protects Conn writes if needed
 }
 
 // RoundPhase tracks the current phase of the game.

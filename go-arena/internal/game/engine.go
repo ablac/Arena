@@ -87,6 +87,18 @@ type SpectatorConn struct {
 	Done        chan struct{}
 	IP          string
 	ConnectedAt time.Time
+
+	closeDoneOnce sync.Once
+}
+
+// CloseDone closes the Done channel exactly once. Both the connection
+// handler's own disconnect cleanup and an admin-triggered KickSpectator can
+// race to close Done for the same spectator; without this guard the second
+// close panics with "close of closed channel".
+func (s *SpectatorConn) CloseDone() {
+	s.closeDoneOnce.Do(func() {
+		close(s.Done)
+	})
 }
 
 // NewGameEngine initialises all fields and returns a ready-to-run engine.
@@ -790,7 +802,7 @@ func (e *GameEngine) KickSpectator(index int) bool {
 	if s.Conn != nil {
 		s.Conn.Close()
 	}
-	close(s.Done)
+	s.CloseDone()
 	e.Spectators = append(e.Spectators[:index], e.Spectators[index+1:]...)
 	return true
 }
@@ -1393,6 +1405,13 @@ func (e *GameEngine) sendBotTickUpdates() {
 
 		yourState := BuildYourState(bot, e.Arena, e.KillFeed, e.TickCount)
 
+		// Cache the bot's grid cell once per tick; every entity-visibility
+		// check below reuses it instead of recomputing WorldToGrid.
+		var botCell [2]int
+		if ActiveTerrain != nil {
+			botCell = ActiveTerrain.WorldToGrid(bot.Position)
+		}
+
 		// Build nearby entities using fog radius.
 		nearbyIDs := e.Grid.QueryRadius(bot.Position, viewRadius)
 		var nearby []map[string]interface{}
@@ -1411,7 +1430,6 @@ func (e *GameEngine) sendBotTickUpdates() {
 		// Include pickups within fog radius.
 		for _, p := range e.Pickups {
 			if ActiveTerrain != nil {
-				botCell := ActiveTerrain.WorldToGrid(bot.Position)
 				pickupCell := ActiveTerrain.WorldToGrid(p.Position)
 				if GridDistance(botCell, pickupCell) <= fogRadius {
 					nearby = append(nearby, BuildPickupNearbyView(p))
@@ -1424,7 +1442,6 @@ func (e *GameEngine) sendBotTickUpdates() {
 		// Include teleport pads within fog radius.
 		for _, pad := range e.TeleportPads {
 			if ActiveTerrain != nil {
-				botCell := ActiveTerrain.WorldToGrid(bot.Position)
 				padCell := ActiveTerrain.WorldToGrid(pad.Position)
 				if GridDistance(botCell, padCell) <= fogRadius {
 					nearby = append(nearby, BuildTeleportPadView(pad, e.TickCount, true))
@@ -1437,7 +1454,6 @@ func (e *GameEngine) sendBotTickUpdates() {
 		// Include capture pads within fog radius.
 		for _, pad := range e.CapturePads {
 			if ActiveTerrain != nil {
-				botCell := ActiveTerrain.WorldToGrid(bot.Position)
 				padCell := ActiveTerrain.WorldToGrid(pad.Position)
 				if GridDistance(botCell, padCell) <= fogRadius+3 {
 					nearby = append(nearby, BuildCapturePadView(pad, e.TickCount, true))
@@ -1450,7 +1466,6 @@ func (e *GameEngine) sendBotTickUpdates() {
 		// Include hazard zones within fog radius.
 		for _, zone := range e.HazardZones {
 			if ActiveTerrain != nil {
-				botCell := ActiveTerrain.WorldToGrid(bot.Position)
 				zoneCell := ActiveTerrain.WorldToGrid(zone.Position)
 				if GridDistance(botCell, zoneCell) <= fogRadius+4 {
 					nearby = append(nearby, BuildHazardZoneView(zone, true, e.Round.Modifier))
@@ -1463,7 +1478,6 @@ func (e *GameEngine) sendBotTickUpdates() {
 		// Include staff burn fields within fog radius.
 		for _, field := range e.BurnFields {
 			if ActiveTerrain != nil {
-				botCell := ActiveTerrain.WorldToGrid(bot.Position)
 				fieldCell := ActiveTerrain.WorldToGrid(field.Position)
 				if GridDistance(botCell, fieldCell) <= fogRadius+2 {
 					nearby = append(nearby, BuildBurnFieldView(field, true))
@@ -1476,7 +1490,6 @@ func (e *GameEngine) sendBotTickUpdates() {
 		// Include gravity wells within fog radius.
 		for _, well := range e.GravityWells {
 			if ActiveTerrain != nil {
-				botCell := ActiveTerrain.WorldToGrid(bot.Position)
 				wellCell := ActiveTerrain.WorldToGrid(well.Position)
 				if GridDistance(botCell, wellCell) <= fogRadius {
 					nearby = append(nearby, BuildGravityWellView(well, true))
@@ -1518,7 +1531,6 @@ func (e *GameEngine) sendBotTickUpdates() {
 		for _, mine := range e.Landmines {
 			if mine.Armed && mine.OwnerID != bot.BotID {
 				if ActiveTerrain != nil {
-					botCell := ActiveTerrain.WorldToGrid(bot.Position)
 					mineCell := ActiveTerrain.WorldToGrid(mine.Position)
 					if GridDistance(botCell, mineCell) <= 3 {
 						nearbyMineCount++

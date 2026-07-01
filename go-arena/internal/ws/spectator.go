@@ -82,7 +82,7 @@ func SpectatorHandler(engine *game.GameEngine) http.HandlerFunc {
 		// Cleanup on disconnect.
 		cancel()
 		engine.RemoveSpectator(spec)
-		close(spec.Done)
+		spec.CloseDone()
 		close(spec.SendChan)
 
 		slog.Info("spectator disconnected", "remote", r.RemoteAddr)

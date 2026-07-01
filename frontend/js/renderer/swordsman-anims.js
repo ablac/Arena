@@ -33,6 +33,26 @@ function elerp(current, target, rate, dt) {
 }
 
 // ─── Keyframe interpolation (direct port from CharacterAnimator.ts) ─────────
+
+// A given `keyframes` array (ATTACK_ANIMS[stance][attack].kf) is a static,
+// never-mutated reference shared by every bot playing that attack, so the
+// union of pose keys for each adjacent (kf0, kf1) bracket is cached per
+// array instead of rebuilt via Set+spread every frame per attacking bot.
+const _bracketKeysCache = new WeakMap();
+function _getBracketKeys(keyframes, i, kf0, kf1) {
+  let perArray = _bracketKeysCache.get(keyframes);
+  if (!perArray) {
+    perArray = [];
+    _bracketKeysCache.set(keyframes, perArray);
+  }
+  let keys = perArray[i];
+  if (!keys) {
+    keys = Array.from(new Set([...Object.keys(kf0.pose), ...Object.keys(kf1.pose)]));
+    perArray[i] = keys;
+  }
+  return keys;
+}
+
 /**
  * Interpolate a pose from a keyframe array at normalized time p (0..1).
  * Keyframes are sorted by t. Returns a dict of "partName.axis" -> degrees.
@@ -63,7 +83,7 @@ function interpolateKeyframes(p, keyframes) {
 
   // Interpolate all keys present in either keyframe
   const result = {};
-  const allKeys = new Set([...Object.keys(kf0.pose), ...Object.keys(kf1.pose)]);
+  const allKeys = _getBracketKeys(keyframes, i, kf0, kf1);
   for (const key of allKeys) {
     const v0 = kf0.pose[key] ?? 0;
     const v1 = kf1.pose[key] ?? 0;
@@ -437,6 +457,34 @@ export function updateSwordsmanAnim(entry, dt) {
 
 // ─── Idle animation (breathing, guard pose, walk cycle) ─────────────────────
 
+// GUARD_POSES entries are static per stance, so the parsed
+// {partName, axis, targetRad} triples are cached once per stance instead of
+// being re-derived (Object.entries + string split) every frame per bot.
+const _guardPoseEntriesCache = {};
+function _getGuardPoseEntries(stance) {
+  let entries = _guardPoseEntriesCache[stance];
+  if (entries) return entries;
+
+  const guardPose = GUARD_POSES[stance] || GUARD_POSES.pflug;
+  entries = [];
+  for (const [key, targetDeg] of Object.entries(guardPose)) {
+    if (key === 'body.y') continue;
+    const dot = key.indexOf('.');
+    const partName = key.slice(0, dot);
+    const axis = key.slice(dot + 1);
+
+    const Y_SIGN = -1;
+    const Z_SIGN = -1;
+    let sign = 1;
+    if (axis === 'y') sign = Y_SIGN;
+    if (axis === 'z') sign = Z_SIGN;
+
+    entries.push({ partName, axis, targetRad: targetDeg * DEG * sign });
+  }
+  _guardPoseEntriesCache[stance] = entries;
+  return entries;
+}
+
 function _updateIdle(anim, joints, dt) {
   const S = 13;
   anim.breathPhase += dt * 2.0;
@@ -446,22 +494,11 @@ function _updateIdle(anim, joints, dt) {
   joints.torso.scaling.y = 1 + breathAmt;
 
   // Guard pose: lerp all joints toward current stance
-  const guardPose = GUARD_POSES[anim.stance] || GUARD_POSES.pflug;
-  for (const [key, targetDeg] of Object.entries(guardPose)) {
-    if (key === 'body.y') continue;
-    const dot = key.indexOf('.');
-    const partName = key.slice(0, dot);
-    const axis = key.slice(dot + 1);
+  const entries = _getGuardPoseEntries(anim.stance);
+  for (let i = 0; i < entries.length; i++) {
+    const { partName, axis, targetRad } = entries[i];
     const node = joints[partName];
     if (!node) continue;
-
-    const Y_SIGN = -1;
-    const Z_SIGN = -1;
-    let sign = 1;
-    if (axis === 'y') sign = Y_SIGN;
-    if (axis === 'z') sign = Z_SIGN;
-
-    const targetRad = targetDeg * DEG * sign;
     node.rotation[axis] = elerp(node.rotation[axis], targetRad, 4, dt);
   }
 
