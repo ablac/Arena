@@ -50,12 +50,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Spectator WebSocket
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${wsProtocol}//${window.location.host}/ws/spectator`;
+  // The 3D scene stays fully smooth off the raw ~10Hz tick, but the HUD/
+  // leaderboard/dropdown DOM writes are only human-legible at a few Hz, so
+  // they're throttled independently to cut redundant layout/reflow work.
+  const UI_UPDATE_INTERVAL_MS = 200;
+  let lastUiUpdate = 0;
   const spectator = new SpectatorSocket(wsUrl,
     (state) => {
       arenaEngine.setState(state);
-      hud.updateState(state);
-      updateHeroStatus(state);
-      updateFollowDropdown(state);
+      const now = performance.now();
+      if (now - lastUiUpdate >= UI_UPDATE_INTERVAL_MS) {
+        lastUiUpdate = now;
+        hud.updateState(state);
+        updateHeroStatus(state);
+        updateFollowDropdown(state);
+      }
     },
     (status) => hud.setStatus(status),
   );

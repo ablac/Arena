@@ -36,6 +36,12 @@ export class GameplayRenderer {
     this._glowTex = null;
     this.onStaffImpactCreated = null;
     this._initGlowTexture();
+
+    // Fixed capture-pad tint constants, cached once instead of allocated every tick per pad.
+    const B = window.BABYLON;
+    this._capturePadNeutral = new B.Color3(0.44, 0.62, 0.74);
+    this._capturePadLocked = new B.Color3(0.36, 0.36, 0.4);
+    this._capturePadContested = new B.Color3(1.0, 0.42, 0.2);
   }
 
   /** @private Create shared glow particle texture. */
@@ -182,9 +188,9 @@ export class GameplayRenderer {
       entry.platform.material.emissiveColor.copyFrom(emissive);
       entry.ring.material.emissiveColor.copyFrom(emissive);
       entry.haloMat.emissiveColor.copyFrom(emissive);
-      entry.beam.color1 = new B.Color4(emissive.r, emissive.g, emissive.b, ready ? 0.4 : 0.11);
-      entry.beam.color2 = new B.Color4(emissive.r * 0.5, emissive.g * 0.5, emissive.b * 0.5, ready ? 0.16 : 0.04);
-      entry.swirl.color1 = new B.Color4(emissive.r, emissive.g, emissive.b, ready ? 0.5 : 0.12);
+      entry.beam.color1.set(emissive.r, emissive.g, emissive.b, ready ? 0.4 : 0.11);
+      entry.beam.color2.set(emissive.r * 0.5, emissive.g * 0.5, emissive.b * 0.5, ready ? 0.16 : 0.04);
+      entry.swirl.color1.set(emissive.r, emissive.g, emissive.b, ready ? 0.5 : 0.12);
       entry.beam.emitRate = ready ? 16 : 3;
       entry.swirl.emitRate = ready ? 12 : 2;
 
@@ -272,9 +278,9 @@ export class GameplayRenderer {
       const contested = !!pad.is_contested;
       const contenderCount = pad.contender_count || 0;
       const ownerColor = parseColor(pad.color || '#7ef7ff');
-      const neutral = new B.Color3(0.44, 0.62, 0.74);
-      const locked = new B.Color3(0.36, 0.36, 0.4);
-      const contestedColor = new B.Color3(1.0, 0.42, 0.2);
+      const neutral = this._capturePadNeutral;
+      const locked = this._capturePadLocked;
+      const contestedColor = this._capturePadContested;
       const targetColor = ready ? neutral : locked;
 
       entry.base.position.set(x, 0.7, z);
