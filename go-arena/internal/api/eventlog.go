@@ -129,6 +129,12 @@ func NewErrorAggregator() *ErrorAggregator {
 	}
 }
 
+// maxDistinctErrors bounds ErrorAggregator's map so a source that keeps
+// producing new distinct (code, message) pairs can't grow it unboundedly --
+// every other event store in this package (RingBuffer) is already
+// fixed-size, and this map was the one exception.
+const maxDistinctErrors = 1000
+
 // Record adds or increments an error.
 func (ea *ErrorAggregator) Record(message, code, stack string) {
 	ea.mu.Lock()
@@ -142,16 +148,33 @@ func (ea *ErrorAggregator) Record(message, code, stack string) {
 		if stack != "" {
 			agg.StackTrace = stack
 		}
-	} else {
-		ea.errors[key] = &ErrorAggregate{
-			Message:    message,
-			Code:       code,
-			Count:      1,
-			LastSeen:   now,
-			FirstSeen:  now,
-			StackTrace: stack,
+		return
+	}
+
+	if len(ea.errors) >= maxDistinctErrors {
+		ea.evictOldestLocked()
+	}
+	ea.errors[key] = &ErrorAggregate{
+		Message:    message,
+		Code:       code,
+		Count:      1,
+		LastSeen:   now,
+		FirstSeen:  now,
+		StackTrace: stack,
+	}
+}
+
+// evictOldestLocked removes the least-recently-seen error. Callers must hold ea.mu.
+func (ea *ErrorAggregator) evictOldestLocked() {
+	var oldestKey string
+	var oldestSeen time.Time
+	for key, agg := range ea.errors {
+		if oldestKey == "" || agg.LastSeen.Before(oldestSeen) {
+			oldestKey = key
+			oldestSeen = agg.LastSeen
 		}
 	}
+	delete(ea.errors, oldestKey)
 }
 
 // GetAll returns all aggregated errors.

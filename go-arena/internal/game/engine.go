@@ -732,6 +732,18 @@ func (e *GameEngine) RemoveBot(botID string, expected *BotState) {
 		bot = current
 		delete(e.WaitingBots, botID)
 	}
+	if bot != nil && len(e.Landmines) > 0 {
+		// Drop this bot's armed-but-undetonated mines so they don't keep
+		// damaging other bots (and crediting kills to a departed player)
+		// for the rest of the round.
+		live := e.Landmines[:0]
+		for _, m := range e.Landmines {
+			if m.OwnerID != botID {
+				live = append(live, m)
+			}
+		}
+		e.Landmines = live
+	}
 	e.mu.Unlock()
 
 	if bot != nil {
