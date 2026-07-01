@@ -15,6 +15,21 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// safeGo runs fn in its own goroutine, recovering any panic so a bug (or a
+// database call unexpectedly panicking, e.g. an unguarded nil db.Pool
+// access) in fire-and-forget persistence work can never crash the whole
+// server process the way an unrecovered goroutine panic would.
+func safeGo(fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("recovered panic in background goroutine", "panic", r)
+			}
+		}()
+		fn()
+	}()
+}
+
 // GameEngine is the central coordinator for the arena game loop.
 type GameEngine struct {
 	mu sync.RWMutex
@@ -449,7 +464,8 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	persistInterval := int(c.PersistIntervalSecs * float64(c.TickRate))
 	if persistInterval > 0 && e.TickCount-e.lastPersistTick >= persistInterval {
 		e.lastPersistTick = e.TickCount
-		go PersistBotStatsFromSnapshot(context.Background(), e.snapshotBotStats(), "", false)
+		snaps := e.snapshotBotStats()
+		safeGo(func() { PersistBotStatsFromSnapshot(context.Background(), snaps, "", false) })
 	}
 
 	// Check round end.
@@ -621,11 +637,14 @@ func (e *GameEngine) endRound() {
 	}
 
 	// Persist final stats for the round.
-	go PersistBotStatsFromSnapshot(context.Background(), e.snapshotBotStats(), winnerID, true)
+	finalSnaps := e.snapshotBotStats()
+	safeGo(func() { PersistBotStatsFromSnapshot(context.Background(), finalSnaps, winnerID, true) })
 
 	// Record per-round per-bot stats for time-based leaderboards.
 	roundNum := e.Round.RoundNumber
-	go func(bots map[string]*BotState, wID string) {
+	roundBots := e.copyBotsForPersist()
+	safeGo(func() {
+		bots, wID := roundBots, winnerID
 		ctx := context.Background()
 		for _, bot := range bots {
 			won := bot.BotID == wID
@@ -635,7 +654,7 @@ func (e *GameEngine) endRound() {
 				int64(bot.RoundDamageDealt), int64(bot.RoundDamageTaken),
 				lifeSecs, bot.RoundShotsFired, bot.RoundShotsHit, bot.RoundPickups, bot.RoundDistance, bot.Elo, won)
 		}
-	}(e.copyBotsForPersist(), winnerID)
+	})
 
 	// Pre-generate next round's terrain so bots can GET /api/v1/arena/map during intermission.
 	nextC := &config.C
@@ -716,7 +735,7 @@ func (e *GameEngine) RemoveBot(botID string, expected *BotState) {
 	e.mu.Unlock()
 
 	if bot != nil {
-		go PersistSingleBot(context.Background(), bot)
+		safeGo(func() { PersistSingleBot(context.Background(), bot) })
 	}
 }
 
@@ -916,11 +935,11 @@ func (e *GameEngine) persistBountyBoardAsync() {
 		})
 	}
 
-	go func(entries []db.BountyBoardEntry) {
-		if err := db.ReplaceBountyBoardEntries(context.Background(), entries); err != nil {
+	safeGo(func() {
+		if err := db.ReplaceBountyBoardEntries(context.Background(), rows); err != nil {
 			slog.Error("failed to persist bounty board", "error", err)
 		}
-	}(rows)
+	})
 }
 
 // --------------------------------------------------------------------------
@@ -1328,7 +1347,8 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 
 		// Log the kill to the database.
 		if killer != nil && victimOk {
-			go InsertKillLog(context.Background(), e.Round.RoundID, killer, victim, weapon, damage, e.TickCount)
+			roundID, tick := e.Round.RoundID, e.TickCount
+			safeGo(func() { InsertKillLog(context.Background(), roundID, killer, victim, weapon, damage, tick) })
 		}
 
 		// Emit game event for dashboard.
@@ -1788,7 +1808,7 @@ func (e *GameEngine) KickBot(botID, reason string) bool {
 	if bot.Conn != nil {
 		bot.Conn.Close()
 	}
-	go PersistSingleBot(context.Background(), bot)
+	safeGo(func() { PersistSingleBot(context.Background(), bot) })
 	slog.Info("admin kicked bot", "bot_id", botID, "name", bot.Name, "reason", reason)
 	return true
 }
