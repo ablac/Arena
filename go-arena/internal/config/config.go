@@ -168,6 +168,11 @@ type Config struct {
 	DBPoolSize    int `envconfig:"ARENA_DB_POOL_SIZE" default:"20"`
 	DBMaxOverflow int `envconfig:"ARENA_DB_MAX_OVERFLOW" default:"10"`
 
+	// DB connection resilience
+	DBConnectAttempts     int  `envconfig:"ARENA_DB_CONNECT_ATTEMPTS" default:"10"`
+	DBConnectRetrySeconds int  `envconfig:"ARENA_DB_CONNECT_RETRY_SECONDS" default:"3"`
+	DBOptional            bool `envconfig:"ARENA_DB_OPTIONAL" default:"false"`
+
 	// Frontend UI
 	UIBgColor      string `envconfig:"ARENA_UI_BG_COLOR" default:"#1a1a2e"`
 	UIBgSecondary  string `envconfig:"ARENA_UI_BG_SECONDARY" default:"#16213e"`
