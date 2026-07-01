@@ -66,13 +66,21 @@ func CheckRateLimit(ctx context.Context, key string, maxPerWindow int, windowSec
 
 	// If this is the first request in the window, set the expiry.
 	if count == 1 {
-		RedisClient.Expire(ctx, redisKey, time.Duration(windowSecs)*time.Second)
+		if err := RedisClient.Expire(ctx, redisKey, time.Duration(windowSecs)*time.Second).Err(); err != nil {
+			slog.Warn("rate limiter: failed to set key expiry", "key", redisKey, "error", err)
+		}
 	}
 
 	// Determine when the window resets.
 	ttl, err := RedisClient.TTL(ctx, redisKey).Result()
 	if err != nil || ttl < 0 {
-		// Fallback: assume full window remaining.
+		// ttl == -1 means the key exists but has no expiry -- most likely the
+		// Expire call above failed transiently. Without this, the counter
+		// would never reset and every future request through this key would
+		// be permanently rate-limited. Self-heal by (re-)setting it now.
+		if err := RedisClient.Expire(ctx, redisKey, time.Duration(windowSecs)*time.Second).Err(); err != nil {
+			slog.Warn("rate limiter: failed to self-heal key expiry", "key", redisKey, "error", err)
+		}
 		resetAt = time.Now().Add(time.Duration(windowSecs) * time.Second)
 	} else {
 		resetAt = time.Now().Add(ttl)

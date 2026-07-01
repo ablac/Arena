@@ -80,6 +80,9 @@ func UpdateMines(mines *[]Landmine, bots map[string]*BotState, tickCount int) []
 						continue
 					}
 					if IsInRange(target.Position, mine.Position, mine.BlastRadius) {
+						if target.InvulnTicks > 0 {
+							continue
+						}
 						target.HP -= mine.Damage
 						target.RoundDamageTaken += mine.Damage
 

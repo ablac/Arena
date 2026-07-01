@@ -87,6 +87,9 @@ func UpdateHazards(zones []HazardZone, bots map[string]*BotState, tickCount int,
 			if hasEffectByName(bot.ActiveEffects, "hazard_key") {
 				continue
 			}
+			if bot.InvulnTicks > 0 {
+				continue
+			}
 			if isBotInHazardZone(bot.Position, zone) {
 				bot.HP -= damagePerTick
 				bot.RoundDamageTaken += damagePerTick

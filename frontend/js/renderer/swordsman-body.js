@@ -97,25 +97,29 @@ const _SW_SHADOW_SCALE = (TORSO_W * 0.9) / (5 * 1.3);  // 5.85 / 6.5 ≈ 0.9
 
 function _getSwordMats(scene) {
   const B = window.BABYLON;
-  if (!_swordBladeMat || _swordBladeMat.isDisposed) {
+  // BABYLON.Material has no `isDisposed` property or method (unlike meshes),
+  // so these caches rely solely on the null check below; these materials are
+  // shared across every sword-wielding bot and intentionally never disposed
+  // (see disposeSwordsmanEntry's comment).
+  if (!_swordBladeMat) {
     _swordBladeMat = makeMat('sw-blade', scene, new B.Color3(0.85, 0.85, 0.95), {
       emissiveFactor: 0.5, specular: new B.Color3(0.6, 0.6, 0.6)
     });
     _swordBladeMat.freeze();
   }
-  if (!_swordGuardMat || _swordGuardMat.isDisposed) {
+  if (!_swordGuardMat) {
     _swordGuardMat = makeMat('sw-guard', scene, new B.Color3(0.55, 0.45, 0.25), {
       emissiveFactor: 0.3
     });
     _swordGuardMat.freeze();
   }
-  if (!_swordGripMat || _swordGripMat.isDisposed) {
+  if (!_swordGripMat) {
     _swordGripMat = makeMat('sw-grip', scene, new B.Color3(0.3, 0.2, 0.1), {
       emissiveFactor: 0.2
     });
     _swordGripMat.freeze();
   }
-  if (!_swordPommelMat || _swordPommelMat.isDisposed) {
+  if (!_swordPommelMat) {
     _swordPommelMat = makeMat('sw-pommel', scene, new B.Color3(0.6, 0.5, 0.3), {
       emissiveFactor: 0.3
     });
@@ -423,8 +427,10 @@ export function disposeSwordsmanEntry(entry) {
   // Dispose shadow instance
   if (entry.shadow && !entry.shadow.isDisposed()) entry.shadow.dispose();
   if (entry.selector && !entry.selector.isDisposed()) entry.selector.dispose();
+  // BABYLON.Material has no isDisposed check; these are per-bot materials
+  // disposed exactly once here, so an unconditional dispose is correct.
   for (const mat of entry._swMats) {
-    if (mat && !mat.isDisposed) mat.dispose();
+    if (mat) mat.dispose();
   }
   entry.root.dispose();
 }
