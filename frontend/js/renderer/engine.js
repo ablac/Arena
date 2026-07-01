@@ -47,7 +47,7 @@ export class ArenaEngine {
     try {
       const webGPUSupported = await B.WebGPUEngine.IsSupportedAsync;
       if (webGPUSupported) {
-        engine = new B.WebGPUEngine(this.canvas, { antialias: false, powerPreference: 'high-performance' });
+        engine = new B.WebGPUEngine(this.canvas, { antialias: false });
         await engine.initAsync();
         console.log('[Arena] WebGPU');
       } else {
@@ -57,7 +57,6 @@ export class ArenaEngine {
       engine = new B.Engine(this.canvas, false, {
         preserveDrawingBuffer: false,
         stencil: false,
-        powerPreference: 'high-performance',
       });
       console.log('[Arena] WebGL');
     }

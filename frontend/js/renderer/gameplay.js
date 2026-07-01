@@ -36,6 +36,12 @@ export class GameplayRenderer {
     this._glowTex = null;
     this.onStaffImpactCreated = null;
     this._initGlowTexture();
+
+    // Fixed capture-pad tint constants, cached once instead of allocated every tick per pad.
+    const B = window.BABYLON;
+    this._capturePadNeutral = new B.Color3(0.44, 0.62, 0.74);
+    this._capturePadLocked = new B.Color3(0.36, 0.36, 0.4);
+    this._capturePadContested = new B.Color3(1.0, 0.42, 0.2);
   }
 
   /** @private Create shared glow particle texture. */
@@ -182,9 +188,9 @@ export class GameplayRenderer {
       entry.platform.material.emissiveColor.copyFrom(emissive);
       entry.ring.material.emissiveColor.copyFrom(emissive);
       entry.haloMat.emissiveColor.copyFrom(emissive);
-      entry.beam.color1 = new B.Color4(emissive.r, emissive.g, emissive.b, ready ? 0.4 : 0.11);
-      entry.beam.color2 = new B.Color4(emissive.r * 0.5, emissive.g * 0.5, emissive.b * 0.5, ready ? 0.16 : 0.04);
-      entry.swirl.color1 = new B.Color4(emissive.r, emissive.g, emissive.b, ready ? 0.5 : 0.12);
+      entry.beam.color1.set(emissive.r, emissive.g, emissive.b, ready ? 0.4 : 0.11);
+      entry.beam.color2.set(emissive.r * 0.5, emissive.g * 0.5, emissive.b * 0.5, ready ? 0.16 : 0.04);
+      entry.swirl.color1.set(emissive.r, emissive.g, emissive.b, ready ? 0.5 : 0.12);
       entry.beam.emitRate = ready ? 16 : 3;
       entry.swirl.emitRate = ready ? 12 : 2;
 
@@ -204,8 +210,10 @@ export class GameplayRenderer {
       if (!seen.has(id)) {
         entry.platform.dispose();
         entry.ring.dispose();
-        entry.beam.dispose();
-        entry.swirl.dispose();
+        // false: beam/swirl share _glowTex with other effect types; disposing
+        // the texture here would blank out every other glow particle system.
+        entry.beam.dispose(false);
+        entry.swirl.dispose(false);
         entry.halo.dispose();
         entry.haloMat.dispose();
         this.teleportPads.delete(id);
@@ -272,9 +280,9 @@ export class GameplayRenderer {
       const contested = !!pad.is_contested;
       const contenderCount = pad.contender_count || 0;
       const ownerColor = parseColor(pad.color || '#7ef7ff');
-      const neutral = new B.Color3(0.44, 0.62, 0.74);
-      const locked = new B.Color3(0.36, 0.36, 0.4);
-      const contestedColor = new B.Color3(1.0, 0.42, 0.2);
+      const neutral = this._capturePadNeutral;
+      const locked = this._capturePadLocked;
+      const contestedColor = this._capturePadContested;
       const targetColor = ready ? neutral : locked;
 
       entry.base.position.set(x, 0.7, z);
@@ -588,8 +596,9 @@ export class GameplayRenderer {
       if (!seen.has(id)) {
         entry.edges.forEach(e => e.dispose());
         entry.parent.dispose();
-        entry.zaps.dispose();
-        entry.sparks.dispose();
+        // false: zaps/sparks share _glowTex — see note in _updateTeleportPads.
+        entry.zaps.dispose(false);
+        entry.sparks.dispose(false);
         this.hazardZones.delete(id);
       }
     }
@@ -709,7 +718,8 @@ export class GameplayRenderer {
       if (!seen.has(id)) {
         entry.ring.dispose();
         entry.inner.dispose();
-        entry.vortex.dispose();
+        // false: vortex shares _glowTex — see note in _updateTeleportPads.
+        entry.vortex.dispose(false);
         this.gravityWells.delete(id);
       }
     }
@@ -813,12 +823,12 @@ export class GameplayRenderer {
 
   dispose() {
     for (const [, e] of this.teleportPads) {
-      e.platform.dispose(); e.ring.dispose(); e.beam.dispose(); e.swirl.dispose(); e.halo.dispose(); e.haloMat.dispose();
+      e.platform.dispose(); e.ring.dispose(); e.beam.dispose(false); e.swirl.dispose(false); e.halo.dispose(); e.haloMat.dispose();
     }
-    for (const [, e] of this.hazardZones) { e.edges.forEach(m => m.dispose()); e.parent.dispose(); e.zaps.dispose(); e.sparks.dispose(); }
+    for (const [, e] of this.hazardZones) { e.edges.forEach(m => m.dispose()); e.parent.dispose(); e.zaps.dispose(false); e.sparks.dispose(false); }
     for (const [, e] of this.burnFields) { e.disc.dispose(); e.ring.dispose(); e.discMat.dispose(); e.ringMat.dispose(); }
     for (const m of this.landmines.values()) m.dispose();
-    for (const [, e] of this.gravityWells) { e.ring.dispose(); e.inner.dispose(); e.vortex.dispose(); }
+    for (const [, e] of this.gravityWells) { e.ring.dispose(); e.inner.dispose(); e.vortex.dispose(false); }
     for (const [, e] of this.staffImpacts) { e.outer.dispose(); e.disc.dispose(); e.outerMat.dispose(); e.discMat.dispose(); }
     for (const m of this.voidTiles.values()) m.dispose();
     if (this.bountyGroup) this.bountyGroup.ring.dispose();
@@ -829,5 +839,11 @@ export class GameplayRenderer {
     this.gravityWells.clear();
     this.staffImpacts.clear();
     this.voidTiles.clear();
+    // Shared glow texture is only actually freed here, once, after every
+    // particle system that referenced it has been disposed without it.
+    if (this._glowTex) {
+      this._glowTex.dispose();
+      this._glowTex = null;
+    }
   }
 }

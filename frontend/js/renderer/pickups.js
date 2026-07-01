@@ -130,7 +130,7 @@ export class PickupRenderer {
       stem.position.y = -1.5;
       mesh._sibling = stem;
     } else if (type === 'overdrive_core') {
-      mesh = B.MeshBuilder.CreateOctahedron(`pum-${id}`, { size: 4.8 }, this.scene);
+      mesh = B.MeshBuilder.CreatePolyhedron(`pum-${id}`, { type: 1, size: 4.8 }, this.scene);
       mesh.parent = root;
       mesh.material = mats.shapeMat;
       const ring = B.MeshBuilder.CreateTorus(`pur-${id}`, { diameter: 10, thickness: 0.65, tessellation: 36 }, this.scene);

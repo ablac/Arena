@@ -274,7 +274,7 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 			"id":           bot.BotID,
 			"bot_id":       bot.BotID,
 			"name":         bot.Name,
-			"position":     bot.Position,
+			"position":     Vec2{round1(bot.Position[0]), round1(bot.Position[1])},
 			"hp":           math.Round(bot.HP),
 			"max_hp":       math.Round(bot.MaxHP),
 			"weapon":       bot.Weapon,
@@ -319,7 +319,7 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 			"id":          p.ID,
 			"pickup_id":   p.ID,
 			"pickup_type": string(p.Type),
-			"position":    p.Position,
+			"position":    Vec2{round1(p.Position[0]), round1(p.Position[1])},
 		})
 	}
 
