@@ -34,6 +34,18 @@ type Config struct {
 	PathfindingCellSize float64 `envconfig:"ARENA_PATHFINDING_CELL_SIZE" default:"20"`
 	FogRadius           int     `envconfig:"ARENA_FOG_RADIUS" default:"7"`
 
+	// Game modes (groundwork). "ffa" (default), "team_battle", "ctf".
+	GameModeName     string  `envconfig:"ARENA_GAME_MODE" default:"ffa"`
+	TeamCount        int     `envconfig:"ARENA_TEAM_COUNT" default:"2"`
+	FriendlyFire     bool    `envconfig:"ARENA_FRIENDLY_FIRE" default:"false"`
+	CTFCapturesToWin    int     `envconfig:"ARENA_CTF_CAPTURES_TO_WIN" default:"3"`
+	CTFFlagPickupRadius float64 `envconfig:"ARENA_CTF_FLAG_PICKUP_RADIUS" default:"25"`
+	CTFFlagReturnSecs   float64 `envconfig:"ARENA_CTF_FLAG_RETURN_SECS" default:"20"`
+
+	// Map generation. "square" (classic), "circle", "hexagon", "diamond",
+	// "cross", "caves", or "random" to roll a shape each round.
+	MapShape string `envconfig:"ARENA_MAP_SHAPE" default:"square"`
+
 	// Combat
 	StatBudget        int     `envconfig:"ARENA_STAT_BUDGET" default:"20"`
 	StatMin           int     `envconfig:"ARENA_STAT_MIN" default:"1"`
@@ -105,6 +117,7 @@ type Config struct {
 
 	// Zone
 	ZoneInitialRadius   float64 `envconfig:"ARENA_ZONE_INITIAL_RADIUS" default:"1000.0"`
+	ZoneCoverMap        bool    `envconfig:"ARENA_ZONE_COVER_MAP" default:"true"`
 	ZoneCenterX         float64 `envconfig:"ARENA_ZONE_CENTER_X" default:"1000.0"`
 	ZoneCenterY         float64 `envconfig:"ARENA_ZONE_CENTER_Y" default:"1000.0"`
 	ZoneShrinkPercent   float64 `envconfig:"ARENA_ZONE_SHRINK_PERCENT" default:"0.15"`
