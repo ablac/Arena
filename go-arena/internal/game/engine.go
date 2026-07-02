@@ -629,6 +629,8 @@ func (e *GameEngine) startRound() {
 		"bots", len(e.Bots),
 		"modifier", e.Round.Modifier,
 		"obstacles", len(obstacles),
+		"map_shape", ActiveMapShape,
+		"mode", e.Round.Mode,
 	)
 
 	if GameEventHook != nil {
@@ -637,6 +639,8 @@ func (e *GameEngine) startRound() {
 			"modifier":     string(e.Round.Modifier),
 			"bots":         len(e.Bots),
 			"obstacles":    len(obstacles),
+			"map_shape":    string(ActiveMapShape),
+			"mode":         string(e.Round.Mode),
 		})
 	}
 }
