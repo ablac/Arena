@@ -44,7 +44,7 @@ type Config struct {
 
 	// Map generation. "square" (classic), "circle", "hexagon", "diamond",
 	// "cross", "caves", or "random" to roll a shape each round.
-	MapShape string `envconfig:"ARENA_MAP_SHAPE" default:"square"`
+	MapShape string `envconfig:"ARENA_MAP_SHAPE" default:"random"`
 
 	// Spectator keyframes: static round data (obstacles, map shape) is only
 	// included every Nth broadcast plus immediately after a spectator joins.
