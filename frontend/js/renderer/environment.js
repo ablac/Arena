@@ -1099,6 +1099,32 @@ export class EnvironmentRenderer {
     this._targetMat.disableLighting = true;
     this._targetMat.alpha = 0.25;
     this._targetMat.backFaceCulling = false;
+
+    // Clip planes bounding the arena rectangle. The zone can start larger
+    // than the map (circumscribing it), so any ring geometry outside the
+    // walls is clipped away — the circle only becomes visible once it
+    // shrinks inside the arena.
+    this._mapClipPlanes = [
+      new B.Plane(-1, 0, 0, 0),        // discard x < 0
+      new B.Plane(1, 0, 0, -this.w),   // discard x > w
+      new B.Plane(0, 0, -1, 0),        // discard z < 0
+      new B.Plane(0, 0, 1, -this.h),   // discard z > h
+    ];
+  }
+
+  /** @private Clip a mesh to the arena rectangle using scene clip planes. */
+  _clipToArena(mesh) {
+    mesh.onBeforeRenderObservable.add(() => {
+      const s = this.scene;
+      const p = this._mapClipPlanes;
+      s.clipPlane = p[0]; s.clipPlane2 = p[1];
+      s.clipPlane3 = p[2]; s.clipPlane4 = p[3];
+    });
+    mesh.onAfterRenderObservable.add(() => {
+      const s = this.scene;
+      s.clipPlane = null; s.clipPlane2 = null;
+      s.clipPlane3 = null; s.clipPlane4 = null;
+    });
   }
 
   /** Set up shadow generator on the directional light. */
@@ -1177,6 +1203,7 @@ export class EnvironmentRenderer {
         diameter: 1, thickness: 0.005, tessellation: ZONE_RING_SEGMENTS
       }, this.scene);
       this._zoneRing.material = this._zoneMat;
+      this._clipToArena(this._zoneRing);
     }
   }
 
@@ -1188,6 +1215,7 @@ export class EnvironmentRenderer {
         diameter: 1, thickness: 0.003, tessellation: 256
       }, this.scene);
       this._targetRing.material = this._targetMat;
+      this._clipToArena(this._targetRing);
     }
     this._targetRing.scaling.set(r * 2, r * 2, r * 2);
     this._targetRing.position.set(cx, 1, cy);

@@ -245,6 +245,9 @@ type BotState struct {
 	CurrentPath []Vec2
 	PathTarget  *Vec2
 
+	// Team (game modes): 0 = no team (FFA), 1..N in team modes.
+	Team int
+
 	// Round stats
 	RoundKills       int
 	RoundDeaths      int
@@ -255,6 +258,7 @@ type BotState struct {
 	RoundShotsHit    int
 	RoundLongestLife  int
 	RoundPickups     int
+	RoundFlagCaptures int
 	RoundLifeStartTick int
 
 	// Persistence snapshot — tracks what was already synced to DB
@@ -348,6 +352,7 @@ type RoundState struct {
 	RoundNumber       int
 	StartTick         int
 	Phase             RoundPhase
+	Mode              GameMode
 	Modifier          RoundModifier
 	TimeRemaining     float64
 	IntermissionTicks int
@@ -422,6 +427,14 @@ type SpectatorState struct {
 	BountyTarget string                   `json:"bounty_target,omitempty"`
 	RoundModifier string                  `json:"round_modifier,omitempty"`
 	Events       []ArenaEvent             `json:"events,omitempty"`
+
+	// Game modes (groundwork)
+	GameMode   string                   `json:"game_mode,omitempty"`
+	TeamScores map[string]int           `json:"team_scores,omitempty"`
+	Flags      []map[string]interface{} `json:"flags,omitempty"`
+
+	// Map shape metadata for non-square maps ("square" when absent).
+	MapShape string `json:"map_shape,omitempty"`
 }
 
 // DerivedStats are computed from stat allocations.
@@ -467,6 +480,7 @@ func (b *BotState) ResetRoundStats() {
 	b.RoundShotsHit = 0
 	b.RoundLongestLife = 0
 	b.RoundPickups = 0
+	b.RoundFlagCaptures = 0
 	b.RoundLifeStartTick = 0
 	b.BestKillStreak = 0
 	b.RecentlyDisruptedTicks = 0

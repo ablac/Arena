@@ -69,9 +69,98 @@ export class GameplayRenderer {
     this._updateLandmines(state.landmines || []);
     this._updateGravityWells(state.gravity_wells || []);
     this._updateVoidTiles(state.void_tiles || []);
+    this._updateFlags(state.flags || []);
     this.bountyBots = state.bots || [];
     this.bountyTargetId = state.bounty_target || null;
     this._updateBounty();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // CTF FLAGS — team-colored pole + banner at the base, follows carriers
+  // ═══════════════════════════════════════════════════════════════════
+  /** @private Team palette shared by flags (team 1..n). */
+  _teamColor(team) {
+    const B = window.BABYLON;
+    const palette = [
+      new B.Color3(0.25, 0.55, 1.0),  // team 1 — blue
+      new B.Color3(1.0, 0.3, 0.25),   // team 2 — red
+      new B.Color3(0.3, 0.9, 0.4),    // team 3 — green
+      new B.Color3(1.0, 0.85, 0.2),   // team 4 — yellow
+    ];
+    return palette[(team - 1) % palette.length] || palette[0];
+  }
+
+  _updateFlags(flags) {
+    const B = window.BABYLON;
+    if (!this.flags) this.flags = new Map();
+    const seen = new Set();
+
+    for (const flag of flags) {
+      seen.add(flag.id);
+      let entry = this.flags.get(flag.id);
+      if (!entry || entry.pole.isDisposed()) {
+        const color = this._teamColor(flag.team || 1);
+
+        const pole = B.MeshBuilder.CreateCylinder(`flag-pole-${flag.id}`, {
+          height: 26, diameter: 1.2, tessellation: 8,
+        }, this.scene);
+        const poleMat = new B.StandardMaterial(`flag-pole-mat-${flag.id}`, this.scene);
+        poleMat.diffuseColor = new B.Color3(0.7, 0.7, 0.75);
+        poleMat.emissiveColor = color.scale(0.15);
+        pole.material = poleMat;
+        pole.isPickable = false;
+
+        const banner = B.MeshBuilder.CreatePlane(`flag-banner-${flag.id}`, {
+          width: 12, height: 8,
+        }, this.scene);
+        const bannerMat = new B.StandardMaterial(`flag-banner-mat-${flag.id}`, this.scene);
+        bannerMat.diffuseColor = B.Color3.Black();
+        bannerMat.emissiveColor = color;
+        bannerMat.disableLighting = true;
+        bannerMat.backFaceCulling = false;
+        bannerMat.alpha = 0.9;
+        banner.material = bannerMat;
+        banner.isPickable = false;
+        banner.parent = pole;
+        banner.position.set(6, 9, 0);
+
+        // Base ring marking the flag's home position.
+        const base = B.MeshBuilder.CreateTorus(`flag-base-${flag.id}`, {
+          diameter: 30, thickness: 1.5, tessellation: 48,
+        }, this.scene);
+        const baseMat = new B.StandardMaterial(`flag-base-mat-${flag.id}`, this.scene);
+        baseMat.diffuseColor = B.Color3.Black();
+        baseMat.emissiveColor = color.scale(0.7);
+        baseMat.disableLighting = true;
+        baseMat.alpha = 0.6;
+        base.material = baseMat;
+        base.isPickable = false;
+
+        entry = { pole, banner, bannerMat, base, curX: flag.position[0], curZ: flag.position[1] };
+        this.flags.set(flag.id, entry);
+      }
+
+      // Base ring stays at home; pole follows the flag (smoothed).
+      entry.base.position.set(flag.base_position[0], 1.5, flag.base_position[1]);
+      const lerp = 0.25;
+      entry.curX += (flag.position[0] - entry.curX) * lerp;
+      entry.curZ += (flag.position[1] - entry.curZ) * lerp;
+      const carried = flag.status === 'carried';
+      entry.pole.position.set(entry.curX, carried ? 18 : 13, entry.curZ);
+      // Dropped flags pulse to draw attention.
+      entry.bannerMat.alpha = flag.status === 'dropped'
+        ? 0.5 + 0.4 * Math.abs(Math.sin(this._tick * 0.15))
+        : 0.9;
+      entry.pole.rotation.y = carried ? this._tick * 0.05 : 0;
+    }
+
+    for (const [id, entry] of this.flags) {
+      if (!seen.has(id)) {
+        entry.pole.dispose(); // banner is parented and disposed with it
+        entry.base.dispose();
+        this.flags.delete(id);
+      }
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -831,6 +920,10 @@ export class GameplayRenderer {
     for (const [, e] of this.gravityWells) { e.ring.dispose(); e.inner.dispose(); e.vortex.dispose(false); }
     for (const [, e] of this.staffImpacts) { e.outer.dispose(); e.disc.dispose(); e.outerMat.dispose(); e.discMat.dispose(); }
     for (const m of this.voidTiles.values()) m.dispose();
+    if (this.flags) {
+      for (const [, e] of this.flags) { e.pole.dispose(); e.base.dispose(); }
+      this.flags.clear();
+    }
     if (this.bountyGroup) this.bountyGroup.ring.dispose();
     this.teleportPads.clear();
     this.hazardZones.clear();

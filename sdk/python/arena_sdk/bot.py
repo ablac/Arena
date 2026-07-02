@@ -34,6 +34,7 @@ class ArenaBot:
         self._tick_number = 0
         self._last_pos: list[int] = [0, 0]
         self._last_action_result: dict | None = None
+        self._team = 0  # team number in team modes (0 = FFA / unassigned)
 
         # Terrain cache (populated by map_init)
         self._terrain: list[list[str]] | None = None
@@ -395,6 +396,8 @@ class ArenaBot:
                 state = msg.get("your_state", {})
                 self._last_pos = state.get("position", [0, 0])
                 self._last_action_result = state.get("last_action_result")
+                # Team number in team-based game modes (0 = no team / FFA).
+                self._team = state.get("team", 0)
                 nearby = msg.get("nearby_entities", [])
                 safe_zone = {
                     "center": state.get("zone_center", [0, 0]),
