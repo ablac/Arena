@@ -21,7 +21,7 @@ go-arena/
     config/                     # Env-based config (100+ params)
     db/                         # PostgreSQL queries & models
     game/                       # Core game engine, combat, pathfinding, weapons
-    demobots/                   # Built-in demo bot AI (behavior trees)
+    demobots/                   # Built-in demo bot AI (danger-aware pathfinding, team/CTF play)
     security/                   # Auth, rate limiting, input validation
     ws/                         # WebSocket handlers (bot + spectator)
 frontend/
@@ -84,15 +84,19 @@ cd sdk/nodejs && npm install
 
 ## Game Mechanics Quick Ref
 
-- **6 weapons:** Sword, Bow, Daggers, Shield, Spear, Staff
+- **7 weapons:** Sword, Bow, Daggers, Shield, Spear, Staff, Grapple (each with a signature move: cleave, charged shot, backstab, bash, brace, burn field, slam)
 - **Stats:** 20-point budget across HP/Speed/Attack/Defense (1-10 each)
-- **Pickups:** Health, Damage Boost, Speed Boost, Shield Bubble
-- **Safe zone:** Shrinks 15% every 20s, 3 dmg/tick outside
+- **Pickups:** Health, Damage Boost, Speed Boost, Shield Bubble, Gravity Well, Cooldown Shard, Bounty Token, Hazard Key, Overdrive Core, Grapple Charge, Relay Battery
+- **Game modes:** `ARENA_GAME_MODE` = `ffa` (default) | `team_battle` | `ctf`; `ARENA_TEAM_COUNT` (2), `ARENA_FRIENDLY_FIRE` (false), CTF first to `ARENA_CTF_CAPTURES_TO_WIN` (3) captures
+- **Map shapes:** `ARENA_MAP_SHAPE` = `random` (default) | `square` | `circle` | `hexagon` | `diamond` | `cross` | `caves` — carved into the terrain grid as blocked cells
+- **Safe zone:** Starts covering the whole map (`ARENA_ZONE_COVER_MAP`, default true; `ARENA_ZONE_INITIAL_RADIUS` only applies when false), shrinks 15% every 20s after a 60s delay, 3 dmg/tick outside
 - **Tick rate:** 10 ticks/sec (configurable)
-- **Round:** 240s default, min 2 bots to start
+- **Round:** 300s default, min 2 bots to start
+- **Extras:** teleport pads, capture pads, hazard zones, landmines, gravity wells, bounty system, universal grapple ability, sudden death, ~30% chance of a round modifier
 
 ## Protocols
 
-- **Bot WebSocket:** `ws://host:8700/ws/bot?key=<api_key>`
-- **Spectator WebSocket:** `ws://host:8700/ws/spectator`
-- **REST API:** `/api/v1/keys/generate`, `/api/v1/arena/state`, `/api/v1/leaderboard`, `/api/v1/admin/*`
+- **Bot WebSocket:** `ws://host:8700/ws/bot?key=<api_key>` — ticks carry `your_state.team`, `game_mode`, and in team modes `team_scores` + `flags`; `void_tiles` during sudden death
+- **Spectator WebSocket:** `ws://host:8700/ws/spectator` — per-bot `team`; top-level `game_mode`, `map_shape`, `team_scores`, `flags`; obstacles only on keyframe broadcasts (`ARENA_SPECTATOR_KEYFRAME_INTERVAL`, default 10, plus on join) — clients keep the last copy between keyframes
+- **REST API:** `/api/v1/keys/generate`, `/api/v1/arena/status`, `/api/v1/arena/map`, `/api/v1/leaderboard`, `/api/v1/bot-setup`, `/api/v1/admin/*`
+- **Admin runtime tuning:** `PUT /api/v1/admin/game/config` accepts `game_mode`, `team_count`, `friendly_fire`, `map_shape` (plus round/zone/stat keys) — mode/shape changes take effect next round
