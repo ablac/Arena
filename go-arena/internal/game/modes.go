@@ -3,6 +3,7 @@ package game
 import (
 	"math"
 	"sort"
+	"strconv"
 
 	"arena-server/internal/config"
 )
@@ -68,6 +69,27 @@ func ModeRulesFor(mode GameMode) ModeRules {
 // CurrentModeRules resolves the configured game mode.
 func CurrentModeRules() ModeRules {
 	return ModeRulesFor(GameMode(config.C.GameModeName))
+}
+
+// AddModeTickExtra merges game-mode fields into a bot tick "extra" map:
+// always "game_mode", and for team modes "team_scores" (string-keyed, same
+// shape as the spectator payload) plus "flags" (one BuildFlagView per flag).
+// Flags are a global objective, so they are deliberately NOT fog-filtered.
+func AddModeTickExtra(extra map[string]interface{}, rules ModeRules, teamScores map[int]int, flags []*CTFFlag) {
+	extra["game_mode"] = string(rules.Mode)
+	if !rules.HasTeams() {
+		return
+	}
+	scores := make(map[string]int, rules.TeamCount)
+	for team := 1; team <= rules.TeamCount; team++ {
+		scores[strconv.Itoa(team)] = teamScores[team]
+	}
+	extra["team_scores"] = scores
+	flagViews := make([]map[string]interface{}, 0, len(flags))
+	for _, f := range flags {
+		flagViews = append(flagViews, BuildFlagView(f))
+	}
+	extra["flags"] = flagViews
 }
 
 // HasTeams reports whether this ruleset plays with teams.
