@@ -1774,6 +1774,7 @@ func (e *GameEngine) sendSpectatorUpdate() {
 	state.BountyTarget = e.Bounty.TargetID
 
 	// Game mode metadata.
+	state.RoundNumber = e.Round.RoundNumber
 	state.GameMode = string(e.ModeRules.Mode)
 	state.MapShape = string(ActiveMapShape)
 	if e.ModeRules.HasTeams() {

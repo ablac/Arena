@@ -409,6 +409,7 @@ type SpectatorState struct {
 	Type         string                   `json:"type"`
 	Tick         int                      `json:"tick"`
 	RoundTick    int                      `json:"round_tick"`
+	RoundNumber  int                      `json:"round_number,omitempty"`
 	Bots         []map[string]interface{} `json:"bots"`
 	SafeZone     map[string]interface{}   `json:"safe_zone"`
 	Pickups      []map[string]interface{} `json:"pickups"`
