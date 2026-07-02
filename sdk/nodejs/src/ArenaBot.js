@@ -92,6 +92,8 @@ export default class ArenaBot {
   useGravityWell(targetPosition) {
     return { action: 'use_gravity_well', target_position: [targetPosition[0], targetPosition[1]] };
   }
+  /** Grapple a target bot (universal ability: 2 charges/round, 12-tile range). */
+  grapple(targetId) { return { action: 'grapple', target: targetId }; }
   /** Do nothing this tick. */
   idle() { return { action: 'idle' }; }
 

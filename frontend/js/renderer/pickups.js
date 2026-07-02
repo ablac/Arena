@@ -9,13 +9,18 @@
 import { makeMat } from './utils.js';
 
 let _highlightLayer = null;
+let _highlightLayerScene = null;
 
 function _getHighlightLayer(scene) {
-  if (!_highlightLayer || _highlightLayer.isDisposed) {
+  // HighlightLayer has no `isDisposed` member (the old check was always
+  // undefined). Track the owning scene so a layer from a disposed/re-created
+  // scene is never handed out.
+  if (!_highlightLayer || _highlightLayerScene !== scene) {
     _highlightLayer = new window.BABYLON.HighlightLayer('pickupHL', scene, {
       blurHorizontalSize: 0.5,
       blurVerticalSize: 0.5,
     });
+    _highlightLayerScene = scene;
   }
   return _highlightLayer;
 }
@@ -39,7 +44,8 @@ const _typeMats = new Map();
 
 function _getMats(type, scene) {
   let mats = _typeMats.get(type);
-  if (mats && !mats.shapeMat.isDisposed) return mats;
+  // Materials have no `isDisposed` member; validate against the scene.
+  if (mats && mats.shapeMat.getScene() === scene) return mats;
   const B = window.BABYLON;
   const c = COLORS[type] || COLORS.health_pack;
   const color = new B.Color3(c[0], c[1], c[2]);

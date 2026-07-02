@@ -34,7 +34,11 @@ let _guiTexture = null;
  * @returns {BABYLON.GUI.AdvancedDynamicTexture}
  */
 export function getGuiTexture() {
-  if (!_guiTexture || _guiTexture.isDisposed) {
+  // NOTE: Babylon textures have no `isDisposed` member (that's a mesh/Node
+  // API), so the old `_guiTexture.isDisposed` check was always undefined and
+  // never detected disposal. Validate via the owning scene instead.
+  const guiScene = _guiTexture ? _guiTexture.getScene() : null;
+  if (!_guiTexture || !guiScene || guiScene.isDisposed) {
     const GUI = window.BABYLON.GUI;
     _guiTexture = GUI.AdvancedDynamicTexture.CreateFullscreenUI('botUI');
   }
@@ -42,7 +46,9 @@ export function getGuiTexture() {
 }
 
 function _getShadowMat(scene) {
-  if (!_shdMat || _shdMat.isDisposed) {
+  // Materials have no `isDisposed` member; a cached material is stale when
+  // it belongs to a different (e.g. disposed and re-created) scene.
+  if (!_shdMat || _shdMat.getScene() !== scene) {
     const B = window.BABYLON;
     _shdMat = new B.StandardMaterial('smat-shared', scene);
     _shdMat.diffuseColor = new B.Color3(0, 0, 0);
@@ -99,7 +105,7 @@ export function _getTplShadow(scene) {
 }
 
 function _getPickMat(scene) {
-  if (!_pickMat || _pickMat.isDisposed) {
+  if (!_pickMat || _pickMat.getScene() !== scene) {
     const B = window.BABYLON;
     _pickMat = new B.StandardMaterial('bot-pick-mat', scene);
     _pickMat.diffuseColor = B.Color3.Black();
@@ -254,9 +260,10 @@ export function disposeBotEntry(entry) {
   if (entry.hpFill) entry.hpFill.dispose();
   if (entry.hpContainer) entry.hpContainer.dispose();
   if (entry.nameLabel) entry.nameLabel.dispose();
-  // Only dispose per-bot materials (not shared/instanced ones)
+  // Only dispose per-bot materials (not shared/instanced ones). Materials
+  // have no `isDisposed` member and Material.dispose() is safe to repeat.
   for (const k of ['bodyMat', 'headMat']) {
-    if (entry[k] && !entry[k].isDisposed) entry[k].dispose();
+    if (entry[k]) entry[k].dispose();
   }
   // Arms and shadow are InstancedMeshes — dispose instances (not the template)
   if (entry.lArm && !entry.lArm.isDisposed()) entry.lArm.dispose();

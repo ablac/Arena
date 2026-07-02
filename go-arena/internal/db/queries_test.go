@@ -29,7 +29,7 @@ func TestAuthQueries_NilPool_ReturnErrorNotPanic(t *testing.T) {
 	if err := UpdateAPIKeyLastSeen(ctx, "some-key-id"); err == nil {
 		t.Error("UpdateAPIKeyLastSeen: expected an error when Pool is nil, got nil")
 	}
-	if _, err := GetAdminTokenHash(ctx, "some-token-id"); err == nil {
-		t.Error("GetAdminTokenHash: expected an error when Pool is nil, got nil")
+	if _, err := GetAllAdminTokenHashes(ctx); err == nil {
+		t.Error("GetAllAdminTokenHashes: expected an error when Pool is nil, got nil")
 	}
 }

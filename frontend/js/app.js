@@ -7,6 +7,7 @@
 
 import { ArenaEngine } from './renderer/engine.js?v=20260523a';
 import { HudRenderer } from './renderer/hud.js?v=20260523a';
+import { Minimap } from './renderer/minimap.js';
 import { SpectatorSocket } from './spectator-ws.js';
 import { initLeaderboardWidget } from './leaderboard.js?v=20260521m';
 import { initKeyGenerator } from './key-generator.js';
@@ -39,6 +40,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Arena info tabs
   setupArenaTabs();
 
+  // Minimap overlay (bottom-right of the arena canvas). Rescales itself
+  // when dynamic arena sizing changes the map dimensions between rounds.
+  const minimap = new Minimap(canvas.parentElement, ARENA_WIDTH, ARENA_HEIGHT);
+
   // Initialize Babylon engine
   try {
     await arenaEngine.init();
@@ -62,6 +67,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (now - lastUiUpdate >= UI_UPDATE_INTERVAL_MS) {
         lastUiUpdate = now;
         hud.updateState(state);
+        if (state.type === 'arena_state') minimap.update(state);
         updateHeroStatus(state);
         updateFollowDropdown(state);
       }

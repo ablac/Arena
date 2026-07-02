@@ -15,7 +15,9 @@ const _sharedMats = new Map();
 
 function _mat(key, scene, color, opts) {
   let mat = _sharedMats.get(key);
-  if (!mat || mat.isDisposed) {
+  // Materials have no `isDisposed` member (the old check was always
+  // undefined); a cached material is stale when it belongs to another scene.
+  if (!mat || mat.getScene() !== scene) {
     mat = makeMat(key, scene, color, opts);
     mat.freeze();
     _sharedMats.set(key, mat);

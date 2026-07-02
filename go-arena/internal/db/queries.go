@@ -598,19 +598,6 @@ func DeleteAdminToken(ctx context.Context, id string) error {
 	return nil
 }
 
-// GetAdminTokenHash returns the hash for a given token ID.
-func GetAdminTokenHash(ctx context.Context, id string) (string, error) {
-	if Pool == nil {
-		return "", ErrNoDatabase
-	}
-	var hash string
-	err := Pool.QueryRow(ctx, `SELECT token_hash FROM admin_tokens WHERE id = $1`, id).Scan(&hash)
-	if err != nil {
-		return "", fmt.Errorf("GetAdminTokenHash: %w", err)
-	}
-	return hash, nil
-}
-
 // GetAllAdminTokenHashes returns all token hashes for auth checking.
 func GetAllAdminTokenHashes(ctx context.Context) ([]string, error) {
 	if Pool == nil {

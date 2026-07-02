@@ -198,6 +198,18 @@ export class ArenaEngine {
    */
   setState(state) {
     if (!this.ready || state.type !== 'arena_state') return;
+
+    // Dynamic arena sizing: the map can change dimensions between rounds
+    // (it grows with bot count). Keyframe states carry arena_size; when it
+    // differs from the scene we built, rebuild the whole scene at the new
+    // size. This only ever happens at round boundaries.
+    const size = state.arena_size;
+    if (size && size.length === 2 && !this._resizing &&
+        (size[0] !== this.arenaWidth || size[1] !== this.arenaHeight)) {
+      this._rebuildForArenaSize(size[0], size[1], state);
+      return;
+    }
+
     this.state = state;
     this._playArenaEvents(state.events || [], state);
     this.obstacleRenderer.update(state.obstacles);
@@ -207,6 +219,36 @@ export class ArenaEngine {
     this.effectRenderer.update(state.bots);
     this.gameplayRenderer.update(state);
     this.camera.updateBotPositions(state.bots);
+  }
+
+  /**
+   * @private Tear down and rebuild the whole scene at new arena dimensions.
+   * Every renderer has a dispose path and module-level caches are
+   * scene-aware, so a full rebuild is safe; external wiring (controls, HUD
+   * callbacks) stays valid because the ArenaEngine instance survives.
+   */
+  async _rebuildForArenaSize(w, h, state) {
+    this._resizing = true;
+    console.log(`[Arena] arena size changed to ${w}x${h} — rebuilding scene`);
+    const prevFollow = this.camera ? this.camera.followId : null;
+    const prevZoom = this.camera ? this.camera.zoom : null;
+    this.ready = false;
+    try {
+      this.dispose();
+      this.arenaWidth = w;
+      this.arenaHeight = h;
+      this.state = null;
+      await this.init();
+      if (prevZoom) this.setZoom(prevZoom);
+      if (prevFollow) this.followBot(prevFollow);
+    } catch (err) {
+      console.error('[Arena] scene rebuild failed:', err);
+    } finally {
+      this._resizing = false;
+    }
+    // Apply the keyframe that triggered the rebuild so the new scene
+    // populates immediately instead of waiting for the next broadcast.
+    if (this.ready && state) this.setState(state);
   }
 
   _playArenaEvents(events, state) {
@@ -296,6 +338,16 @@ export class ArenaEngine {
         if (ev.target_id && this.botRenderer) {
           this.botRenderer.playImpactReaction(ev.target_id);
         }
+      } else if (ev.type === 'flag_captured' && ev.position) {
+        // CTF capture: celebratory burst at the base.
+        this.effectRenderer.spawnMineExplosion(ev.position[0], ev.position[1], 30);
+        this.effectRenderer.spawnHitSparks(ev.position[0], ev.position[1], '#ffd700', 'sword');
+      } else if ((ev.type === 'flag_taken' || ev.type === 'flag_returned' || ev.type === 'flag_dropped') && ev.position) {
+        this.effectRenderer.spawnHitSparks(
+          ev.position[0], ev.position[1],
+          ev.type === 'flag_taken' ? '#ff5a4d' : '#7ef7ff',
+          'sword'
+        );
       } else if (ev.type === 'mine_detonated' && ev.position) {
         this.effectRenderer.spawnMineExplosion(
           ev.position[0], ev.position[1],

@@ -38,6 +38,19 @@ export class Minimap {
    */
   update(state) {
     if (!state) return;
+
+    // Dynamic arena sizing: keyframes carry arena_size; rescale to match.
+    const size = state.arena_size;
+    if (size && size.length === 2 &&
+        (size[0] !== this.arenaWidth || size[1] !== this.arenaHeight)) {
+      this.arenaWidth = size[0];
+      this.arenaHeight = size[1];
+      this.scale = MINIMAP_SIZE / Math.max(this.arenaWidth, this.arenaHeight);
+      this._lastObstacles = null;
+    }
+    // Obstacles arrive only on keyframe broadcasts — keep the last copy.
+    if (state.obstacles) this._lastObstacles = state.obstacles;
+
     const hasBots = state.bots && state.bots.some(b => b.is_alive);
     this.canvas.style.display = hasBots ? '' : 'none';
     if (!hasBots) return;
@@ -95,10 +108,10 @@ export class Minimap {
       ctx.restore();
     }
 
-    // Obstacles
+    // Obstacles (cached between keyframes)
     ctx.fillStyle = 'rgba(40, 40, 55, 0.8)';
-    if (state.obstacles) {
-      for (const obs of state.obstacles) {
+    if (this._lastObstacles) {
+      for (const obs of this._lastObstacles) {
         ctx.fillRect(obs.x * s, obs.y * s, obs.width * s, obs.height * s);
       }
     }
