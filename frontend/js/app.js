@@ -257,6 +257,13 @@ function setupControls(engine) {
     };
 
     fullscreenBtn.addEventListener('click', () => {
+      // On small touch screens the expanded desktop view is still cramped —
+      // send phones to the dedicated mobile spectator site instead.
+      if (window.matchMedia('(max-width: 768px)').matches &&
+          window.matchMedia('(pointer: coarse)').matches) {
+        window.location.href = '/m/';
+        return;
+      }
       if (expanded) {
         collapseShell();
         return;

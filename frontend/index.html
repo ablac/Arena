@@ -1537,7 +1537,8 @@ wss://arena.angel-serv.com/ws/spectator
       left: 12px;
       right: 12px;
       bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-      z-index: 70;
+      /* Above the floating arena shell (120) and onboarding rails (110). */
+      z-index: 150;
       display: flex;
       align-items: center;
       gap: 12px;
@@ -1574,7 +1575,15 @@ wss://arena.angel-serv.com/ws/spectator
       font-size: 1.2rem;
       line-height: 1;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
     }
+    /* The flex display above would otherwise override the hidden attribute's
+       UA display:none — without this rule the banner shows on every device
+       and the dismiss button appears to do nothing. */
+    .mobile-suggest-banner[hidden] { display: none !important; }
   </style>
   <div class="mobile-suggest-banner" id="mobile-suggest-banner" hidden>
     <span>This page is built for desktop &mdash; try the mobile spectator view.</span>

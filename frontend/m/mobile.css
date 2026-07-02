@@ -191,6 +191,12 @@ body {
 
 /* ---------- Floating action cluster ---------- */
 
+/* Several elements toggle the hidden attribute from JS while their classes
+   set an explicit display (flex/inline-flex), which would override the UA's
+   [hidden] display:none — without this guard they'd never actually hide
+   (e.g. the follow chip showed as a stray gold circle on load). */
+[hidden] { display: none !important; }
+
 #fabs {
   position: fixed;
   right: calc(10px + var(--safe-right));
@@ -234,10 +240,11 @@ body {
 
 .fab-follow {
   width: auto;
+  min-width: 44px;
   max-width: 190px;
   height: 44px;
   border-radius: 999px;
-  padding: 0 16px 0 12px;
+  padding: 0 14px;
   gap: 8px;
   font-size: 0.78rem;
   color: var(--accent-gold);
