@@ -60,7 +60,8 @@ export class GameplayRenderer {
   }
 
   update(state) {
-    this._tick++;
+    // NOTE: this._tick advances per-frame in animate() (dt-based) so ambient
+    // pulses stay smooth; update() only applies server-driven state at 10Hz.
     this._updateTeleportPads(state.teleport_pads || []);
     this._updateCapturePads(state.capture_pads || []);
     this._updateHazardZones(state.hazard_zones || []);
@@ -140,18 +141,12 @@ export class GameplayRenderer {
         this.flags.set(flag.id, entry);
       }
 
-      // Base ring stays at home; pole follows the flag (smoothed).
+      // Base ring stays at home; pole position/pulse animate per-frame in
+      // _animateAmbient from the stored target.
       entry.base.position.set(flag.base_position[0], 1.5, flag.base_position[1]);
-      const lerp = 0.25;
-      entry.curX += (flag.position[0] - entry.curX) * lerp;
-      entry.curZ += (flag.position[1] - entry.curZ) * lerp;
-      const carried = flag.status === 'carried';
-      entry.pole.position.set(entry.curX, carried ? 18 : 13, entry.curZ);
-      // Dropped flags pulse to draw attention.
-      entry.bannerMat.alpha = flag.status === 'dropped'
-        ? 0.5 + 0.4 * Math.abs(Math.sin(this._tick * 0.15))
-        : 0.9;
-      entry.pole.rotation.y = carried ? this._tick * 0.05 : 0;
+      entry.tx = flag.position[0];
+      entry.tz = flag.position[1];
+      entry.status = flag.status;
     }
 
     for (const [id, entry] of this.flags) {
@@ -267,8 +262,6 @@ export class GameplayRenderer {
       const blend = ready ? 1 : Math.max(0.15, 1 - cooldown / 30);
       const emissive = B.Color3.Lerp(inactiveColor, entry.color, blend);
       entry.platform.position.set(x, 0.75, z);
-      entry.ring.position.set(x, 2 + Math.sin(this._tick * 0.04) * (ready ? 0.5 : 0.15), z);
-      entry.ring.rotation.y += ready ? 0.02 : 0.006;
       entry.beam.emitter.x = x;
       entry.beam.emitter.z = z;
       entry.swirl.emitter.x = x;
@@ -282,17 +275,12 @@ export class GameplayRenderer {
       entry.swirl.color1.set(emissive.r, emissive.g, emissive.b, ready ? 0.5 : 0.12);
       entry.beam.emitRate = ready ? 16 : 3;
       entry.swirl.emitRate = ready ? 12 : 2;
-
-      // Pulse the platform glow
-      entry.platform.material.alpha = ready
-        ? 0.4 + 0.15 * Math.sin(this._tick * 0.06)
-        : 0.2 + 0.04 * Math.sin(this._tick * 0.03);
       entry.ring.material.alpha = ready ? 0.8 : 0.28;
-      entry.haloMat.alpha = ready
-        ? 0.14 + 0.07 * Math.sin(this._tick * 0.05)
-        : 0.06 + 0.02 * Math.sin(this._tick * 0.03);
-      const haloScale = ready ? 1.0 + Math.sin(this._tick * 0.04) * 0.04 : 0.94;
-      entry.halo.scaling.set(haloScale, haloScale, 1);
+
+      // Ambient bob/pulse runs per-frame in _animateAmbient — store state.
+      entry.x = x;
+      entry.z = z;
+      entry.ready = ready;
     }
 
     for (const [id, entry] of this.teleportPads) {
@@ -375,9 +363,7 @@ export class GameplayRenderer {
       const targetColor = ready ? neutral : locked;
 
       entry.base.position.set(x, 0.7, z);
-      entry.ring.position.set(x, 1.8 + Math.sin(this._tick * 0.035) * 0.18, z);
       entry.inner.position.set(x, 0.22, z);
-      entry.ring.rotation.y += ready ? 0.016 : 0.004;
 
       let captureColor = targetColor;
       if (pad.owner_id || pad.capturing_bot_id) {
@@ -400,14 +386,19 @@ export class GameplayRenderer {
       entry.ringMat.alpha = ready ? 0.48 + 0.22 * progress : 0.2;
       entry.innerMat.alpha = ready ? 0.10 + 0.18 * progress : 0.06;
 
-      const pulse = 1 + Math.sin(this._tick * 0.05) * (0.02 + progress * 0.03 + contenderCount * 0.01);
-      entry.ring.scaling.set(pulse, pulse, 1);
       entry.inner.scaling.set(0.84 + progress * 0.38, 0.84 + progress * 0.38, 1);
       if (contested) {
-        entry.ring.rotation.y += 0.03;
         entry.baseMat.alpha = Math.max(entry.baseMat.alpha, 0.32);
         entry.ringMat.alpha = Math.max(entry.ringMat.alpha, 0.66);
       }
+
+      // Ambient bob/spin/pulse runs per-frame in _animateAmbient.
+      entry.x = x;
+      entry.z = z;
+      entry.ready = ready;
+      entry.progress = progress;
+      entry.contested = contested;
+      entry.contenderCount = contenderCount;
     }
 
     for (const [id, entry] of this.capturePads) {
@@ -487,10 +478,9 @@ export class GameplayRenderer {
       const progress = 1 - Math.min(1, ticksLeft / Math.max(entry.initialTicks, 1));
       const urgency = Math.min(1, 1 / ticksLeft);
       const reveal = Math.max(0, Math.min(1, (progress - 0.18) / 0.82));
-      const scale = 0.88 + reveal * 0.22 + Math.sin(this._tick * 0.15) * (0.015 + reveal * 0.025);
+      entry.reveal = reveal; // outer-ring pulse applied per-frame in _animateAmbient
       entry.outer.position.set(pos[0], 1.2, pos[1]);
       entry.disc.position.set(pos[0], 0.2, pos[1]);
-      entry.outer.scaling.set(scale, scale, 1);
       entry.disc.scaling.set(0.9 + reveal * 0.18, 0.9 + reveal * 0.18, 1);
       entry.outerMat.emissiveColor.set(0.24 + reveal * 0.52, 0.08 + reveal * 0.28, 0.46 + urgency * 0.5);
       entry.discMat.emissiveColor.set(0.14 + reveal * 0.32, 0.05 + reveal * 0.14, 0.30 + urgency * 0.45);
@@ -554,13 +544,12 @@ export class GameplayRenderer {
       const pos = field.position || [0, 0];
       const ticksLeft = Math.max(field.ticks_left || 1, 1);
       const life = Math.min(1, ticksLeft / 12);
-      const pulse = 1 + Math.sin(this._tick * 0.16) * 0.06;
       entry.disc.position.set(pos[0], 0.18, pos[1]);
-      entry.ring.position.set(pos[0], 0.8 + Math.sin(this._tick * 0.08) * 0.18, pos[1]);
-      entry.disc.scaling.set(pulse, pulse, 1);
-      entry.ring.scaling.set(0.96 + pulse * 0.08, 0.96 + pulse * 0.08, 1);
       entry.discMat.alpha = 0.08 + life * 0.14;
       entry.ringMat.alpha = 0.14 + life * 0.28;
+      // Pulse/bob applied per-frame in _animateAmbient.
+      entry.x = pos[0];
+      entry.z = pos[1];
     }
 
     for (const [id, entry] of this.burnFields) {
@@ -660,11 +649,9 @@ export class GameplayRenderer {
       const pos = zone.position;
       entry.parent.position.set(pos[0], 1.0, pos[1]);
 
+      entry.active = !!zone.active;
       if (zone.active) {
-        // Bright red pulsing outline + electrical zapping
-        const pulse = 0.7 + 0.3 * Math.sin(this._tick * 0.2);
-        entry.edgeMat.emissiveColor.set(1.0, 0.15 * pulse, 0.05);
-        entry.edgeMat.alpha = pulse;
+        // Electrical zapping on; pulse applied per-frame in _animateAmbient.
         entry.zaps.emitRate = 40;
         entry.sparks.emitRate = 15;
       } else {
@@ -717,11 +704,9 @@ export class GameplayRenderer {
       }
       const pos = mine.position;
       mesh.position.set(pos[0], 0.75, pos[1]);
-      // Blink red light when armed
-      if (mine.armed) {
-        const blink = Math.sin(this._tick * 0.3) > 0 ? 0.9 : 0.2;
-        mesh.material.emissiveColor.set(blink, 0.05, 0.05);
-      } else {
+      // Blink applied per-frame in _animateAmbient.
+      mesh.metadata = { armed: !!mine.armed };
+      if (!mine.armed) {
         mesh.material.emissiveColor.set(0.1, 0.1, 0.05);
       }
     }
@@ -793,14 +778,12 @@ export class GameplayRenderer {
       const pos = well.position;
       const x = pos[0], z = pos[1];
       entry.ring.position.set(x, 3, z);
-      entry.ring.rotation.y += 0.06;
-      entry.ring.rotation.x = Math.sin(this._tick * 0.03) * 0.3;
       entry.inner.position.set(x, 5, z);
-      entry.inner.rotation.y -= 0.1;
       entry.vortex.emitter.x = x;
       entry.vortex.emitter.z = z;
-      // Pulsing alpha
-      entry.ring.material.alpha = 0.4 + 0.3 * Math.sin(this._tick * 0.08);
+      // Spin/sway/pulse applied per-frame in _animateAmbient.
+      entry.x = x;
+      entry.z = z;
     }
 
     for (const [id, entry] of this.gravityWells) {
@@ -883,6 +866,13 @@ export class GameplayRenderer {
   }
 
   animate(botEntries, dt) {
+    // Advance the ambient clock per-frame (dt-based, 10 units/sec to keep
+    // the same phase speeds the old 10Hz tick counter had) and run all idle
+    // pulses/bobs/spins so they're smooth instead of stepping at 10Hz.
+    const d = Math.min(dt || 0.016, 0.1);
+    this._tick += d * 10;
+    this._animateAmbient(d);
+
     if (!this.bountyGroup || !this.bountyTargetId) return;
     const targetEntry = botEntries && botEntries.get ? botEntries.get(this.bountyTargetId) : null;
     const fallback = this.bountyBots.find((b) => b.bot_id === this.bountyTargetId || b.id === this.bountyTargetId);
@@ -906,8 +896,90 @@ export class GameplayRenderer {
     g.curX += (tx - g.curX) * lerp;
     g.curZ += (tz - g.curZ) * lerp;
     g.ring.position.set(g.curX, 25 + Math.sin(this._tick * 0.06) * 3, g.curZ);
-    g.ring.rotation.y += 0.04;
+    g.ring.rotation.y += 0.4 * Math.min(dt || 0.016, 0.1);
     g.ring.visibility = 1;
+  }
+
+  /** @private Per-frame idle animations for gameplay entities. All phase
+   * math uses this._tick (advanced dt-based at 10 units/sec) so speeds are
+   * identical to the old 10Hz stepping, just smooth. */
+  _animateAmbient(dt) {
+    const t = this._tick;
+
+    for (const [, e] of this.teleportPads) {
+      if (e.x === undefined) continue;
+      e.ring.position.set(e.x, 2 + Math.sin(t * 0.04) * (e.ready ? 0.5 : 0.15), e.z);
+      e.ring.rotation.y += (e.ready ? 0.2 : 0.06) * dt;
+      e.platform.material.alpha = e.ready
+        ? 0.4 + 0.15 * Math.sin(t * 0.06)
+        : 0.2 + 0.04 * Math.sin(t * 0.03);
+      e.haloMat.alpha = e.ready
+        ? 0.14 + 0.07 * Math.sin(t * 0.05)
+        : 0.06 + 0.02 * Math.sin(t * 0.03);
+      const haloScale = e.ready ? 1.0 + Math.sin(t * 0.04) * 0.04 : 0.94;
+      e.halo.scaling.set(haloScale, haloScale, 1);
+    }
+
+    for (const [, e] of this.capturePads) {
+      if (e.x === undefined) continue;
+      e.ring.position.set(e.x, 1.8 + Math.sin(t * 0.035) * 0.18, e.z);
+      e.ring.rotation.y += ((e.ready ? 0.16 : 0.04) + (e.contested ? 0.3 : 0)) * dt;
+      const pulse = 1 + Math.sin(t * 0.05) * (0.02 + e.progress * 0.03 + e.contenderCount * 0.01);
+      e.ring.scaling.set(pulse, pulse, 1);
+    }
+
+    for (const [, e] of this.staffImpacts) {
+      if (e.reveal === undefined) continue;
+      const scale = 0.88 + e.reveal * 0.22 + Math.sin(t * 0.15) * (0.015 + e.reveal * 0.025);
+      e.outer.scaling.set(scale, scale, 1);
+    }
+
+    for (const [, e] of this.burnFields) {
+      if (e.x === undefined) continue;
+      const pulse = 1 + Math.sin(t * 0.16) * 0.06;
+      e.ring.position.set(e.x, 0.8 + Math.sin(t * 0.08) * 0.18, e.z);
+      e.disc.scaling.set(pulse, pulse, 1);
+      e.ring.scaling.set(0.96 + pulse * 0.08, 0.96 + pulse * 0.08, 1);
+    }
+
+    for (const mesh of this.landmines.values()) {
+      if (mesh.metadata && mesh.metadata.armed) {
+        const blink = Math.sin(t * 0.3) > 0 ? 0.9 : 0.2;
+        mesh.material.emissiveColor.set(blink, 0.05, 0.05);
+      }
+    }
+
+    for (const [, e] of this.hazardZones) {
+      if (e.active) {
+        const pulse = 0.7 + 0.3 * Math.sin(t * 0.2);
+        e.edgeMat.emissiveColor.set(1.0, 0.15 * pulse, 0.05);
+        e.edgeMat.alpha = pulse;
+      }
+    }
+
+    for (const [, e] of this.gravityWells) {
+      if (e.x === undefined) continue;
+      e.ring.rotation.y += 0.6 * dt;
+      e.ring.rotation.x = Math.sin(t * 0.03) * 0.3;
+      e.inner.rotation.y -= 1.0 * dt;
+      e.ring.material.alpha = 0.4 + 0.3 * Math.sin(t * 0.08);
+    }
+
+    if (this.flags) {
+      // Old behavior: 0.25/update at 10Hz — equivalent continuous rate ~2.9/s.
+      const lerp = 1 - Math.exp(-3 * dt);
+      for (const [, e] of this.flags) {
+        if (e.tx === undefined) continue;
+        e.curX += (e.tx - e.curX) * lerp;
+        e.curZ += (e.tz - e.curZ) * lerp;
+        const carried = e.status === 'carried';
+        e.pole.position.set(e.curX, carried ? 18 : 13, e.curZ);
+        e.bannerMat.alpha = e.status === 'dropped'
+          ? 0.5 + 0.4 * Math.abs(Math.sin(t * 0.15))
+          : 0.9;
+        e.pole.rotation.y = carried ? t * 0.05 : 0;
+      }
+    }
   }
 
   dispose() {

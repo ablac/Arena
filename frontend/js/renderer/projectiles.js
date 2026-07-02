@@ -13,12 +13,26 @@ const CONFIGS = {
 
 let _counter = 0;
 
+const TRAIL_TEX_DATA = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsSAAALEgHS3X78AAAAxklEQVRYhe2WwQ3CMAxFz2YwAmNwAmMwAmMwAmOwAhM0AiNwAhM0wggqjN0vSZIl/1N7pS1+8gNR5tZ4vYgA4G6v1j4qAABvABeAK8w+3lW0hQfW9a4uGQBM5j8AyGGbGwCd5uB1Vg4g2h8A8lJf2A3wSEmQ4T4kz1y5iD5Sbnx8AaY2mN+G2R8B5V7n6qVq5d3AYQ5xjM1XoI2fJ0Q3i3xL6Y4K3bYQmY2ot7b8Tf1k9U4A1uZyD2a7J4Qf8bqg8dgfQDG2h7U+Lf6HwAAAABJRU5ErkJggg==';
+
 export class ProjectileRenderer {
   /** @param {BABYLON.Scene} scene */
   constructor(scene) {
     this.scene = scene;
     /** @type {Array<BABYLON.Animatable>} */
     this.activeAnimatables = [];
+    // Trail texture is shared by every projectile: decoding the base64 PNG
+    // and uploading it to the GPU per shot was pure churn.
+    this._trailTex = null;
+  }
+
+  /** @private Lazily create the shared trail texture. */
+  _getTrailTexture() {
+    const B = window.BABYLON;
+    if (!this._trailTex || this._trailTex.isDisposed()) {
+      this._trailTex = new B.Texture(TRAIL_TEX_DATA, this.scene, false, false, B.Texture.BILINEAR_SAMPLINGMODE);
+    }
+    return this._trailTex;
   }
 
   /**
@@ -96,7 +110,7 @@ export class ProjectileRenderer {
 
     const trail = new B.ParticleSystem(`proj-trail-${id}`, weapon === 'staff' ? 40 : 24, this.scene);
     trail.emitter = mesh;
-    trail.particleTexture = new B.Texture('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsSAAALEgHS3X78AAAAxklEQVRYhe2WwQ3CMAxFz2YwAmNwAmMwAmMwAmOwAhM0AiNwAhM0wggqjN0vSZIl/1N7pS1+8gNR5tZ4vYgA4G6v1j4qAABvABeAK8w+3lW0hQfW9a4uGQBM5j8AyGGbGwCd5uB1Vg4g2h8A8lJf2A3wSEmQ4T4kz1y5iD5Sbnx8AaY2mN+G2R8B5V7n6qVq5d3AYQ5xjM1XoI2fJ0Q3i3xL6Y4K3bYQmY2ot7b8Tf1k9U4A1uZyD2a7J4Qf8bqg8dgfQDG2h7U+Lf6HwAAAABJRU5ErkJggg==', this.scene, false, false, B.Texture.BILINEAR_SAMPLINGMODE);
+    trail.particleTexture = this._getTrailTexture();
     trail.minLifeTime = weapon === 'staff' ? 0.16 : 0.1;
     trail.maxLifeTime = weapon === 'staff' ? 0.28 : 0.18;
     trail.minSize = weapon === 'staff' ? 1.8 : 1.0;
@@ -125,7 +139,8 @@ export class ProjectileRenderer {
 
     animatable.onAnimationEnd = () => {
       if (onImpact) onImpact();
-      trail.dispose();
+      // false: the particle texture is shared across all projectiles.
+      trail.dispose(false);
       mesh.dispose();
       mat.dispose();
       const idx = this.activeAnimatables.indexOf(animatable);
@@ -152,5 +167,9 @@ export class ProjectileRenderer {
       }
     }
     this.activeAnimatables = [];
+    if (this._trailTex) {
+      this._trailTex.dispose();
+      this._trailTex = null;
+    }
   }
 }

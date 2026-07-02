@@ -183,17 +183,8 @@ func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCoun
 		})
 	}
 
-	// Kill feed (last 5).
-	recentKills := killFeed.GetRecent(5)
-	killFeedEntries := make([]map[string]interface{}, 0, len(recentKills))
-	for _, kfe := range recentKills {
-		killFeedEntries = append(killFeedEntries, map[string]interface{}{
-			"killer": kfe.Killer,
-			"victim": kfe.Victim,
-			"weapon": kfe.Weapon,
-			"tick":   kfe.Tick,
-		})
-	}
+	// Kill feed (last 5) — cached view shared by every bot's message this tick.
+	killFeedEntries := killFeed.RecentViews(5)
 
 	// Zone info in grid coordinates.
 	inSafeZone := arena.IsInZone(bot.Position)
@@ -326,16 +317,8 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 		})
 	}
 
-	recentKills := killFeed.GetAll()
-	killFeedViews := make([]map[string]interface{}, 0, len(recentKills))
-	for _, kfe := range recentKills {
-		killFeedViews = append(killFeedViews, map[string]interface{}{
-			"killer": kfe.Killer,
-			"victim": kfe.Victim,
-			"weapon": kfe.Weapon,
-			"tick":   kfe.Tick,
-		})
-	}
+	// Cached until the feed changes — rebuilt on kills, not every tick.
+	killFeedViews := killFeed.AllViews()
 
 	safeZone := map[string]interface{}{
 		"center":        arena.ZoneCenter,
