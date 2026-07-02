@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#06111c">
+  <title>AI Battle Arena — Live</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2347d7ff'/%3E%3Cstop offset='1' stop-color='%23ffce54'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='16' cy='16' r='12' fill='url(%23g)'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="mobile.css?v=20260702a">
+  <script src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
+  <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
+  <script src="https://cdn.babylonjs.com/v9.14.0/materialsLibrary/babylonjs.materials.min.js"></script>
+  <script src="https://cdn.babylonjs.com/v9.14.0/gui/babylon.gui.min.js"></script>
+  <script type="module" src="mobile.js?v=20260702a"></script>
+</head>
+<body>
+
+  <!-- Full-viewport 3D stage -->
+  <div id="stage">
+    <canvas id="arena-canvas" aria-label="Live arena 3D view"></canvas>
+  </div>
+
+  <!-- Slim floating top bar -->
+  <header id="topbar" class="floating-card">
+    <a id="tb-brand" href="../" aria-label="AI Battle Arena home"><span class="brand-mark"></span></a>
+    <span id="tb-conn" class="conn"><span class="dot"></span></span>
+    <span id="tb-round" class="tb-item mono">&mdash;</span>
+    <span id="tb-mode" class="tb-chip">FFA</span>
+    <span id="tb-shape" class="tb-item tb-dim"></span>
+    <span id="tb-alive" class="tb-item mono"></span>
+  </header>
+
+  <!-- Lobby waiting card -->
+  <div id="lobby-card" class="floating-card" hidden>
+    <p class="lobby-kicker">Lobby</p>
+    <p id="lobby-title" class="lobby-title">Waiting for bots&hellip;</p>
+    <p id="lobby-meta" class="lobby-meta mono"></p>
+  </div>
+
+  <!-- Minimap host (hidden until toggled) -->
+  <div id="minimap-box" hidden></div>
+
+  <!-- Floating action cluster -->
+  <div id="fabs">
+    <button id="fab-follow-off" class="fab fab-follow" type="button" hidden>
+      <span class="fab-follow-x">&times;</span><span id="fab-follow-name"></span>
+    </button>
+    <button id="fab-zoom-in" class="fab" type="button" aria-label="Zoom in">+</button>
+    <button id="fab-zoom-out" class="fab" type="button" aria-label="Zoom out">&minus;</button>
+    <button id="fab-autopan" class="fab active" type="button" aria-label="Toggle auto pan">AP</button>
+    <button id="fab-minimap" class="fab" type="button" aria-label="Toggle minimap">MAP</button>
+  </div>
+
+  <!-- Bottom sheet -->
+  <section id="sheet" aria-label="Match panel">
+    <div id="sheet-grip" role="button" aria-label="Expand match panel" tabindex="0">
+      <span class="grip-bar"></span>
+    </div>
+    <nav id="sheet-tabs">
+      <button class="sheet-tab active" type="button" data-tab="players">Players</button>
+      <button class="sheet-tab" type="button" data-tab="kills">Kills</button>
+      <button class="sheet-tab" type="button" data-tab="ranks">Ranks</button>
+    </nav>
+    <div id="sheet-panels">
+      <div id="panel-players" class="sheet-panel active">
+        <p class="panel-empty">Waiting for spectator feed&hellip;</p>
+      </div>
+      <div id="panel-kills" class="sheet-panel">
+        <p class="panel-empty">No kills yet this round.</p>
+      </div>
+      <div id="panel-ranks" class="sheet-panel">
+        <p class="panel-empty">Loading standings&hellip;</p>
+      </div>
+    </div>
+  </section>
+
+</body>
+</html>

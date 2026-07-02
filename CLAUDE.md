@@ -27,6 +27,7 @@ go-arena/
 frontend/
   js/renderer/                  # Babylon.js modules (engine, bots, weapons, etc.)
   js/                           # App boot, spectator WS, leaderboard
+  m/                            # Mobile spectator site (served at /m/, reuses js/renderer + spectator-ws)
   dashboard/                    # Admin dashboard
 sdk/
   python/arena_sdk/             # Python SDK (ArenaBot base class)
