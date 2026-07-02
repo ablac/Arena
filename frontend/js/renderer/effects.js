@@ -451,23 +451,37 @@ export class EffectRenderer {
     this._dmgCount++;
 
     const B = window.BABYLON;
-    const plane = B.MeshBuilder.CreatePlane(`dmg`, { width: 24, height: 12 }, this.scene);
-    plane.position.set(x + (Math.random() - 0.5) * 10, 25, z);
-    plane.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
 
-    const tex = new B.DynamicTexture(`dtex-dmg`, { width: 128, height: 64 }, this.scene, false);
+    // Pooled: plane + DynamicTexture + material are reused across numbers.
+    // Allocating a 128x64 canvas and uploading a fresh GPU texture on every
+    // hit was steady churn in fights; now we just redraw the pooled canvas.
+    if (!this._dmgPool) this._dmgPool = [];
+    let entry = this._dmgPool.pop();
+    if (!entry || entry.plane.isDisposed()) {
+      const plane = B.MeshBuilder.CreatePlane(`dmg`, { width: 24, height: 12 }, this.scene);
+      plane.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
+      const tex = new B.DynamicTexture(`dtex-dmg`, { width: 128, height: 64 }, this.scene, false);
+      tex.hasAlpha = true;
+      const mat = new B.StandardMaterial(`dmat-dmg`, this.scene);
+      mat.diffuseTexture = tex; mat.emissiveTexture = tex;
+      mat.disableLighting = true; mat.backFaceCulling = false;
+      mat.useAlphaFromDiffuseTexture = true; mat.hasAlpha = true;
+      plane.material = mat;
+      entry = { plane, tex, mat };
+    }
+
+    const { plane, tex, mat } = entry;
+    plane.position.set(x + (Math.random() - 0.5) * 10, 25, z);
+    plane.setEnabled(true);
+    mat.alpha = 1;
+
     const ctx = tex.getContext();
+    ctx.clearRect(0, 0, 128, 64);
     ctx.font = 'bold 36px monospace';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = dmg > 0 ? '#ff4444' : '#44ff44';
     ctx.fillText(`${Math.abs(Math.round(dmg))}`, 64, 32);
-    tex.update(); tex.hasAlpha = true;
-
-    const mat = new B.StandardMaterial(`dmat-dmg`, this.scene);
-    mat.diffuseTexture = tex; mat.emissiveTexture = tex;
-    mat.disableLighting = true; mat.backFaceCulling = false;
-    mat.useAlphaFromDiffuseTexture = true; mat.hasAlpha = true;
-    plane.material = mat;
+    tex.update();
 
     const startY = 25;
 
@@ -488,7 +502,8 @@ export class EffectRenderer {
     const animatable = this.scene.beginDirectAnimation(plane, [posAnim], 0, 50, false);
     this.scene.beginDirectAnimation(mat, [alphaAnim], 0, 50, false);
     animatable.onAnimationEnd = () => {
-      plane.dispose(); mat.dispose(); tex.dispose();
+      plane.setEnabled(false);
+      this._dmgPool.push(entry);
       this._dmgCount--;
     };
   }

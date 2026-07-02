@@ -75,6 +75,10 @@ function updateBowDraw(weapon, drawT = 0) {
   const B = window.BABYLON;
   const base = weapon._bowStringBasePath;
   const pull = Math.max(0, Math.min(1, drawT)) * 3.2;
+  // Rebuilding the tube geometry is only needed when the draw amount actually
+  // changed — idle bots called this every frame at drawT=0.
+  if (weapon._bowLastPull === pull) return;
+  weapon._bowLastPull = pull;
   const path = [
     base[0].clone(),
     new B.Vector3(base[1].x - pull, base[1].y, base[1].z),

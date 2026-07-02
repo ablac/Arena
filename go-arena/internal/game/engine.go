@@ -95,6 +95,10 @@ type GameEngine struct {
 	DeathEvents   []DeathEvent
 	KillEvents    []KillEvent
 	RecentEvents  []ArenaEvent
+	// forceKeyframe requests that the next spectator broadcast include the
+	// static round data regardless of the keyframe interval (set on join).
+	// Guarded by spectatorsMu.
+	forceKeyframe bool
 	// Persistence tracking
 	lastPersistTick int
 }
@@ -822,6 +826,9 @@ func (e *GameEngine) AddSpectator(conn *SpectatorConn) {
 	e.spectatorsMu.Lock()
 	defer e.spectatorsMu.Unlock()
 	e.Spectators = append(e.Spectators, conn)
+	// Make sure the next broadcast is a keyframe so the new spectator gets
+	// the static round data (obstacles, map shape) immediately.
+	e.forceKeyframe = true
 }
 
 // SpectatorCount returns the current number of connected spectators.
@@ -1695,8 +1702,22 @@ func (e *GameEngine) sendLobbyStateUpdate() {
 }
 
 // sendSpectatorUpdate broadcasts the full arena state to all spectators.
+// Static round data (obstacles, map shape) is only included on keyframe
+// ticks and right after a spectator joins; renderers keep their last
+// received copy in between, which cuts steady-state bandwidth noticeably
+// (obstacles dominate the static payload, especially on cave maps).
 func (e *GameEngine) sendSpectatorUpdate() {
 	state := BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.WaitingBots, e.Round.Modifier)
+
+	keyframeInterval := config.C.SpectatorKeyframeInterval
+	e.spectatorsMu.Lock()
+	keyframe := keyframeInterval <= 1 || e.forceKeyframe ||
+		(keyframeInterval > 0 && e.TickCount%keyframeInterval == 0)
+	e.forceKeyframe = false
+	e.spectatorsMu.Unlock()
+	if !keyframe {
+		state.Obstacles = nil
+	}
 
 	// Add new gameplay entities to spectator state.
 	for _, pad := range e.TeleportPads {

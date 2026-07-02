@@ -1185,7 +1185,10 @@ export class EnvironmentRenderer {
       this._zoneLerpRegistered = true;
       this.scene.registerBeforeRender(() => {
         if (this._zoneTargetR === undefined || !this._zoneRing) return;
-        const lerpSpeed = 0.08; // smooth factor per frame
+        // dt-based smoothing so convergence speed is framerate-independent
+        // (a fixed per-frame factor converges 2.4x faster at 144Hz than 60Hz).
+        const dt = this.scene.getEngine().getDeltaTime() / 1000;
+        const lerpSpeed = 1 - Math.exp(-5 * Math.min(dt, 0.1));
         this._zoneCurR += (this._zoneTargetR - this._zoneCurR) * lerpSpeed;
         this._zoneCurCx += (this._zoneTargetCx - this._zoneCurCx) * lerpSpeed;
         this._zoneCurCy += (this._zoneTargetCy - this._zoneCurCy) * lerpSpeed;
