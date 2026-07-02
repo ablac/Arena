@@ -132,6 +132,37 @@ func TestMaskToRectsCoverBlockedCells(t *testing.T) {
 	}
 }
 
+func TestPassableNearAvoidsBlockedCells(t *testing.T) {
+	loadTestConfig(t)
+
+	prevTerrain := ActiveTerrain
+	defer func() { ActiveTerrain = prevTerrain }()
+
+	// 2000x2000 arena, cell size 20 -> 100x100 grid. Block a 10-cell-radius
+	// square around the centre so the naive zone-centre fallback would land
+	// on a wall.
+	terrain := NewTerrainGrid(2000, 2000, nil, 20, 0)
+	for x := 40; x <= 60; x++ {
+		for y := 40; y <= 60; y++ {
+			terrain.Cells[x][y] = '#'
+		}
+	}
+	ActiveTerrain = terrain
+
+	m := NewArenaMap()
+	pos := m.PassableNear(m.ZoneCenter)
+	cell := terrain.WorldToGrid(pos)
+	if terrain.IsBlocked(cell[0], cell[1]) {
+		t.Errorf("PassableNear returned a blocked cell %v (pos %v)", cell, pos)
+	}
+
+	// Sanity: an already-passable position is returned unchanged.
+	open := NewVec2(100, 100)
+	if got := m.PassableNear(open); got != open {
+		t.Errorf("PassableNear moved an already-passable position: %v -> %v", open, got)
+	}
+}
+
 func TestSegmentBlockedDiagonalCorners(t *testing.T) {
 	loadTestConfig(t)
 	// 10x10 grid, cell size 10. Wall at cell (5,5) only.

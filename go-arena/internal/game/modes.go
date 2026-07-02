@@ -187,7 +187,13 @@ func (m *ArenaMap) TeamSpawnPoint(teamIdx, memberIdx, teamCount, teamSize int) V
 			return pos
 		}
 	}
-	return m.ClampToArena(m.ZoneCenter)
+	// Fall back toward the team's ideal arc position rather than the map
+	// centre, so a fully-blocked arc still spawns the team on its own side.
+	fallback := m.ClampToArena(NewVec2(
+		m.ZoneCenter.X()+spawnRadius*0.5*math.Cos(angle),
+		m.ZoneCenter.Y()+spawnRadius*0.5*math.Sin(angle),
+	))
+	return m.PassableNear(fallback)
 }
 
 // terrainBlockedAt reports whether a world position falls in a blocked

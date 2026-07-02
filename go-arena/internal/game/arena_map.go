@@ -285,7 +285,7 @@ func (m *ArenaMap) GetSpawnPoints(count int) []Vec2 {
 		}
 
 		if !placed {
-			points = append(points, m.ClampToArena(m.ZoneCenter))
+			points = append(points, m.PassableNear(m.ZoneCenter))
 		}
 	}
 
@@ -311,8 +311,49 @@ func (m *ArenaMap) GetSpawnPoint() Vec2 {
 		}
 	}
 
-	// Fallback: zone centre, clamped.
-	return m.ClampToArena(m.ZoneCenter)
+	// Fallback: nearest passable spot to the zone centre.
+	return m.PassableNear(m.ZoneCenter)
+}
+
+// PassableNear returns the closest position to pos that is neither inside an
+// obstacle nor on a blocked terrain cell (which includes carved-out areas of
+// non-square map shapes). It spirals outward over grid cells from pos; if
+// nothing is found within the search budget it returns pos clamped to the
+// arena, and the engine's per-tick wall enforcement takes over from there.
+func (m *ArenaMap) PassableNear(pos Vec2) Vec2 {
+	pos = m.ClampToArena(pos)
+	botR := config.C.BotRadius
+
+	passable := func(p Vec2) bool {
+		return CollidesWithObstacle(p.X(), p.Y(), m.Obstacles, botR) == nil && !terrainBlockedAt(p)
+	}
+	if passable(pos) {
+		return pos
+	}
+	if ActiveTerrain == nil {
+		return pos
+	}
+
+	center := ActiveTerrain.WorldToGrid(pos)
+	for radius := 1; radius <= 20; radius++ {
+		for dx := -radius; dx <= radius; dx++ {
+			for dy := -radius; dy <= radius; dy++ {
+				// Ring only — interior cells were covered by smaller radii.
+				if dx > -radius && dx < radius && dy > -radius && dy < radius {
+					continue
+				}
+				cell := [2]int{center[0] + dx, center[1] + dy}
+				if ActiveTerrain.IsBlocked(cell[0], cell[1]) {
+					continue
+				}
+				candidate := m.ClampToArena(ActiveTerrain.GridToWorld(cell))
+				if passable(candidate) {
+					return candidate
+				}
+			}
+		}
+	}
+	return pos
 }
 
 // ClampToArena restricts a position so that a bot circle of BotRadius stays
