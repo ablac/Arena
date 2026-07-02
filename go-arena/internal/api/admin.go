@@ -596,6 +596,10 @@ func (h *AdminHandler) getGameConfig(w http.ResponseWriter, r *http.Request) {
 		"lobby_countdown":    c.LobbyCountdown,
 		"min_bots_to_start":  c.MinBotsToStart,
 		"stat_budget":        c.StatBudget,
+		"game_mode":          c.GameModeName,
+		"team_count":         c.TeamCount,
+		"friendly_fire":      c.FriendlyFire,
+		"map_shape":          c.MapShape,
 		"zone_damage":        c.ZoneDamagePerTick,
 		"zone_shrink_pct":    c.ZoneShrinkPercent,
 		"zone_shrink_interval": c.ZoneShrinkInterval,
@@ -666,6 +670,32 @@ func (h *AdminHandler) updateGameConfig(w http.ResponseWriter, r *http.Request) 
 			if v, ok := toFloat(val); ok && v >= 0 {
 				c.ZoneDamagePerTick = v
 				applied[key] = v
+			}
+		case "game_mode":
+			if v, ok := val.(string); ok {
+				switch v {
+				case "ffa", "team_battle", "ctf":
+					c.GameModeName = v // takes effect at next round start
+					applied[key] = v
+				}
+			}
+		case "team_count":
+			if v, ok := toInt(val); ok && v >= 2 && v <= 8 {
+				c.TeamCount = v
+				applied[key] = v
+			}
+		case "friendly_fire":
+			if v, ok := val.(bool); ok {
+				c.FriendlyFire = v
+				applied[key] = v
+			}
+		case "map_shape":
+			if v, ok := val.(string); ok {
+				switch v {
+				case "square", "circle", "hexagon", "diamond", "cross", "caves", "random":
+					c.MapShape = v // takes effect when next round's terrain is generated
+					applied[key] = v
+				}
 			}
 		case "zone_shrink_pct":
 			if v, ok := toFloat(val); ok && v >= 0 && v <= 1 {

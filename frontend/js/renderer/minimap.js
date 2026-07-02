@@ -111,6 +111,17 @@ export class Minimap {
       }
     }
 
+    // CTF flags (team modes)
+    if (state.flags) {
+      const teamColors = ['#4a8dff', '#ff4a40', '#4de669', '#ffd933'];
+      for (const f of state.flags) {
+        ctx.fillStyle = teamColors[((f.team || 1) - 1) % teamColors.length];
+        ctx.fillRect(f.position[0] * s - 2, f.position[1] * s - 2, 4, 4);
+        ctx.strokeStyle = ctx.fillStyle;
+        ctx.strokeRect(f.base_position[0] * s - 3, f.base_position[1] * s - 3, 6, 6);
+      }
+    }
+
     // Bots
     if (state.bots) {
       for (const bot of state.bots) {
