@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -49,6 +50,8 @@ type GameEngine struct {
 	NextTerrain  *TerrainGrid   // Pre-generated terrain for next round (available during intermission)
 	NextObstacles []Obstacle    // Pre-generated obstacles for next round
 	NextNavGrid  *NavGrid       // Pre-generated nav grid for next round
+	NextMapShape MapShape       // Pre-generated map shape for next round
+	NextMaskRects []Obstacle    // Pre-generated boundary rectangles for the next round's shape
 	KillFeed     *KillFeed
 
 	// Anti-teaming
@@ -62,6 +65,11 @@ type GameEngine struct {
 	Bounty       *BountySystem
 	Landmines    []Landmine
 	GravityWells []GravityWell
+
+	// Game modes (groundwork)
+	ModeRules  ModeRules
+	Flags      []*CTFFlag
+	TeamScores map[int]int
 
 	// Spectators
 	Spectators   []*SpectatorConn
@@ -335,6 +343,11 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Capture pad objective.
 	e.appendArenaEvents(UpdateCapturePads(e.CapturePads, e.Bots, e.TickCount)...)
 
+	// CTF flags (team modes only).
+	if len(e.Flags) > 0 {
+		e.appendArenaEvents(UpdateCTFFlags(e.Flags, e.Bots, e.TeamScores, e.TickCount)...)
+	}
+
 	// Environmental hazards.
 	UpdateHazards(e.HazardZones, e.Bots, e.TickCount, e.Round.Modifier)
 
@@ -345,11 +358,10 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	UpdateGravityWells(&e.GravityWells, e.Bots, e.Grid)
 
 	// Sudden death: activate when zone reaches minimum, remove floor tiles.
+	// (Runs before death checks so void-tile damage registers this tick;
+	// the bounty target is recalculated after deaths instead.)
 	e.SuddenDeath.CheckActivation(e.Arena)
 	e.SuddenDeath.Update(e.Bots, e.Arena)
-
-	// Bounty system: update bounty target based on kill streaks.
-	e.Bounty.Update(e.Bots)
 
 	// Anti-teaming: penalise bots that stay near each other without fighting.
 	penalised := e.AntiTeam.Update(e.Bots, e.Grid)
@@ -419,11 +431,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 
 	// No respawns — dead bots stay dead until next round.
 
-	// Sudden death (activates when zone reaches minimum).
-	e.SuddenDeath.CheckActivation(e.Arena)
-	e.SuddenDeath.Update(e.Bots, e.Arena)
-
-	// Bounty system.
+	// Bounty system: recalculate the live target now that deaths are resolved.
 	e.Bounty.Update(e.Bots)
 
 	// Pickups (include gravity_well type).
@@ -469,7 +477,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	}
 
 	// Check round end.
-	if ShouldEndRound(e.Bots, &e.Round, e.TickCount) {
+	if ShouldEndRound(e.Bots, &e.Round, e.TickCount, e.TeamScores) {
 		e.endRound()
 	}
 
@@ -489,23 +497,29 @@ func (e *GameEngine) startRound() {
 
 	// Use pre-generated terrain from intermission if available, otherwise generate fresh.
 	var obstacles []Obstacle
+	var maskRects []Obstacle
 	if e.NextTerrain != nil {
 		obstacles = e.NextObstacles
 		e.NavGrid = e.NextNavGrid
 		e.Terrain = e.NextTerrain
 		ActiveTerrain = e.Terrain
+		ActiveMapShape = e.NextMapShape
+		maskRects = e.NextMaskRects
 		// Clear pre-gen fields.
 		e.NextTerrain = nil
 		e.NextObstacles = nil
 		e.NextNavGrid = nil
+		e.NextMaskRects = nil
+		e.NextMapShape = ShapeSquare
 	} else {
 		// First round or no pre-gen available — generate fresh.
-		obstacles = GenerateObstacles(c.ArenaWidth, c.ArenaHeight, c.ObstacleCountMin, c.ObstacleCountMax)
-		e.NavGrid = NewNavGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.BotRadius)
-		e.Terrain = NewTerrainGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.PathfindingCellSize, c.BotRadius)
+		var shape MapShape
+		obstacles, e.NavGrid, e.Terrain, shape, maskRects = generateRoundTerrain()
 		ActiveTerrain = e.Terrain
+		ActiveMapShape = shape
 	}
 	e.Arena.Reset(obstacles)
+	e.Arena.MaskRects = maskRects
 
 	// Clear transient state.
 	e.Pickups = nil
@@ -539,6 +553,21 @@ func (e *GameEngine) startRound() {
 	e.Round.RoundID = uuid.New().String()
 	e.Bounty.RewardMultiplier = effectiveBountyRewardMultiplier(e.Round.Modifier)
 
+	// Resolve the game mode for this round and set up teams/objectives.
+	e.ModeRules = CurrentModeRules()
+	ActiveModeRules = e.ModeRules
+	e.Round.Mode = e.ModeRules.Mode
+	e.TeamScores = make(map[int]int)
+	e.Flags = nil
+	if e.ModeRules.HasTeams() {
+		AssignTeams(e.Bots, e.ModeRules.TeamCount)
+		if e.ModeRules.UsesFlags {
+			e.Flags = SpawnCTFFlags(e.Arena, e.ModeRules.TeamCount)
+		}
+	} else {
+		AssignTeams(e.Bots, 0)
+	}
+
 	if db.Pool != nil {
 		round := &db.Round{
 			ID:               e.Round.RoundID,
@@ -552,12 +581,27 @@ func (e *GameEngine) startRound() {
 		}
 	}
 
-	// Spawn bots evenly around the zone perimeter.
+	// Spawn bots evenly around the zone perimeter. In team modes each team
+	// gets its own arc of the spawn ring so allies start together.
 	botList := make([]*BotState, 0, len(e.Bots))
 	for _, bot := range e.Bots {
 		botList = append(botList, bot)
 	}
-	spawnPoints := e.Arena.GetSpawnPoints(len(botList))
+	var spawnPoints []Vec2
+	if e.ModeRules.HasTeams() {
+		teamSizes := make(map[int]int)
+		for _, bot := range botList {
+			teamSizes[bot.Team]++
+		}
+		memberIdx := make(map[int]int)
+		spawnPoints = make([]Vec2, len(botList))
+		for i, bot := range botList {
+			spawnPoints[i] = e.Arena.TeamSpawnPoint(bot.Team, memberIdx[bot.Team], e.ModeRules.TeamCount, teamSizes[bot.Team])
+			memberIdx[bot.Team]++
+		}
+	} else {
+		spawnPoints = e.Arena.GetSpawnPoints(len(botList))
+	}
 	for i, bot := range botList {
 		SpawnBotAt(bot, spawnPoints[i], e.Grid, e.TickCount)
 		bot.ResetRoundStats()
@@ -594,7 +638,7 @@ func (e *GameEngine) startRound() {
 }
 
 func (e *GameEngine) endRound() {
-	winnerID, winnerName := DetermineWinner(e.Bots)
+	winnerID, winnerName := DetermineWinner(e.Bots, e.TeamScores)
 	awards := CalculateAwards(e.Bots)
 
 	info := RoundEndInfo{
@@ -657,11 +701,9 @@ func (e *GameEngine) endRound() {
 	})
 
 	// Pre-generate next round's terrain so bots can GET /api/v1/arena/map during intermission.
-	nextC := &config.C
-	e.NextObstacles = GenerateObstacles(nextC.ArenaWidth, nextC.ArenaHeight, nextC.ObstacleCountMin, nextC.ObstacleCountMax)
-	e.NextNavGrid = NewNavGrid(nextC.ArenaWidth, nextC.ArenaHeight, e.NextObstacles, nextC.BotRadius)
-	e.NextTerrain = NewTerrainGrid(nextC.ArenaWidth, nextC.ArenaHeight, e.NextObstacles, nextC.PathfindingCellSize, nextC.BotRadius)
+	e.NextObstacles, e.NextNavGrid, e.NextTerrain, e.NextMapShape, e.NextMaskRects = generateRoundTerrain()
 	ActiveTerrain = e.NextTerrain
+	ActiveMapShape = e.NextMapShape
 
 	slog.Info("round ended",
 		"round", e.Round.RoundNumber,
@@ -961,19 +1003,25 @@ func (e *GameEngine) persistBountyBoardAsync() {
 // applyFallbacks assigns AI fallback actions to bots that have no pending
 // action and are alive and not stunned.
 func (e *GameEngine) applyFallbacks() {
+	var nearbyIDs []string
+	var nearbyBots []*BotState
 	for _, bot := range e.Bots {
 		if bot.PendingAction != nil || !bot.IsAlive || bot.StunTicks > 0 {
 			continue
 		}
 
 		viewRadius := float64(config.C.FogRadius) * config.C.PathfindingCellSize
-		nearbyIDs := e.Grid.QueryRadius(bot.Position, viewRadius)
-		var nearbyBots []*BotState
+		nearbyIDs = e.Grid.QueryRadiusInto(bot.Position, viewRadius, nearbyIDs[:0])
+		nearbyBots = nearbyBots[:0]
 		for _, id := range nearbyIDs {
 			if id == bot.BotID {
 				continue
 			}
 			if other, ok := e.Bots[id]; ok && other.IsAlive {
+				// Team modes: fallback AI only considers enemies as targets.
+				if SameTeam(bot, other) {
+					continue
+				}
 				nearbyBots = append(nearbyBots, other)
 			}
 		}
@@ -1430,6 +1478,7 @@ func (e *GameEngine) sendBotTickUpdates() {
 	fogRadius := config.C.FogRadius
 	viewRadius := float64(fogRadius) * config.C.PathfindingCellSize
 
+	var nearbyIDs []string
 	for _, bot := range e.Bots {
 		if bot.SendChan == nil {
 			continue
@@ -1445,7 +1494,7 @@ func (e *GameEngine) sendBotTickUpdates() {
 		}
 
 		// Build nearby entities using fog radius.
-		nearbyIDs := e.Grid.QueryRadius(bot.Position, viewRadius)
+		nearbyIDs = e.Grid.QueryRadiusInto(bot.Position, viewRadius, nearbyIDs[:0])
 		var nearby []map[string]interface{}
 
 		nearbyBotCount := 0
@@ -1674,6 +1723,20 @@ func (e *GameEngine) sendSpectatorUpdate() {
 	state.VoidTiles = e.SuddenDeath.GetAllVoidTiles()
 	state.SuddenDeath = e.SuddenDeath.Active
 	state.BountyTarget = e.Bounty.TargetID
+
+	// Game mode metadata.
+	state.GameMode = string(e.ModeRules.Mode)
+	state.MapShape = string(ActiveMapShape)
+	if e.ModeRules.HasTeams() {
+		scores := make(map[string]int, e.ModeRules.TeamCount)
+		for team := 1; team <= e.ModeRules.TeamCount; team++ {
+			scores[strconv.Itoa(team)] = e.TeamScores[team]
+		}
+		state.TeamScores = scores
+		for _, f := range e.Flags {
+			state.Flags = append(state.Flags, BuildFlagView(f))
+		}
+	}
 	if len(e.RecentEvents) > 0 {
 		state.Events = append(state.Events, e.RecentEvents...)
 	}

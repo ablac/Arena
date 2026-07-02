@@ -224,39 +224,75 @@ func (g *TerrainGrid) IsMoveBlocked(cx, cy, dx, dy int) bool {
 }
 
 // GridLineBlocked returns true if any blocked cell lies on the grid line
-// between world-space positions a and b (DDA ray-march). This prevents
-// attacks and projectiles from passing through wall cells.
+// between world-space positions a and b. This prevents attacks and
+// projectiles from passing through wall cells.
 func (g *TerrainGrid) GridLineBlocked(a, b Vec2) bool {
+	return g.SegmentBlocked(a, b)
+}
+
+// SegmentBlocked walks every grid cell the world-space segment a→b actually
+// crosses (Amanatides–Woo voxel traversal) and reports whether any of them is
+// blocked. The starting cell is excluded; the destination cell is included.
+// Unlike an index-interpolation march, this cannot skip cells on steep
+// diagonals, so fast projectiles can't tunnel through wall corners.
+func (g *TerrainGrid) SegmentBlocked(a, b Vec2) bool {
 	c1 := g.WorldToGrid(a)
 	c2 := g.WorldToGrid(b)
 	if c1 == c2 {
 		return false // same cell — no wall between them
 	}
 
-	dx := c2[0] - c1[0]
-	dy := c2[1] - c1[1]
+	x, y := c1[0], c1[1]
+	dx := b.X() - a.X()
+	dy := b.Y() - a.Y()
 
-	adx := dx
+	stepX, stepY := 0, 0
+	tMaxX, tMaxY := math.Inf(1), math.Inf(1)
+	tDeltaX, tDeltaY := math.Inf(1), math.Inf(1)
+
+	if dx > 0 {
+		stepX = 1
+		tMaxX = ((float64(x)+1)*g.CellSize - a.X()) / dx
+		tDeltaX = g.CellSize / dx
+	} else if dx < 0 {
+		stepX = -1
+		tMaxX = (float64(x)*g.CellSize - a.X()) / dx
+		tDeltaX = -g.CellSize / dx
+	}
+	if dy > 0 {
+		stepY = 1
+		tMaxY = ((float64(y)+1)*g.CellSize - a.Y()) / dy
+		tDeltaY = g.CellSize / dy
+	} else if dy < 0 {
+		stepY = -1
+		tMaxY = (float64(y)*g.CellSize - a.Y()) / dy
+		tDeltaY = -g.CellSize / dy
+	}
+
+	// Bounded walk: a segment crossing N columns and M rows visits at most
+	// N+M cells beyond the start. (WorldToGrid clamps out-of-grid points, so
+	// the destination cell may be unreachable; the bound terminates us then.)
+	adx := c2[0] - c1[0]
 	if adx < 0 {
 		adx = -adx
 	}
-	ady := dy
+	ady := c2[1] - c1[1]
 	if ady < 0 {
 		ady = -ady
 	}
-	steps := adx
-	if ady > steps {
-		steps = ady
-	}
-	if steps == 0 {
-		return false
-	}
-
-	for i := 1; i <= steps; i++ {
-		cx := c1[0] + dx*i/steps
-		cy := c1[1] + dy*i/steps
-		if g.IsBlocked(cx, cy) {
+	for i := 0; i < adx+ady+2; i++ {
+		if tMaxX < tMaxY {
+			x += stepX
+			tMaxX += tDeltaX
+		} else {
+			y += stepY
+			tMaxY += tDeltaY
+		}
+		if g.IsBlocked(x, y) {
 			return true
+		}
+		if x == c2[0] && y == c2[1] {
+			return false
 		}
 	}
 	return false

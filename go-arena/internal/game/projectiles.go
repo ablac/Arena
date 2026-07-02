@@ -31,38 +31,12 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 		//    Ray-march from previous position to current position so fast
 		//    projectiles can never skip over a wall cell.
 		if ActiveTerrain != nil {
-			hitWall := false
-			prevCell := ActiveTerrain.WorldToGrid(prevPos)
 			curCell := ActiveTerrain.WorldToGrid(proj.Position)
 
-			if ActiveTerrain.IsBlocked(curCell[0], curCell[1]) {
-				hitWall = true
-			} else if prevCell != curCell {
-				// DDA ray-march: step through cells using world-space line
-				// to avoid rounding into adjacent blocked cells.
-				dx := curCell[0] - prevCell[0]
-				dy := curCell[1] - prevCell[1]
-				adx := dx
-				if adx < 0 {
-					adx = -adx
-				}
-				ady := dy
-				if ady < 0 {
-					ady = -ady
-				}
-				steps := adx
-				if ady > steps {
-					steps = ady
-				}
-				for s := 1; s < steps; s++ {
-					cx := prevCell[0] + dx*s/steps
-					cy := prevCell[1] + dy*s/steps
-					if ActiveTerrain.IsBlocked(cx, cy) {
-						hitWall = true
-						break
-					}
-				}
-			}
+			// Exact voxel traversal of the swept segment so fast projectiles
+			// can never skip over a wall cell, even on steep diagonals.
+			hitWall := ActiveTerrain.IsBlocked(curCell[0], curCell[1]) ||
+				ActiveTerrain.SegmentBlocked(prevPos, proj.Position)
 			if hitWall {
 				if proj.Weapon == "bow" && arenaEvents != nil {
 					*arenaEvents = append(*arenaEvents, buildBowImpactEvent(proj.ID, proj.OwnerID, proj.Color, proj.Position, tickCount, "", proj.Intensity))

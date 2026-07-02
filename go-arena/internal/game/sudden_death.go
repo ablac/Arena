@@ -52,11 +52,19 @@ func (sd *SuddenDeathSystem) Update(bots map[string]*BotState, arena *ArenaMap) 
 	tilesPerTick := c.SuddenDeathTilesPerTick
 	var newVoids [][2]int
 
+	// Sample within the zone's grid-space bounding box. Sampling the whole
+	// grid makes the hit rate collapse once the zone is small, silently
+	// destroying far fewer tiles per tick than configured.
+	minCell := terrain.WorldToGrid(NewVec2(arena.ZoneCenter.X()-arena.ZoneRadius, arena.ZoneCenter.Y()-arena.ZoneRadius))
+	maxCell := terrain.WorldToGrid(NewVec2(arena.ZoneCenter.X()+arena.ZoneRadius, arena.ZoneCenter.Y()+arena.ZoneRadius))
+	spanX := maxCell[0] - minCell[0] + 1
+	spanY := maxCell[1] - minCell[1] + 1
+
 	for i := 0; i < tilesPerTick; i++ {
 		// Pick a random cell within the zone
 		for attempt := 0; attempt < 20; attempt++ {
-			col := rand.Intn(terrain.Width)
-			row := rand.Intn(terrain.Height)
+			col := minCell[0] + rand.Intn(spanX)
+			row := minCell[1] + rand.Intn(spanY)
 			cell := [2]int{col, row}
 
 			// Skip if already void/wall
