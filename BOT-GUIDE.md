@@ -113,7 +113,9 @@ All HTTP endpoints are also available under the `/arena` prefix (e.g., `/arena/a
 | `POST` | `/api/v1/keys/generate` | Generate a new API key and bot (rate-limited) |
 | `GET` | `/api/v1/leaderboard` | Leaderboard with `?limit=N&offset=N` pagination |
 | `GET` | `/api/v1/arena/status` | Current round, bots alive, safe zone radius |
-| `GET` | `/api/v1/arena/map` | Current terrain grid (width, height, cell_size, compact terrain). **Next round's map is pre-generated during intermission** — fetch early and pre-compute pathfinding! |
+| `GET` | `/api/v1/arena/map` | Current terrain grid (width, height, cell_size, compact terrain with pad/hazard overlays, teleport/capture/hazard metadata). **Next round's map is pre-generated during intermission** — fetch early and pre-compute pathfinding! |
+| `GET` | `/api/v1/bounties` | Current bounty board |
+| `GET` | `/api/v1/weapon-stats` | Live weapon stats (including auto-balance adjustments) |
 | `GET` | `/api/v1/bot-setup` | Machine-readable JSON reference (this guide as an endpoint) |
 
 ### Authenticated Endpoints (Require `X-Arena-Key` Header)
@@ -136,6 +138,15 @@ X-Arena-Key: YOUR_API_KEY
 1. Query parameter: `wss://arena.angel-serv.com/ws/bot?key=YOUR_API_KEY` (recommended)
 2. Header: `X-Arena-Key: YOUR_API_KEY` (if your WS library supports headers)
 3. Auth message: Send `{"type": "auth", "api_key": "YOUR_API_KEY"}` as first message
+
+### Spectator WebSocket
+
+`wss://arena.angel-serv.com/ws/spectator` requires no auth and streams `arena_state` snapshots every tick. Notable fields for client builders:
+
+- Each bot entry includes `team` (0 in FFA), plus combat state (`facing`, `bow_charge_level`, `shield_absorb`, `is_bounty_target`, ...).
+- Top-level: `game_mode`, `map_shape`, and in team modes `team_scores` (string-keyed) and `flags` (each with `id`, `team`, `position`, `base_position`, `status`, `carrier_id`).
+- Entity arrays: `teleport_pads`, `capture_pads`, `hazard_zones`, `landmines`, `gravity_wells`, `burn_fields`, `staff_impacts`, `void_tiles`, plus `sudden_death`, `bounty_target`, `round_modifier`, and one-shot `events`.
+- **Keyframes**: `obstacles` is only included on every 10th broadcast (and immediately after you connect). Between keyframes the field is omitted — keep your last received copy instead of clearing the map.
 
 ---
 
@@ -186,7 +197,7 @@ Sent immediately after successful authentication.
   "grid_size": [100, 100],
   "cell_size": 20,
   "fog_radius": 7,
-  "available_weapons": ["bow", "daggers", "shield", "spear", "staff", "sword"],
+  "available_weapons": ["sword", "bow", "daggers", "shield", "spear", "staff", "grapple"],
   "stat_budget": 20,
   "stat_min": 1,
   "stat_max": 10,
@@ -208,8 +219,8 @@ Confirms your loadout with computed derived stats.
     "attack_mult": 1.5,
     "defense_red": 0.09,
     "attack_range": 1,
-    "cooldown_seconds": 0.5,
-    "weapon_damage": 25
+    "cooldown_seconds": 0.55,
+    "weapon_damage": 21
   },
   "position": [50, 50]
 }
@@ -249,12 +260,16 @@ Sent when a new round begins.
 {
   "type": "round_start",
   "round_number": 1,
+  "round_modifier": "",
+  "round_modifier_label": "",
   "position": [50, 25],
   "bots_in_round": 8,
   "all_positions": { "bot-id-1": [10, 20], "bot-id-2": [80, 70] },
-  "safe_zone": { "center": [50, 50], "radius": 50, "target_center": [50, 50], "target_radius": 50 }
+  "safe_zone": { "center": [50, 50], "radius": 71, "target_center": [50, 50], "target_radius": 71 }
 }
 ```
+
+The initial safe zone covers the entire map (its radius circumscribes the arena), so every spawn point starts inside it — the shrinking ring becomes visible once it contracts past the map edge.
 
 #### `tick`
 Sent 10 times per second during active rounds. This is your main data source.
@@ -264,6 +279,7 @@ Sent 10 times per second during active rounds. This is your main data source.
   "tick": 142,
   "your_state": {
     "bot_id": "your-uuid",
+    "team": 0,
     "position": [45, 32],
     "hp": 150,
     "max_hp": 170,
@@ -290,13 +306,27 @@ Sent 10 times per second during active rounds. This is your main data source.
     "zone_target_radius": 35
   },
   "nearby_entities": [
-    { "type": "bot", "bot_id": "enemy-uuid", "name": "Enemy", "position": [46, 32], "hp": 80, "max_hp": 150, "weapon": "daggers", "is_alive": true, "is_dodging": false, "is_stunned": false },
+    { "type": "bot", "bot_id": "enemy-uuid", "name": "Enemy", "team": 0, "position": [46, 32], "hp": 80, "max_hp": 150, "weapon": "daggers", "is_alive": true, "is_dodging": false, "is_stunned": false },
     { "type": "pickup", "pickup_id": "pickup-uuid", "pickup_type": "health_pack", "position": [44, 30] }
   ],
   "safe_zone": { "center": [50, 50], "radius": 40, "target_center": [50, 50], "target_radius": 35 },
-  "fog_radius": 7
+  "fog_radius": 7,
+  "game_mode": "ffa",
+  "sudden_death": false,
+  "bounty_target": "",
+  "nearby_mines": 0,
+  "round_tick": 142,
+  "round_modifier": ""
 }
 ```
+
+Additional tick fields worth knowing:
+
+- `your_state.team` — your team number in team-based modes (`0` in FFA / unassigned). Nearby bot entities carry the same `team` field so you can tell allies from enemies.
+- `game_mode` — always present: `"ffa"`, `"team_battle"`, or `"ctf"`.
+- `team_scores` and `flags` — only present in team modes. See [Game Modes](#game-modes) below.
+- `void_tiles` — only present while sudden death is active: the list of `[col, row]` void tiles within your fog radius.
+- Bot entities also expose combat-read fields such as `has_los`, `attack_range`, `can_attack`, `facing`, `rear_exposed`, `brace_ready`, `bow_charge_level`, `charged_shot_ready`, `recently_disrupted_ticks`, `near_impact_surface`, and `threat_score` — the full field list lives at `GET /api/v1/bot-setup`.
 
 #### `death`
 ```json
@@ -380,6 +410,9 @@ Send one per tick to control your bot.
 | `dodge` | Dash with 3 invulnerability ticks (30 tick cooldown) | `direction`: `[dx, dy]` |
 | `shove` | Push a nearby bot (range 2.0, stun 2 ticks, 1.5s cooldown) | `target`: bot_id |
 | `use_item` | Collect a nearby pickup | `item_id`: pickup_id |
+| `place_mine` | Place a landmine at your current position (max 3 active) | (none) |
+| `use_gravity_well` | Deploy a gravity well (requires a `gravity_well` pickup charge) | `target_position`: `[col, row]` |
+| `grapple` | Universal grapple ability: yank an enemy to you, or anchor-pull yourself | `target`: bot_id **or** `target_position`: `[col, row]` |
 | `idle` | Do nothing this tick | (none) |
 
 ### Action Examples
@@ -402,29 +435,55 @@ Send one per tick to control your bot.
 
 // Pick up an item
 {"type": "action", "tick": 42, "action": "use_item", "item_id": "pickup-uuid"}
+
+// Place a landmine at your feet
+{"type": "action", "tick": 42, "action": "place_mine"}
+
+// Deploy a gravity well at a position
+{"type": "action", "tick": 42, "action": "use_gravity_well", "target_position": [50, 50]}
+
+// Grapple: yank an enemy to melee range
+{"type": "action", "tick": 42, "action": "grapple", "target": "enemy-bot-id"}
+
+// Grapple: anchor-pull yourself toward a position
+{"type": "action", "tick": 42, "action": "grapple", "target_position": [60, 40]}
 ```
 
 ---
 
 ## Weapons
 
+Base stats (the server auto-balances weapon damage/cooldown between rounds based on win rates, so live values can drift roughly ±20-30% — query `GET /api/v1/bot-setup` or `GET /api/v1/weapon-stats` for current numbers):
+
 | Weapon | Damage | Range (tiles) | Cooldown | Special Ability |
 |--------|--------|---------------|----------|-----------------|
-| **Sword** | 25 | 1 | 0.5s | **Cleave** — hits all adjacent enemies in range |
-| **Bow** | 12 | 7 | 1.4s | **Projectile** — fires arrows at long range |
-| **Daggers** | 12 | 1 | 0.3s | **Double Strike** — second hit deals 25% damage |
-| **Shield** | 15 | 1 | 0.7s | **Block** — passive 50% chance to block incoming damage |
-| **Spear** | 20 | 2 | 0.7s | **Knockback** — pushes enemies back 2.0 tiles |
-| **Staff** | 18 | 5 | 1.3s | **Area** — delayed AoE explosion (2-tile radius) |
+| **Sword** | 21 | 1 | 0.55s | **Cleave** — 50% splash damage to up to 2 extra enemies within range+1 |
+| **Bow** | 16 | 8 | 1.05s | **Projectile** — fires arrows at long range; charges while you hold still |
+| **Daggers** | 11 | 1 | 0.35s | **Backstab** — 1.45× damage when striking from behind |
+| **Shield** | 14 | 1 | 0.8s | **Block** — passive 50% damage reduction; **Bash** stuns the target |
+| **Spear** | 17 | 2 | 0.75s | **Knockback** — pushes enemies back; **Brace** bonus when standing still |
+| **Staff** | 17 | 6 | 1.65s | **Area** — delayed AoE explosion (2-tile radius) leaving a burn field |
+| **Grapple** | 14 | 5 | 1.05s | **Hook** — pulls YOU to melee range of the target on hit |
+
+### Weapon Signature Moves
+
+Every weapon has a conditional bonus your bot can play around:
+
+- **Bow — Charged Shot**: The bow charges automatically while its cooldown is ready and you're not firing (`bow_charge_ticks` in `your_state`). Ready after 2 ticks, max at 6 ticks; each charge tick adds +12% damage and +8% projectile speed but +6% cooldown. Firing resets the charge. Enemies see your `charged_shot_ready` flag — and you see theirs, so dodge when it's up.
+- **Daggers — Backstab**: Hits landed from the target's rear arc deal 1.45× damage. The `rear_exposed` field on nearby bots tells you when a backstab angle is open.
+- **Spear — Brace**: Stand still for 2 ticks (`brace_ready`) and your next spear hit deals 1.35× damage with +1 tile of knockback.
+- **Shield — Bash**: Shield hits stun for 1 tick and "disrupt" the target; hitting a recently disrupted target (`recently_disrupted_ticks` > 0) deals a 1.35× bash bonus.
+- **Grapple weapon — Slam**: Pulling a target from 3+ tiles into a wall or obstacle (`near_impact_surface`) deals a 1.4× slam bonus plus a 2-tick stun.
 
 ### Weapon Strategy Tips
 
-- **Sword**: Best all-around melee weapon. High damage, hits multiple targets.
-- **Bow**: Stay at range, kite melee bots. Low damage per hit but safe positioning.
-- **Daggers**: Fastest attack speed. Great for 1v1 if you can stick to your target.
-- **Shield**: Tanky pick. Pairs well with high HP stats for a wall build.
+- **Sword**: Best all-around melee weapon. High damage, splash hits groups.
+- **Bow**: Stay at range, kite melee bots. Hold position to build charged shots.
+- **Daggers**: Fastest attack speed. Circle behind targets for backstab bonuses.
+- **Shield**: Tanky pick — flat 50% damage reduction. Pairs well with high HP for a wall build.
 - **Spear**: Extended melee range + knockback. Push enemies into zone damage or walls.
-- **Staff**: Area denial. Place AoE on chokepoints. Strong in late-game tight zones.
+- **Staff**: Area denial. Place AoE on chokepoints; the burn field lingers. Strong in late-game tight zones.
+- **Grapple**: Gap-closer. Yank yourself onto ranged enemies; slam targets near walls.
 
 ---
 
@@ -445,9 +504,9 @@ You have **20 points** to distribute across 4 stats. Each stat has a minimum of 
 effective_damage = weapon_damage × attacker_attack_mult × (1 - target_defense_reduction)
 ```
 
-Example: Sword (25 dmg) with 5 attack (1.5×) vs 5 defense (15% reduction):
+Example: Sword (21 dmg) with 5 attack (1.5×) vs 5 defense (15% reduction):
 ```
-25 × 1.5 × (1 - 0.15) = 31.875 damage
+21 × 1.5 × (1 - 0.15) = 26.775 damage
 ```
 
 ### Fallback Behaviors
@@ -459,6 +518,8 @@ When your bot doesn't send an action in time, the server plays one of these AI b
 | `aggressive` | Seek and attack the nearest enemy |
 | `defensive` | Flee from enemies, stay near zone center |
 | `opportunistic` | Attack weak enemies, flee from strong ones |
+| `territorial` | Hold ground, attack intruders within 2× weapon range |
+| `hunter` | Chase the enemy with the highest kill streak |
 
 ### Example Builds
 
@@ -483,18 +544,34 @@ When your bot doesn't send an action in time, the server plays one of these AI b
 
 ### Terrain
 
-The map is generated fresh each round. The **next round's map is pre-generated during intermission**, so bots can fetch and analyze it before the round starts. Two ways to get it:
-1. **REST API** (recommended): `GET /api/v1/arena/map` — available during intermission with the upcoming round's terrain. Pre-compute your pathfinding while waiting!
-2. **WebSocket**: `map_init` message sent automatically at round start (same data)
+The map is generated fresh each round. The **next round's map is pre-generated during intermission**, so bots can fetch and analyze it before the round starts. Get it via the REST API: `GET /api/v1/arena/map` — pre-compute your pathfinding while waiting! (The old `map_init` WebSocket message is no longer sent.)
+
+The map endpoint returns the terrain as compact row strings with this legend:
 
 | Symbol | Meaning |
 |--------|---------|
 | `.` | Ground (walkable) |
-| `#` | Wall (impassable) |
-| `~` | Water (impassable) |
-| `V` | Void (impassable) |
+| `#` | Wall (impassable) — includes obstacles and the map-shape boundary |
+| `T` | Teleport pad |
+| `C` | Capture pad objective |
+| `H` | Hazard zone (damage when active) |
 
-There are 20-30 randomly placed obstacles per round.
+There are 20-30 randomly placed obstacles per round, plus the carved map-shape boundary (see [Map Shapes](#map-shapes)).
+
+### Map Shapes
+
+The arena is still a square grid, but each round's playable area is carved into one of several outlines. Cells outside the shape are blocked walls (`#` in the map endpoint). The default server setting is **random** — a new shape is rolled each round.
+
+| Shape | Description |
+|-------|-------------|
+| `square` | Classic full-grid arena |
+| `circle` | Circular arena |
+| `hexagon` | Hexagonal arena |
+| `diamond` | Diamond (rotated square) |
+| `cross` | Plus-shaped arena with dead-end arms |
+| `caves` | Organic cave system with tunnels and chambers |
+
+Bot takeaway: don't assume the corners of the grid are reachable. Fetch `GET /api/v1/arena/map` during intermission and pathfind against the actual `#` cells — server-side `move_to` already handles this for you.
 
 ### Safe Zone
 
@@ -502,8 +579,8 @@ The safe zone shrinks over time. Bots outside take **3 damage per tick**.
 
 | Parameter | Value |
 |-----------|-------|
-| Initial radius | 1000 (50 tiles) |
-| Minimum radius | 175 (~9 tiles) |
+| Initial radius | Covers the whole map (circle circumscribing the arena, ~71 tiles) — the ring becomes visible once it shrinks inside the map edge |
+| Minimum radius | 175 world units (~9 tiles) |
 | Shrink starts after | 60 seconds |
 | Shrink interval | Every 20 seconds |
 | Shrink amount | 15% of current radius |
@@ -519,6 +596,13 @@ Items spawn on the map and can be collected with the `use_item` action.
 | `speed_boost` | 2.0× speed for 50 ticks (5 seconds) |
 | `damage_boost` | 1.5× damage for 50 ticks (5 seconds) |
 | `shield_bubble` | Absorbs 50 damage |
+| `gravity_well` | Grants 1 gravity well charge (see `use_gravity_well` action) |
+| `cooldown_shard` | 0.6× attack cooldowns for 100 ticks (10 seconds) |
+| `bounty_token` | +18 bonus points on your next kill within 90 ticks |
+| `hazard_key` | Immunity to hazard zone damage for 80 ticks |
+| `overdrive_core` | 1.25× damage and 0.75× cooldowns for 60 ticks |
+| `grapple_charge` | +1 grapple ability charge |
+| `relay_battery` | Faster capture pad progress for 90 ticks |
 
 - Collect radius: 2.0 tiles
 - Max active pickups: 20
@@ -526,18 +610,19 @@ Items spawn on the map and can be collected with the `use_item` action.
 
 ### Rounds
 
-- Round duration: **240 seconds** (4 minutes)
+- Round duration: **300 seconds** (5 minutes)
 - Intermission between rounds: **10 seconds**
 - Minimum 2 bots to start
-- Last bot alive wins the round
+- FFA: last bot alive wins the round (team modes have their own win conditions — see [Game Modes](#game-modes))
+- ~30% of rounds roll a **round modifier** (`round_modifier` in `round_start` and tick messages): `fast_zone`, `pickup_surge`, `double_bounty`, `teleport_surge`, or `hazard_storm`
 
 ### Combat Details
 
 - **Dodge**: 2.0× speed burst, 3 ticks invulnerability, 30 tick cooldown
 - **Shove**: Range 2.0 tiles, 15.0 knockback, 2 tick stun, 1.5s cooldown
 - **Wall collision**: Bots knocked into walls take 5 bonus damage
-- **Projectiles** (bow): Speed 30.0, hit radius 1.0, max 1 second flight time
-- **Staff AoE**: 2 tick delay before impact, 2-tile explosion radius
+- **Projectiles** (bow): Speed 240 world units/sec (~12 tiles/sec), generous hit radius, flight time capped by weapon range
+- **Staff AoE**: 3 tick delay before impact, 2-tile explosion radius, then leaves a burn field (3 damage every 2 ticks for 12 ticks)
 
 ### Rate Limits
 
@@ -888,8 +973,10 @@ node bot.js YOUR_API_KEY       # use existing key
 
 | Language | Install | Repository |
 |----------|---------|------------|
-| Python | `pip install arena-sdk` | [sdks/python](https://github.com/angel-serv/ai-battle-arena/tree/main/sdks/python) |
-| Node.js | `npm install @arena/sdk` | [sdks/nodejs](https://github.com/angel-serv/ai-battle-arena/tree/main/sdks/nodejs) |
+| Python | `pip install arena-sdk` | [sdk/python](https://github.com/angel-serv/ai-battle-arena/tree/main/sdk/python) |
+| Node.js | `npm install @arena/sdk` | [sdk/nodejs](https://github.com/angel-serv/ai-battle-arena/tree/main/sdk/nodejs) |
+
+Both SDKs expose your team number in team modes (Python: `self._team`, Node.js: `this.team`).
 
 ---
 
@@ -910,45 +997,106 @@ This returns all weapons, stats, game mechanics, endpoints, protocol details, an
 ### Teleport Pads
 - 3 linked pairs spawn each round
 - Step onto a pad to instantly teleport to its linked partner
-- 5-second cooldown per bot per pad pair
-- Visible in `nearby_entities` as type `"teleport_pad"` with `linked_pad_id` and `color`
+- 5-second cooldown per bot per pad; the pad pair also locks for 3 seconds after any use
+- Visible in `nearby_entities` as type `"teleport_pad"` with `linked_pad_id`, `color`, `is_ready`, and `cooldown_remaining_ticks`
 
 ### Environmental Hazards
 - 6 pulsing damage zones spawn each round
 - Cycle: 3 seconds active (deal 3 damage/tick) then 2 seconds inactive
 - Visible in `nearby_entities` as type `"hazard_zone"` with `active` status and timing
+- The `hazard_key` pickup grants temporary immunity; `hazard_storm` rounds make hazards stay on longer and hit harder
+
+### Capture Pads
+- A neutral objective pad spawns each round (`C` on the map, type `"capture_pad"` in `nearby_entities`)
+- Stand on it uncontested for 20 ticks to capture: +12 score, +20 shield absorb, and 1.2× damage for 80 ticks
+- While holding a captured pad, the owner earns periodic control pulses (+2 score, +4 shield)
+- Pad entities expose `progress_ticks`, `capture_ticks`, `owner_id`, `is_contested`, and `contender_count`
 
 ### Sudden Death
-- Activates when safe zone reaches minimum radius
+- Activates when the safe zone reaches minimum radius
 - Random floor tiles become void (instant death)
-- Track via `"sudden_death"` field in tick messages
+- Track via the `"sudden_death"` field in tick messages; while active, `"void_tiles"` lists the void cells within your fog radius
 - Prioritize moving to safe tiles
 
 ### Bounty System
 - Bot with 3+ kill streak becomes the bounty target
-- Bounty target position is visible to ALL bots (ignores fog of war)
+- Bounty target position is visible to ALL bots (ignores fog of war) — it appears in `nearby_entities` as type `"bounty_target"`
 - Killing the bounty target grants bonus points
 - Check `"is_bounty_target"` in `your_state` and `"bounty_target"` in tick message
 
-### Grappling Hook (New Weapon)
-- Weapon name: `"grapple"`
-- Range: 4 tiles, Damage: 15, Cooldown: 1.5s
-- Special: On hit, pulls the ATTACKER to melee range of target
-- Great for gap-closing on ranged enemies
+### Grapple Ability (All Bots)
+- Every bot gets **2 grapple charges per round**, regardless of weapon (`grapple_charges` and `grapple_cooldown` in `your_state`; `grapple_charge` pickups grant +1)
+- Action: `"grapple"` with `target: bot_id` — yanks the enemy to melee range, dealing 15 damage and a 3-tick stun (requires line of sight)
+- Action: `"grapple"` with `target_position: [col, row]` — anchor-pulls YOURSELF to that position (mobility/escape)
+- Range: 12 tiles, cooldown: 4 seconds
+- The separate **grapple weapon** (see Weapons table) works the other way: its regular attacks pull the attacker to the target
 
 ### Landmines
 - Action: `"place_mine"` — places a mine at your current position
 - Max 3 active mines per bot
-- Arms after 1 second, invisible to enemy bots
-- Detonates when enemy walks within blast radius (1.5 tiles), dealing 40 damage
+- Arms after 1 second, invisible to enemy bots (the `nearby_mines` tick field counts armed enemy mines within 3 tiles)
+- Detonates when an enemy walks within blast radius (1 tile), dealing 40 damage
 - Your own mines are visible in `nearby_entities` as type `"landmine"`
 
 ### Gravity Well
-- New pickup type: `"gravity_well"` — grants 1 charge
+- Pickup type `"gravity_well"` grants 1 charge (`gravity_well_charge` in `your_state`)
 - Action: `"use_gravity_well"` with `target_position: [col, row]`
-- Creates a vortex that pulls nearby enemy bots toward center for 3 seconds
+- Creates a vortex that pulls nearby bots (within 3 tiles) toward its center for 3 seconds
 - Does NOT affect the deploying bot
 - Visible to all bots as type `"gravity_well"` in `nearby_entities`
+
+---
+
+## Game Modes
+
+The server runs one of three modes (default: free-for-all). Your bot discovers the active mode from the `game_mode` field present in every tick message — write mode-aware bots by branching on it.
+
+| Mode | Win Condition |
+|------|---------------|
+| `ffa` | Last bot alive (classic battle royale) |
+| `team_battle` | Last team with a living bot |
+| `ctf` | First team to 3 flag captures (or best score when time expires) |
+
+### Teams
+
+In `team_battle` and `ctf`:
+
+- Bots are split evenly across teams (2 by default) at round start. Assignment is deterministic within a round, so a reconnecting bot lands back on the same team.
+- Teams spawn together in separate arcs of the spawn ring — allies start near you, enemies across the map.
+- `your_state.team` is your team number (1, 2, ...). In FFA it is `0`. Nearby bot entities carry the same `team` field — **check it before attacking**.
+- Friendly fire is off by default: attacks against teammates deal no damage (the server can enable it).
+- Both SDKs surface your team (Python: `self._team`, Node.js: `this.team`).
+
+Team-mode ticks additionally include:
+
+```json
+{
+  "team_scores": { "1": 2, "2": 1 },
+  "flags": [
+    {
+      "id": "flag_1",
+      "team": 1,
+      "position": [500.0, 1000.0],
+      "base_position": [500.0, 1000.0],
+      "status": "at_base",
+      "carrier_id": ""
+    }
+  ]
+}
+```
+
+- `team_scores` — string-keyed map of team number to score. In `ctf` it counts flag captures; in `team_battle` it is present but stays at zero (the win is decided by elimination).
+- `flags` — one entry per team flag in CTF (empty array in `team_battle`). **Flag and base positions are world coordinates** (divide by `cell_size`, 20, to get grid tiles — unlike the grid coords used elsewhere in bot messages). Flags are a global objective and are NOT fog-limited: you always see every flag.
+
+### Capture the Flag Rules
+
+- One flag per team, starting at a base on that team's side of the map.
+- **Steal**: touch an enemy flag (within 25 world units / ~1.25 tiles) to pick it up. One flag per carrier.
+- **Capture**: carry the enemy flag to your own base *while your own flag is at home* to score.
+- **Drop**: if the carrier dies or disconnects, the flag drops where they fell.
+- **Return**: a teammate touching your dropped flag sends it home instantly; otherwise it auto-returns after 20 seconds.
+- Flag `status` is one of `"at_base"`, `"carried"`, `"dropped"`; `carrier_id` names the carrier when carried.
+- CTF rounds do not end by elimination — dead teams' flags can still be stolen until the timer or capture target ends the round.
 
 ---
 
@@ -962,3 +1110,6 @@ This returns all weapons, stats, game mechanics, endpoints, protocol details, an
 6. **Rate limits**: Max 25 messages/second. One action per tick (10/sec) is optimal. Don't spam.
 7. **Dodge saves lives**: 3 invuln ticks = survive a sword hit. Use it when low HP.
 8. **Pathfinding is free**: `move_to` uses server-side A* — you don't need to implement pathfinding.
+9. **Check the game mode**: Branch on the `game_mode` tick field. In team modes, never waste attacks on bots with your `team` number, and in CTF play the flags — captures win rounds, not kills.
+10. **Maps have shapes**: The playable area is usually not the full square grid. Fetch `GET /api/v1/arena/map` during intermission to see this round's walls.
+11. **Demo bots are no pushovers**: The built-in demo bots use danger-aware pathfinding (they route around hazards, burn fields, mines, gravity wells, and void tiles), pick targets by value, disengage at low HP, dodge charged attacks, zigzag against ranged weapons, and play the objective in team/CTF modes. Beat that.

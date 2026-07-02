@@ -112,3 +112,16 @@ func (sd *SuddenDeathSystem) GetAllVoidTiles() [][2]int {
 	}
 	return tiles
 }
+
+// VoidTilesNear returns void tiles within radius (Chebyshev grid distance) of
+// the given cell. Used to keep per-bot tick payloads small: bots only receive
+// void tiles inside their fog radius.
+func (sd *SuddenDeathSystem) VoidTilesNear(cell [2]int, radius int) [][2]int {
+	tiles := make([][2]int, 0, 16)
+	for c := range sd.VoidTiles {
+		if GridDistance(cell, c) <= radius {
+			tiles = append(tiles, c)
+		}
+	}
+	return tiles
+}

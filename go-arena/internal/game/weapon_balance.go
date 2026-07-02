@@ -405,6 +405,17 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, winnerID
 		return
 	}
 
+	// Only learn from free-for-all rounds. Team battles and CTF distort the
+	// per-weapon signal: kills/damage depend on team composition, friendly
+	// targets are excluded, and objective play (flag running) suppresses a
+	// weapon's combat stats without the weapon being weak. Feeding those
+	// rounds into the balancer would push scales around for the wrong
+	// reasons; balance still applies in team modes, it just doesn't train
+	// there.
+	if ActiveModeRules.HasTeams() {
+		return
+	}
+
 	perf := make(map[string]*weaponRoundPerformance)
 	for _, bot := range bots {
 		if bot == nil || bot.Weapon == "" {
@@ -479,6 +490,10 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, winnerID
 	minStep := config.C.WeaponAutoBalanceMinStep
 	if minStep <= 0 {
 		minStep = 0.005
+	}
+	startStep := config.C.WeaponAutoBalanceStartStep
+	if startStep <= 0 {
+		startStep = 0.05
 	}
 	decay := config.C.WeaponAutoBalanceDecay
 	if decay <= 0 || decay >= 1 {
@@ -565,7 +580,13 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, winnerID
 		}
 
 		state.RoundsTracked++
-		state.AdjustmentScale = math.Max(minStep, state.AdjustmentScale*decay)
+		// The weapon is still outside the deadzone, so it is actively being
+		// corrected — grow the step slightly (capped at the starting step)
+		// instead of decaying it. The old behaviour decayed the step on every
+		// round, so a persistently unbalanced weapon was corrected slower and
+		// slower exactly when the system should keep pushing; the step only
+		// shrinks once the weapon settles inside the deadzone.
+		state.AdjustmentScale = clampFloat(state.AdjustmentScale*1.05, minStep, startStep)
 		state.UpdatedAt = time.Now()
 		weaponBalance[weapon] = state
 		WeaponConfigs[weapon] = effectiveWeaponConfigLocked(weapon)

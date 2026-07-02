@@ -1631,7 +1631,7 @@ func (e *GameEngine) sendBotTickUpdates() {
 			}
 		}
 
-		// Add sudden death and bounty info to tick.
+		// Add sudden death, bounty, and game-mode info to tick.
 		tickExtra := map[string]interface{}{
 			"sudden_death":  e.SuddenDeath.Active,
 			"bounty_target": e.Bounty.TargetID,
@@ -1639,6 +1639,12 @@ func (e *GameEngine) sendBotTickUpdates() {
 			"round_tick":    e.TickCount - e.Round.StartTick,
 			"round_modifier": string(e.Round.Modifier),
 		}
+		// Void tiles within the bot's fog radius (omitted entirely while
+		// sudden death is inactive to keep payloads small).
+		if e.SuddenDeath.Active {
+			tickExtra["void_tiles"] = e.SuddenDeath.VoidTilesNear(botCell, fogRadius)
+		}
+		AddModeTickExtra(tickExtra, e.ModeRules, e.TeamScores, e.Flags)
 
 		SendTickUpdate(bot, yourState, nearby, e.TickCount, e.Arena, hints, fogRadius, tickExtra)
 	}
