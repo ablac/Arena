@@ -372,7 +372,7 @@ func (h *AdminHandler) debugMetrics(w http.ResponseWriter, r *http.Request) {
 			"pause_total_ms":  float64(memStats.PauseTotalNs) / 1e6,
 		},
 		"game": map[string]interface{}{
-			"tick_count":      h.Engine.ConnectedBotCount(),
+			"tick_count":      h.Engine.GetTickCount(),
 			"bots_connected":  h.Engine.ConnectedBotCount(),
 			"spectators":      h.Engine.SpectatorCount(),
 			"tick_rate":       config.C.TickRate,
@@ -588,7 +588,6 @@ func (h *AdminHandler) getGameConfig(w http.ResponseWriter, r *http.Request) {
 		"tick_rate":          c.TickRate,
 		"max_bots":           c.MaxBots,
 		"max_spectators":     c.MaxSpectators,
-		"view_radius":        c.ViewRadius,
 		"arena_width":        c.ArenaWidth,
 		"arena_height":       c.ArenaHeight,
 		"round_duration":     c.RoundDuration,
@@ -705,11 +704,6 @@ func (h *AdminHandler) updateGameConfig(w http.ResponseWriter, r *http.Request) 
 		case "afk_timeout_ticks":
 			if v, ok := toInt(val); ok && v >= 0 {
 				c.AFKTimeoutTicks = v
-				applied[key] = v
-			}
-		case "view_radius":
-			if v, ok := toFloat(val); ok && v > 0 {
-				c.ViewRadius = v
 				applied[key] = v
 			}
 		// Stat multipliers

@@ -118,6 +118,9 @@ func (m *ArenaMap) Reset(obstacles []Obstacle) {
 	m.Obstacles = obstacles
 	m.visObstacles = nil
 	m.visObsTerrain = nil
+	// Refresh dimensions: dynamic arena sizing can change them per round.
+	m.Width = c.ArenaWidth
+	m.Height = c.ArenaHeight
 	m.ZoneCenter = NewVec2(c.ZoneCenterX, c.ZoneCenterY)
 	// Recompute in case arena dimensions or zone config changed at runtime.
 	m.InitialRadius = initialZoneRadius(c, m.ZoneCenter, m.Width, m.Height)
