@@ -106,6 +106,7 @@ func BuildBotNearbyView(bot *BotState, observerPos Vec2) map[string]interface{} 
 		"id":           bot.BotID,
 		"bot_id":       bot.BotID,
 		"name":         bot.Name,
+		"team":         bot.Team,
 		"position":     [2]int{gridPos[0], gridPos[1]},
 		"hp":           math.Round(bot.HP),
 		"max_hp":       math.Round(bot.MaxHP),
@@ -212,6 +213,7 @@ func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCoun
 
 	state := map[string]interface{}{
 		"bot_id":             bot.BotID,
+		"team":               bot.Team,
 		"position":           [2]int{gridPos[0], gridPos[1]},
 		"hp":                 math.Round(bot.HP),
 		"max_hp":             math.Round(bot.MaxHP),
@@ -306,6 +308,7 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 			"gravity_well_charge": bot.GravityWellCharge,
 			"is_bounty_target":   bot.IsBountyTarget,
 			"bounty_token_bonus": bot.BountyTokenBonus,
+			"team":               bot.Team,
 		})
 	}
 	sort.Slice(botViews, func(i, j int) bool {
@@ -341,32 +344,9 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 		"target_radius": round1(arena.ZoneTargetRadius),
 	}
 
-	// Send collision-accurate obstacles: expand by botRadius padding and snap
-	// to grid cell boundaries so the visual walls match exactly what blocks
-	// movement on the server.
-	visObstacles := arena.Obstacles
-	if ActiveTerrain != nil {
-		visObstacles = make([]Obstacle, len(arena.Obstacles))
-		cs := ActiveTerrain.CellSize
-		pad := config.C.BotRadius
-		for i, obs := range arena.Obstacles {
-			ox := obs.X - pad
-			oy := obs.Y - pad
-			ow := obs.Width + 2*pad
-			oh := obs.Height + 2*pad
-			// Snap to grid cell boundaries.
-			minCX := math.Floor(ox / cs)
-			minCY := math.Floor(oy / cs)
-			maxCX := math.Floor((ox+ow)/cs) + 1
-			maxCY := math.Floor((oy+oh)/cs) + 1
-			visObstacles[i] = Obstacle{
-				X:      minCX * cs,
-				Y:      minCY * cs,
-				Width:  (maxCX - minCX) * cs,
-				Height: (maxCY - minCY) * cs,
-			}
-		}
-	}
+	// Send collision-accurate obstacles (expanded + grid-snapped). These are
+	// static for the whole round, so they're computed once and cached.
+	visObstacles := arena.VisualObstacles()
 
 	// Build waiting bots list for the lobby tab during active rounds.
 	var waitingViews []map[string]interface{}

@@ -140,7 +140,8 @@ func incMineCount(botID string) {
 func resetMineCount(botID string) {
 	mineCountMu.Lock()
 	defer mineCountMu.Unlock()
-	mineCount[botID] = 0
+	// Delete rather than zero so entries for stale bot IDs don't accumulate.
+	delete(mineCount, botID)
 }
 
 // === Gravity well tracking ===
@@ -165,7 +166,8 @@ func setHasGravWell(botID string, v bool) {
 func resetGravWell(botID string) {
 	gravWellMu.Lock()
 	defer gravWellMu.Unlock()
-	hasGravWell[botID] = false
+	// Delete rather than zero so entries for stale bot IDs don't accumulate.
+	delete(hasGravWell, botID)
 }
 
 // parseTerrain extracts and caches terrain from a map_init message.

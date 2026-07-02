@@ -321,6 +321,8 @@ export default class ArenaBot {
         const st = msg.your_state || {};
         if (st.position) this._lastPos = st.position;
         this.lastActionResult = st.last_action_result || null;
+        // Team number in team-based game modes (0 = no team / FFA).
+        this.team = st.team || 0;
         const safeZone = {
           center: st.zone_center || [0, 0],
           radius: st.zone_radius ?? 100,

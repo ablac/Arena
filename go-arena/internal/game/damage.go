@@ -60,6 +60,11 @@ func ApplyDamage(target, attacker *BotState, baseDamage float64, weapon string, 
 		return 0
 	}
 
+	// Team modes: no friendly fire unless the ruleset allows it.
+	if !ActiveModeRules.CanDamage(attacker, target) {
+		return 0
+	}
+
 	actual := baseDamage
 
 	// Shield weapon passive: 50% damage reduction when the target wields a shield.

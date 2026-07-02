@@ -7,8 +7,9 @@ import (
 )
 
 // ShouldEndRound returns true when the current round should end, based on
-// time expiry, bot count, or all bots being dead/disconnected.
-func ShouldEndRound(bots map[string]*BotState, round *RoundState, tickCount int) bool {
+// time expiry, bot count, all bots being dead/disconnected, or the active
+// game mode's win condition (team elimination, CTF capture target).
+func ShouldEndRound(bots map[string]*BotState, round *RoundState, tickCount int, teamScores map[int]int) bool {
 	c := &config.C
 
 	// Duration exceeded.
@@ -21,15 +22,29 @@ func ShouldEndRound(bots map[string]*BotState, round *RoundState, tickCount int)
 		return true
 	}
 
-	// At most 1 bot alive and round started with >= 2.
-	alive := 0
-	for _, bot := range bots {
-		if bot.IsAlive {
-			alive++
+	rules := ActiveModeRules
+	if rules.HasTeams() {
+		// CTF: a team reached the capture target.
+		if rules.UsesFlags && CTFWinningTeam(teamScores) != 0 {
+			return true
 		}
-	}
-	if alive <= 1 && len(bots) >= c.MinBotsToStart {
-		return true
+		// Team elimination: at most one team still has alive bots.
+		if rules.TeamElimination && len(bots) >= c.MinBotsToStart {
+			if len(AliveTeams(bots)) <= 1 {
+				return true
+			}
+		}
+	} else {
+		// FFA: at most 1 bot alive and round started with >= 2.
+		alive := 0
+		for _, bot := range bots {
+			if bot.IsAlive {
+				alive++
+			}
+		}
+		if alive <= 1 && len(bots) >= c.MinBotsToStart {
+			return true
+		}
 	}
 
 	// At most 1 bot connected.
@@ -41,8 +56,17 @@ func ShouldEndRound(bots map[string]*BotState, round *RoundState, tickCount int)
 }
 
 // DetermineWinner returns the ID and name of the round winner.
-// Priority: last bot alive, then most kills, then first found.
-func DetermineWinner(bots map[string]*BotState) (winnerID, winnerName string) {
+// FFA priority: last bot alive, then most kills, then first found.
+// Team modes: the winning team is resolved first (CTF score, then last team
+// standing, then total kills) and its best member is credited as winner.
+func DetermineWinner(bots map[string]*BotState, teamScores map[int]int) (winnerID, winnerName string) {
+	rules := ActiveModeRules
+	if rules.HasTeams() {
+		if team := DetermineWinningTeam(bots, teamScores); team != 0 {
+			return bestBotOnTeam(bots, team)
+		}
+	}
+
 	// Check for last alive bot.
 	var aliveBot *BotState
 	aliveCount := 0
@@ -66,6 +90,77 @@ func DetermineWinner(bots map[string]*BotState) (winnerID, winnerName string) {
 		}
 	}
 	return winnerID, winnerName
+}
+
+// DetermineWinningTeam resolves the winning team for team modes: highest CTF
+// score first, then the last team with alive bots, then most total kills.
+// Returns 0 when no team can be singled out.
+func DetermineWinningTeam(bots map[string]*BotState, teamScores map[int]int) int {
+	// CTF score.
+	bestTeam, bestScore := 0, 0
+	tied := false
+	for team, score := range teamScores {
+		if score > bestScore {
+			bestTeam, bestScore = team, score
+			tied = false
+		} else if score == bestScore && score > 0 {
+			tied = true
+		}
+	}
+	if bestTeam != 0 && bestScore > 0 && !tied {
+		return bestTeam
+	}
+
+	// Last team standing.
+	alive := AliveTeams(bots)
+	if len(alive) == 1 {
+		for team := range alive {
+			return team
+		}
+	}
+
+	// Most total kills.
+	kills := make(map[int]int)
+	for _, bot := range bots {
+		if bot.Team > 0 {
+			kills[bot.Team] += bot.RoundKills
+		}
+	}
+	bestTeam, bestKills := 0, -1
+	tied = false
+	for team, k := range kills {
+		if k > bestKills {
+			bestTeam, bestKills = team, k
+			tied = false
+		} else if k == bestKills {
+			tied = true
+		}
+	}
+	if tied {
+		return 0
+	}
+	return bestTeam
+}
+
+// bestBotOnTeam picks the winning team's top performer (flag captures first,
+// then kills, then damage) so individual ELO/award flows keep working.
+func bestBotOnTeam(bots map[string]*BotState, team int) (winnerID, winnerName string) {
+	var best *BotState
+	for _, bot := range bots {
+		if bot.Team != team {
+			continue
+		}
+		if best == nil ||
+			bot.RoundFlagCaptures > best.RoundFlagCaptures ||
+			(bot.RoundFlagCaptures == best.RoundFlagCaptures && bot.RoundKills > best.RoundKills) ||
+			(bot.RoundFlagCaptures == best.RoundFlagCaptures && bot.RoundKills == best.RoundKills && bot.RoundDamageDealt > best.RoundDamageDealt) {
+			best = bot
+		}
+	}
+	if best == nil {
+		return "", ""
+	}
+	return best.BotID, best.Name
 }
 
 // CalculateAwards determines special awards for the round. Each award maps

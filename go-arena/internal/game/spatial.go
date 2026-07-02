@@ -88,6 +88,13 @@ func (g *SpatialGrid) Update(id string, pos Vec2) {
 
 // QueryRadius returns all entity IDs within the given Euclidean distance of pos.
 func (g *SpatialGrid) QueryRadius(pos Vec2, radius float64) []string {
+	return g.QueryRadiusInto(pos, radius, nil)
+}
+
+// QueryRadiusInto appends all entity IDs within radius of pos to buf and
+// returns it. Callers in per-tick loops can pass buf[:0] to reuse the same
+// backing array and avoid an allocation per query.
+func (g *SpatialGrid) QueryRadiusInto(pos Vec2, radius float64, buf []string) []string {
 	// Determine the range of cells that could overlap the radius bounding box.
 	minCX := int(math.Floor((pos.X() - radius) / g.cellSize))
 	maxCX := int(math.Floor((pos.X() + radius) / g.cellSize))
@@ -95,7 +102,6 @@ func (g *SpatialGrid) QueryRadius(pos Vec2, radius float64) []string {
 	maxCY := int(math.Floor((pos.Y() + radius) / g.cellSize))
 
 	r2 := radius * radius
-	var result []string
 
 	for cx := minCX; cx <= maxCX; cx++ {
 		for cy := minCY; cy <= maxCY; cy++ {
@@ -108,12 +114,12 @@ func (g *SpatialGrid) QueryRadius(pos Vec2, radius float64) []string {
 				dx := ePos.X() - pos.X()
 				dy := ePos.Y() - pos.Y()
 				if dx*dx+dy*dy <= r2 {
-					result = append(result, id)
+					buf = append(buf, id)
 				}
 			}
 		}
 	}
-	return result
+	return buf
 }
 
 // GetPosition returns the stored position of an entity and whether it exists.

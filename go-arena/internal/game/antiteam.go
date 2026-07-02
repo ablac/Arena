@@ -52,18 +52,24 @@ func (at *AntiTeamTracker) Update(bots map[string]*BotState, grid *SpatialGrid) 
 	// Track which pairs are currently near each other.
 	activePairs := make(map[string]bool)
 
+	var nearbyIDs []string
 	for _, bot := range bots {
 		if !bot.IsAlive {
 			continue
 		}
 
-		nearbyIDs := grid.QueryRadius(bot.Position, radius)
+		nearbyIDs = grid.QueryRadiusInto(bot.Position, radius, nearbyIDs[:0])
 		for _, otherID := range nearbyIDs {
 			if otherID == bot.BotID {
 				continue
 			}
 			other, ok := bots[otherID]
 			if !ok || !other.IsAlive {
+				continue
+			}
+
+			// Team modes: teammates are supposed to stick together.
+			if SameTeam(bot, other) {
 				continue
 			}
 
