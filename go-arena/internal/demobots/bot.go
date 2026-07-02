@@ -296,11 +296,6 @@ func (b *demoBot) session(ctx context.Context) error {
 		msgType, _ := msg["type"].(string)
 		switch msgType {
 		case "tick":
-			if ys, ok := msg["your_state"].(map[string]interface{}); ok {
-				if charge, ok := ys["gravity_well_charge"].(float64); ok {
-					setHasGravWell(b.botID, charge > 0)
-				}
-			}
 			action := PickAction(b.strategy, msg, b.config.Weapon, b.attackRange, b.botID)
 			payload := map[string]interface{}{
 				"type": "action",

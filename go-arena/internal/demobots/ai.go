@@ -13,6 +13,9 @@ import (
 type tickState struct {
 	Tick             int
 	RoundTick        int
+	Team             int
+	Mode             string
+	SuddenDeath      bool
 	Position         [2]float64
 	HP               float64
 	MaxHP            float64
@@ -53,12 +56,35 @@ type tickState struct {
 	DoubleBounty      bool
 	TeleportSurge     bool
 	HazardStorm       bool
+	BountyTargetID   string
 	Enemies          []entity
+	Allies           []entity
 	Pickups          []entity
 	Teleporters      []entity
 	CapturePads      []entity
 	HazardZones      []entity
+	Mines            []entity
+	GravityWells     []entity
+	Flags            []entity
+	VoidTiles        [][2]int
+	TeamScores       map[string]int
 	Hints            []hint
+	Danger           *dangerSet
+}
+
+// isEnemyFlagCarrier reports whether the given bot ID carries any flag.
+// Allies never appear in ts.Enemies, so callers scoring enemies can use this
+// directly to detect enemy carriers.
+func (ts *tickState) isFlagCarrier(id string) bool {
+	if id == "" {
+		return false
+	}
+	for i := range ts.Flags {
+		if ts.Flags[i].CarrierID == id {
+			return true
+		}
+	}
+	return false
 }
 
 type entity struct {
@@ -94,6 +120,24 @@ type entity struct {
 	ChargedShotReady bool
 	RearExposed bool
 	NearImpactSurface bool
+	Team     int
+	ThreatScore float64
+	// Hazard zone rect + pulse fields (server sends width/height in grid
+	// cells instead of a radius for hazard_zone entities).
+	Width         int
+	Height        int
+	OnTicks       int
+	OffTicks      int
+	TickCounter   int
+	DamagePerTick float64
+	// Landmine fields.
+	Armed bool
+	// Gravity well fields.
+	PullRadius int
+	// CTF flag fields (parsed from the top-level "flags" tick array).
+	Status       string
+	CarrierID    string
+	BasePosition [2]float64
 }
 
 type hint struct {
@@ -252,6 +296,108 @@ func (t *botTerrain) isMoveBlocked(cx, cy, dx, dy int) bool {
 	return false
 }
 
+// === Danger Set ===
+
+// dangerSet is the per-tick set of grid cells the bot should not step into:
+// burn fields, active hazard zones, gravity well pull areas, armed enemy
+// mines, and sudden-death void tiles. Instances are pooled (demo bots run
+// concurrently, so package-level scratch would race) and rebuilt each
+// PickAction without allocation growth.
+type dangerSet struct {
+	cells map[[2]int]struct{}
+}
+
+var dangerPool = sync.Pool{New: func() interface{} { return &dangerSet{} }}
+
+func (d *dangerSet) reset() {
+	if d.cells == nil {
+		d.cells = make(map[[2]int]struct{}, 64)
+		return
+	}
+	clear(d.cells)
+}
+
+func (d *dangerSet) empty() bool {
+	return d == nil || len(d.cells) == 0
+}
+
+func (d *dangerSet) has(col, row int) bool {
+	if d == nil || len(d.cells) == 0 {
+		return false
+	}
+	_, ok := d.cells[[2]int{col, row}]
+	return ok
+}
+
+func (d *dangerSet) add(col, row int) {
+	d.cells[[2]int{col, row}] = struct{}{}
+}
+
+// addSquare marks all cells within a Chebyshev radius of center.
+func (d *dangerSet) addSquare(center [2]float64, radius int) {
+	d.addRect(center, 2*radius+1, 2*radius+1)
+}
+
+// addRect marks a rectangle of width x height grid cells centered on center,
+// using the same integer half-extent math as the server's hazard damage check.
+func (d *dangerSet) addRect(center [2]float64, width, height int) {
+	cc, cr := int(math.Round(center[0])), int(math.Round(center[1]))
+	halfW, halfH := width/2, height/2
+	for col := cc - halfW; col <= cc+halfW; col++ {
+		for row := cr - halfH; row <= cr+halfH; row++ {
+			d.add(col, row)
+		}
+	}
+}
+
+// buildDangerSet populates the danger set for this tick from the parsed state.
+func buildDangerSet(d *dangerSet, ts *tickState, botID string) {
+	d.reset()
+	for i := range ts.HazardZones {
+		// Hazard key grants immunity to both hazard zones and burn fields.
+		if ts.HasHazardKey {
+			break
+		}
+		h := &ts.HazardZones[i]
+		if !h.Active {
+			continue
+		}
+		if h.Width > 0 || h.Height > 0 {
+			// Rectangular pulsing hazard zone.
+			d.addRect(h.Position, h.Width, h.Height)
+			continue
+		}
+		// Radial burn field.
+		r := int(h.Radius)
+		if r <= 0 {
+			r = 2
+		}
+		d.addSquare(h.Position, r)
+	}
+	for i := range ts.GravityWells {
+		w := &ts.GravityWells[i]
+		if w.OwnerID == botID {
+			continue // own well never pulls us
+		}
+		r := w.PullRadius
+		if r <= 0 {
+			r = 3 // server default ARENA_GRAVITY_WELL_PULL_RADIUS
+		}
+		d.addSquare(w.Position, r)
+	}
+	for i := range ts.Mines {
+		m := &ts.Mines[i]
+		if m.OwnerID == botID || !m.Armed {
+			continue
+		}
+		// Mine blast radius is small (server default 1 tile).
+		d.addSquare(m.Position, 1)
+	}
+	for _, vt := range ts.VoidTiles {
+		d.add(vt[0], vt[1])
+	}
+}
+
 // === BFS Pathfinding ===
 
 type bfsNode struct {
@@ -303,16 +449,43 @@ func (s *bfsScratch) visit(c, r int) bool {
 	return true
 }
 
-// bfsStep finds the first grid step direction from (sc,sr) toward (gc,gr), navigating walls.
-// Returns [2]int{dx, dy} where dx,dy are -1, 0, or 1.
-func bfsStep(sc, sr, gc, gr int) [2]int {
+// bfsStep finds the first grid step direction from (sc,sr) toward (gc,gr),
+// navigating walls and avoiding danger cells (hazards, void tiles, mines).
+// If no safe step exists at all, it retries once ignoring danger so bots
+// never freeze when fully surrounded. Returns [2]int{dx, dy} in {-1,0,1}.
+func bfsStep(sc, sr, gc, gr int, danger *dangerSet) [2]int {
+	step, ok := bfsStepConstrained(sc, sr, gc, gr, danger)
+	if !ok && !danger.empty() {
+		step, _ = bfsStepConstrained(sc, sr, gc, gr, nil)
+	}
+	return step
+}
+
+// bfsStepConstrained is bfsStep with a fixed danger set (nil = ignore danger).
+// The boolean result reports whether any step (including the heuristic
+// fallbacks) was found under the constraints.
+func bfsStepConstrained(sc, sr, gc, gr int, danger *dangerSet) ([2]int, bool) {
 	if sc == gc && sr == gr {
-		return [2]int{0, 0}
+		return [2]int{0, 0}, true
 	}
 
 	t := getTerrain()
 	if t == nil {
-		return [2]int{intSign(gc - sc), intSign(gr - sr)}
+		return [2]int{intSign(gc - sc), intSign(gr - sr)}, true
+	}
+
+	// The goal cell itself is never treated as dangerous: otherwise a target
+	// sitting inside a hazard (e.g. a pickup in a burn field) would force the
+	// whole path to fall back to danger-blind mode.
+	blocked := func(cx, cy, dx, dy int) bool {
+		if t.isMoveBlocked(cx, cy, dx, dy) {
+			return true
+		}
+		nc, nr := cx+dx, cy+dy
+		if nc == gc && nr == gr {
+			return false
+		}
+		return danger.has(nc, nr)
 	}
 
 	s := bfsPool.Get().(*bfsScratch)
@@ -326,7 +499,7 @@ func bfsStep(sc, sr, gc, gr int) [2]int {
 			if dc == 0 && dr == 0 {
 				continue
 			}
-			if t.isMoveBlocked(sc, sr, dc, dr) {
+			if blocked(sc, sr, dc, dr) {
 				continue
 			}
 			nc, nr := sc+dc, sr+dr
@@ -339,14 +512,14 @@ func bfsStep(sc, sr, gc, gr int) [2]int {
 	for i := 0; i < len(s.queue) && i < 200*9; i++ {
 		n := s.queue[i]
 		if n.col == gc && n.row == gr {
-			return [2]int{n.firstDC, n.firstDR}
+			return [2]int{n.firstDC, n.firstDR}, true
 		}
 		for dc := -1; dc <= 1; dc++ {
 			for dr := -1; dr <= 1; dr++ {
 				if dc == 0 && dr == 0 {
 					continue
 				}
-				if t.isMoveBlocked(n.col, n.row, dc, dr) {
+				if blocked(n.col, n.row, dc, dr) {
 					continue
 				}
 				if s.visit(n.col+dc, n.row+dr) {
@@ -358,23 +531,23 @@ func bfsStep(sc, sr, gc, gr int) [2]int {
 
 	// BFS exhausted — fall back to direct direction toward goal.
 	direct := [2]int{intSign(gc - sc), intSign(gr - sr)}
-	if !t.isMoveBlocked(sc, sr, direct[0], direct[1]) {
-		return direct
+	if !blocked(sc, sr, direct[0], direct[1]) {
+		return direct, true
 	}
-	if direct[0] != 0 && !t.isMoveBlocked(sc, sr, direct[0], 0) {
-		return [2]int{direct[0], 0}
+	if direct[0] != 0 && !blocked(sc, sr, direct[0], 0) {
+		return [2]int{direct[0], 0}, true
 	}
-	if direct[1] != 0 && !t.isMoveBlocked(sc, sr, 0, direct[1]) {
-		return [2]int{0, direct[1]}
+	if direct[1] != 0 && !blocked(sc, sr, 0, direct[1]) {
+		return [2]int{0, direct[1]}, true
 	}
 	dirs := [][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}}
 	rand.Shuffle(len(dirs), func(i, j int) { dirs[i], dirs[j] = dirs[j], dirs[i] })
 	for _, d := range dirs {
-		if !t.isMoveBlocked(sc, sr, d[0], d[1]) {
-			return d
+		if !blocked(sc, sr, d[0], d[1]) {
+			return d, true
 		}
 	}
-	return [2]int{0, 0}
+	return [2]int{0, 0}, false
 }
 
 func intSign(v int) int {
@@ -392,6 +565,22 @@ func intSign(v int) int {
 // chebyshev returns the Chebyshev (grid) distance — matches server range checks.
 func chebyshev(a, b [2]float64) float64 {
 	return math.Max(math.Abs(a[0]-b[0]), math.Abs(a[1]-b[1]))
+}
+
+// intChebyshev is chebyshev for integer grid cells.
+func intChebyshev(a, b [2]int) int {
+	dx := a[0] - b[0]
+	if dx < 0 {
+		dx = -dx
+	}
+	dy := a[1] - b[1]
+	if dy < 0 {
+		dy = -dy
+	}
+	if dx > dy {
+		return dx
+	}
+	return dy
 }
 
 func fsign(v float64) float64 {
@@ -415,9 +604,10 @@ func gridDirAway(src, dst [2]float64) [2]float64 {
 	return [2]float64{-d[0], -d[1]}
 }
 
-// bfsDir uses BFS to get the first step direction from src toward dst.
-func bfsDir(src, dst [2]float64) [2]float64 {
-	step := bfsStep(int(src[0]), int(src[1]), int(dst[0]), int(dst[1]))
+// bfsDir uses BFS to get the first step direction from src toward dst,
+// avoiding cells in the danger set (nil = no danger constraints).
+func bfsDir(src, dst [2]float64, danger *dangerSet) [2]float64 {
+	step := bfsStep(int(src[0]), int(src[1]), int(dst[0]), int(dst[1]), danger)
 	return [2]float64{float64(step[0]), float64(step[1])}
 }
 
@@ -445,9 +635,52 @@ func moveDir(d [2]float64) actionResult {
 	return actionResult{Action: "move", Direction: &snapped}
 }
 
-// moveTo uses BFS pathfinding to take one step from src toward dst.
-func moveTo(src, dst [2]float64) actionResult {
-	d := bfsDir(src, dst)
+// safeStepDir adjusts a desired step direction so it does not land in a
+// danger cell when a safe alternative adjacent step exists. Falls back to
+// the original direction when nothing safe (or passable) is available.
+func safeStepDir(pos [2]float64, d [2]float64, danger *dangerSet) [2]float64 {
+	dx, dy := int(fsign(d[0])), int(fsign(d[1]))
+	if (dx == 0 && dy == 0) || danger.empty() {
+		return [2]float64{float64(dx), float64(dy)}
+	}
+	cx, cy := int(math.Round(pos[0])), int(math.Round(pos[1]))
+	t := getTerrain()
+	ok := func(sx, sy int) bool {
+		if sx == 0 && sy == 0 {
+			return false
+		}
+		if t != nil && t.isMoveBlocked(cx, cy, sx, sy) {
+			return false
+		}
+		return !danger.has(cx+sx, cy+sy)
+	}
+	if ok(dx, dy) {
+		return [2]float64{float64(dx), float64(dy)}
+	}
+	// Deterministic alternatives near the desired direction: perpendiculars,
+	// then axis components, then diagonally-adjacent rotations.
+	candidates := [][2]int{
+		{-dy, dx}, {dy, -dx}, // perpendicular
+		{dx, 0}, {0, dy}, // axis components
+		{dx + dy, dy - dx}, {dx - dy, dy + dx}, // 45-degree rotations
+	}
+	for _, c := range candidates {
+		sx, sy := intSign(c[0]), intSign(c[1])
+		if ok(sx, sy) {
+			return [2]float64{float64(sx), float64(sy)}
+		}
+	}
+	return [2]float64{float64(dx), float64(dy)}
+}
+
+// moveDirSafe is moveDir with danger-cell avoidance for the single step.
+func moveDirSafe(ts tickState, d [2]float64) actionResult {
+	return moveDir(safeStepDir(ts.Position, d, ts.Danger))
+}
+
+// moveTo uses BFS pathfinding to take one danger-aware step from src toward dst.
+func moveTo(src, dst [2]float64, danger *dangerSet) actionResult {
+	d := bfsDir(src, dst, danger)
 	if d[0] == 0 && d[1] == 0 {
 		return idle()
 	}
@@ -531,8 +764,64 @@ func parseTick(msg map[string]interface{}) tickState {
 		ts.TeleportSurge = v == "teleport_surge"
 		ts.HazardStorm = v == "hazard_storm"
 	}
+	if v, ok := msg["game_mode"].(string); ok {
+		ts.Mode = v
+	}
+	if v, ok := msg["sudden_death"].(bool); ok {
+		ts.SuddenDeath = v
+	}
+	if v, ok := msg["bounty_target"].(string); ok {
+		ts.BountyTargetID = v
+	}
+	if vt, ok := msg["void_tiles"].([]interface{}); ok {
+		for _, raw := range vt {
+			if cell, ok := raw.([]interface{}); ok && len(cell) >= 2 {
+				x, _ := cell[0].(float64)
+				y, _ := cell[1].(float64)
+				ts.VoidTiles = append(ts.VoidTiles, [2]int{int(x), int(y)})
+			}
+		}
+	}
+	if scores, ok := msg["team_scores"].(map[string]interface{}); ok {
+		ts.TeamScores = make(map[string]int, len(scores))
+		for k, raw := range scores {
+			if v, ok := raw.(float64); ok {
+				ts.TeamScores[k] = int(v)
+			}
+		}
+	}
+	if flags, ok := msg["flags"].([]interface{}); ok {
+		for _, raw := range flags {
+			f, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			// BuildFlagView sends spectator-style world coordinates, so
+			// convert to grid tiles like everything else the AI reasons in.
+			ent := entity{Type: "flag", Position: worldToGridPos(parsePos(f["position"])), IsAlive: true}
+			if v, ok := f["id"].(string); ok {
+				ent.ID = v
+			}
+			if v, ok := f["team"].(float64); ok {
+				ent.Team = int(v)
+			}
+			if v, ok := f["base_position"]; ok {
+				ent.BasePosition = worldToGridPos(parsePos(v))
+			}
+			if v, ok := f["status"].(string); ok {
+				ent.Status = v
+			}
+			if v, ok := f["carrier_id"].(string); ok {
+				ent.CarrierID = v
+			}
+			ts.Flags = append(ts.Flags, ent)
+		}
+	}
 	if ys, ok := msg["your_state"].(map[string]interface{}); ok {
 		ts.Position = parsePos(ys["position"])
+		if v, ok := ys["team"].(float64); ok {
+			ts.Team = int(v)
+		}
 		if v, ok := ys["hp"].(float64); ok {
 			ts.HP = v
 		}
@@ -767,10 +1056,45 @@ func parseTick(msg map[string]interface{}) tickState {
 			if v, ok := e["near_impact_surface"].(bool); ok {
 				ent.NearImpactSurface = v
 			}
+			if v, ok := e["team"].(float64); ok {
+				ent.Team = int(v)
+			}
+			if v, ok := e["threat_score"].(float64); ok {
+				ent.ThreatScore = v
+			}
+			if v, ok := e["width"].(float64); ok {
+				ent.Width = int(v)
+			}
+			if v, ok := e["height"].(float64); ok {
+				ent.Height = int(v)
+			}
+			if v, ok := e["on_ticks"].(float64); ok {
+				ent.OnTicks = int(v)
+			}
+			if v, ok := e["off_ticks"].(float64); ok {
+				ent.OffTicks = int(v)
+			}
+			if v, ok := e["tick_counter"].(float64); ok {
+				ent.TickCounter = int(v)
+			}
+			if v, ok := e["damage_per_tick"].(float64); ok {
+				ent.DamagePerTick = v
+			}
+			if v, ok := e["armed"].(bool); ok {
+				ent.Armed = v
+			}
+			if v, ok := e["pull_radius"].(float64); ok {
+				ent.PullRadius = int(v)
+			}
 			switch ent.Type {
 			case "bot":
 				if ent.IsAlive {
-					ts.Enemies = append(ts.Enemies, ent)
+					// Teammates are allies, everyone else is an enemy.
+					if ent.Team != 0 && ent.Team == ts.Team {
+						ts.Allies = append(ts.Allies, ent)
+					} else {
+						ts.Enemies = append(ts.Enemies, ent)
+					}
 				}
 			case "bounty_target":
 				ts.Enemies = append(ts.Enemies, ent)
@@ -784,6 +1108,10 @@ func parseTick(msg map[string]interface{}) tickState {
 				ts.HazardZones = append(ts.HazardZones, ent)
 			case "burn_field":
 				ts.HazardZones = append(ts.HazardZones, ent)
+			case "landmine":
+				ts.Mines = append(ts.Mines, ent)
+			case "gravity_well":
+				ts.GravityWells = append(ts.GravityWells, ent)
 			}
 		}
 	}
@@ -808,6 +1136,16 @@ func parseTick(msg map[string]interface{}) tickState {
 		}
 	}
 	return ts
+}
+
+// worldToGridPos converts a world-space position to grid tile coordinates,
+// mirroring the server's TerrainGrid.WorldToGrid floor division.
+func worldToGridPos(p [2]float64) [2]float64 {
+	cs := 20.0
+	if t := getTerrain(); t != nil && t.CellSize > 0 {
+		cs = t.CellSize
+	}
+	return [2]float64{math.Floor(p[0] / cs), math.Floor(p[1] / cs)}
 }
 
 func parsePos(v interface{}) [2]float64 {
@@ -877,8 +1215,10 @@ func hasVisibleRangedThreat(enemies []entity) bool {
 	return false
 }
 
-// bestTarget picks the optimal attack target in weapon range.
-func bestTarget(pos [2]float64, enemies []entity, wrange float64) *entity {
+// bestTarget picks the optimal attack target in weapon range, weighting
+// low HP, stuns, proximity, threat score, bounty targets, and (in CTF)
+// enemy flag carriers.
+func bestTarget(ts *tickState, pos [2]float64, enemies []entity, wrange float64) *entity {
 	var best *entity
 	bestScore := -math.Inf(1)
 	for i := range enemies {
@@ -900,6 +1240,13 @@ func bestTarget(pos [2]float64, enemies []entity, wrange float64) *entity {
 		score -= d * 5
 		if e.HP < e.MaxHP*0.3 {
 			score += 40
+		}
+		score += e.ThreatScore * 0.3
+		if e.Type == "bounty_target" || (ts.BountyTargetID != "" && e.ID == ts.BountyTargetID) {
+			score += 120
+		}
+		if ts.Mode == "ctf" && ts.isFlagCarrier(e.ID) {
+			score += 80
 		}
 		if score > bestScore {
 			bestScore = score
@@ -991,6 +1338,96 @@ func terrainBlocked(col, row int) bool {
 		return true
 	}
 	return t.Cells[col][row] != 0
+}
+
+// gridLineBlocked reports whether any wall/void cell lies on the grid line
+// from a to b (start cell excluded). Bot-side approximation of the server's
+// LOS check whose result arrives as has_los on nearby views; used for cells
+// where we have no server-provided answer (e.g. candidate cover cells).
+func (t *botTerrain) gridLineBlocked(a, b [2]int) bool {
+	x0, y0 := a[0], a[1]
+	x1, y1 := b[0], b[1]
+	dx, dy := x1-x0, y1-y0
+	sx, sy := intSign(dx), intSign(dy)
+	if dx < 0 {
+		dx = -dx
+	}
+	if dy < 0 {
+		dy = -dy
+	}
+	err := dx - dy
+	for {
+		if x0 == x1 && y0 == y1 {
+			return false
+		}
+		e2 := 2 * err
+		if e2 > -dy {
+			err -= dy
+			x0 += sx
+		}
+		if e2 < dx {
+			err += dx
+			y0 += sy
+		}
+		if t.isBlocked(x0, y0) && !(x0 == x1 && y0 == y1) {
+			return true
+		}
+	}
+}
+
+// strongestRangedThreat returns the visible bow/staff enemy with the highest
+// threat score (falling back to HP when the server didn't send one).
+func strongestRangedThreat(ts *tickState) *entity {
+	var best *entity
+	bestScore := -math.Inf(1)
+	for i := range ts.Enemies {
+		e := &ts.Enemies[i]
+		if !e.HasLOS || !e.IsAlive {
+			continue
+		}
+		if e.Weapon != "bow" && e.Weapon != "staff" {
+			continue
+		}
+		score := e.ThreatScore
+		if score <= 0 {
+			score = e.HP
+		}
+		if score > bestScore {
+			bestScore = score
+			best = e
+		}
+	}
+	return best
+}
+
+// findLOSBreakCell samples the 8 neighbors and the 16 cells at Chebyshev
+// radius 2 around pos and returns the first passable, non-dangerous cell
+// where terrain blocks the line to the threat. Used to duck out of ranged
+// fire instead of trading into it.
+func findLOSBreakCell(pos, threatPos [2]float64, danger *dangerSet) ([2]float64, bool) {
+	t := getTerrain()
+	if t == nil {
+		return [2]float64{}, false
+	}
+	cx, cy := int(math.Round(pos[0])), int(math.Round(pos[1]))
+	tc := [2]int{int(math.Round(threatPos[0])), int(math.Round(threatPos[1]))}
+	for r := 1; r <= 2; r++ {
+		for dx := -r; dx <= r; dx++ {
+			for dy := -r; dy <= r; dy++ {
+				if dx != -r && dx != r && dy != -r && dy != r {
+					continue // ring cells only
+				}
+				c, w := cx+dx, cy+dy
+				if t.isBlocked(c, w) || danger.has(c, w) {
+					continue
+				}
+				if t.gridLineBlocked([2]int{c, w}, tc) {
+					return [2]float64{float64(c), float64(w)}, true
+				}
+			}
+		}
+	}
+	return [2]float64{}, false
 }
 
 func nearImpactSurface(pos [2]float64) bool {
@@ -1213,7 +1650,7 @@ func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD f
 	}
 	if pad.OwnerID == botID && !pad.Ready && !pad.Contested && pressure <= 1 && hpRatio >= 0.45 {
 		if padD > 1 && padD <= 7 {
-			a := moveTo(ts.Position, pad.Position)
+			a := moveTo(ts.Position, pad.Position, ts.Danger)
 			return &a
 		}
 		if padD <= 1 {
@@ -1224,15 +1661,106 @@ func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD f
 		return nil
 	}
 	if pad.Contested && padD <= 8 && (objectiveBias || ts.HasHazardKey || ts.IsBountyTarget) {
-		a := moveTo(ts.Position, pad.Position)
+		a := moveTo(ts.Position, pad.Position, ts.Danger)
 		return &a
 	}
 	if pad.CapturingBotID != "" && pad.CapturingBotID != botID && padD <= 8 {
-		a := moveTo(ts.Position, pad.Position)
+		a := moveTo(ts.Position, pad.Position, ts.Danger)
 		return &a
 	}
 	if padD <= 9 && (pressure == 0 || objectiveBias || enemyOwned || ts.IsBountyTarget) {
-		a := moveTo(ts.Position, pad.Position)
+		a := moveTo(ts.Position, pad.Position, ts.Danger)
+		return &a
+	}
+	return nil
+}
+
+// === CTF Objective Logic ===
+
+// tryCTFObjective implements capture-the-flag play: carriers run the flag
+// home, defenders hunt enemy carriers, dropped flags get returned, and the
+// faster personalities go for steals. Returns nil outside CTF rounds or when
+// combat should take over.
+func tryCTFObjective(ts tickState, strategy string, near *entity, nearD, wrange float64, weapon string, canAtk, canDodge bool, botID string) *actionResult {
+	if ts.Mode != "ctf" || len(ts.Flags) == 0 || ts.Team == 0 {
+		return nil
+	}
+	pos := ts.Position
+	hpRatio := ts.HP / math.Max(ts.MaxHP, 1)
+
+	var myFlag *entity   // my team's flag
+	var carrying *entity // the flag I am carrying (an enemy team's)
+	var enemyFlag *entity // nearest enemy flag
+	for i := range ts.Flags {
+		f := &ts.Flags[i]
+		if f.CarrierID == botID {
+			carrying = f
+		}
+		if f.Team == ts.Team {
+			myFlag = f
+		} else if enemyFlag == nil || chebyshev(pos, f.Position) < chebyshev(pos, enemyFlag.Position) {
+			enemyFlag = f
+		}
+	}
+
+	// 1. Carrying a flag: run it home (danger-aware). Still trade with a
+	// directly adjacent enemy when the weapon is ready, and dodge when hit.
+	if carrying != nil && myFlag != nil {
+		if near != nil && nearD <= 1 && canAtk && wrange >= 1 && near.HasLOS && !near.Dodging {
+			a := atk(near, weapon)
+			return &a
+		}
+		if ts.HitsThisTick > 0 && canDodge && near != nil && nearD <= wrange+2 {
+			a := dodge(perpDir(gridDir(pos, near.Position)))
+			return &a
+		}
+		a := moveTo(pos, myFlag.BasePosition, ts.Danger)
+		return &a
+	}
+
+	// 2. An enemy carries MY team's flag: the carrier is the priority target.
+	if myFlag != nil && myFlag.Status == "carried" && myFlag.CarrierID != "" {
+		for i := range ts.Enemies {
+			e := &ts.Enemies[i]
+			if e.ID != myFlag.CarrierID {
+				continue
+			}
+			if canAtk && chebyshev(pos, e.Position) <= wrange && e.HasLOS && !e.Dodging {
+				a := atk(e, weapon)
+				return &a
+			}
+			a := moveTo(pos, e.Position, ts.Danger)
+			return &a
+		}
+		// Carrier outside fog: flag positions are global — give chase while
+		// it isn't hopeless.
+		if chebyshev(pos, myFlag.Position) <= 20 {
+			a := moveTo(pos, myFlag.Position, ts.Danger)
+			return &a
+		}
+	}
+
+	// 3. My team's flag is dropped reasonably close: touch it to return it.
+	if myFlag != nil && myFlag.Status == "dropped" && chebyshev(pos, myFlag.Position) < 25 {
+		a := moveTo(pos, myFlag.Position, ts.Danger)
+		return &a
+	}
+
+	// 4. Steal runs: mobile/aggressive personalities go for the enemy flag
+	// when healthy and not already pinned in a knife fight; defensive and
+	// territorial types keep holding mid instead.
+	stealer := strategy == "aggressive" || strategy == "assassin" || strategy == "kite"
+	if enemyFlag != nil && stealer && hpRatio > 0.5 && (near == nil || nearD > 2) &&
+		(enemyFlag.Status == "at_base" || enemyFlag.Status == "dropped") {
+		// Leave the run to a strictly closer visible ally so the whole team
+		// doesn't abandon combat for the same flag.
+		myD := chebyshev(pos, enemyFlag.Position)
+		for i := range ts.Allies {
+			if chebyshev(ts.Allies[i].Position, enemyFlag.Position) < myD-1 {
+				return nil
+			}
+		}
+		a := moveTo(pos, enemyFlag.Position, ts.Danger)
 		return &a
 	}
 	return nil
@@ -1241,14 +1769,26 @@ func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD f
 // === Hazard Zone Helpers ===
 
 // inHazardZone checks if a position is inside any active hazard zone.
+// Hazard zones are rectangles (width/height in grid cells, mirroring the
+// server's isBotInHazardZone: center cell ± integer half-extents); burn
+// fields are radial. Inactive (pulsed-off) zones are safe.
 func inHazardZone(pos [2]float64, hazards []entity) bool {
+	cx, cy := int(math.Round(pos[0])), int(math.Round(pos[1]))
 	for _, h := range hazards {
 		if !h.Active {
 			continue
 		}
+		if h.Width > 0 || h.Height > 0 {
+			zc, zr := int(math.Round(h.Position[0])), int(math.Round(h.Position[1]))
+			halfW, halfH := h.Width/2, h.Height/2
+			if cx >= zc-halfW && cx <= zc+halfW && cy >= zr-halfH && cy <= zr+halfH {
+				return true
+			}
+			continue
+		}
 		r := h.Radius
 		if r <= 0 {
-			r = 2 // default hazard radius
+			r = 2 // default burn-field radius
 		}
 		if chebyshev(pos, h.Position) <= r {
 			return true
@@ -1308,19 +1848,22 @@ func enemiesWithinRange(pos [2]float64, enemies []entity, r float64) int {
 	return count
 }
 
-func bestStaffCast(pos [2]float64, enemies []entity, wrange float64) (*actionResult, bool) {
+func bestStaffCast(ts *tickState, pos [2]float64, enemies []entity, wrange float64) (*actionResult, bool) {
 	candidates := visibleEnemiesInRange(pos, enemies, wrange)
 	if len(candidates) == 0 {
 		return nil, false
 	}
 
-	clusterCenter, clusterCount := enemyClusterCenter(candidates, 3)
+	// Cluster radius 2 matches the staff's server-side AoE radius
+	// (weapon_balance.go GridParam: 2) so casts land on cells that actually
+	// hit multiple bots — and pass finalizeWeaponAction's radius-2 check.
+	clusterCenter, clusterCount := enemyClusterCenter(candidates, 2)
 	if clusterCount >= 2 && chebyshev(pos, clusterCenter) <= wrange {
 		a := atkPos(clusterCenter, "staff")
 		return &a, true
 	}
 
-	target := bestTarget(pos, candidates, wrange)
+	target := bestTarget(ts, pos, candidates, wrange)
 	if target != nil {
 		a := atk(target, "staff")
 		return &a, true
@@ -1372,15 +1915,15 @@ func finalizeWeaponAction(ts tickState, weapon string, wrange float64, action ac
 		}
 	}
 
-	if best, ok := bestStaffCast(ts.Position, ts.Enemies, wrange); ok {
+	if best, ok := bestStaffCast(&ts, ts.Position, ts.Enemies, wrange); ok {
 		return *best
 	}
 
 	near, _ := closestVisible(ts.Position, ts.Enemies)
 	if near != nil {
-		return moveTo(ts.Position, near.Position)
+		return moveTo(ts.Position, near.Position, ts.Danger)
 	}
-	return moveTo(ts.Position, ts.ZoneTargetCenter)
+	return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
 }
 
 // === Smart Pickup Prioritization ===
@@ -1405,7 +1948,7 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	// Gravity well: grab only if we do not already have a charge.
 	gw, gwD := nearestPickupOfType(pos, ts.Pickups, "gravity_well")
 	if gw != nil && gwD <= 8+pickupReachBonus && ts.GravityWellCharge <= 0 {
-		a := moveTo(pos, gw.Position)
+		a := moveTo(pos, gw.Position, ts.Danger)
 		return &a
 	}
 
@@ -1413,7 +1956,7 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	cd, cdD := nearestPickupOfType(pos, ts.Pickups, "cooldown_shard")
 	if cd != nil && cdD <= 7+pickupReachBonus {
 		if ts.Cooldown > 0 || ts.DodgeCool > 0 || ts.GrappleCooldown > 0 || ts.StunTicks > 0 || ts.FastZone || ts.DoubleBounty || ts.TeleportSurge {
-			a := moveTo(pos, cd.Position)
+			a := moveTo(pos, cd.Position, ts.Danger)
 			return &a
 		}
 	}
@@ -1422,15 +1965,15 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	hk, hkD := nearestPickupOfType(pos, ts.Pickups, "hazard_key")
 	if hk != nil && hkD <= 8+pickupReachBonus && !ts.HasHazardKey {
 		if pad, padD := nearestCapturePad(pos, ts.CapturePads); pad != nil && padD <= 9 && (pad.Contested || pad.ContenderCount > 0 || !pad.Ready || ts.HazardStorm) {
-			a := moveTo(pos, hk.Position)
+			a := moveTo(pos, hk.Position, ts.Danger)
 			return &a
 		}
 		if visibleEnemies > 0 && (rangedThreat || ts.IsBountyTarget || hpRatio < 0.7 || ts.HazardStorm) {
-			a := moveTo(pos, hk.Position)
+			a := moveTo(pos, hk.Position, ts.Danger)
 			return &a
 		}
 		if !ts.InZone || inHazardZone(ts.ZoneTargetCenter, ts.HazardZones) {
-			a := moveTo(pos, hk.Position)
+			a := moveTo(pos, hk.Position, ts.Danger)
 			return &a
 		}
 	}
@@ -1440,7 +1983,7 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	if rb != nil && rbD <= 8+pickupReachBonus && !ts.HasRelayBattery {
 		if pad, padD := nearestCapturePad(pos, ts.CapturePads); pad != nil && padD <= 10 &&
 			(pad.Contested || pad.CapturingBotID != "" || pad.OwnerID != "" || !pad.Ready) {
-			a := moveTo(pos, rb.Position)
+			a := moveTo(pos, rb.Position, ts.Danger)
 			return &a
 		}
 	}
@@ -1448,7 +1991,7 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	// Overdrive core: strongest swing pickup when a fight is imminent.
 	od, odD := nearestPickupOfType(pos, ts.Pickups, "overdrive_core")
 	if od != nil && odD <= 8+pickupReachBonus && (visibleEnemies > 0 || ts.IsBountyTarget || ts.DoubleBounty || strategy == "aggressive" || strategy == "berserker" || strategy == "assassin") {
-		a := moveTo(pos, od.Position)
+		a := moveTo(pos, od.Position, ts.Danger)
 		return &a
 	}
 
@@ -1456,7 +1999,7 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	gc, gcD := nearestPickupOfType(pos, ts.Pickups, "grapple_charge")
 	if gc != nil && gcD <= 7+pickupReachBonus {
 		if ts.GrappleCharges <= 0 || ts.GrappleCooldown > 0 || weapon == "grapple" || strategy == "kite" || strategy == "assassin" {
-			a := moveTo(pos, gc.Position)
+			a := moveTo(pos, gc.Position, ts.Danger)
 			return &a
 		}
 	}
@@ -1464,40 +2007,40 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	// Damage boost: grab if there is a realistic fight to use it in.
 	dmg, dmgD := nearestPickupOfType(pos, ts.Pickups, "damage_boost")
 	if dmg != nil && dmgD <= 6+pickupReachBonus && (visibleEnemies > 0 || strategy == "aggressive" || strategy == "assassin" || ts.DoubleBounty) {
-		a := moveTo(pos, dmg.Position)
+		a := moveTo(pos, dmg.Position, ts.Danger)
 		return &a
 	}
 
 	// Bounty token: worth contesting when we can realistically convert a fight soon.
 	bt, btD := nearestPickupOfType(pos, ts.Pickups, "bounty_token")
 	if bt != nil && btD <= 7+pickupReachBonus && (visibleEnemies > 0 || ts.IsBountyTarget || strategy == "aggressive" || strategy == "assassin" || ts.DoubleBounty) {
-		a := moveTo(pos, bt.Position)
+		a := moveTo(pos, bt.Position, ts.Danger)
 		return &a
 	}
 
 	// Speed boost: useful for mobility styles and zone recovery.
 	spd, spdD := nearestPickupOfType(pos, ts.Pickups, "speed_boost")
 	if spd != nil && spdD <= 6+pickupReachBonus && (strategy == "assassin" || strategy == "kite" || !ts.InZone || ts.FastZone) {
-		a := moveTo(pos, spd.Position)
+		a := moveTo(pos, spd.Position, ts.Danger)
 		return &a
 	}
 
 	// Shield bubble: grab aggressively when ranged LOS is on us.
 	sb, sbD := nearestPickupOfType(pos, ts.Pickups, "shield_bubble")
 	if sb != nil && sbD <= 5+pickupReachBonus && (hpRatio < 0.9 || rangedThreat || ts.IsBountyTarget) {
-		a := moveTo(pos, sb.Position)
+		a := moveTo(pos, sb.Position, ts.Danger)
 		return &a
 	}
 
 	// Health pack: be more willing to stabilize before losing initiative.
 	hp, hpD := nearestHealthPickup(pos, ts.Pickups)
 	if hp != nil && hpD <= 6+pickupReachBonus && hpRatio < 0.8 {
-		a := moveTo(pos, hp.Position)
+		a := moveTo(pos, hp.Position, ts.Danger)
 		return &a
 	}
 
 	if any, anyD := nearestPickup(pos, ts.Pickups); any != nil && visibleEnemies == 0 && anyD <= 6+pickupReachBonus {
-		a := moveTo(pos, any.Position)
+		a := moveTo(pos, any.Position, ts.Danger)
 		return &a
 	}
 
@@ -1555,7 +2098,7 @@ func tryUniversalGrapple(ts tickState, weapon string, wrange float64) *actionRes
 	if ts.GrappleCharges <= 0 || ts.GrappleCooldown > 0 || len(ts.Enemies) == 0 {
 		return nil
 	}
-	const grappleRange = 12.0
+	const grappleRange = 12.0 // matches config GrappleAbilityRangeTiles (ARENA_GRAPPLE_RANGE_TILES, default 12)
 
 	var best *entity
 	bestScore := -math.Inf(1)
@@ -1636,7 +2179,7 @@ func tryAnchorGrapple(ts tickState, strategy string, near *entity, nearD, wrange
 	if ts.GrappleCharges <= 0 || ts.GrappleCooldown > 0 {
 		return nil
 	}
-	const grappleRange = 12.0
+	const grappleRange = 12.0 // matches config GrappleAbilityRangeTiles (ARENA_GRAPPLE_RANGE_TILES, default 12)
 
 	hpRatio := ts.HP / math.Max(ts.MaxHP, 1)
 	if !ts.InZone {
@@ -1775,7 +2318,7 @@ func tryTeleporterEngage(ts tickState, target *entity, wrange float64) *actionRe
 	if bestPad == nil || bestScore < minScore {
 		return nil
 	}
-	a := moveTo(ts.Position, bestPad.Position)
+	a := moveTo(ts.Position, bestPad.Position, ts.Danger)
 	return &a
 }
 
@@ -1801,7 +2344,7 @@ func tryTeleporterEscape(ts tickState) *actionResult {
 			escapeReach = 8
 		}
 		if chebyshev(ts.Position, tp.Position) <= escapeReach {
-			a := moveTo(ts.Position, tp.Position)
+			a := moveTo(ts.Position, tp.Position, ts.Danger)
 			return &a
 		}
 	}
@@ -1831,7 +2374,7 @@ func tryTeleporterPressureEscape(ts tickState, strategy string, near *entity, ne
 			escapeReach = 10
 		}
 		if chebyshev(ts.Position, tp.Position) <= escapeReach {
-			a := moveTo(ts.Position, tp.Position)
+			a := moveTo(ts.Position, tp.Position, ts.Danger)
 			return &a
 		}
 	}
@@ -1884,7 +2427,7 @@ func tryTeleporterZoneShortcut(ts tickState) *actionResult {
 	if bestPad == nil {
 		return nil
 	}
-	a := moveTo(ts.Position, bestPad.Position)
+	a := moveTo(ts.Position, bestPad.Position, ts.Danger)
 	return &a
 }
 
@@ -1951,6 +2494,14 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	ts := parseTick(msg)
 	currentHazards = ts.HazardZones
 	currentHazardImmunity = ts.HasHazardKey
+
+	// Per-tick danger set: cells movement must route around (pooled — demo
+	// bots pick actions concurrently).
+	danger := dangerPool.Get().(*dangerSet)
+	defer dangerPool.Put(danger)
+	buildDangerSet(danger, &ts, botID)
+	ts.Danger = danger
+
 	pos := ts.Position
 	hpRatio := ts.HP / ts.MaxHP
 	wrange := float64(attackRange)
@@ -1968,6 +2519,27 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	// Stunned — can't act
 	if ts.StunTicks > 0 {
 		return idle()
+	}
+
+	// === SUDDEN DEATH: step off/away from void tiles immediately ===
+	// Void tiles are already in the danger set, so normal pathing avoids
+	// them; this branch handles standing on (or right next to) one.
+	if ts.SuddenDeath && len(ts.VoidTiles) > 0 {
+		cell := [2]int{int(math.Round(pos[0])), int(math.Round(pos[1]))}
+		minVoid := math.MaxInt32
+		for _, vt := range ts.VoidTiles {
+			d := intChebyshev(cell, vt)
+			if d < minVoid {
+				minVoid = d
+			}
+		}
+		if minVoid <= 1 {
+			dir := safeStepDir(pos, gridDir(pos, ts.ZoneTargetCenter), ts.Danger)
+			if minVoid == 0 && canDodge {
+				return dodge(dir)
+			}
+			return moveDir(dir)
+		}
 	}
 
 	// === HAZARD ZONE: Get out immediately (highest priority after stun) ===
@@ -1991,6 +2563,11 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		}
 	}
 
+	// === CTF OBJECTIVE PLAY: carry, chase carriers, return, steal ===
+	if ctf := tryCTFObjective(ts, strategy, near, nearD, wrange, weapon, canAtk, canDodge, botID); ctf != nil {
+		return *ctf
+	}
+
 	isAggStrat := strategy == "aggressive" || strategy == "berserker" || strategy == "assassin"
 	canShv := ts.ShoveCool <= 0
 
@@ -2005,7 +2582,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 				return finalizeWeaponAction(ts, weapon, wrange, atk(target, weapon))
 			}
 			if d <= wrange+4 {
-				return moveTo(pos, target.Position)
+				return moveTo(pos, target.Position, ts.Danger)
 			}
 		}
 	}
@@ -2044,7 +2621,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	}
 
 	if weapon == "bow" && canAtk {
-		target := bestTarget(pos, ts.Enemies, wrange)
+		target := bestTarget(&ts, pos, ts.Enemies, wrange)
 		if target != nil {
 			dist := chebyshev(pos, target.Position)
 			if shouldHoldBowCharge(ts, target, dist, wrange) {
@@ -2089,6 +2666,25 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		return *mine
 	}
 
+	// === DODGE CHARGED ATTACKS: sidestep ready bow shots and braced spears ===
+	// Skipped when we can land our own hit this tick — trading beats juking.
+	if canDodge && !(canAtk && near != nil && nearD <= wrange) {
+		for i := range ts.Enemies {
+			e := &ts.Enemies[i]
+			if !e.HasLOS || !e.IsAlive {
+				continue
+			}
+			charged := (e.Weapon == "bow" && e.ChargedShotReady) ||
+				(e.Weapon == "spear" && e.BraceReady)
+			if !charged {
+				continue
+			}
+			if chebyshev(pos, e.Position) <= WeaponRanges[e.Weapon]+1 {
+				return dodge(perpDir(gridDir(pos, e.Position)))
+			}
+		}
+	}
+
 	// === REACT: Got hit — only kite/defensive dodge; aggressive types fight back ===
 	if ts.HitsThisTick > 0 && canDodge && near != nil && nearD <= wrange+3 {
 		if !isAggStrat {
@@ -2113,10 +2709,29 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		// Grab adjacent health pickup if available
 		hp, hpD := nearestHealthPickup(pos, ts.Pickups)
 		if hp != nil && hpD <= 1 {
-			return moveTo(pos, hp.Position)
+			return moveTo(pos, hp.Position, ts.Danger)
 		}
 		if canDodge {
 			return dodge(gridDirAway(pos, near.Position))
+		}
+	}
+
+	// === DISENGAGE & BREAK LOS: melee bots under ranged fire at <45% HP,
+	// anyone at <30% — duck behind terrain or grab a closer health pack.
+	if visibleEnemies > 0 && (hpRatio < 0.3 || (hpRatio < 0.45 && wrange <= 2 && hasVisibleRangedThreat(ts.Enemies))) {
+		threat := strongestRangedThreat(&ts)
+		if threat == nil {
+			threat = near
+		}
+		if threat != nil {
+			// A health pickup closer than the threat beats hiding.
+			if hp, hpD := nearestHealthPickup(pos, ts.Pickups); hp != nil && hpD < chebyshev(pos, threat.Position) {
+				return moveTo(pos, hp.Position, ts.Danger)
+			}
+			if cover, ok := findLOSBreakCell(pos, threat.Position, ts.Danger); ok {
+				return moveTo(pos, cover, ts.Danger)
+			}
+			return moveDirSafe(ts, gridDirAway(pos, threat.Position))
 		}
 	}
 
@@ -2135,11 +2750,11 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		if near != nil && nearD <= wrange && canAtk {
 			return finalizeWeaponAction(ts, weapon, wrange, atk(near, weapon))
 		}
-		return moveTo(pos, ts.ZoneCenter)
+		return moveTo(pos, ts.ZoneCenter, ts.Danger)
 	}
 
 	if (ts.FastZone || ts.HazardStorm) && ts.ZoneDist <= 3 && near == nil {
-		return moveTo(pos, ts.ZoneTargetCenter)
+		return moveTo(pos, ts.ZoneTargetCenter, ts.Danger)
 	}
 
 	// === ZONE EDGE TACTICS: Shove enemies out of zone ===
@@ -2148,6 +2763,19 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		enemyZoneDist := chebyshev(near.Position, ts.ZoneCenter) - ts.ZoneRadius
 		if enemyZoneDist > -2 { // enemy near zone edge
 			return shove(near.ID)
+		}
+	}
+
+	// === PROACTIVE ZONE DRIFT: reposition ahead of the shrink when the zone
+	// edge is close (or the round is late and we're far from the next zone)
+	// and no enemy is within fighting distance.
+	if near == nil || nearD > wrange+2 {
+		distToZoneTarget := chebyshev(pos, ts.ZoneTargetCenter)
+		lateRound := ts.RoundTick > 1200
+		if ts.ZoneDist < 4 || (lateRound && distToZoneTarget > ts.ZoneTargetRadius) {
+			if a := moveTo(pos, ts.ZoneTargetCenter, ts.Danger); a.Action != "idle" {
+				return a
+			}
 		}
 	}
 
@@ -2165,30 +2793,28 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	// Adjustments are handled within each strategy below
 
 	// === NO ENEMIES VISIBLE: Hunt them down ===
+	// (trySmartPickup already ran unconditionally above.)
 	if visibleEnemies == 0 {
-		if pickup := trySmartPickup(ts, strategy, weapon); pickup != nil {
-			return *pickup
-		}
 		for _, h := range ts.Hints {
 			if h.HintType == "pickup" {
 				target := [2]float64{
 					pos[0] + h.Direction[0]*math.Min(h.Distance, 6),
 					pos[1] + h.Direction[1]*math.Min(h.Distance, 6),
 				}
-				return moveTo(pos, target)
+				return moveTo(pos, target, ts.Danger)
 			}
 		}
 		for _, h := range ts.Hints {
 			if h.HintType == "bot" {
 				target := [2]float64{pos[0] + h.Direction[0]*h.Distance, pos[1] + h.Direction[1]*h.Distance}
-				return moveTo(pos, target)
+				return moveTo(pos, target, ts.Danger)
 			}
 		}
 		p, pd := nearestPickup(pos, ts.Pickups)
 		if p != nil && pd <= 3 {
-			return moveTo(pos, p.Position)
+			return moveTo(pos, p.Position, ts.Danger)
 		}
-		return moveTo(pos, ts.ZoneTargetCenter)
+		return moveTo(pos, ts.ZoneTargetCenter, ts.Danger)
 	}
 
 	// === COMBAT: Strategy-specific ===
@@ -2210,16 +2836,58 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	}
 }
 
+// chaseApproach closes distance on a target. Melee bots approaching a ranged
+// enemy zigzag deterministically (tick parity) between the direct BFS step
+// and a perpendicular offset, making charged shots harder to line up.
+func chaseApproach(ts tickState, target *entity, wrange float64, weapon string) actionResult {
+	dist := chebyshev(ts.Position, target.Position)
+	if !isMelee(weapon) || dist <= wrange || (target.Weapon != "bow" && target.Weapon != "staff") {
+		return moveTo(ts.Position, target.Position, ts.Danger)
+	}
+	dir := bfsDir(ts.Position, target.Position, ts.Danger)
+	if dir[0] == 0 && dir[1] == 0 {
+		return idle()
+	}
+	// Offset perpendicular on alternating tick pairs while still far out.
+	if dist > 2 && (ts.Tick/2)%2 == 1 {
+		perp := [2]float64{-dir[1], dir[0]} // fixed CW perpendicular — deterministic
+		px, py := int(perp[0]), int(perp[1])
+		cx, cy := int(math.Round(ts.Position[0])), int(math.Round(ts.Position[1]))
+		t := getTerrain()
+		if (px != 0 || py != 0) && (t == nil || !t.isMoveBlocked(cx, cy, px, py)) && !ts.Danger.has(cx+px, cy+py) {
+			return moveDir(perp)
+		}
+	}
+	return moveDir(dir)
+}
+
+// baitPunish handles the adjacent stand-off: our weapon is cooling down while
+// the enemy's is ready — dodging (or shoving) beats strafing into the swing.
+func baitPunish(ts tickState, near *entity, canDodge bool) *actionResult {
+	if near == nil || !near.CanAttack || !isMelee(near.Weapon) {
+		return nil
+	}
+	if canShv := ts.ShoveCool <= 0; canShv {
+		a := shove(near.ID)
+		return &a
+	}
+	if canDodge && ts.DodgeCool <= 0 {
+		a := dodge(perpDir(gridDir(ts.Position, near.Position)))
+		return &a
+	}
+	return nil
+}
+
 // AGGRESSIVE: Rush enemies, attack on cooldown, shove when close, chase relentlessly.
 // Used by Lancers (spear) — knockback into walls for bonus damage.
 func aiAggressive(ts tickState, near *entity, nearD, wrange float64, weapon string, canAtk, canDodge bool, botID string) actionResult {
 	if near == nil {
-		return moveTo(ts.Position, ts.ZoneTargetCenter)
+		return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
 	}
 	canShv := ts.ShoveCool <= 0
 
 	// Attack best target in range
-	target := bestTarget(ts.Position, ts.Enemies, wrange)
+	target := bestTarget(&ts, ts.Position, ts.Enemies, wrange)
 	if target != nil && canAtk {
 		return atk(target, weapon)
 	}
@@ -2232,24 +2900,28 @@ func aiAggressive(ts tickState, near *entity, nearD, wrange float64, weapon stri
 	// Close on cooldown — advance to stay in melee
 	if nearD <= wrange && !canAtk {
 		if nearD > 1 {
-			return moveTo(ts.Position, near.Position)
+			return moveTo(ts.Position, near.Position, ts.Danger)
 		}
-		return moveDir(perpDir(gridDir(ts.Position, near.Position)))
+		// Adjacent with their weapon ready and ours cooling — don't stand in the swing.
+		if p := baitPunish(ts, near, canDodge); p != nil {
+			return *p
+		}
+		return moveDirSafe(ts, perpDir(gridDir(ts.Position, near.Position)))
 	}
 
-	// Chase — but don't follow enemies outside the zone
-	return moveTo(ts.Position, near.Position)
+	// Chase — zigzag against ranged kiters so shots are harder to line up
+	return chaseApproach(ts, near, wrange, weapon)
 }
 
 // BERSERKER: Never retreat, dodge INTO enemies, shove constantly, fight to the death.
 func aiBerserker(ts tickState, near *entity, nearD, wrange float64, weapon string, canAtk, canDodge bool) actionResult {
 	if near == nil {
-		return moveTo(ts.Position, ts.ZoneTargetCenter)
+		return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
 	}
 	canShv := ts.ShoveCool <= 0
 
 	if nearD <= wrange && canAtk {
-		target := bestTarget(ts.Position, ts.Enemies, wrange)
+		target := bestTarget(&ts, ts.Position, ts.Enemies, wrange)
 		if target != nil {
 			return atk(target, weapon)
 		}
@@ -2264,25 +2936,26 @@ func aiBerserker(ts tickState, near *entity, nearD, wrange float64, weapon strin
 		return dodge(gridDir(ts.Position, near.Position))
 	}
 
-	return moveTo(ts.Position, near.Position)
+	// Chase — zigzag against ranged kiters so shots are harder to line up
+	return chaseApproach(ts, near, wrange, weapon)
 }
 
 // KITE: AoE kiting for Staff users. Prioritize enemy clusters, maintain 3-4 tile range.
 func aiKite(ts tickState, near *entity, nearD, wrange float64, weapon string, canAtk, canDodge bool, botID string) actionResult {
 	if near == nil {
-		return moveTo(ts.Position, ts.ZoneTargetCenter)
+		return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
 	}
 	canShv := ts.ShoveCool <= 0
 	isBounty := ts.KillStreak >= 3
 
 	// Staff AoE: target cluster center instead of individual enemies
 	if weapon == "staff" && canAtk {
-		if cast, ok := bestStaffCast(ts.Position, ts.Enemies, wrange); ok {
+		if cast, ok := bestStaffCast(&ts, ts.Position, ts.Enemies, wrange); ok {
 			return *cast
 		}
 	} else if canAtk {
 		// Non-staff kite weapons
-		target := bestTarget(ts.Position, ts.Enemies, wrange)
+		target := bestTarget(&ts, ts.Position, ts.Enemies, wrange)
 		if target != nil {
 			return atk(target, weapon)
 		}
@@ -2299,7 +2972,7 @@ func aiKite(ts tickState, near *entity, nearD, wrange float64, weapon string, ca
 		if canDodge {
 			return dodge(gridDirAway(ts.Position, near.Position))
 		}
-		return moveDir(gridDirAway(ts.Position, near.Position))
+		return moveDirSafe(ts, gridDirAway(ts.Position, near.Position))
 	}
 
 	// Maintain 3-4 tile distance (sweet spot for staff)
@@ -2313,12 +2986,12 @@ func aiKite(ts tickState, near *entity, nearD, wrange float64, weapon string, ca
 		if canDodge {
 			return dodge(gridDirAway(ts.Position, near.Position))
 		}
-		return moveDir(gridDirAway(ts.Position, near.Position))
+		return moveDirSafe(ts, gridDirAway(ts.Position, near.Position))
 	}
 
 	// On cooldown at range — strafe to be harder to hit
 	if nearD <= wrange && !canAtk {
-		return moveDir(perpDir(gridDir(ts.Position, near.Position)))
+		return moveDirSafe(ts, perpDir(gridDir(ts.Position, near.Position)))
 	}
 
 	// Too far — approach to get in range
@@ -2326,12 +2999,12 @@ func aiKite(ts tickState, near *entity, nearD, wrange float64, weapon string, ca
 		// Approach cluster if multiple enemies
 		clusterCenter, clusterCount := enemyClusterCenter(ts.Enemies, 3)
 		if clusterCount >= 2 {
-			return moveTo(ts.Position, clusterCenter)
+			return moveTo(ts.Position, clusterCenter, ts.Danger)
 		}
-		return moveTo(ts.Position, near.Position)
+		return moveTo(ts.Position, near.Position, ts.Danger)
 	}
 
-	return moveTo(ts.Position, near.Position)
+	return moveTo(ts.Position, near.Position, ts.Danger)
 }
 
 // ASSASSIN: Hunt weakest target, grapple for gap-close, shove + burst, disengage at 20%.
@@ -2347,7 +3020,7 @@ func aiAssassin(ts tickState, near *entity, nearD, wrange float64, weapon string
 			prey = near
 			preyD = nearD
 		} else {
-			return moveTo(ts.Position, ts.ZoneTargetCenter)
+			return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
 		}
 	}
 
@@ -2355,7 +3028,7 @@ func aiAssassin(ts tickState, near *entity, nearD, wrange float64, weapon string
 	if isBounty {
 		hp, hpD := nearestHealthPickup(ts.Position, ts.Pickups)
 		if hp != nil && hpD <= 3 && ts.HP/ts.MaxHP < 0.6 {
-			return moveTo(ts.Position, hp.Position)
+			return moveTo(ts.Position, hp.Position, ts.Danger)
 		}
 	}
 
@@ -2397,7 +3070,7 @@ func aiAssassin(ts tickState, near *entity, nearD, wrange float64, weapon string
 	}
 
 	// Hunt them down
-	return moveTo(ts.Position, prey.Position)
+	return moveTo(ts.Position, prey.Position, ts.Danger)
 }
 
 // DEFENSIVE: Counter-attack focused, shove intruders, hold ground but fight.
@@ -2405,13 +3078,13 @@ func aiDefensive(ts tickState, near *entity, nearD, wrange float64, weapon strin
 	if near == nil {
 		d := chebyshev(ts.Position, ts.ZoneTargetCenter)
 		if d > 5 {
-			return moveTo(ts.Position, ts.ZoneTargetCenter)
+			return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
 		}
 		return idle()
 	}
 	canShv := ts.ShoveCool <= 0
 
-	target := bestTarget(ts.Position, ts.Enemies, wrange)
+	target := bestTarget(&ts, ts.Position, ts.Enemies, wrange)
 	if target != nil && canAtk {
 		return atk(target, weapon)
 	}
@@ -2422,16 +3095,20 @@ func aiDefensive(ts tickState, near *entity, nearD, wrange float64, weapon strin
 
 	if nearD <= wrange+2 && !canAtk {
 		if nearD > 1 {
-			return moveTo(ts.Position, near.Position)
+			return moveTo(ts.Position, near.Position, ts.Danger)
 		}
-		return moveDir(perpDir(gridDir(ts.Position, near.Position)))
+		// Adjacent with their weapon ready and ours cooling — don't stand in the swing.
+		if p := baitPunish(ts, near, canDodge); p != nil {
+			return *p
+		}
+		return moveDirSafe(ts, perpDir(gridDir(ts.Position, near.Position)))
 	}
 
 	if nearD <= wrange+5 {
-		return moveTo(ts.Position, near.Position)
+		return moveTo(ts.Position, near.Position, ts.Danger)
 	}
 
-	return moveTo(ts.Position, ts.ZoneTargetCenter)
+	return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
 }
 
 // TERRITORIAL: Hold zone TARGET center, shove EVERY adjacent enemy, place mines at center.
@@ -2442,7 +3119,7 @@ func aiTerritorial(ts tickState, near *entity, nearD, wrange float64, weapon str
 
 	if near == nil {
 		if distToCenter > 3 {
-			return moveTo(ts.Position, ts.ZoneTargetCenter)
+			return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
 		}
 		return idle()
 	}
@@ -2466,19 +3143,19 @@ func aiTerritorial(ts tickState, near *entity, nearD, wrange float64, weapon str
 	}
 
 	// Priority 2: Attack anything in range (alternate between shove and attack on different targets)
-	target := bestTarget(ts.Position, ts.Enemies, wrange)
+	target := bestTarget(&ts, ts.Position, ts.Enemies, wrange)
 	if target != nil && canAtk {
 		return atk(target, weapon)
 	}
 
 	// Priority 3: Chase enemies that enter territory, but NEVER more than 5 tiles from center
 	if nearD <= wrange+4 && distToCenter <= 5 {
-		return moveTo(ts.Position, near.Position)
+		return moveTo(ts.Position, near.Position, ts.Danger)
 	}
 
 	// Priority 4: Return to zone TARGET center (anticipate shrink)
 	if distToCenter > 2 {
-		return moveTo(ts.Position, ts.ZoneTargetCenter)
+		return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
 	}
 
 	// At center, no targets in range — idle

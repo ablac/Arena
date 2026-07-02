@@ -9,16 +9,17 @@ type BotConfig struct {
 	Color    string         // avatar hex color
 }
 
-// WeaponRanges maps weapon names to their GridRange (Chebyshev tiles).
+// WeaponRanges maps weapon names to their GridRange (Chebyshev tiles),
+// mirroring game/weapon_balance.go baseWeaponConfigs.
 // These are fallbacks — the bot uses attack_range from loadout_confirmed when available.
 var WeaponRanges = map[string]float64{
 	"sword":   1,
-	"bow":     7,
+	"bow":     8,
 	"daggers": 1,
 	"shield":  1,
 	"spear":   2,
 	"staff":   6,
-	"grapple": 4,
+	"grapple": 5,
 }
 
 // DemoConfigs defines 14 built-in arena bots, with two bots per weapon so the

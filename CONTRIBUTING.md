@@ -43,15 +43,18 @@ refactor: extract combat logic into module
 go-arena/           # Go server (production)
 ├── cmd/            # Entry points
 ├── internal/
-│   ├── api/        # REST endpoints
-│   ├── config/     # Configuration
+│   ├── api/        # REST endpoints, admin API
+│   ├── config/     # Configuration (env-based)
 │   ├── db/         # Database layer
-│   ├── game/       # Game engine, combat, movement
+│   ├── game/       # Game engine, combat, movement, game modes, map shapes
+│   ├── demobots/   # Built-in demo bot AI
 │   ├── security/   # Auth, rate limiting
-│   └── ws/         # WebSocket handlers
+│   └── ws/         # WebSocket handlers (bot + spectator)
 frontend/           # Spectator UI (HTML/JS/BabylonJS)
 sdk/python/         # Python bot SDK
-server/             # Legacy Python server (reference only)
+sdk/nodejs/         # Node.js bot SDK
+bots/               # User-created bots
+examples/           # API usage examples
 ```
 
 ## Running Locally
