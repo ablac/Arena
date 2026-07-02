@@ -1379,8 +1379,8 @@ func (h *AdminHandler) botProfile(w http.ResponseWriter, r *http.Request) {
 		}
 
 		pos := [2]float64{0, 0}
-		if p, ok := profile["position"].([2]float64); ok {
-			pos = p
+		if p, ok := profile["position"].(game.Vec2); ok {
+			pos = [2]float64(p)
 		}
 		snap := snapshot{
 			Action:           fmt.Sprintf("%v", profile["current_action"]),
@@ -2025,7 +2025,7 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 			flags = append(flags, acFlag{
 				Severity: "critical", Category: "stats",
 				Message: "Unknown/invalid weapon equipped",
-				Value: weapon, Expected: "sword, bow, daggers, shield, spear, or staff",
+				Value: weapon, Expected: "sword, bow, daggers, shield, spear, staff, or grapple",
 			})
 		}
 

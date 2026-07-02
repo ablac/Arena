@@ -2258,7 +2258,13 @@ func (e *GameEngine) GetFullGameState() map[string]interface{} {
 		"bots_active":   len(e.Bots),
 		"bots_waiting":  len(e.WaitingBots),
 		"bots":          bots,
+		// Dynamic arena sizing can change dimensions between rounds; admin
+		// minimaps should rescale from this instead of assuming a fixed size.
+		"arena_size":    [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
+		"game_mode":     string(e.Round.Mode),
+		"map_shape":     string(ActiveMapShape),
 		"pickups":       len(e.Pickups),
+		"pickups_list":  e.Pickups,
 		"projectiles":   len(e.Projectiles),
 		"zone": map[string]interface{}{
 			"center":        e.Arena.ZoneCenter,

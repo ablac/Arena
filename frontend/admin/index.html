@@ -369,7 +369,6 @@ button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--g
         <div id="minimapLegend">
           <div class="leg-item"><div class="leg-dot" style="background:var(--green)"></div> Alive Bot</div>
           <div class="leg-item"><div class="leg-dot" style="background:var(--red)"></div> Dead Bot</div>
-          <div class="leg-item"><div class="leg-dot" style="background:var(--orange);border-radius:0;width:10px;height:10px"></div> Obstacle</div>
           <div class="leg-item"><div class="leg-dot" style="background:var(--purple)"></div> Pickup</div>
           <div class="leg-item"><div class="leg-dot" style="background:transparent;border:2px solid rgba(88,166,255,0.5)"></div> Safe Zone</div>
           <div class="leg-item"><div class="leg-dot" style="background:transparent;border:2px dashed rgba(248,81,73,0.5)"></div> Target Zone</div>
@@ -763,7 +762,7 @@ button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--g
     <div class="panel" id="panel-leaderboard">
       <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
         <button onclick="refreshLeaderboard()">Refresh</button>
-        <select id="lbSort" onchange="refreshLeaderboard()" style="font-size:12px"><option value="kills">Kills</option><option value="elo">Elo</option><option value="kd_ratio">K/D Ratio</option><option value="best_streak">Best Streak</option><option value="wins">Wins</option><option value="damage">Damage</option></select>
+        <select id="lbSort" onchange="refreshLeaderboard()" style="font-size:12px"><option value="kills">Kills</option><option value="elo">Elo</option><option value="kd_ratio">K/D Ratio</option><option value="streak">Best Streak</option><option value="wins">Wins</option><option value="damage">Damage</option></select>
         <select id="lbPeriod" onchange="refreshLeaderboard()" style="font-size:12px"><option value="1h">Last Hour</option><option value="24h">Last 24 Hours</option><option value="7d">Last 7 Days</option><option value="30d">Last 30 Days</option><option value="all_time">All Time</option></select>
         <span id="lbCount" style="color:var(--text2);font-size:11px;margin-left:auto">--</span>
       </div>
@@ -801,6 +800,7 @@ button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--g
       <div class="ctrl-section">
         <h3><span class="icon">&#9881;</span> Game Configuration</h3>
         <div class="config-grid" id="gameConfigGrid"></div>
+        <div style="font-size:10px;color:var(--text2);margin-top:6px">Game mode and map shape changes take effect at the next round start.</div>
         <div class="ctrl-row" style="margin-top:10px">
           <button onclick="loadGameConfig()">Reload Config</button>
           <button class="btn-success" onclick="saveGameConfig()">Save Config</button>
@@ -926,6 +926,11 @@ let tickInterval = null;
 const tickHistory = []; // {tick,bots,projectiles,pickups,goroutines,heapMB}
 const TICK_HISTORY_MAX = 60;
 let lastGameState = null; // cached for minimap hover
+let arenaSize = [2000, 2000]; // updated from /debug/game-state and /game/config (dynamic arena sizing)
+
+function arenaCenter() {
+  return [Math.round((arenaSize[0]||2000)/2), Math.round((arenaSize[1]||2000)/2)];
+}
 
 // Kill feed stats
 const kfWeapons = {};
@@ -1157,6 +1162,7 @@ async function refreshOverview() {
   try {
     const data = await api('/dashboard/overview');
     const gs = data.game_state || {};
+    if (Array.isArray(gs.arena_size) && gs.arena_size.length === 2 && gs.arena_size[0] > 0) arenaSize = gs.arena_size;
     let phase = 'lobby';
     if (gs.round_phase) phase = gs.round_phase;
 
@@ -1190,6 +1196,9 @@ async function refreshOverview() {
         <div><span style="color:var(--text2)">Projectiles:</span> ${gs.projectiles||0}</div>
         <div><span style="color:var(--text2)">Pickups:</span> ${gs.pickups||0}</div>
         <div><span style="color:var(--text2)">Zone Radius:</span> ${zone.radius||'--'}</div>
+        <div><span style="color:var(--text2)">Mode:</span> ${esc(gs.game_mode||'--')}</div>
+        <div><span style="color:var(--text2)">Map Shape:</span> ${esc(gs.map_shape||'--')}</div>
+        <div><span style="color:var(--text2)">Arena:</span> ${Array.isArray(gs.arena_size) ? gs.arena_size[0]+' x '+gs.arena_size[1] : '--'}</div>
         <div><span style="color:var(--text2)">HTTP Events:</span> ${ec.http_log||0}</div>
         <div><span style="color:var(--text2)">Connections:</span> ${ec.connections||0}</div>
         <div><span style="color:var(--text2)">Game Events:</span> ${ec.game_events||0}</div>
@@ -1231,7 +1240,7 @@ function renderLogEntry(logType, evt) {
       const event = d.event || '';
       msg = `<b style="color:var(--purple)">${esc(event)}</b>`;
       if (event === 'kill') msg += ` ${esc(d.killer_name||'')} killed ${esc(d.victim_name||'')} with ${esc(d.weapon||'')}`;
-      else if (event === 'round_start') msg += ` Round #${d.round_number} (${d.bots} bots)`;
+      else if (event === 'round_start') msg += ` Round #${d.round_number} (${d.bots} bots${d.map_shape ? ', ' + esc(d.map_shape) : ''}${d.mode ? ', ' + esc(d.mode) : ''})`;
       else if (event === 'round_end') msg += ` Round #${d.round_number} winner: ${esc(d.winner_name||'none')}`;
       else if (event === 'afk_kick') msg += ` ${esc(d.bot_name||'')} kicked`;
       else msg += ` ${JSON.stringify(d).slice(0,100)}`;
@@ -1469,7 +1478,7 @@ async function inspectBot(id, clickedRow) {
             <button style="border-color:var(--purple);color:var(--purple)" onclick="event.stopPropagation();profileBot('${esc(id)}','${esc(b.name||id)}')">Profile Behavior</button>
             <button class="btn-warn" onclick="event.stopPropagation();freezeBot('${esc(id)}','${esc(b.name||id)}')">Freeze</button>
             <button onclick="event.stopPropagation();unfreezeBot('${esc(id)}','${esc(b.name||id)}')">Unfreeze</button>
-            <button onclick="event.stopPropagation();botTeleport('${esc(id)}','${esc(b.name||id)}',1000,1000)">Teleport to Center</button>
+            <button onclick="event.stopPropagation();botTeleportCenter('${esc(id)}','${esc(b.name||id)}')">Teleport to Center</button>
             <button onclick="event.stopPropagation();promptTeleport('${esc(id)}','${esc(b.name||id)}')">Teleport to...</button>
             <button onclick="event.stopPropagation();addBotNote('${esc(id)}','${esc(b.name||id)}')" style="border-color:var(--text2)">Note</button>
           </div>
@@ -1548,9 +1557,11 @@ async function bulkBotAction(action) {
         case 'unfreeze':
           await api('/bots/' + bot.id + '/unfreeze', {method:'POST'});
           break;
-        case 'teleportCenter':
-          await api('/bots/' + bot.id + '/teleport', {method:'POST', body:JSON.stringify({x:1000, y:1000})});
+        case 'teleportCenter': {
+          const [cx, cy] = arenaCenter();
+          await api('/bots/' + bot.id + '/teleport', {method:'POST', body:JSON.stringify({x:cx, y:cy})});
           break;
+        }
       }
       ok++;
     } catch(e) { fail++; }
@@ -1652,8 +1663,10 @@ async function fetchAndDrawMap() {
   try {
     const gs = await api('/debug/game-state');
     lastGameState = gs;
+    if (Array.isArray(gs.arena_size) && gs.arena_size.length === 2 && gs.arena_size[0] > 0) arenaSize = gs.arena_size;
     drawMinimap(gs);
-    document.getElementById('minimapTick').textContent = 'Tick: ' + (gs.tick||0) + ' | Phase: ' + (gs.round_phase||'--');
+    document.getElementById('minimapTick').textContent = 'Tick: ' + (gs.tick||0) + ' | Phase: ' + (gs.round_phase||'--')
+      + (gs.game_mode ? ' | ' + gs.game_mode : '') + (gs.map_shape ? ' | ' + gs.map_shape : '');
 
     // Weapon stats from bots
     const wStats = {};
@@ -1675,19 +1688,20 @@ function drawMinimap(gs) {
   const ctx = canvas.getContext('2d');
   const W = canvas.width;
   const H = canvas.height;
-  const ARENA_W = 2000;
-  const ARENA_H = 2000;
+  // Dynamic arena sizing: dimensions can change between rounds — rescale.
+  const ARENA_W = arenaSize[0] || 2000;
+  const ARENA_H = arenaSize[1] || 2000;
   const sx = W / ARENA_W;
   const sy = H / ARENA_H;
 
   ctx.clearRect(0, 0, W, H);
 
-  // Background grid
+  // Background grid (10x10)
   ctx.strokeStyle = 'rgba(48,54,61,0.3)';
   ctx.lineWidth = 0.5;
-  for (let i = 0; i <= 2000; i += 200) {
-    ctx.beginPath(); ctx.moveTo(i*sx, 0); ctx.lineTo(i*sx, H); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, i*sy); ctx.lineTo(W, i*sy); ctx.stroke();
+  for (let i = 0; i <= 10; i++) {
+    ctx.beginPath(); ctx.moveTo((i*ARENA_W/10)*sx, 0); ctx.lineTo((i*ARENA_W/10)*sx, H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, (i*ARENA_H/10)*sy); ctx.lineTo(W, (i*ARENA_H/10)*sy); ctx.stroke();
   }
 
   // Zone
@@ -1705,7 +1719,7 @@ function drawMinimap(gs) {
     }
     // Current zone
     ctx.beginPath();
-    ctx.arc((zone.center?zone.center[0]:1000)*sx, (zone.center?zone.center[1]:1000)*sy, zone.radius*sx, 0, Math.PI*2);
+    ctx.arc((zone.center?zone.center[0]:ARENA_W/2)*sx, (zone.center?zone.center[1]:ARENA_H/2)*sy, zone.radius*sx, 0, Math.PI*2);
     ctx.strokeStyle = 'rgba(88,166,255,0.5)';
     ctx.lineWidth = 2;
     ctx.stroke();
@@ -1713,14 +1727,11 @@ function drawMinimap(gs) {
     ctx.save();
     ctx.beginPath();
     ctx.rect(0,0,W,H);
-    ctx.arc((zone.center?zone.center[0]:1000)*sx, (zone.center?zone.center[1]:1000)*sy, zone.radius*sx, 0, Math.PI*2, true);
+    ctx.arc((zone.center?zone.center[0]:ARENA_W/2)*sx, (zone.center?zone.center[1]:ARENA_H/2)*sy, zone.radius*sx, 0, Math.PI*2, true);
     ctx.fillStyle = 'rgba(248,81,73,0.08)';
     ctx.fill();
     ctx.restore();
   }
-
-  // Obstacles (from game state if available via debug endpoint - draw as rectangles)
-  // The debug endpoint doesn't include obstacles, but we can show pickups
 
   // Pickups
   (gs.pickups_list||[]).forEach(p => {
@@ -1767,8 +1778,8 @@ function drawMinimap(gs) {
 document.getElementById('minimapCanvas').addEventListener('mousemove', function(e) {
   if (!lastGameState) return;
   const rect = this.getBoundingClientRect();
-  const mx = ((e.clientX - rect.left) / rect.width) * 2000;
-  const my = ((e.clientY - rect.top) / rect.height) * 2000;
+  const mx = ((e.clientX - rect.left) / rect.width) * (arenaSize[0]||2000);
+  const my = ((e.clientY - rect.top) / rect.height) * (arenaSize[1]||2000);
 
   let closest = null;
   let closestDist = 50; // pixel threshold in arena coords
@@ -1800,8 +1811,8 @@ let ctxBot = null;
 document.getElementById('minimapCanvas').addEventListener('click', function(e) {
   if (!lastGameState) return;
   const rect = this.getBoundingClientRect();
-  const mx = ((e.clientX - rect.left) / rect.width) * 2000;
-  const my = ((e.clientY - rect.top) / rect.height) * 2000;
+  const mx = ((e.clientX - rect.left) / rect.width) * (arenaSize[0]||2000);
+  const my = ((e.clientY - rect.top) / rect.height) * (arenaSize[1]||2000);
 
   let closest = null;
   let closestDist = 50;
@@ -1859,7 +1870,7 @@ function ctxAction(action) {
       botHeal(id, name);
       break;
     case 'teleportCenter':
-      botTeleport(id, name, 1000, 1000);
+      botTeleportCenter(id, name);
       break;
     case 'teleport':
       promptTeleport(id, name);
@@ -2145,8 +2156,14 @@ async function botTeleport(id, name, x, y) {
   } catch(e) { toast('Failed to teleport ' + name, 'error'); }
 }
 
+function botTeleportCenter(id, name) {
+  const [cx, cy] = arenaCenter();
+  botTeleport(id, name, cx, cy);
+}
+
 function promptTeleport(id, name) {
-  const input = prompt('Teleport ' + name + ' to coordinates (x, y):\nArena is 0-2000 x 0-2000', '1000, 1000');
+  const [cx, cy] = arenaCenter();
+  const input = prompt('Teleport ' + name + ' to coordinates (x, y):\nArena is 0-' + Math.round(arenaSize[0]||2000) + ' x 0-' + Math.round(arenaSize[1]||2000), cx + ', ' + cy);
   if (!input) return;
   const parts = input.split(',').map(s => parseFloat(s.trim()));
   if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) {
@@ -2292,7 +2309,10 @@ const CONFIG_FIELDS = [
   {key:'zone_damage', label:'Zone Damage', min:0, step:0.1},
   {key:'zone_shrink_pct', label:'Zone Shrink %', min:0, max:1, step:0.01},
   {key:'afk_timeout_ticks', label:'AFK Timeout (ticks)', min:0},
-  {key:'view_radius', label:'View Radius', min:1},
+  {key:'game_mode', label:'Game Mode (next round)', type:'select', options:['ffa','team_battle','ctf']},
+  {key:'team_count', label:'Team Count', min:2, max:8},
+  {key:'friendly_fire', label:'Friendly Fire', type:'checkbox'},
+  {key:'map_shape', label:'Map Shape (next round)', type:'select', options:['random','square','circle','hexagon','diamond','cross','caves']},
 ];
 let currentConfig = {};
 
@@ -2301,6 +2321,7 @@ async function loadGameConfig() {
   try {
     const data = await api('/game/config');
     currentConfig = data;
+    if (data.arena_width > 0 && data.arena_height > 0) arenaSize = [data.arena_width, data.arena_height];
     renderConfigGrid(data);
     el.textContent = 'Config loaded';
     el.style.color = 'var(--green)';
@@ -2313,6 +2334,13 @@ async function loadGameConfig() {
 function renderConfigGrid(data) {
   document.getElementById('gameConfigGrid').innerHTML = CONFIG_FIELDS.map(f => {
     const val = data[f.key] != null ? data[f.key] : '';
+    if (f.type === 'select') {
+      const opts = f.options.map(o => `<option value="${o}" ${o===val?'selected':''}>${o}</option>`).join('');
+      return `<div class="config-item"><label>${f.label}</label><select id="cfg_${f.key}" style="width:110px">${opts}</select></div>`;
+    }
+    if (f.type === 'checkbox') {
+      return `<div class="config-item"><label>${f.label}</label><input type="checkbox" id="cfg_${f.key}" ${val===true?'checked':''}></div>`;
+    }
     return `<div class="config-item"><label>${f.label}</label><input type="number" id="cfg_${f.key}" value="${val}" min="${f.min||''}" max="${f.max||''}" step="${f.step||1}"></div>`;
   }).join('');
 }
@@ -2322,13 +2350,18 @@ async function saveGameConfig() {
   const body = {};
   CONFIG_FIELDS.forEach(f => {
     const input = document.getElementById('cfg_' + f.key);
-    if (input && input.value !== '') body[f.key] = parseFloat(input.value);
+    if (!input) return;
+    if (f.type === 'select') { if (input.value) body[f.key] = input.value; }
+    else if (f.type === 'checkbox') { body[f.key] = input.checked; }
+    else if (input.value !== '') body[f.key] = parseFloat(input.value);
   });
   try {
-    await api('/game/config', {method:'PUT', body:JSON.stringify(body)});
-    el.textContent = 'Config saved';
+    const res = await api('/game/config', {method:'PUT', body:JSON.stringify(body)});
+    const appliedKeys = Object.entries(res.applied||{}).map(([k,v])=>k+'='+v).join(', ');
+    el.textContent = 'Config saved' + (appliedKeys ? ' — applied: ' + appliedKeys : ' — no changes accepted');
     el.style.color = 'var(--green)';
     toast('Game config updated', 'success');
+    logConfigChange('Game Config', appliedKeys || '(no changes)');
   } catch(e) {
     el.textContent = 'Failed to save config';
     el.style.color = 'var(--red)';
@@ -2849,10 +2882,10 @@ async function refreshDebug() {
       connIssues.map(c=>`<div style="color:var(--orange)">${esc(c.name)}: ${c.issue}</div>`).join('') :
       '<span style="color:var(--green)">All connections healthy</span>';
 
-    // DB Stats
-    document.getElementById('dbgDB').innerHTML = dbStatsData.tables ?
-      Object.entries(dbStatsData.tables).map(([t,c])=>`<div>${esc(t)}: <b>${c}</b> rows</div>`).join('') :
-      JSON.stringify(dbStatsData).slice(0,200);
+    // DB Stats — handler responds with "table_counts" (+ "pool").
+    document.getElementById('dbgDB').innerHTML = dbStatsData.table_counts ?
+      Object.entries(dbStatsData.table_counts).map(([t,c])=>`<div>${esc(t)}: <b>${c}</b> rows</div>`).join('') :
+      '<span style="color:var(--text2)">DB stats unavailable</span>';
 
     // Memory trend
     const mem = metrics.memory || {};
@@ -3442,7 +3475,8 @@ async function refreshLeaderboard() {
       headers: {'Content-Type':'application/json'}
     });
     const data = await res.json();
-    const entries = data.leaderboard || [];
+    // Time-based periods respond with "leaderboard"; all_time responds with "entries".
+    const entries = data.leaderboard || data.entries || [];
     const periodLabel = {all_time:'All Time','30d':'30 Days','7d':'7 Days','24h':'24 Hours','1h':'1 Hour'}[period]||period;
     document.getElementById('lbCount').textContent = entries.length + ' bots | ' + periodLabel + ' | sorted by ' + sort;
     document.getElementById('lbBody').innerHTML = entries.map(e => {
