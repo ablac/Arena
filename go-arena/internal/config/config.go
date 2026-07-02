@@ -46,6 +46,11 @@ type Config struct {
 	// "cross", "caves", or "random" to roll a shape each round.
 	MapShape string `envconfig:"ARENA_MAP_SHAPE" default:"square"`
 
+	// Spectator keyframes: static round data (obstacles, map shape) is only
+	// included every Nth broadcast plus immediately after a spectator joins.
+	// 1 = include everything every tick (legacy behaviour).
+	SpectatorKeyframeInterval int `envconfig:"ARENA_SPECTATOR_KEYFRAME_INTERVAL" default:"10"`
+
 	// Combat
 	StatBudget        int     `envconfig:"ARENA_STAT_BUDGET" default:"20"`
 	StatMin           int     `envconfig:"ARENA_STAT_MIN" default:"1"`

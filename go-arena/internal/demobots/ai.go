@@ -259,6 +259,50 @@ type bfsNode struct {
 	firstDC, firstDR int
 }
 
+// bfsScratch is reusable BFS working memory. The old implementation
+// allocated a map[[2]int]bool plus a queue on every call — at 10 ticks/sec
+// per demo bot, with almost every AI branch calling moveTo, that was the
+// dominant allocation source in the demobot package. A generation-stamped
+// flat array avoids both the per-call allocation and the hashing.
+type bfsScratch struct {
+	visited    []uint32
+	stamp      uint32
+	queue      []bfsNode
+	cols, rows int
+}
+
+var bfsPool = sync.Pool{New: func() interface{} { return &bfsScratch{} }}
+
+func (s *bfsScratch) reset(cols, rows int) {
+	if s.cols != cols || s.rows != rows || len(s.visited) != cols*rows {
+		s.visited = make([]uint32, cols*rows)
+		s.cols, s.rows = cols, rows
+		s.stamp = 0
+	}
+	s.stamp++
+	if s.stamp == 0 { // generation counter wrapped: hard-clear once
+		for i := range s.visited {
+			s.visited[i] = 0
+		}
+		s.stamp = 1
+	}
+	s.queue = s.queue[:0]
+}
+
+// visit marks the cell and reports whether it was newly visited.
+// Out-of-grid cells count as already visited so they are never enqueued.
+func (s *bfsScratch) visit(c, r int) bool {
+	if c < 0 || r < 0 || c >= s.cols || r >= s.rows {
+		return false
+	}
+	idx := c*s.rows + r
+	if s.visited[idx] == s.stamp {
+		return false
+	}
+	s.visited[idx] = s.stamp
+	return true
+}
+
 // bfsStep finds the first grid step direction from (sc,sr) toward (gc,gr), navigating walls.
 // Returns [2]int{dx, dy} where dx,dy are -1, 0, or 1.
 func bfsStep(sc, sr, gc, gr int) [2]int {
@@ -271,9 +315,10 @@ func bfsStep(sc, sr, gc, gr int) [2]int {
 		return [2]int{intSign(gc - sc), intSign(gr - sr)}
 	}
 
-	visited := make(map[[2]int]bool, 256)
-	visited[[2]int{sc, sr}] = true
-	queue := make([]bfsNode, 0, 128)
+	s := bfsPool.Get().(*bfsScratch)
+	defer bfsPool.Put(s)
+	s.reset(t.Width, t.Height)
+	s.visit(sc, sr)
 
 	// Seed with all passable neighbors (diagonal corner-cutting prevented).
 	for dc := -1; dc <= 1; dc++ {
@@ -285,13 +330,14 @@ func bfsStep(sc, sr, gc, gr int) [2]int {
 				continue
 			}
 			nc, nr := sc+dc, sr+dr
-			visited[[2]int{nc, nr}] = true
-			queue = append(queue, bfsNode{nc, nr, dc, dr})
+			if s.visit(nc, nr) {
+				s.queue = append(s.queue, bfsNode{nc, nr, dc, dr})
+			}
 		}
 	}
 
-	for i := 0; i < len(queue) && i < 200*9; i++ {
-		n := queue[i]
+	for i := 0; i < len(s.queue) && i < 200*9; i++ {
+		n := s.queue[i]
 		if n.col == gc && n.row == gr {
 			return [2]int{n.firstDC, n.firstDR}
 		}
@@ -303,11 +349,8 @@ func bfsStep(sc, sr, gc, gr int) [2]int {
 				if t.isMoveBlocked(n.col, n.row, dc, dr) {
 					continue
 				}
-				nc, nr := n.col+dc, n.row+dr
-				key := [2]int{nc, nr}
-				if !visited[key] {
-					visited[key] = true
-					queue = append(queue, bfsNode{nc, nr, n.firstDC, n.firstDR})
+				if s.visit(n.col+dc, n.row+dr) {
+					s.queue = append(s.queue, bfsNode{n.col + dc, n.row + dr, n.firstDC, n.firstDR})
 				}
 			}
 		}

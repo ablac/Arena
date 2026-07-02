@@ -413,7 +413,7 @@ type SpectatorState struct {
 	SafeZone     map[string]interface{}   `json:"safe_zone"`
 	Pickups      []map[string]interface{} `json:"pickups"`
 	KillFeed     []map[string]interface{} `json:"kill_feed"`
-	Obstacles    []Obstacle               `json:"obstacles"`
+	Obstacles    []Obstacle               `json:"obstacles,omitempty"`
 	WaitingBots  []map[string]interface{} `json:"waiting_bots,omitempty"`
 	TeleportPads []map[string]interface{} `json:"teleport_pads,omitempty"`
 	CapturePads  []map[string]interface{} `json:"capture_pads,omitempty"`

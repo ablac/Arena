@@ -105,7 +105,10 @@ export class CameraController {
   _tick() {
     // WASD / arrow key movement relative to camera facing
     if (this._keys.size > 0) {
-      const speed = PAN_SPEED * (this.camera.radius / BASE_RADIUS);
+      // Scale by dt (relative to a 60fps baseline) so pan speed doesn't
+      // depend on the display's refresh rate.
+      const dtFrames = Math.min(this.scene.getEngine().getDeltaTime(), 100) / (1000 / 60);
+      const speed = PAN_SPEED * (this.camera.radius / BASE_RADIUS) * dtFrames;
       // Get camera's actual forward direction projected onto XZ plane
       const cam = this.camera;
       const forward = cam.target.subtract(cam.position);
@@ -145,7 +148,9 @@ export class CameraController {
     this.targetX = Math.max(-margin, Math.min(this.arenaWidth + margin, this.targetX));
     this.targetZ = Math.max(-margin, Math.min(this.arenaHeight + margin, this.targetZ));
 
-    const lerp = 0.08;
+    // dt-based smoothing so follow/pan speed is framerate-independent.
+    const dt = this.scene.getEngine().getDeltaTime() / 1000;
+    const lerp = 1 - Math.exp(-5 * Math.min(dt, 0.1));
     const t = this.camera.target;
     t.x += (this.targetX - t.x) * lerp;
     t.z += (this.targetZ - t.z) * lerp;
