@@ -26,10 +26,17 @@ export class ProjectileRenderer {
     this._trailTex = null;
   }
 
+  /** @private True when the shared texture has been disposed by Babylon. */
+  _isTrailTextureDisposed() {
+    if (!this._trailTex) return true;
+    const disposed = this._trailTex.isDisposed;
+    return typeof disposed === 'function' ? disposed.call(this._trailTex) : disposed === true;
+  }
+
   /** @private Lazily create the shared trail texture. */
   _getTrailTexture() {
     const B = window.BABYLON;
-    if (!this._trailTex || this._trailTex.isDisposed()) {
+    if (this._isTrailTextureDisposed()) {
       this._trailTex = new B.Texture(TRAIL_TEX_DATA, this.scene, false, false, B.Texture.BILINEAR_SAMPLINGMODE);
     }
     return this._trailTex;
