@@ -36,6 +36,7 @@
       <button type="button" class="site-nav-action" data-overlay-open="toolkit-overlay">Toolkit</button>
       <button type="button" class="site-nav-action" data-overlay-open="dashboard-overlay">Dashboard</button>
       <button type="button" class="site-nav-action" data-overlay-open="onboarding-overlay" data-overlay-target="#api-reference">API</button>
+      <a href="/m/">Mobile view</a>
     </nav>
     <div class="site-live-pill" id="site-live-pill"><span class="dot"></span> Spectator syncing</div>
   </header>
@@ -1528,6 +1529,73 @@ wss://arena.angel-serv.com/ws/spectator
       <p class="footer-stats" id="footer-stats">Loading stats...</p>
     </div>
   </footer>
+
+  <!-- Mobile view suggestion (small touch screens only, dismiss persists) -->
+  <style>
+    .mobile-suggest-banner {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+      z-index: 70;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      background: var(--bg-card-strong);
+      border: 1px solid var(--border-strong);
+      border-radius: 14px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: var(--shadow-md);
+      font-size: 0.85rem;
+      color: var(--text-soft);
+    }
+    .mobile-suggest-banner a {
+      margin-left: auto;
+      flex: none;
+      padding: 8px 16px;
+      border-radius: 999px;
+      border: 1px solid rgba(71, 215, 255, 0.35);
+      background: rgba(71, 215, 255, 0.1);
+      color: var(--accent-blue);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .mobile-suggest-banner button {
+      appearance: none;
+      flex: none;
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 50%;
+      background: none;
+      color: var(--text-muted);
+      font-size: 1.2rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+  </style>
+  <div class="mobile-suggest-banner" id="mobile-suggest-banner" hidden>
+    <span>This page is built for desktop &mdash; try the mobile spectator view.</span>
+    <a href="/m/">Open</a>
+    <button type="button" aria-label="Dismiss">&times;</button>
+  </div>
+  <script>
+    (function () {
+      var KEY = 'arena-mobile-banner-dismissed';
+      try { if (localStorage.getItem(KEY)) return; } catch (e) { return; }
+      if (!window.matchMedia('(max-width: 768px)').matches ||
+          !window.matchMedia('(pointer: coarse)').matches) return;
+      var banner = document.getElementById('mobile-suggest-banner');
+      if (!banner) return;
+      banner.hidden = false;
+      banner.querySelector('button').addEventListener('click', function () {
+        banner.hidden = true;
+        try { localStorage.setItem(KEY, '1'); } catch (e) { /* ignore */ }
+      });
+    })();
+  </script>
 
 </body>
 </html>

@@ -1,0 +1,585 @@
+'use strict';
+
+/**
+ * Mobile spectator shell — full-viewport 3D stage, floating top bar,
+ * action cluster, and a draggable bottom sheet (Players / Kills / Ranks).
+ *
+ * Reuses the desktop renderer stack unchanged:
+ *   ArenaEngine (3D scene), SpectatorSocket (WS + reconnect), Minimap.
+ * @module m/mobile
+ */
+
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260523a';
+import { Minimap } from '../js/renderer/minimap.js';
+import { SpectatorSocket } from '../js/spectator-ws.js';
+
+const ARENA_WIDTH = 2000;
+const ARENA_HEIGHT = 2000;
+const UI_UPDATE_INTERVAL_MS = 200; // DOM updates throttled below tick rate
+const KILL_FEED_MAX = 30;
+const BASE_CAMERA_RADIUS = 800;    // mirrors BASE_RADIUS in renderer/camera.js
+const RANKS_REFRESH_MS = 30000;
+
+// Matches the 3D flag/team palette (renderer + minimap).
+const TEAM_COLORS = ['#4a8dff', '#ff4a40', '#4de669', '#ffd933'];
+const TEAM_NAMES = ['Blue', 'Red', 'Green', 'Gold'];
+
+const WEAPON_ICONS = {
+  sword: '⚔',
+  bow: '🏹',
+  daggers: '🗡',
+  shield: '🛡',
+  spear: '🔱',
+  staff: '🪄',
+  grapple: '⛓',
+};
+
+const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+function esc(value) {
+  return String(value == null ? '???' : value).replace(/[&<>"']/g, (ch) => _ESC_MAP[ch]);
+}
+
+function titleCase(value) {
+  return String(value || '')
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  const el = (id) => document.getElementById(id);
+  const ui = {
+    conn: el('tb-conn'),
+    round: el('tb-round'),
+    mode: el('tb-mode'),
+    shape: el('tb-shape'),
+    alive: el('tb-alive'),
+    lobbyCard: el('lobby-card'),
+    lobbyTitle: el('lobby-title'),
+    lobbyMeta: el('lobby-meta'),
+    minimapBox: el('minimap-box'),
+    fabZoomIn: el('fab-zoom-in'),
+    fabZoomOut: el('fab-zoom-out'),
+    fabAutoPan: el('fab-autopan'),
+    fabMinimap: el('fab-minimap'),
+    fabFollow: el('fab-follow-off'),
+    fabFollowName: el('fab-follow-name'),
+    sheet: el('sheet'),
+    sheetGrip: el('sheet-grip'),
+    sheetTabs: el('sheet-tabs'),
+    panelPlayers: el('panel-players'),
+    panelKills: el('panel-kills'),
+    panelRanks: el('panel-ranks'),
+  };
+
+  // ---------- 3D engine ----------
+  const canvas = el('arena-canvas');
+  const engine = new ArenaEngine(canvas, {
+    arenaWidth: ARENA_WIDTH, arenaHeight: ARENA_HEIGHT,
+  });
+  try {
+    await engine.init();
+    console.log('[Mobile] Arena engine initialized');
+  } catch (err) {
+    console.error('[Mobile] Engine init failed:', err);
+  }
+
+  // Camera state that must survive dynamic arena-size scene rebuilds
+  // (ArenaEngine recreates its CameraController; zoom/follow are restored
+  // by the engine itself, pinch tuning and auto-pan are ours to reapply).
+  let autoPanOn = true;
+  let followId = null;
+  let followName = '';
+  let lastCameraRef = null;
+
+  function tuneCameraIfNew() {
+    const controller = engine.camera;
+    if (!controller || controller === lastCameraRef) return;
+    lastCameraRef = controller;
+    const cam = controller.camera;
+    if (cam) {
+      // ArcRotateCamera pointer input already does one-finger orbit and
+      // two-finger pinch; percentage-based pinch keeps zoom speed sane
+      // across the 80..1800 radius range without touching camera.js.
+      cam.pinchDeltaPercentage = 0.01;
+    }
+    controller.setAutoPan(autoPanOn && !followId);
+    if (followId) controller.followBot(followId);
+  }
+  tuneCameraIfNew();
+
+  // ---------- Minimap (hidden until toggled) ----------
+  const minimap = new Minimap(ui.minimapBox, ARENA_WIDTH, ARENA_HEIGHT);
+  let minimapOn = false;
+
+  // ---------- Follow handling ----------
+  function setFollow(botId, name) {
+    followId = botId || null;
+    followName = name || '';
+    engine.followBot(followId);
+    if (followId) {
+      engine.selectBot(followId);
+      engine.setAutoPan(false);
+    } else {
+      engine.setAutoPan(autoPanOn);
+    }
+    ui.fabFollow.hidden = !followId;
+    ui.fabFollowName.textContent = followName;
+    rosterCache = ''; // force roster re-render for highlight
+  }
+
+  ui.fabFollow.addEventListener('click', () => setFollow(null));
+
+  // ---------- Action cluster ----------
+  function nudgeZoom(delta) {
+    const controller = engine.camera;
+    if (!controller || !controller.camera) return;
+    // Derive current zoom from the live radius so pinch gestures (which
+    // change radius directly) stay in sync with the buttons.
+    const current = BASE_CAMERA_RADIUS / controller.camera.radius;
+    controller.setZoom(current + delta);
+  }
+  ui.fabZoomIn.addEventListener('click', () => nudgeZoom(0.25));
+  ui.fabZoomOut.addEventListener('click', () => nudgeZoom(-0.25));
+
+  ui.fabAutoPan.classList.toggle('active', autoPanOn);
+  ui.fabAutoPan.addEventListener('click', () => {
+    autoPanOn = !autoPanOn;
+    ui.fabAutoPan.classList.toggle('active', autoPanOn);
+    if (autoPanOn && followId) setFollow(null);
+    else engine.setAutoPan(autoPanOn);
+  });
+
+  ui.fabMinimap.addEventListener('click', () => {
+    minimapOn = !minimapOn;
+    ui.minimapBox.hidden = !minimapOn;
+    ui.fabMinimap.classList.toggle('active', minimapOn);
+    if (minimapOn && lastArenaState) minimap.update(lastArenaState);
+  });
+
+  // ---------- Bottom sheet ----------
+  const sheet = createBottomSheet(ui.sheet, ui.sheetGrip, ui.sheetTabs);
+
+  let activeTab = 'players';
+  ui.sheetTabs.addEventListener('click', (event) => {
+    const btn = event.target.closest('.sheet-tab');
+    if (!btn || sheet.didDrag()) return;
+    activeTab = btn.dataset.tab;
+    ui.sheetTabs.querySelectorAll('.sheet-tab').forEach((t) => {
+      t.classList.toggle('active', t === btn);
+    });
+    document.querySelectorAll('.sheet-panel').forEach((p) => {
+      p.classList.toggle('active', p.id === `panel-${activeTab}`);
+    });
+    if (sheet.getState() === 'collapsed') sheet.snapTo('half');
+    if (activeTab === 'ranks') loadRanks();
+    if (activeTab === 'players') rosterCache = '';
+    if (lastState) renderPanels(lastState);
+  });
+
+  // ---------- Players roster ----------
+  let rosterCache = '';
+
+  function teamColor(team) {
+    return team > 0 ? TEAM_COLORS[(team - 1) % TEAM_COLORS.length] : '';
+  }
+
+  function renderRoster(state) {
+    const bots = state.bots || [];
+    if (bots.length === 0) {
+      const empty = '<p class="panel-empty">No bots in the arena.</p>';
+      if (rosterCache !== empty) {
+        ui.panelPlayers.innerHTML = empty;
+        rosterCache = empty;
+      }
+      return;
+    }
+    const teamMode = state.game_mode === 'team_battle' || state.game_mode === 'ctf';
+    const alive = bots.filter((b) => b.is_alive);
+    const dead = bots.filter((b) => !b.is_alive);
+    const html = [...alive, ...dead].map((b) => {
+      const maxHp = b.max_hp || 100;
+      const pct = b.is_alive ? Math.max(0, Math.min(100, Math.round((b.hp / maxHp) * 100))) : 0;
+      const nameColor = teamMode && b.team > 0 ? ` style="color:${teamColor(b.team)}"` : '';
+      const hpLabel = b.is_alive ? `${Math.round(b.hp)} HP` : 'Out';
+      return `
+        <button type="button" class="p-row${b.is_alive ? '' : ' dead'}${followId === b.bot_id ? ' following' : ''}" data-bot-id="${esc(b.bot_id)}" data-name="${esc(b.name)}">
+          <span class="p-dot" style="background:${esc(b.avatar_color || '#fff')};color:${esc(b.avatar_color || '#fff')}"></span>
+          <span class="p-main">
+            <span class="p-name"${nameColor}>${esc(b.name)}</span>
+            <span class="p-sub">${esc(b.weapon || '?')}</span>
+          </span>
+          <span class="p-hp">
+            <span class="p-hp-track"><span class="p-hp-fill${pct < 35 ? ' low' : ''}" style="width:${pct}%"></span></span>
+            <span class="p-hp-label">${hpLabel}</span>
+          </span>
+          <span class="p-kills">${Math.round(b.round_kills || 0)}K</span>
+        </button>`;
+    }).join('');
+    if (html !== rosterCache) {
+      ui.panelPlayers.innerHTML = html;
+      rosterCache = html;
+    }
+  }
+
+  function renderLobbyRoster(state) {
+    const players = state.players || [];
+    const html = players.length === 0
+      ? '<p class="panel-empty">No bots connected yet.</p>'
+      : players.map((p) => `
+        <div class="p-row" style="cursor:default">
+          <span class="p-dot" style="background:${esc(p.avatar_color || '#fff')};color:${esc(p.avatar_color || '#fff')}"></span>
+          <span class="p-main">
+            <span class="p-name">${esc(p.name)}</span>
+            <span class="p-sub">${esc(p.weapon || '?')}</span>
+          </span>
+          <span class="p-kills">Ready</span>
+        </div>`).join('');
+    if (html !== rosterCache) {
+      ui.panelPlayers.innerHTML = html;
+      rosterCache = html;
+    }
+  }
+
+  ui.panelPlayers.addEventListener('click', (event) => {
+    const row = event.target.closest('.p-row[data-bot-id]');
+    if (!row) return;
+    const id = row.dataset.botId;
+    if (followId === id) setFollow(null);
+    else setFollow(id, row.dataset.name);
+  });
+
+  // ---------- Kill feed ----------
+  const seenKills = new Set();
+  let killCount = 0;
+
+  function renderKillFeed(kills) {
+    if (!kills || kills.length === 0) return;
+    const fresh = [];
+    for (const kill of kills) {
+      const key = `${kill.killer}-${kill.victim}-${kill.tick}`;
+      if (seenKills.has(key)) continue;
+      seenKills.add(key);
+      fresh.push(kill);
+    }
+    if (fresh.length === 0) return;
+    if (killCount === 0) ui.panelKills.innerHTML = '';
+    for (let i = fresh.length - 1; i >= 0; i--) {
+      const kill = fresh[i];
+      const row = document.createElement('div');
+      row.className = 'k-row';
+      row.innerHTML = `
+        <span class="k-killer">${esc(kill.killer)}</span>
+        <span class="k-icon">${WEAPON_ICONS[kill.weapon] || '☠'}</span>
+        <span class="k-victim">${esc(kill.victim)}</span>
+        <span class="k-weapon">${esc((kill.weapon || 'unknown').replace('_', ' '))}</span>`;
+      ui.panelKills.prepend(row);
+      killCount++;
+    }
+    while (killCount > KILL_FEED_MAX && ui.panelKills.lastElementChild) {
+      ui.panelKills.lastElementChild.remove();
+      killCount--;
+    }
+  }
+
+  function resetKillFeed() {
+    if (killCount === 0 && seenKills.size === 0) return;
+    seenKills.clear();
+    killCount = 0;
+    ui.panelKills.innerHTML = '<p class="panel-empty">No kills yet this round.</p>';
+  }
+
+  // ---------- Ranks (leaderboard) ----------
+  let ranksFetchedAt = 0;
+  let ranksLoading = false;
+
+  async function loadRanks() {
+    const now = Date.now();
+    if (ranksLoading || now - ranksFetchedAt < RANKS_REFRESH_MS) return;
+    ranksLoading = true;
+    try {
+      const resp = await fetch('/api/v1/leaderboard?sort=elo&limit=20');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      // All-time responses use "entries"; period responses use "leaderboard".
+      const entries = data.entries || data.leaderboard || [];
+      ranksFetchedAt = Date.now();
+      if (entries.length === 0) {
+        ui.panelRanks.innerHTML = '<p class="panel-empty">No ranked bots yet.</p>';
+        return;
+      }
+      ui.panelRanks.innerHTML = entries.map((e) => `
+        <div class="r-row${e.rank <= 3 ? ' top' : ''}">
+          <span class="r-rank">#${e.rank}</span>
+          <span class="p-dot" style="background:${esc(e.avatar_color || '#fff')};color:${esc(e.avatar_color || '#fff')}"></span>
+          <span class="r-name">${esc(e.name)}</span>
+          <span class="r-stat">${e.kills}/${e.deaths} K/D</span>
+          <span class="r-elo">${e.elo}</span>
+        </div>`).join('');
+    } catch (err) {
+      console.error('[Mobile] Leaderboard fetch failed:', err);
+      ui.panelRanks.innerHTML = '<p class="panel-empty">Standings unavailable.</p>';
+    } finally {
+      ranksLoading = false;
+    }
+  }
+
+  // ---------- Top bar ----------
+  let roundNumber = 0;
+  let lastRoundTick = -1;
+  let statusFetchedAt = 0;
+
+  async function fetchRoundNumber() {
+    const now = Date.now();
+    if (now - statusFetchedAt < 5000) return;
+    statusFetchedAt = now;
+    try {
+      const resp = await fetch('/api/v1/arena/status');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (Number.isFinite(data.round_number)) roundNumber = data.round_number;
+    } catch { /* topbar falls back to LIVE */ }
+  }
+
+  function modeChip(state) {
+    const scores = state.team_scores;
+    let label = 'FFA';
+    if (state.game_mode === 'team_battle') label = 'TEAM';
+    else if (state.game_mode === 'ctf') label = 'CTF';
+    if (!scores) return esc(label);
+    const teams = Object.keys(scores).sort((a, b) => Number(a) - Number(b));
+    if (teams.length < 2) return esc(label);
+    let scoreText;
+    if (teams.length === 2) {
+      const [a, b] = teams;
+      scoreText = `${TEAM_NAMES[Number(a) - 1] || `T${a}`} ${scores[a]}:${scores[b]} ${TEAM_NAMES[Number(b) - 1] || `T${b}`}`;
+    } else {
+      scoreText = teams
+        .map((t) => `${(TEAM_NAMES[Number(t) - 1] || `T${t}`).charAt(0)} ${scores[t]}`)
+        .join(' · ');
+    }
+    return `${esc(label)} <span class="ts">${esc(scoreText)}</span>`;
+  }
+
+  function updateTopbar(state) {
+    if (state.type === 'lobby_state') {
+      ui.round.textContent = state.countdown ? `Lobby ${state.countdown}s` : 'Lobby';
+      ui.mode.innerHTML = 'FFA';
+      ui.mode.hidden = true;
+      ui.shape.textContent = '';
+      ui.alive.textContent = `${state.bots_connected || 0}/${state.bots_needed || 2} bots`;
+      return;
+    }
+    // New round detection: round_tick resets, refresh the round number.
+    const roundTick = state.round_tick || 0;
+    if (roundTick < lastRoundTick) fetchRoundNumber();
+    lastRoundTick = roundTick;
+
+    const secs = Math.floor(roundTick / 10); // 10 ticks/sec default
+    const clock = `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
+    ui.round.textContent = roundNumber ? `R${roundNumber} ${clock}` : `LIVE ${clock}`;
+
+    ui.mode.hidden = false;
+    ui.mode.innerHTML = modeChip(state);
+    ui.shape.textContent = state.map_shape && state.map_shape !== 'square'
+      ? titleCase(state.map_shape) : '';
+
+    const bots = state.bots || [];
+    const alive = bots.filter((b) => b.is_alive).length;
+    ui.alive.textContent = `${alive}/${bots.length} alive`;
+  }
+
+  // ---------- Lobby card ----------
+  function updateLobbyCard(state) {
+    const isLobby = state.type === 'lobby_state';
+    ui.lobbyCard.hidden = !isLobby;
+    if (!isLobby) return;
+    const count = state.bots_connected || 0;
+    const needed = state.bots_needed || 2;
+    ui.lobbyTitle.textContent = state.countdown
+      ? `Round starts in ${state.countdown}s`
+      : 'Waiting for bots…';
+    ui.lobbyMeta.textContent = `${count} connected · ${Math.max(0, needed - count)} more needed`;
+  }
+
+  // ---------- State plumbing ----------
+  let lastState = null;
+  let lastArenaState = null;
+  let lastUiUpdate = 0;
+
+  function renderPanels(state) {
+    if (state.type === 'lobby_state') {
+      renderLobbyRoster(state);
+      return;
+    }
+    if (activeTab === 'players') renderRoster(state);
+    if (activeTab === 'ranks') loadRanks(); // self rate-limited to 30s
+    renderKillFeed(state.kill_feed || []);
+  }
+
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${wsProtocol}//${window.location.host}/ws/spectator`;
+  const spectator = new SpectatorSocket(wsUrl,
+    (state) => {
+      engine.setState(state); // full tick rate for the 3D scene
+      tuneCameraIfNew();
+      const now = performance.now();
+      if (now - lastUiUpdate < UI_UPDATE_INTERVAL_MS) return;
+      lastUiUpdate = now;
+      lastState = state;
+      if (state.type === 'lobby_state') {
+        resetKillFeed();
+        if (followId) setFollow(null);
+      } else if (state.type === 'arena_state') {
+        lastArenaState = state;
+        if (minimapOn) minimap.update(state);
+        // Clear follow if the bot left the arena entirely.
+        if (followId && !(state.bots || []).some((b) => b.bot_id === followId)) {
+          setFollow(null);
+        }
+      }
+      updateTopbar(state);
+      updateLobbyCard(state);
+      renderPanels(state);
+    },
+    (status) => {
+      const connected = status === 'connected';
+      ui.conn.classList.toggle('connected', connected);
+      ui.conn.title = status;
+    },
+  );
+  spectator.connect();
+
+  fetchRoundNumber();
+});
+
+/**
+ * Plain-touch bottom sheet with collapsed / half / full snap states.
+ * Dragging is handled with touch events + CSS transforms only.
+ */
+function createBottomSheet(sheetEl, gripEl, tabsEl) {
+  const STATES = ['collapsed', 'half', 'full'];
+  let state = 'collapsed';
+  let sheetH = 0;
+  let dragging = false;
+  let dragMoved = false;
+  let startY = 0;
+  let startVisible = 0;
+  let lastY = 0;
+  let lastT = 0;
+  let velocity = 0;
+
+  function measure() {
+    sheetH = sheetEl.getBoundingClientRect().height;
+  }
+
+  function visibleFor(s) {
+    const headerH = gripEl.offsetHeight + tabsEl.offsetHeight;
+    if (s === 'collapsed') return headerH;
+    if (s === 'half') return Math.min(sheetH, Math.round(window.innerHeight * 0.46));
+    return sheetH;
+  }
+
+  function currentVisible() {
+    const transform = getComputedStyle(sheetEl).transform;
+    if (!transform || transform === 'none') return visibleFor(state);
+    return sheetH - new DOMMatrixReadOnly(transform).m42;
+  }
+
+  function applyVisible(px, animate) {
+    const clamped = Math.max(visibleFor('collapsed'), Math.min(sheetH, px));
+    sheetEl.classList.toggle('snapping', !!animate);
+    sheetEl.style.transform = `translateY(${Math.round(sheetH - clamped)}px)`;
+  }
+
+  function snapTo(s) {
+    state = s;
+    applyVisible(visibleFor(s), true);
+    sheetEl.dataset.state = s;
+  }
+
+  function nearestState(visible, vel) {
+    // Strong flick wins regardless of position.
+    if (Math.abs(vel) > 0.9) {
+      const idx = STATES.indexOf(state);
+      const next = vel < 0 ? Math.min(idx + 1, 2) : Math.max(idx - 1, 0);
+      return STATES[next];
+    }
+    let best = STATES[0];
+    let bestDist = Infinity;
+    for (const s of STATES) {
+      const d = Math.abs(visibleFor(s) - visible);
+      if (d < bestDist) { bestDist = d; best = s; }
+    }
+    return best;
+  }
+
+  function onTouchStart(event) {
+    measure();
+    dragging = true;
+    dragMoved = false;
+    startY = event.touches[0].clientY;
+    lastY = startY;
+    lastT = performance.now();
+    velocity = 0;
+    startVisible = currentVisible();
+    sheetEl.classList.remove('snapping');
+  }
+
+  function onTouchMove(event) {
+    if (!dragging) return;
+    const y = event.touches[0].clientY;
+    const dy = y - startY;
+    if (Math.abs(dy) > 8) dragMoved = true;
+    if (!dragMoved) return;
+    event.preventDefault();
+    const now = performance.now();
+    const dt = now - lastT;
+    if (dt > 0) velocity = (y - lastY) / dt; // px/ms, + = downward
+    lastY = y;
+    lastT = now;
+    applyVisible(startVisible - dy, false);
+  }
+
+  function onTouchEnd() {
+    if (!dragging) return;
+    dragging = false;
+    if (!dragMoved) return;
+    snapTo(nearestState(currentVisible(), velocity));
+  }
+
+  for (const target of [gripEl, tabsEl]) {
+    target.addEventListener('touchstart', onTouchStart, { passive: true });
+    target.addEventListener('touchmove', onTouchMove, { passive: false });
+    target.addEventListener('touchend', onTouchEnd);
+    target.addEventListener('touchcancel', onTouchEnd);
+  }
+
+  // Tap or keyboard on the grip cycles states.
+  const cycle = () => {
+    if (dragMoved) return;
+    snapTo(STATES[(STATES.indexOf(state) + 1) % STATES.length]);
+  };
+  gripEl.addEventListener('click', cycle);
+  gripEl.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      cycle();
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    measure();
+    snapTo(state);
+  });
+
+  measure();
+  snapTo('collapsed');
+
+  return {
+    snapTo,
+    getState: () => state,
+    didDrag: () => dragMoved,
+  };
+}
