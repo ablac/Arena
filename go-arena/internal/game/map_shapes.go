@@ -112,12 +112,18 @@ func GenerateShapeMask(shape MapShape, cols, rows int) [][]bool {
 }
 
 // generateRoundTerrain rolls a map shape and builds a round's obstacles and
-// grids with the shape carved into both. Returns the boundary rectangles of
-// the carved area for client rendering.
-func generateRoundTerrain() (obstacles []Obstacle, nav *NavGrid, terrain *TerrainGrid, shape MapShape, maskRects []Obstacle) {
+// grids with the shape carved into both, sized for the given bot count.
+// Returns the boundary rectangles of the carved area for client rendering.
+func generateRoundTerrain(botCount int) (obstacles []Obstacle, nav *NavGrid, terrain *TerrainGrid, shape MapShape, maskRects []Obstacle) {
 	c := &config.C
+	scale := ApplyDynamicArenaSize(botCount)
 	shape = PickMapShape()
-	obstacles = GenerateObstacles(c.ArenaWidth, c.ArenaHeight, c.ObstacleCountMin, c.ObstacleCountMax)
+
+	// Preserve obstacle density on scaled maps: counts grow with area.
+	area := scale * scale
+	obsMin := int(float64(c.ObstacleCountMin) * area)
+	obsMax := int(float64(c.ObstacleCountMax) * area)
+	obstacles = GenerateObstacles(c.ArenaWidth, c.ArenaHeight, obsMin, obsMax)
 	nav = NewNavGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.BotRadius)
 	terrain = NewTerrainGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.PathfindingCellSize, c.BotRadius)
 

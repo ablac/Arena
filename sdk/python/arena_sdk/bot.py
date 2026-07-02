@@ -204,6 +204,11 @@ class ArenaBot:
         """Deploy a gravity well at target position (requires gravity_well pickup charge)."""
         return {"action": "use_gravity_well", "target_position": [target_position[0], target_position[1]]}
 
+    def grapple(self, target_id: str) -> dict:
+        """Grapple a target bot (universal ability: 2 charges per round,
+        12-tile range; pulls you together, damages and briefly stuns the target)."""
+        return {"action": "grapple", "target": target_id}
+
     # -- Map / pathfinding helpers --
 
     def get_local_map(self, state: dict, nearby: list, radius: int = 5) -> list[str]:

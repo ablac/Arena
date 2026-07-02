@@ -435,6 +435,10 @@ type SpectatorState struct {
 
 	// Map shape metadata for non-square maps ("square" when absent).
 	MapShape string `json:"map_shape,omitempty"`
+
+	// Arena dimensions [w, h]; sent on keyframes (dynamic arena sizing can
+	// change them between rounds). Slice so omitempty drops it off-keyframe.
+	ArenaSize []float64 `json:"arena_size,omitempty"`
 }
 
 // DerivedStats are computed from stat allocations.

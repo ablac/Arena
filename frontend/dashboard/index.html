@@ -1575,7 +1575,8 @@ async function loadMapViewer() {
       return;
     }
     mapData = d;
-    status.textContent = `Grid: ${d.width}x${d.height} cells | Cell size: ${d.cell_size}px | Arena: ${d.width*d.cell_size}x${d.height*d.cell_size} world units`;
+    status.textContent = `Grid: ${d.width}x${d.height} cells | Cell size: ${d.cell_size}px | Arena: ${d.width*d.cell_size}x${d.height*d.cell_size} world units`
+      + (d.map_shape ? ` | Shape: ${d.map_shape}` : '') + (d.game_mode ? ` | Mode: ${d.game_mode}` : '');
     drawMap();
   } catch(e) {
     status.innerHTML = '<span style="color:var(--red)">Failed to load map</span>';

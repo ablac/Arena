@@ -106,10 +106,15 @@ export class HudRenderer {
     const roundLabel = state.round_number ? `Round ${state.round_number}` : 'Live Round';
     const zoneRadius = Math.round(state.safe_zone?.radius || 0);
     const modifierLabel = this._modifierLabel(state.round_modifier);
-    const phase = botsAlive > 0 ? modifierLabel : 'Syncing';
-    const compactLabel = modifierLabel === 'Normal'
+    // Team modes: surface the mode and live team scores in the HUD.
+    const modeLabel = this._modeLabel(state.game_mode);
+    const scoreText = this._teamScoreText(state.team_scores);
+    const teamInfo = modeLabel && scoreText ? `${modeLabel} ${scoreText}` : modeLabel;
+    const phase = teamInfo || (botsAlive > 0 ? modifierLabel : 'Syncing');
+    let compactLabel = modifierLabel === 'Normal'
       ? `${this._esc(roundLabel)} - ${botsAlive}/${totalBots}`
       : `${this._esc(roundLabel)} - ${modifierLabel} - ${botsAlive}/${totalBots}`;
+    if (teamInfo) compactLabel = `${this._esc(roundLabel)} - ${teamInfo}`;
 
     if (this.roundCollapsed) {
       this._ensureCompactHud();
@@ -124,6 +129,26 @@ export class HudRenderer {
     this._roundRefs.metric2.textContent = `${botsAlive} / ${totalBots}`;
     this._roundRefs.metric3.textContent = String(zoneRadius);
     this._roundRefs.metric4.textContent = String((state.pickups || []).length);
+  }
+
+  /** @private Human label for team game modes ('' for FFA/unknown). */
+  _modeLabel(mode) {
+    switch (mode) {
+      case 'team_battle': return 'Team Battle';
+      case 'ctf': return 'CTF';
+      default: return '';
+    }
+  }
+
+  /** @private "Blue 3 : 1 Red"-style score line from the team_scores map. */
+  _teamScoreText(scores) {
+    if (!scores) return '';
+    const names = ['Blue', 'Red', 'Green', 'Gold'];
+    const teams = Object.keys(scores).sort((a, b) => Number(a) - Number(b));
+    if (teams.length < 2) return '';
+    return teams
+      .map((t) => `${names[Number(t) - 1] || `T${t}`} ${scores[t]}`)
+      .join(' : ');
   }
 
   _modifierLabel(modifier) {

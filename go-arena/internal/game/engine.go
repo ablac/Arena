@@ -518,7 +518,7 @@ func (e *GameEngine) startRound() {
 	} else {
 		// First round or no pre-gen available — generate fresh.
 		var shape MapShape
-		obstacles, e.NavGrid, e.Terrain, shape, maskRects = generateRoundTerrain()
+		obstacles, e.NavGrid, e.Terrain, shape, maskRects = generateRoundTerrain(len(e.Bots))
 		ActiveTerrain = e.Terrain
 		ActiveMapShape = shape
 	}
@@ -709,7 +709,9 @@ func (e *GameEngine) endRound() {
 	})
 
 	// Pre-generate next round's terrain so bots can GET /api/v1/arena/map during intermission.
-	e.NextObstacles, e.NextNavGrid, e.NextTerrain, e.NextMapShape, e.NextMaskRects = generateRoundTerrain()
+	// Size the next round's map for everyone expected to play it: current
+	// bots plus the waiting lobby that joins at round start.
+	e.NextObstacles, e.NextNavGrid, e.NextTerrain, e.NextMapShape, e.NextMaskRects = generateRoundTerrain(len(e.Bots) + len(e.WaitingBots))
 	ActiveTerrain = e.NextTerrain
 	ActiveMapShape = e.NextMapShape
 
@@ -833,6 +835,13 @@ func (e *GameEngine) AddSpectator(conn *SpectatorConn) {
 	// Make sure the next broadcast is a keyframe so the new spectator gets
 	// the static round data (obstacles, map shape) immediately.
 	e.forceKeyframe = true
+}
+
+// GetTickCount returns the engine's current tick under a read lock.
+func (e *GameEngine) GetTickCount() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.TickCount
 }
 
 // SpectatorCount returns the current number of connected spectators.
@@ -1371,6 +1380,13 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 			death.KillerName = killerName
 			death.Weapon = weapon
 
+			// Team battle: kills are the team score. (CTF scores captures
+			// instead — see UpdateCTFFlags — so don't mix kills in there.)
+			if e.ModeRules.HasTeams() && !e.ModeRules.UsesFlags && killer.Team > 0 &&
+				(victim == nil || victim.Team != killer.Team) {
+				e.TeamScores[killer.Team]++
+			}
+
 			if victimOk {
 				ApplyEloChange(killer, victim)
 				// Bounty bonus for killing the bounty target.
@@ -1725,7 +1741,9 @@ func (e *GameEngine) sendSpectatorUpdate() {
 		(keyframeInterval > 0 && e.TickCount%keyframeInterval == 0)
 	e.forceKeyframe = false
 	e.spectatorsMu.Unlock()
-	if !keyframe {
+	if keyframe {
+		state.ArenaSize = []float64{e.Arena.Width, e.Arena.Height}
+	} else {
 		state.Obstacles = nil
 	}
 
@@ -2240,7 +2258,13 @@ func (e *GameEngine) GetFullGameState() map[string]interface{} {
 		"bots_active":   len(e.Bots),
 		"bots_waiting":  len(e.WaitingBots),
 		"bots":          bots,
+		// Dynamic arena sizing can change dimensions between rounds; admin
+		// minimaps should rescale from this instead of assuming a fixed size.
+		"arena_size":    [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
+		"game_mode":     string(e.Round.Mode),
+		"map_shape":     string(ActiveMapShape),
 		"pickups":       len(e.Pickups),
+		"pickups_list":  e.Pickups,
 		"projectiles":   len(e.Projectiles),
 		"zone": map[string]interface{}{
 			"center":        e.Arena.ZoneCenter,

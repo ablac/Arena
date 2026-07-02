@@ -76,6 +76,11 @@ func GetArenaMap(engine *game.GameEngine) http.HandlerFunc {
 			"width":         terrain.Width,
 			"height":        terrain.Height,
 			"cell_size":     terrain.CellSize,
+			// Shape of this terrain. Non-square shapes are already carved
+			// into the terrain rows as '#' walls; this names the outline so
+			// bots and dashboards can adapt strategy per shape.
+			"map_shape": string(game.ActiveMapShape),
+			"game_mode": string(game.ActiveModeRules.Mode),
 			"terrain":       terrain.ToCompactJSONWithFeatures(pads, zones, capturePads),
 			"teleport_pads": padViews,
 			"capture_pads":  captureViews,

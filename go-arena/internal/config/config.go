@@ -26,7 +26,6 @@ type Config struct {
 	TickRate       int     `envconfig:"ARENA_TICK_RATE" default:"10"`
 	MaxBots        int     `envconfig:"ARENA_MAX_BOTS" default:"500"`
 	MaxSpectators  int     `envconfig:"ARENA_MAX_SPECTATORS" default:"500"`
-	ViewRadius     float64 `envconfig:"ARENA_VIEW_RADIUS" default:"100"`
 	ArenaWidth     float64 `envconfig:"ARENA_WIDTH" default:"2000"`
 	ArenaHeight    float64 `envconfig:"ARENA_HEIGHT" default:"2000"`
 	BotRadius      float64 `envconfig:"ARENA_BOT_RADIUS" default:"5.0"`
@@ -45,6 +44,15 @@ type Config struct {
 	// Map generation. "square" (classic), "circle", "hexagon", "diamond",
 	// "cross", "caves", or "random" to roll a shape each round.
 	MapShape string `envconfig:"ARENA_MAP_SHAPE" default:"random"`
+
+	// Dynamic arena size: the map grows with the number of bots joining the
+	// round, from the base ARENA_WIDTH/HEIGHT at <= ARENA_SIZE_BASE_BOTS up
+	// to ARENA_SIZE_MAX_SCALE times the base dimensions at
+	// >= ARENA_SIZE_MAX_BOTS. Applied when each round's terrain is generated.
+	ArenaSizeDynamic  bool    `envconfig:"ARENA_SIZE_DYNAMIC" default:"true"`
+	ArenaSizeBaseBots int     `envconfig:"ARENA_SIZE_BASE_BOTS" default:"12"`
+	ArenaSizeMaxBots  int     `envconfig:"ARENA_SIZE_MAX_BOTS" default:"48"`
+	ArenaSizeMaxScale float64 `envconfig:"ARENA_SIZE_MAX_SCALE" default:"2.0"`
 
 	// Spectator keyframes: static round data (obstacles, map shape) is only
 	// included every Nth broadcast plus immediately after a spectator joins.
@@ -191,17 +199,6 @@ type Config struct {
 	DBConnectRetrySeconds int  `envconfig:"ARENA_DB_CONNECT_RETRY_SECONDS" default:"3"`
 	DBOptional            bool `envconfig:"ARENA_DB_OPTIONAL" default:"false"`
 
-	// Frontend UI
-	UIBgColor      string `envconfig:"ARENA_UI_BG_COLOR" default:"#1a1a2e"`
-	UIBgSecondary  string `envconfig:"ARENA_UI_BG_SECONDARY" default:"#16213e"`
-	UIAccentBlue   string `envconfig:"ARENA_UI_ACCENT_BLUE" default:"#0f3460"`
-	UIAccentRed    string `envconfig:"ARENA_UI_ACCENT_RED" default:"#e94560"`
-	UIAccentGold   string `envconfig:"ARENA_UI_ACCENT_GOLD" default:"#ffd700"`
-	UITextColor    string `envconfig:"ARENA_UI_TEXT_COLOR" default:"#eee"`
-	UIGridColor    string `envconfig:"ARENA_UI_GRID_COLOR" default:"#333"`
-	UIFontFamily   string `envconfig:"ARENA_UI_FONT_FAMILY" default:"'Courier New', monospace"`
-	UIMinimapSize  int    `envconfig:"ARENA_UI_MINIMAP_SIZE" default:"200"`
-
 	// Rate limiting per endpoint
 	RateLimitBotConfigPerMin int `envconfig:"ARENA_RATE_LIMIT_BOT_CONFIG_PER_MIN" default:"120"`
 
@@ -217,8 +214,6 @@ type Config struct {
 	EloMin        int     `envconfig:"ARENA_ELO_MIN" default:"100"`
 
 	// Bot separation
-	BotSeparationDist float64 `envconfig:"ARENA_BOT_SEPARATION_DIST" default:"20.0"`
-	BotSeparationFactor float64 `envconfig:"ARENA_BOT_SEPARATION_FACTOR" default:"1.5"`
 
 	// Anti-teaming
 	AntiTeamRadius         float64 `envconfig:"ARENA_ANTI_TEAM_RADIUS" default:"30.0"`
