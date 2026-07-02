@@ -103,7 +103,10 @@ export class HudRenderer {
     this._lastRoundState = state;
     const botsAlive = (state.bots || []).filter((b) => b.is_alive).length;
     const totalBots = (state.bots || []).length;
-    const roundLabel = state.round_number ? `Round ${state.round_number}` : 'Live Round';
+    // Maps roll a random shape every round — show which one this round is
+    // playing on so two spectators comparing views can tell rounds apart.
+    const shape = state.map_shape && state.map_shape !== 'square' ? ` · ${state.map_shape}` : '';
+    const roundLabel = (state.round_number ? `Round ${state.round_number}` : 'Live Round') + shape;
     const zoneRadius = Math.round(state.safe_zone?.radius || 0);
     const modifierLabel = this._modifierLabel(state.round_modifier);
     // Team modes: surface the mode and live team scores in the HUD.
