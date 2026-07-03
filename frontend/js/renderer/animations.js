@@ -310,10 +310,18 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat) {
     targetRotZ = Math.sin(anim.moveAngle) * MOVE_TILT;
     targetRotX = Math.cos(anim.moveAngle) * MOVE_TILT;
   } else {
-    const bob = Math.sin(anim.time * IDLE_BOB_SPEED) * IDLE_BOB_AMOUNT;
+    // Wounded bots idle with a slower bob (below 35% HP, woundLevel set in bots.js).
+    const bobSpeed = anim.woundLevel >= 1 ? IDLE_BOB_SPEED * 0.5 : IDLE_BOB_SPEED;
+    const bob = Math.sin(anim.time * bobSpeed) * IDLE_BOB_AMOUNT;
     targetY = 10 + bob;
     targetRotZ = 0;
     targetRotX = 0;
+  }
+  // Wounded slump: sink lower and droop forward, whether idle or moving. Smoothed
+  // through the same lerp below, so it eases in as HP falls and out on a heal.
+  if (anim.woundLevel >= 1) {
+    targetY -= 1.5;
+    targetRotX += 0.12;
   }
   anim.smoothY = lerp(anim.smoothY, targetY, 12, dt);
   anim.smoothRotX = lerp(anim.smoothRotX, targetRotX, 8, dt);
