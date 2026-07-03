@@ -63,17 +63,52 @@ func (bs *BountySystem) Update(bots map[string]*BotState) {
 		bot.IsBountyTarget = false
 	}
 
+	// Issue #14: the crown must not flap between tied bots. Two rules make the
+	// pick stable across ticks: (1) incumbent hysteresis - if the current
+	// target is still alive and on the board, it starts as the best, so a
+	// challenger must be STRICTLY better on (BountyPoints, WinStreak) to
+	// dethrone it; a tie keeps the incumbent. (2) deterministic tiebreak by
+	// BotID - Go randomizes map iteration order every range, so without this a
+	// first-time tie between two equal bots would still pick a random winner
+	// per tick. Lowest BotID wins a genuine tie, so the initial pick is stable.
 	var bestBot *BotState
 	var bestEntry *BountyEntry
+	bestIsIncumbent := false
+	if bs.TargetID != "" {
+		if incumbent, ok := bots[bs.TargetID]; ok && incumbent.IsAlive {
+			if entry, ok := bs.entries[bs.TargetID]; ok {
+				bestBot = incumbent
+				bestEntry = entry
+				bestIsIncumbent = true
+			}
+		}
+	}
 	for botID, entry := range bs.entries {
 		bot, ok := bots[botID]
 		if !ok || !bot.IsAlive {
 			continue
 		}
-		if bestEntry == nil || entry.BountyPoints > bestEntry.BountyPoints ||
-			(entry.BountyPoints == bestEntry.BountyPoints && entry.WinStreak > bestEntry.WinStreak) {
+		if bestEntry == nil {
 			bestEntry = entry
 			bestBot = bot
+			continue
+		}
+		if bot.BotID == bestBot.BotID {
+			continue // the incumbent, already seeded as best
+		}
+		strictlyBetter := entry.BountyPoints > bestEntry.BountyPoints ||
+			(entry.BountyPoints == bestEntry.BountyPoints && entry.WinStreak > bestEntry.WinStreak)
+		// Incumbent keeps the crown on a genuine tie (hysteresis). Only a
+		// no-incumbent leader is decided among equals by lowest BotID, so the
+		// first-ever pick is deterministic instead of map-order random.
+		tiedButLowerID := !bestIsIncumbent &&
+			entry.BountyPoints == bestEntry.BountyPoints &&
+			entry.WinStreak == bestEntry.WinStreak &&
+			bot.BotID < bestBot.BotID
+		if strictlyBetter || tiedButLowerID {
+			bestEntry = entry
+			bestBot = bot
+			bestIsIncumbent = false
 		}
 	}
 
