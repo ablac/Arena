@@ -72,7 +72,14 @@ export class GameplayRenderer {
     this._updateVoidTiles(state.void_tiles || []);
     this._updateFlags(state.flags || []);
     this.bountyBots = state.bots || [];
-    this.bountyTargetId = state.bounty_target || null;
+    // Issue #13: only adopt the server's explicit target when it sends one.
+    // When bounty_target is empty, keep the current holder so the kill-streak
+    // heuristic in _updateBounty retains its incumbent instead of re-deriving
+    // (and potentially flapping) every update. A dead incumbent is released
+    // by the alive check in _updateBounty.
+    if (state.bounty_target) {
+      this.bountyTargetId = state.bounty_target;
+    }
     this._updateBounty();
   }
 
@@ -835,7 +842,11 @@ export class GameplayRenderer {
       .sort((a, b) => {
         const streakGap = Number(b.kill_streak || 0) - Number(a.kill_streak || 0);
         if (streakGap !== 0) return streakGap;
-        return Number(b.round_kills || 0) - Number(a.round_kills || 0);
+        const killGap = Number(b.round_kills || 0) - Number(a.round_kills || 0);
+        if (killGap !== 0) return killGap;
+        // Final stable tiebreak by id: the input order is only incidentally
+        // stable (server name-sorts), so make the leader deterministic here.
+        return String(a.bot_id || a.id || '').localeCompare(String(b.bot_id || b.id || ''));
       })[0];
     const highlightId = this.bountyTargetId || streakLeader?.bot_id || streakLeader?.id || null;
     if (!highlightId) {
@@ -887,16 +898,47 @@ export class GameplayRenderer {
     const tx = sourcePos[0];
     const tz = sourcePos[1];
     const g = this.bountyGroup;
+    // usingEntry: true when we have the bot's already-smoothed render position
+    // (bots.js lerps it toward server snapshots at rate 6). In that case the
+    // ring follows it DIRECTLY - no second exponential chase - so the ~270ms
+    // compounded lag that made the ring drag behind moving bots is gone.
+    const usingEntry = !!(targetEntry && targetEntry.root && targetEntry.root.position);
+    const TRANS_DUR = 0.35; // seconds, target-switch ease
     if (!g.initialized) {
       g.curX = tx;
       g.curZ = tz;
       g.initialized = true;
+      g.followId = this.bountyTargetId;
+      g.transT = TRANS_DUR; // no ease on first appearance
     }
-    const lerp = 1 - Math.exp(-10 * Math.max(dt, 0.016));
-    g.curX += (tx - g.curX) * lerp;
-    g.curZ += (tz - g.curZ) * lerp;
+    // Target switch: ease from the ring's current position to the new target
+    // over a fixed duration (cubic-out) instead of an endless cross-arena
+    // glide that oscillated when the server flapped the target.
+    if (g.followId !== this.bountyTargetId) {
+      g.followId = this.bountyTargetId;
+      g.transFromX = g.curX;
+      g.transFromZ = g.curZ;
+      g.transT = 0;
+    }
+    if (g.transT < TRANS_DUR) {
+      g.transT = Math.min(TRANS_DUR, g.transT + d);
+      const p = g.transT / TRANS_DUR;
+      const ease = 1 - Math.pow(1 - p, 3);
+      g.curX = g.transFromX + (tx - g.transFromX) * ease;
+      g.curZ = g.transFromZ + (tz - g.transFromZ) * ease;
+    } else if (usingEntry) {
+      g.curX = tx;
+      g.curZ = tz;
+    } else {
+      // Raw fallback server position (entry not yet created): steps at 10Hz,
+      // so smooth it lightly. Uses real dt (d), not the old Math.max floor
+      // that inflated the rate on high-refresh displays.
+      const lerp = 1 - Math.exp(-12 * d);
+      g.curX += (tx - g.curX) * lerp;
+      g.curZ += (tz - g.curZ) * lerp;
+    }
     g.ring.position.set(g.curX, 25 + Math.sin(this._tick * 0.06) * 3, g.curZ);
-    g.ring.rotation.y += 0.4 * Math.min(dt || 0.016, 0.1);
+    g.ring.rotation.y += 0.4 * d;
     g.ring.visibility = 1;
   }
 
