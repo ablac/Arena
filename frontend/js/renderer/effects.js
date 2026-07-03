@@ -61,6 +61,12 @@ export class EffectRenderer {
     }
 
     this.prevAlive = alive;
+    // Prune prevHp to the alive set so a bot that leaves the list without a
+    // preceding is_alive:false frame (mid-match disconnect, between-round drop)
+    // does not linger for the whole session; subsumes the death-branch delete.
+    for (const id of this.prevHp.keys()) {
+      if (!alive.has(id)) this.prevHp.delete(id);
+    }
     this._cleanup(now);
   }
 
