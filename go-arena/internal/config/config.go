@@ -53,11 +53,6 @@ type Config struct {
 	ArenaSizeBaseBots int     `envconfig:"ARENA_SIZE_BASE_BOTS" default:"12"`
 	ArenaSizeMaxBots  int     `envconfig:"ARENA_SIZE_MAX_BOTS" default:"48"`
 	ArenaSizeMaxScale float64 `envconfig:"ARENA_SIZE_MAX_SCALE" default:"2.0"`
-	// Below ARENA_SIZE_BASE_BOTS the map shrinks linearly down to
-	// ARENA_SIZE_MIN_SCALE times the base dimensions at 2 bots (a duel plays
-	// on a small arena instead of the full map; GitHub issue #12). Set to 1.0
-	// to disable shrinking and keep the pre-delta scale-up-only behavior.
-	ArenaSizeMinScale float64 `envconfig:"ARENA_SIZE_MIN_SCALE" default:"0.6"`
 
 	// Spectator keyframes: static round data (obstacles, map shape) is only
 	// included every Nth broadcast plus immediately after a spectator joins.
