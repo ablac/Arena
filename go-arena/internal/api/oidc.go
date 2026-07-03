@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,6 +94,19 @@ func generateToken(bytes int) string {
 		panic("crypto/rand failed: " + err.Error())
 	}
 	return hex.EncodeToString(b)
+}
+
+// adminDashboardPath returns the path to redirect back to after an OIDC
+// login/logout, honoring whichever prefix the request arrived on. The
+// router mirrors /admin/* under /arena/admin/* (Caddy maps the shared
+// angel-serv.com/arena/* domain there, alongside the dedicated
+// arena.angel-serv.com host at the unprefixed path), so a hardcoded
+// "/admin/" redirect sends /arena/-mounted visitors to the wrong app.
+func adminDashboardPath(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, "/arena/") {
+		return "/arena/admin/"
+	}
+	return "/admin/"
 }
 
 // LoginHandler redirects the user to the Authentik authorization page.
@@ -206,7 +220,7 @@ func (h *OIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Redirect to admin dashboard.
-	http.Redirect(w, r, "/admin/", http.StatusFound)
+	http.Redirect(w, r, adminDashboardPath(r), http.StatusFound)
 }
 
 // LogoutHandler clears the session and optionally redirects to Authentik logout.
@@ -230,7 +244,7 @@ func (h *OIDCHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Redirect to admin login page.
-	http.Redirect(w, r, "/admin/", http.StatusFound)
+	http.Redirect(w, r, adminDashboardPath(r), http.StatusFound)
 }
 
 // SessionInfoHandler returns the current session info as JSON (for the frontend).
