@@ -317,20 +317,19 @@ export class BotRenderer {
     }
 
     // Stun — red emissive tint (transient, wins over the wounded look)
-    if (bot.is_stunned) {
+    if (bot.is_alive && bot.is_stunned) {
       entry.bodyMat.emissiveColor.set(0.8, 0.15, 0.1);
       entry.headMat.emissiveColor.set(0.8, 0.15, 0.1);
-    } else if (bot.is_alive) {
+    } else if (bot.is_alive || entry._stunActive || entry._woundedActive) {
       // Resting emissive. _updateStatusEffects is the single owner of the
       // non-stunned baseline, so the wounded look layers in here rather than
       // fighting the attack-glow the anim tick adds on top. Below 35% HP the
       // body dims (a fading, failing look); below 15% a slow red heartbeat
-      // pulses in. Gated on is_alive so a dead bot (HP 0) leaves the channel to
-      // _deathFlash. Only write when there is something to apply or restore, so
-      // healthy bots keep the original zero-cost path.
-      const hpRatio = bot.max_hp > 0 ? bot.hp / bot.max_hp : 1;
-      const wounded = hpRatio < 0.35;
-      const critical = hpRatio < 0.15;
+      // pulses in. When a bot dies while stunned/wounded, restore the baseline
+      // before _deathFlash captures the material's original color.
+      const hpRatio = bot.is_alive && bot.max_hp > 0 ? bot.hp / bot.max_hp : 1;
+      const wounded = bot.is_alive && hpRatio < 0.35;
+      const critical = bot.is_alive && hpRatio < 0.15;
       if (wounded || entry._stunActive || entry._woundedActive) {
         const dim = wounded ? 0.6 : 1;
         // ~1.2Hz sine from the wall clock (0..1), scaled into a red add.
@@ -344,7 +343,7 @@ export class BotRenderer {
       }
       entry._woundedActive = wounded || critical;
     }
-    entry._stunActive = !!bot.is_stunned;
+    entry._stunActive = bot.is_alive && !!bot.is_stunned;
   }
 
   /** @private Flash body white on death using Babylon.js Animation API. */
