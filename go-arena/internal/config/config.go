@@ -190,6 +190,11 @@ type Config struct {
 	// CORS
 	CORSOrigins string `envconfig:"ARENA_CORS_ORIGINS" default:"*"`
 
+	// Security headers (HSTS, CSP, X-Frame-Options, etc). Enabled by default;
+	// provided as an escape hatch in case a header ever conflicts with a
+	// deployment's reverse-proxy setup.
+	SecurityHeadersEnabled bool `envconfig:"ARENA_SECURITY_HEADERS_ENABLED" default:"true"`
+
 	// DB Pool
 	DBPoolSize    int `envconfig:"ARENA_DB_POOL_SIZE" default:"20"`
 	DBMaxOverflow int `envconfig:"ARENA_DB_MAX_OVERFLOW" default:"10"`
@@ -319,4 +324,26 @@ func Load() {
 		"tick_rate", C.TickRate,
 		"arena", [2]float64{C.ArenaWidth, C.ArenaHeight},
 	)
+	warnInsecureDefaults()
+}
+
+// warnInsecureDefaults logs loud (but non-fatal) warnings when the server is
+// running with default/weak credentials. It never blocks startup — operators
+// should be nudged to fix these, not locked out by a config validation bug.
+func warnInsecureDefaults() {
+	if C.DBPassword == "arena" {
+		slog.Warn("SECURITY: ARENA_DB_PASSWORD is set to the insecure default " +
+			"value — set a strong, unique password before exposing this server")
+	}
+	if C.AdminToken == "" {
+		if C.AdminLocalhostBypass {
+			slog.Warn("SECURITY: ARENA_ADMIN_TOKEN is not set; admin API is only " +
+				"reachable via the ARENA_ADMIN_LOCALHOST_BYPASS loopback path (no " +
+				"remote admin auth configured)")
+		} else {
+			slog.Warn("SECURITY: ARENA_ADMIN_TOKEN is not set and " +
+				"ARENA_ADMIN_LOCALHOST_BYPASS is disabled — the admin API cannot " +
+				"be authenticated at all unless OIDC or a DB-issued token is configured")
+		}
+	}
 }
