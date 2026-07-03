@@ -274,14 +274,23 @@ export class BotRenderer {
       }
 
       // Damage flinch: a quick squash on the root, decaying to rest. The root
-      // scale is a channel the anim tick above never writes, so this layers on
-      // top of the body's own bounce/attack without fighting it. Runs after the
-      // anim tick so it wins the frame; releases the channel exactly at rest.
+      // scale is free MOST of the time, but updateBotAnim (which takes entry.root
+      // as its body param) does drive root scaling during dodge, death, and
+      // respawn; swordsmen never touch the root at all. So write the flinch only
+      // when that shared channel is otherwise free, and yield to the anim when it
+      // owns the scale. This keeps the two from fighting and stops any residual
+      // from compounding. Runs after the anim tick so a free-channel write wins.
       if (entry._flinchT > 0) {
         entry._flinchT -= dt;
-        if (entry._flinchT <= 0) {
+        const a = entry.anim;
+        const animOwnsScale = !entry.isSwordsman && a &&
+          (a.dodgeTimer >= 0 || a.deathTimer >= 0 || a.respawnTimer >= 0);
+        if (animOwnsScale) {
+          // Anim is driving root scaling this frame; the flinch sits it out.
+          // It resumes on a later free frame if any time is left.
+        } else if (entry._flinchT <= 0) {
           entry._flinchT = 0;
-          entry.root.scaling.setAll(1);
+          entry.root.scaling.setAll(1); // release to rest
         } else {
           const k = entry._flinchT / 0.18; // 1 at impact -> 0 at rest
           entry.root.scaling.setAll(1 - 0.14 * entry._flinch * k);
