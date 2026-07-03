@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"arena-server/internal/api"
 	"arena-server/internal/config"
@@ -115,6 +116,14 @@ func main() {
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: router,
+		// ReadHeaderTimeout bounds slow-header (Slowloris-style) connections.
+		// It only covers the time to read request headers before the handler
+		// runs, so it does not affect long-lived WebSocket connections, which
+		// hijack the raw net.Conn and manage their own read/write deadlines.
+		ReadHeaderTimeout: 10 * time.Second,
+		// IdleTimeout only applies to keep-alive HTTP connections sitting
+		// between requests, not to hijacked WebSocket connections.
+		IdleTimeout: 120 * time.Second,
 	}
 
 	// Start demo bots after server setup.

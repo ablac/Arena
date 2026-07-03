@@ -56,6 +56,12 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		MaxAge:           300,
 	}))
 
+	// Security headers (CSP, HSTS, X-Frame-Options, etc).
+	r.Use(SecurityHeadersMiddleware)
+
+	// Bound request body size to prevent oversized-body memory exhaustion.
+	r.Use(BodySizeLimitMiddleware)
+
 	// Dashboard HTTP logging middleware (before request logger so it captures all).
 	r.Use(DashboardLogMiddleware(bus))
 
@@ -83,13 +89,17 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 	// --- OIDC routes (mounted OUTSIDE admin auth — these handle pre-auth flow) ---
 	if oidcHandler != nil {
-		r.Get("/admin/login", oidcHandler.LoginHandler)
-		r.Get("/admin/callback", oidcHandler.CallbackHandler)
+		// Rate-limited per IP so an attacker can't grow the in-memory CSRF
+		// state/session maps unbounded by hammering /admin/login before the
+		// 5-minute cleanup loop runs.
+		oidcEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
+		r.With(oidcEntry).Get("/admin/login", oidcHandler.LoginHandler)
+		r.With(oidcEntry).Get("/admin/callback", oidcHandler.CallbackHandler)
 		r.Get("/admin/logout", oidcHandler.LogoutHandler)
 		r.Get("/api/v1/admin/session", oidcHandler.SessionInfoHandler)
 		// Mirror under /arena prefix
-		r.Get("/arena/admin/login", oidcHandler.LoginHandler)
-		r.Get("/arena/admin/callback", oidcHandler.CallbackHandler)
+		r.With(oidcEntry).Get("/arena/admin/login", oidcHandler.LoginHandler)
+		r.With(oidcEntry).Get("/arena/admin/callback", oidcHandler.CallbackHandler)
 		r.Get("/arena/admin/logout", oidcHandler.LogoutHandler)
 		r.Get("/arena/api/v1/admin/session", oidcHandler.SessionInfoHandler)
 	}

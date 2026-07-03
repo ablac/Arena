@@ -8,14 +8,18 @@ Hunts via hints, intercepts enemy movement, shoves melee threats.
 import asyncio
 import json
 import math
+import os
 import random
 import signal
 import sys
 import websockets
 
 # ── Config ──────────────────────────────────────────────────────────────
-API_KEY = "arena_NrxfjpHe2P461qjTGzhFHGR4Hx7XItJS"
-WS_URL = f"ws://localhost:8700/ws/bot?key={API_KEY}"
+# Never hardcode API keys in source. Set ARENA_API_KEY in your shell/
+# environment before running this bot.
+API_KEY = os.environ.get("ARENA_API_KEY", "")
+SERVER = os.environ.get("ARENA_SERVER", "ws://localhost:8700")
+WS_URL = f"{SERVER}/ws/bot?key={API_KEY}"
 
 LOADOUT = {
     "type": "select_loadout",
@@ -285,6 +289,10 @@ class AnisminBot:
 
 # ── Main loop ───────────────────────────────────────────────────────────
 async def run():
+    if not API_KEY:
+        print("[Anismin] ERROR: Set ARENA_API_KEY in your environment before running.")
+        return
+
     bot = AnisminBot()
     print("[Anismin] 🐬 v5 — Staff kiter + zone tracking + enemy prediction. Zero tokens.")
 
