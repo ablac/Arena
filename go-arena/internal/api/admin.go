@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -62,6 +63,12 @@ func hashToken(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// constantTimeEqual compares two strings in constant time to avoid leaking
+// information about secret tokens via response-time side channels.
+func constantTimeEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
 func (h *AdminHandler) reloadTokenHashes() {
 	ctx := context.Background()
 	hashes, err := db.GetAllAdminTokenHashes(ctx)
@@ -77,14 +84,14 @@ func (h *AdminHandler) reloadTokenHashes() {
 // IsValidAdminToken checks if the given token is either the env var token or
 // one of the database-stored tokens.
 func (h *AdminHandler) IsValidAdminToken(token string) bool {
-	if config.C.AdminToken != "" && token == config.C.AdminToken {
+	if config.C.AdminToken != "" && constantTimeEqual(token, config.C.AdminToken) {
 		return true
 	}
 	hashed := hashToken(token)
 	h.tokenMu.RLock()
 	defer h.tokenMu.RUnlock()
 	for _, th := range h.tokenHashes {
-		if th == hashed {
+		if constantTimeEqual(th, hashed) {
 			return true
 		}
 	}
@@ -136,7 +143,7 @@ func MakeAdminAuthMiddlewareWithOIDC(handler *AdminHandler, oidcHandler *OIDCHan
 			}
 
 			// Check env var token.
-			if cfg.AdminToken != "" && token == cfg.AdminToken {
+			if cfg.AdminToken != "" && constantTimeEqual(token, cfg.AdminToken) {
 				next.ServeHTTP(w, r)
 				return
 			}
