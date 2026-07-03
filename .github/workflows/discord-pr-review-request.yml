@@ -1,8 +1,8 @@
-name: Discord PR review request
+name: Discord PR ready for review
 
 on:
   pull_request_target:
-    types: [review_requested]
+    types: [ready_for_review]
 
 permissions:
   contents: read
@@ -10,14 +10,13 @@ permissions:
 
 jobs:
   notify-discord:
-    if: ${{ github.event.pull_request.draft == false && github.event.requested_reviewer.login == 'AnisminC' }}
+    if: ${{ github.event.pull_request.draft == false && github.event.pull_request.base.ref == 'main' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Send Discord review request
+      - name: Send Discord ready-for-review request
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_PR_WEBHOOK }}
           DISCORD_USER_ID: '1469793203564839108'
-          PR_ACTION: ${{ github.event.action }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -39,7 +38,7 @@ jobs:
 
           payload = {
               'content': (
-                  f'<@{user_id}> review requested for **{repo}** PR #{number}: **{title}**\n'
+                  f'<@{user_id}> PR ready for review in **{repo}**: #{number} **{title}**\n'
                   f'Opened by `{author}`.\n{url}'
               ),
               'allowed_mentions': {'users': [user_id]},
