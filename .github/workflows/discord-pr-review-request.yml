@@ -1,0 +1,57 @@
+name: Discord PR review request
+
+on:
+  pull_request_target:
+    types: [review_requested]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  notify-discord:
+    if: ${{ github.event.pull_request.draft == false && github.event.requested_reviewer.login == 'AnisminC' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Discord review request
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_PR_WEBHOOK }}
+          DISCORD_USER_ID: '1469793203564839108'
+          PR_ACTION: ${{ github.event.action }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          webhook = os.environ['DISCORD_WEBHOOK_URL']
+          user_id = os.environ['DISCORD_USER_ID']
+          repo = os.environ['REPOSITORY']
+          number = os.environ['PR_NUMBER']
+          title = os.environ['PR_TITLE']
+          url = os.environ['PR_URL']
+          author = os.environ['PR_AUTHOR']
+
+          payload = {
+              'content': (
+                  f'<@{user_id}> review requested for **{repo}** PR #{number}: **{title}**\n'
+                  f'Opened by `{author}`.\n{url}'
+              ),
+              'allowed_mentions': {'users': [user_id]},
+          }
+
+          request = urllib.request.Request(
+              webhook,
+              data=json.dumps(payload).encode('utf-8'),
+              headers={'Content-Type': 'application/json'},
+              method='POST',
+          )
+          with urllib.request.urlopen(request, timeout=10) as response:
+              if response.status not in (200, 204):
+                  raise SystemExit(f'Discord webhook returned HTTP {response.status}')
+          PY
