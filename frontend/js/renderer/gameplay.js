@@ -857,6 +857,12 @@ export class GameplayRenderer {
     this.bountyTargetId = highlightId;
     const target = this.bountyBots.find(b => b.bot_id === highlightId || b.id === highlightId);
     if (!target || !target.is_alive) {
+      // Clear the latch so a dead holder does not stick forever: in heuristic
+      // mode (empty server target) highlightId short-circuits on
+      // this.bountyTargetId, so without this the crown would never reappear
+      // for a new streak leader after the holder dies. Safe in server mode too:
+      // a live server target is re-sent every update and re-adopted at once.
+      this.bountyTargetId = null;
       if (this.bountyGroup) this.bountyGroup.ring.visibility = 0;
       return;
     }
