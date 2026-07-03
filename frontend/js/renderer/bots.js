@@ -110,6 +110,14 @@ export class BotRenderer {
 
       // HP bar — only update when HP changes
       if (bot.hp !== entry._lastHp) {
+        // Damage flinch: when HP actually dropped on a live bot, arm a brief
+        // recoil punch. _lastHp is null on first appearance so a spawn never
+        // flinches; _wasAlive still holds last frame's state here.
+        if (entry._lastHp != null && bot.hp < entry._lastHp && bot.is_alive && entry._wasAlive) {
+          const dmg = entry._lastHp - bot.hp;
+          entry._flinch = Math.min(1, 0.35 + dmg / 30); // intensity 0.35..1 by hit size
+          entry._flinchT = 0.18;                         // seconds, decays in interpolate()
+        }
         entry._lastHp = bot.hp;
         const hpRatio = bot.hp / bot.max_hp;
         entry.hpFill.width = Math.max(0.01, hpRatio);
@@ -206,6 +214,9 @@ export class BotRenderer {
       // Death flash
       if (!bot.is_alive && entry._wasAlive) {
         this._deathFlash(entry);
+        // Release the flinch channel so a respawn starts at rest scale.
+        entry._flinchT = 0;
+        entry.root.scaling.setAll(1);
       }
       entry._wasAlive = bot.is_alive;
       entry.isAlive = bot.is_alive;
@@ -260,6 +271,21 @@ export class BotRenderer {
           entry.root.position.x, entry.root.position.z,
           entry.isAlive, dt, entry.bodyMat
         );
+      }
+
+      // Damage flinch: a quick squash on the root, decaying to rest. The root
+      // scale is a channel the anim tick above never writes, so this layers on
+      // top of the body's own bounce/attack without fighting it. Runs after the
+      // anim tick so it wins the frame; releases the channel exactly at rest.
+      if (entry._flinchT > 0) {
+        entry._flinchT -= dt;
+        if (entry._flinchT <= 0) {
+          entry._flinchT = 0;
+          entry.root.scaling.setAll(1);
+        } else {
+          const k = entry._flinchT / 0.18; // 1 at impact -> 0 at rest
+          entry.root.scaling.setAll(1 - 0.14 * entry._flinch * k);
+        }
       }
     }
   }
