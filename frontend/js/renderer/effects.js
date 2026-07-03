@@ -29,6 +29,8 @@ export class EffectRenderer {
     this.scene = scene;
     /** @type {Set<string>} */
     this.prevAlive = new Set();
+    /** @type {Map<string, number>} bot_id -> last-seen hp, for damage numbers */
+    this.prevHp = new Map();
     /** @type {Array<{dispose: Function, created: number}>} */
     this.active = [];
     this._dmgCount = 0;
@@ -41,8 +43,20 @@ export class EffectRenderer {
     for (const bot of bots) {
       if (bot.is_alive) {
         alive.add(bot.bot_id);
-      } else if (this.prevAlive.has(bot.bot_id)) {
-        this._deathBurst(bot.position[0], bot.position[1], bot.avatar_color);
+        // Damage numbers (task-6, phase A): on an hp decrease for a bot that
+        // was already alive last frame, pop a floating number at the victim.
+        // spawnDamageNumber is a pre-built pooled system that had no caller.
+        const prev = this.prevHp.get(bot.bot_id);
+        if (prev != null && this.prevAlive.has(bot.bot_id) && bot.hp < prev) {
+          this.spawnDamageNumber(bot.position[0], bot.position[1], prev - bot.hp);
+        }
+        this.prevHp.set(bot.bot_id, bot.hp);
+      } else {
+        if (this.prevAlive.has(bot.bot_id)) {
+          this._deathBurst(bot.position[0], bot.position[1], bot.avatar_color);
+        }
+        // Reset on death so a respawn back to full hp is not read as a hit.
+        this.prevHp.delete(bot.bot_id);
       }
     }
 
@@ -477,11 +491,17 @@ export class EffectRenderer {
 
     const ctx = tex.getContext();
     ctx.clearRect(0, 0, 128, 64);
-    ctx.font = 'bold 36px monospace';
+    // Magnitude styling: a big hit reads bigger and hotter than a chip of
+    // damage, so the eye tracks the decisive blows at spectator distance.
+    const mag = Math.abs(dmg);
+    const fontPx = Math.round(Math.min(52, 30 + mag * 0.7));
+    ctx.font = `bold ${fontPx}px monospace`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = dmg > 0 ? '#ff4444' : '#44ff44';
+    ctx.fillStyle = dmg <= 0 ? '#44ff44' : (mag >= 25 ? '#ffdd33' : '#ff4444');
     ctx.fillText(`${Math.abs(Math.round(dmg))}`, 64, 32);
     tex.update();
+    // A big hit gets a brief scale punch on the pooled plane.
+    plane.scaling.setAll(mag >= 25 ? 1.35 : 1);
 
     const startY = 25;
 
