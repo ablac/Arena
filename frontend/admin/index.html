@@ -973,6 +973,14 @@ async function api(path, opts={}) {
     headers: {'X-Admin-Token': token, 'Content-Type':'application/json', ...(opts.headers||{})}
   });
   if (res.status === 401 || res.status === 403) { logout(); throw new Error('unauthorized'); }
+  if (!res.ok) {
+    let message = 'request failed (' + res.status + ')';
+    try {
+      const body = await res.json();
+      if (body && body.error) message = body.error;
+    } catch (_) {}
+    throw new Error(message);
+  }
   return res.json();
 }
 
@@ -990,7 +998,7 @@ async function testAuth() {
     await api('/dashboard/overview');
     showApp();
   } catch(e) {
-    document.getElementById('loginError').textContent = 'Invalid token';
+    document.getElementById('loginError').textContent = e.message || 'Invalid token';
     localStorage.removeItem('arena_admin_token');
     token = '';
   }
