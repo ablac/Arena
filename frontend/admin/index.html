@@ -585,6 +585,7 @@ button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--g
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px">
         <div class="ctrl-section" style="flex:1;min-width:300px">
           <h3>Weapon Usage &amp; Performance</h3>
+          <div style="color:var(--text2);font-size:10px;margin-bottom:4px">Currently-connected bots this round, not an all-time average</div>
           <div id="balWeapons" style="font-size:12px">Loading...</div>
         </div>
         <div class="ctrl-section" style="flex:1;min-width:300px">
@@ -607,6 +608,7 @@ button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--g
       <!-- Meta Analysis -->
       <div class="ctrl-section" style="margin-top:12px">
         <h3>Meta Analysis — Balance Flags</h3>
+        <div style="color:var(--text2);font-size:10px;margin-bottom:4px">Based on this round's connected bots — a small sample can trigger a flag that isn't a real server-wide trend</div>
         <div id="balMeta" style="font-size:12px">Hit Refresh to analyze...</div>
       </div>
 
@@ -947,6 +949,12 @@ function getAPIBase() {
   const p = location.pathname;
   if (p.startsWith('/arena/')) return '/arena/api/v1/admin';
   return '/api/v1/admin';
+}
+
+function getPublicAPIBase() {
+  const p = location.pathname;
+  if (p.startsWith('/arena/')) return '/arena/api/v1';
+  return '/api/v1';
 }
 
 function ssoLoginUrl() {
@@ -2532,12 +2540,15 @@ function filterDmgLog() {
 // ========== Balance Dashboard ==========
 async function refreshBalance() {
   try {
-    const [gs, roundsData, weaponsData, gameConfig] = await Promise.all([
+    const [gs, roundsData, weaponsData, gameConfig, weaponStats] = await Promise.all([
       api('/debug/game-state'),
       api('/debug/rounds?limit=100'),
       api('/weapons'),
-      api('/game/config')
+      api('/game/config'),
+      fetch(getPublicAPIBase() + '/weapon-stats').then(r => r.json()).catch(() => ({entries:[]}))
     ]);
+    const canonicalTier = {};
+    (weaponStats.entries || []).forEach(e => { canonicalTier[e.weapon] = {tier: e.tier, metaScore: e.meta_score}; });
 
     // Weapon tuning table
     const weapons = weaponsData.weapons || {};
@@ -2663,28 +2674,28 @@ async function refreshBalance() {
       </div>`).join('') :
       '<span style="color:var(--green)">No balance issues detected — meta looks healthy</span>';
 
-    // === Loadout Tier List — rank weapons by composite score ===
+    // === Loadout Tier List — tier comes from GET /api/v1/weapon-stats, the
+    // same canonical source the public site uses, so this never disagrees
+    // with what players see. K/D/Elo/Survival below are this round's live
+    // stats, shown as context alongside the tier, not used to derive it. ===
     const tierData = wpEntries.filter(([,s]) => s.count > 0).map(([w, s]) => {
       const kd = s.deaths > 0 ? s.kills / s.deaths : s.kills;
       const avgElo = s.elo / s.count;
       const survivalRate = s.count > 0 ? (s.alive / s.count * 100) : 0;
-      // Composite score: weighted K/D + Elo deviation from 1000 + survival
-      const score = (kd * 30) + ((avgElo - 1000) * 0.3) + (survivalRate * 0.2);
-      return {weapon: w, kd, avgElo, survivalRate, score, count: s.count};
-    }).sort((a,b) => b.score - a.score);
+      const canon = canonicalTier[w] || {};
+      return {weapon: w, kd, avgElo, survivalRate, tier: canon.tier || '?', metaScore: canon.metaScore ?? -Infinity, count: s.count};
+    }).sort((a,b) => b.metaScore - a.metaScore);
 
-    const tierLabels = ['S','A','B','C','D'];
-    const tierColors = ['var(--green)','var(--accent)','var(--text)','var(--orange)','var(--red)'];
-    document.getElementById('balTierList').innerHTML = tierData.length ? tierData.map((t, i) => {
-      const tier = tierLabels[Math.min(i, tierLabels.length-1)];
-      const tc = tierColors[Math.min(i, tierColors.length-1)];
+    const tierColors = {S:'var(--green)', A:'var(--accent)', B:'var(--text)', C:'var(--orange)'};
+    document.getElementById('balTierList').innerHTML = tierData.length ? tierData.map((t) => {
+      const tc = tierColors[t.tier] || 'var(--red)';
       return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border)">
-        <span style="color:${tc};font-weight:bold;font-size:16px;min-width:24px">${tier}</span>
+        <span style="color:${tc};font-weight:bold;font-size:16px;min-width:24px">${t.tier}</span>
         <span style="color:var(--orange);min-width:60px">${esc(t.weapon)}</span>
         <span style="color:var(--text2);font-size:11px">K/D: <b style="color:var(--text)">${t.kd.toFixed(1)}</b></span>
         <span style="color:var(--text2);font-size:11px">Elo: <b style="color:var(--text)">${t.avgElo.toFixed(0)}</b></span>
         <span style="color:var(--text2);font-size:11px">Surv: <b style="color:var(--text)">${t.survivalRate.toFixed(0)}%</b></span>
-        <span style="color:var(--text2);font-size:11px">${t.count} users</span>
+        <span style="color:var(--text2);font-size:11px">${t.count} users this round</span>
       </div>`;
     }).join('') : 'Not enough data';
 

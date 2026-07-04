@@ -316,7 +316,7 @@ function getStatValue(entry, sort) {
       return kd.toFixed(2);
     }
     case 'streak':
-      return entry.best_streak ?? entry.current_streak ?? entry.kills ?? 0;
+      return entry.best_streak ?? entry.kills ?? 0;
     default:
       return entry.elo;
   }

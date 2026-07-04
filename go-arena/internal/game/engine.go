@@ -931,7 +931,7 @@ func (e *GameEngine) GetArenaSnapshot() ArenaSnapshot {
 		Phase:              e.Round.Phase,
 		Modifier:           e.Round.Modifier,
 		Tick:               e.TickCount,
-		BotsConnected:      len(e.Bots),
+		BotsConnected:      len(e.Bots) + len(e.WaitingBots),
 		RoundNumber:        e.Round.RoundNumber,
 		RoundTimeRemaining: e.Round.TimeRemaining,
 		SafeZoneRadius:     e.Arena.ZoneRadius,

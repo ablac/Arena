@@ -38,7 +38,7 @@ func GetLeaderboard(w http.ResponseWriter, r *http.Request) {
 
 	if db.Pool == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"leaderboard": []interface{}{}, "total": 0, "limit": limit, "offset": offset, "period": "all_time",
+			"entries": []interface{}{}, "total": 0, "limit": limit, "offset": offset, "period": "all_time",
 		})
 		return
 	}
@@ -71,11 +71,11 @@ func GetLeaderboard(w http.ResponseWriter, r *http.Request) {
 		}
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"leaderboard": entries,
-			"total":       len(entries),
-			"limit":       limit,
-			"offset":      0,
-			"period":      period,
+			"entries": entries,
+			"total":   len(entries),
+			"limit":   limit,
+			"offset":  0,
+			"period":  period,
 		})
 		return
 	}
