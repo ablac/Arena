@@ -1246,8 +1246,11 @@ func GetBotRank(ctx context.Context, botID, sortBy string) (int, error) {
 
 	query := fmt.Sprintf(
 		`SELECT rank FROM (
-		   SELECT bot_id, ROW_NUMBER() OVER (ORDER BY %s) AS rank
+		   SELECT s.bot_id, ROW_NUMBER() OVER (ORDER BY %s) AS rank
 		   FROM bot_stats s
+		   JOIN bots b ON b.id = s.bot_id
+		   WHERE b.name NOT LIKE 'Legacy-%%'
+		     AND (s.rounds_played > 0 OR s.kills > 0 OR s.deaths > 0 OR s.damage_dealt > 0)
 		 ) ranked WHERE bot_id = $1`, orderClause,
 	)
 
