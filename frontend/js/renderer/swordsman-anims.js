@@ -495,6 +495,34 @@ export function updateSwordsmanAnim(entry, dt) {
     joints.head.rotation.z = 0;
     if (bodyMat) bodyMat.alpha = 1;
   }
+
+  // ── Residue self-heal ──
+  // The death topple and the dodge squash are the only writers of these
+  // channels, and the reset above is the only cleaner; the idle path never
+  // touches them. If the reset is bypassed (anim state and rig falling out
+  // of step, observed live under rAF throttling), a live bot keeps a
+  // permanent 45-degree roll. Converge to rest on every alive frame outside
+  // dodge so no residue can outlive a second.
+  if (anim.dodgeTimer < 0) {
+    const bodyNode = joints.body;
+    if (bodyNode.rotation.z !== 0) {
+      bodyNode.rotation.z = Math.abs(bodyNode.rotation.z) < 0.01
+        ? 0 : elerp(bodyNode.rotation.z, 0, 6, dt);
+    }
+    if (bodyNode.scaling.y !== 1) {
+      bodyNode.scaling.y = Math.abs(bodyNode.scaling.y - 1) < 0.01
+        ? 1 : elerp(bodyNode.scaling.y, 1, 6, dt);
+    }
+    if (bodyNode.scaling.x !== 1) {
+      bodyNode.scaling.x = Math.abs(bodyNode.scaling.x - 1) < 0.01
+        ? 1 : elerp(bodyNode.scaling.x, 1, 6, dt);
+    }
+    if (bodyNode.scaling.z !== 1) {
+      bodyNode.scaling.z = Math.abs(bodyNode.scaling.z - 1) < 0.01
+        ? 1 : elerp(bodyNode.scaling.z, 1, 6, dt);
+    }
+  }
+
   if (anim.respawnTimer >= 0) {
     anim.respawnTimer += dt;
     const rt = Math.min(anim.respawnTimer / 0.5, 1);
@@ -566,6 +594,12 @@ export function updateSwordsmanAnim(entry, dt) {
     // Recoil rides on top of the swing (applyPose wrote absolutely above).
     _applyHitRecoil(entry, anim, dt);
     return;
+  } else if (anim.attackTimer >= 0) {
+    // A timer with no keyframes has nothing to play, and it would gate every
+    // future attack trigger forever (progress reads as 0, below the 0.7
+    // interrupt threshold). The generic triggerShove sets exactly this state
+    // on swordsman entries. Clear it and fall through to idle.
+    anim.attackTimer = -1;
   }
 
   // ── Idle / movement ──
