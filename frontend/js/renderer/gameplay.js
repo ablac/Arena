@@ -144,7 +144,25 @@ export class GameplayRenderer {
         base.material = baseMat;
         base.isPickable = false;
 
-        entry = { pole, banner, bannerMat, base, curX: flag.position[0], curZ: flag.position[1] };
+        // Comet trail for a carried flag - CTF's key spectator moment. Idle
+        // at emitRate 0; the per-frame flag block turns it on while carried.
+        // Shares _glowTex, so dispose with dispose(false). 2-4 flags max.
+        const trail = new B.ParticleSystem(`flag-trail-${flag.id}`, 40, this.scene);
+        trail.particleTexture = this._glowTex;
+        trail.emitter = new B.Vector3(flag.position[0], 14, flag.position[1]);
+        trail.createPointEmitter(new B.Vector3(-0.3, 0.4, -0.3), new B.Vector3(0.3, 1, 0.3));
+        trail.color1 = new B.Color4(color.r, color.g, color.b, 0.9);
+        trail.color2 = new B.Color4(Math.min(1, color.r + 0.3), Math.min(1, color.g + 0.3), Math.min(1, color.b + 0.3), 0.7);
+        trail.colorDead = new B.Color4(color.r * 0.3, color.g * 0.3, color.b * 0.3, 0);
+        trail.minSize = 3; trail.maxSize = 7;
+        trail.minLifeTime = 0.5; trail.maxLifeTime = 1.0;
+        trail.minEmitPower = 2; trail.maxEmitPower = 6;
+        trail.gravity = new B.Vector3(0, 4, 0);
+        trail.blendMode = B.ParticleSystem.BLENDMODE_ADD;
+        trail.emitRate = 0;
+        trail.start();
+
+        entry = { pole, banner, bannerMat, base, trail, curX: flag.position[0], curZ: flag.position[1] };
         this.flags.set(flag.id, entry);
       }
 
@@ -160,6 +178,7 @@ export class GameplayRenderer {
       if (!seen.has(id)) {
         entry.pole.dispose(); // banner is parented and disposed with it
         entry.base.dispose();
+        if (entry.trail) entry.trail.dispose(false); // shared _glowTex stays
         this.flags.delete(id);
       }
     }
@@ -850,7 +869,10 @@ export class GameplayRenderer {
       })[0];
     const highlightId = this.bountyTargetId || streakLeader?.bot_id || streakLeader?.id || null;
     if (!highlightId) {
-      if (this.bountyGroup) this.bountyGroup.ring.visibility = 0;
+      if (this.bountyGroup) {
+        this.bountyGroup.ring.visibility = 0;
+        if (this.bountyGroup.sparkle) this.bountyGroup.sparkle.emitRate = 0;
+      }
       return;
     }
 
@@ -863,7 +885,10 @@ export class GameplayRenderer {
       // for a new streak leader after the holder dies. Safe in server mode too:
       // a live server target is re-sent every update and re-adopted at once.
       this.bountyTargetId = null;
-      if (this.bountyGroup) this.bountyGroup.ring.visibility = 0;
+      if (this.bountyGroup) {
+        this.bountyGroup.ring.visibility = 0;
+        if (this.bountyGroup.sparkle) this.bountyGroup.sparkle.emitRate = 0;
+      }
       return;
     }
 
@@ -878,7 +903,24 @@ export class GameplayRenderer {
       mat.disableLighting = true;
       ring.material = mat;
       ring.isPickable = false;
-      this.bountyGroup = { ring, curX: 0, curZ: 0, initialized: false };
+      // Gold sparkle drip under the crown so the streak leader - the
+      // spectator's "who is winning" anchor - reads from across the room.
+      // Shares _glowTex (dispose(false)); emitter tracked in animate().
+      const sparkle = new B.ParticleSystem('bountySparkle', 30, this.scene);
+      sparkle.particleTexture = this._glowTex;
+      sparkle.emitter = new B.Vector3(0, 23, 0);
+      sparkle.createPointEmitter(new B.Vector3(-0.4, -0.2, -0.4), new B.Vector3(0.4, 0.2, 0.4));
+      sparkle.color1 = new B.Color4(1, 0.85, 0.2, 0.8);
+      sparkle.color2 = new B.Color4(1, 0.95, 0.6, 0.6);
+      sparkle.colorDead = new B.Color4(0.6, 0.45, 0.05, 0);
+      sparkle.minSize = 2; sparkle.maxSize = 5;
+      sparkle.minLifeTime = 0.4; sparkle.maxLifeTime = 0.9;
+      sparkle.minEmitPower = 1; sparkle.maxEmitPower = 4;
+      sparkle.gravity = new B.Vector3(0, -6, 0);
+      sparkle.blendMode = B.ParticleSystem.BLENDMODE_ADD;
+      sparkle.emitRate = 0;
+      sparkle.start();
+      this.bountyGroup = { ring, sparkle, curX: 0, curZ: 0, initialized: false };
     }
   }
 
@@ -898,6 +940,7 @@ export class GameplayRenderer {
       : fallback?.position;
     if (!sourcePos) {
       this.bountyGroup.ring.visibility = 0;
+      if (this.bountyGroup.sparkle) this.bountyGroup.sparkle.emitRate = 0;
       return;
     }
 
@@ -946,6 +989,13 @@ export class GameplayRenderer {
     g.ring.position.set(g.curX, 25 + Math.sin(this._tick * 0.06) * 3, g.curZ);
     g.ring.rotation.y += 0.4 * d;
     g.ring.visibility = 1;
+    if (g.sparkle) {
+      // Track the crown; drip toward the bot (emitter mutated in place).
+      g.sparkle.emitter.x = g.curX;
+      g.sparkle.emitter.y = 23;
+      g.sparkle.emitter.z = g.curZ;
+      g.sparkle.emitRate = 18;
+    }
   }
 
   /** @private Per-frame idle animations for gameplay entities. All phase
@@ -1026,6 +1076,15 @@ export class GameplayRenderer {
           ? 0.5 + 0.4 * Math.abs(Math.sin(t * 0.15))
           : 0.9;
         e.pole.rotation.y = carried ? t * 0.05 : 0;
+        // Comet trail while carried: the exp-lerp position above sweeps the
+        // emitter smoothly, leaving a genuine team-colored tail across the
+        // arena. Emitter Vector3 mutated in place (allocation-free).
+        if (e.trail) {
+          e.trail.emitter.x = e.curX;
+          e.trail.emitter.y = 14;
+          e.trail.emitter.z = e.curZ;
+          e.trail.emitRate = carried ? 28 : 0;
+        }
       }
     }
   }
@@ -1041,10 +1100,17 @@ export class GameplayRenderer {
     for (const [, e] of this.staffImpacts) { e.outer.dispose(); e.disc.dispose(); e.outerMat.dispose(); e.discMat.dispose(); }
     for (const m of this.voidTiles.values()) m.dispose();
     if (this.flags) {
-      for (const [, e] of this.flags) { e.pole.dispose(); e.base.dispose(); }
+      for (const [, e] of this.flags) {
+        e.pole.dispose();
+        e.base.dispose();
+        if (e.trail) e.trail.dispose(false); // shared _glowTex freed below
+      }
       this.flags.clear();
     }
-    if (this.bountyGroup) this.bountyGroup.ring.dispose();
+    if (this.bountyGroup) {
+      this.bountyGroup.ring.dispose();
+      if (this.bountyGroup.sparkle) this.bountyGroup.sparkle.dispose(false);
+    }
     this.teleportPads.clear();
     this.hazardZones.clear();
     this.burnFields.clear();
