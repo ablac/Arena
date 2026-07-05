@@ -41,22 +41,12 @@ export class TrailRenderer {
       if (!trail) {
         const color = entry.bodyMat ? entry.bodyMat.diffuseColor : new B.Color3(0.5, 0.5, 0.5);
         const mat = new B.StandardMaterial(`tmat-${botId}`, this.scene);
-        // Additive + brightened so overlapping trails brighten instead of
-        // muddying, and every moving bot drags a visible light streak (with
-        // bloom this is the core "alive between battles" read on a big screen).
-        // Depth-write off keeps additive ribbons from occluding ground decals.
-        mat.emissiveColor = new B.Color3(
-          Math.min(1, color.r * 1.5),
-          Math.min(1, color.g * 1.5),
-          Math.min(1, color.b * 1.5)
-        );
+        mat.emissiveColor = color.clone();
         mat.diffuseColor = color.clone();
         mat.disableLighting = true;
         mat.backFaceCulling = false;
         mat.alpha = 1;
         mat.useVertexAlpha = true;
-        mat.alphaMode = B.Engine.ALPHA_ADD;
-        mat.disableDepthWrite = true;
 
         // Pre-allocate reusable path arrays (2 sides × MAX_HISTORY points)
         const left = [];
@@ -158,9 +148,7 @@ export class TrailRenderer {
         const pps = MAX_HISTORY; // points per side
         for (let v = 0; v < vc; v++) {
           const idx = v % pps;
-          // 0.5 peak alpha (was 0.3): with additive blending the ground shows
-          // through, so the brighter ribbon does not occlude.
-          const a = idx < n ? (idx / (n - 1)) * 0.5 : 0;
+          const a = idx < n ? (idx / (n - 1)) * 0.3 : 0;
           trail.colors[v * 4] = c.r;
           trail.colors[v * 4 + 1] = c.g;
           trail.colors[v * 4 + 2] = c.b;
