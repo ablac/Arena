@@ -7,8 +7,8 @@
  */
 
 import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260706a';
-import { updateBotAnim, triggerAttack, triggerDodge, triggerShove, meleeContactDelay } from './animations.js?v=20260706a';
-import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance, triggerSwordsmanHit } from './swordsman-anims.js?v=20260706a';
+import { updateBotAnim, triggerAttack, triggerDodge, triggerShove, meleeContactDelay } from './animations.js?v=20260706b';
+import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance, triggerSwordsmanHit } from './swordsman-anims.js?v=20260706b';
 
 export class BotRenderer {
   /** @param {BABYLON.Scene} scene */
@@ -193,7 +193,12 @@ export class BotRenderer {
 
       // Shove detection
       if (botAction === 'shove' && bot.is_alive && entry._wasAlive) {
-        triggerShove(entry.anim);
+        // The generic shove drives the WEAPON_ANIMS phase machine, which the
+        // swordsman rig does not run: on a SwordsmanAnimState it sets
+        // attackTimer=0 with no keyframes, wedging the timer at 0 and gating
+        // all future swings. Swordsmen keep the facing turn and shove ring
+        // but skip the generic trigger.
+        if (!entry.isSwordsman) triggerShove(entry.anim);
 
         const targetPos = bot.target_id ? getPosMap().get(bot.target_id) : null;
         if (targetPos) {
@@ -346,11 +351,14 @@ export class BotRenderer {
 
   /** @private Apply visual indicators for dodge (invulnerability) and stun. */
   _updateStatusEffects(entry, bot) {
-    // Dodge / invulnerability — semi-transparent
+    // Dodge / invulnerability — semi-transparent. While the bot is dead the
+    // death fade in the anim tick owns alpha; writing 1 here every server
+    // tick keeps corpses opaque and fights that fade, so steer alpha only
+    // for live bots.
     if (bot.is_dodging) {
       entry.bodyMat.alpha = 0.5;
       entry.headMat.alpha = 0.5;
-    } else {
+    } else if (bot.is_alive) {
       entry.bodyMat.alpha = 1;
       entry.headMat.alpha = 1;
     }

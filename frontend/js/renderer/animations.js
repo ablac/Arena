@@ -210,7 +210,8 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat, en
     anim.attackTimer = -1;
     anim.attackType = null;
     body.rotation.z = 0;
-    body.scaling.y = 1;
+    // Dodge writes scaling.x/z too; restore the full vector.
+    body.scaling.set(1, 1, 1);
     if (bodyMat) bodyMat.alpha = 1;
   }
   if (anim.respawnTimer >= 0) {
@@ -223,6 +224,24 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat, en
       bodyMat.emissiveColor.b = Math.min(bodyMat.emissiveColor.b + glow, 1);
     }
     if (anim.respawnTimer > 0.5) anim.respawnTimer = -1;
+  }
+
+  // --- Self-heal scale residue ---
+  // rotation.z and alpha already have alive-path owners here (the idle block
+  // writes body.rotation.z absolutely every frame, and _updateStatusEffects
+  // stomps alpha every server tick), but nothing restores scaling outside
+  // the dodge branch itself, so a missed respawn reset would freeze the
+  // death squash forever. Ease scaling back to rest on every alive frame
+  // the dodge does not own it.
+  if (anim.dodgeTimer < 0) {
+    const sc = body.scaling;
+    if (sc.x !== 1 || sc.y !== 1 || sc.z !== 1) {
+      sc.x = lerp(sc.x, 1, 6, dt);
+      sc.y = lerp(sc.y, 1, 6, dt);
+      sc.z = lerp(sc.z, 1, 6, dt);
+      if (Math.abs(sc.x - 1) < 0.001 && Math.abs(sc.y - 1) < 0.001 &&
+          Math.abs(sc.z - 1) < 0.001) sc.set(1, 1, 1);
+    }
   }
 
   // Smooth rotation toward target when set
