@@ -34,8 +34,8 @@
  */
 
 import { parseColor, makeMat } from './utils.js';
-import { getGuiTexture, _getTplShadow } from './bot-body.js';
-import { SwordsmanAnimState } from './swordsman-anims.js';
+import { getGuiTexture, _getTplShadow } from './bot-body.js?v=20260706a';
+import { SwordsmanAnimState } from './swordsman-anims.js?v=20260706a';
 
 // ─── Scale ───────────────────────────────────────────────────────────────────
 // Editor character is ~1.85 units tall. Arena bots are ~24 units tall.

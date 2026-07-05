@@ -9,7 +9,7 @@
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260705c';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260706a';
 import { Minimap } from '../js/renderer/minimap.js';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 

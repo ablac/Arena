@@ -8,8 +8,8 @@
 
 import { parseColor, makeMat } from './utils.js';
 import { createWeaponMesh, disposeWeapon } from './weapons.js?v=20260705a';
-import { BotAnimState } from './animations.js?v=20260521f';
-import { createSwordsmanEntry, disposeSwordsmanEntry } from './swordsman-body.js';
+import { BotAnimState } from './animations.js?v=20260706a';
+import { createSwordsmanEntry, disposeSwordsmanEntry } from './swordsman-body.js?v=20260706a';
 
 const BODY_H = 12;
 const BODY_R = 5;
@@ -168,19 +168,29 @@ export function createBotEntry(bot, scene) {
   });
   head.material = headMat;
 
-  // Arms — instanced from shared template (per-instance color)
+  // Arms — instanced from shared template (per-instance color), each hung
+  // from a shoulder-pivot TransformNode at the arm's top so attack and
+  // locomotion animation can swing them like limbs instead of translating
+  // rigid cylinders. TransformNodes cost no draw calls; the instances keep
+  // their per-instance color buffers.
   const armColor = new B.Color4(color.r * 0.8, color.g * 0.8, color.b * 0.8, 1);
+  const lShoulder = new B.TransformNode(`lshoulder-${id}`, scene);
+  lShoulder.position.set(-BODY_R - ARM_R, BODY_H * 0.6 + ARM_H / 2, 0);
+  lShoulder.parent = root;
   const lArm = _getTplArm(scene).createInstance(`larm-${id}`);
   lArm.instancedBuffers.color = armColor;
-  lArm.position.set(-BODY_R - ARM_R, BODY_H * 0.6, 0);
-  lArm.parent = root;
+  lArm.position.set(0, -ARM_H / 2, 0);
+  lArm.parent = lShoulder;
   lArm.isPickable = false;
   lArm.alwaysSelectAsActiveMesh = true;
 
+  const rShoulder = new B.TransformNode(`rshoulder-${id}`, scene);
+  rShoulder.position.set(BODY_R + ARM_R, BODY_H * 0.6 + ARM_H / 2, 0);
+  rShoulder.parent = root;
   const rArm = _getTplArm(scene).createInstance(`rarm-${id}`);
   rArm.instancedBuffers.color = armColor;
-  rArm.position.set(BODY_R + ARM_R, BODY_H * 0.6, 0);
-  rArm.parent = root;
+  rArm.position.set(0, -ARM_H / 2, 0);
+  rArm.parent = rShoulder;
   rArm.isPickable = false;
   rArm.alwaysSelectAsActiveMesh = true;
 
@@ -244,6 +254,7 @@ export function createBotEntry(bot, scene) {
 
   return {
     root, body, bodyMat, head, headMat, lArm, rArm,
+    lShoulder, rShoulder,
     shadow, weapon, hpContainer, hpFill, nameLabel,
     selector, pickMeshes: [selector, body, head],
     anim: new BotAnimState(),
@@ -268,6 +279,10 @@ export function disposeBotEntry(entry) {
   // Arms and shadow are InstancedMeshes — dispose instances (not the template)
   if (entry.lArm && !entry.lArm.isDisposed()) entry.lArm.dispose();
   if (entry.rArm && !entry.rArm.isDisposed()) entry.rArm.dispose();
+  // Shoulder pivots (TransformNodes; root.dispose() below would also cascade,
+  // explicit for symmetry with the arm instances they carried)
+  if (entry.lShoulder) entry.lShoulder.dispose();
+  if (entry.rShoulder) entry.rShoulder.dispose();
   if (entry.shadow && !entry.shadow.isDisposed()) entry.shadow.dispose();
   if (entry.selector && !entry.selector.isDisposed()) entry.selector.dispose();
   if (entry.weapon) disposeWeapon(entry.weapon);

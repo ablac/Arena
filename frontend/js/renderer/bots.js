@@ -6,9 +6,9 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260705a';
-import { updateBotAnim, triggerAttack, triggerDodge, triggerShove } from './animations.js?v=20260521f';
-import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance } from './swordsman-anims.js';
+import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260706a';
+import { updateBotAnim, triggerAttack, triggerDodge, triggerShove, meleeContactDelay } from './animations.js?v=20260706a';
+import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance, triggerSwordsmanHit } from './swordsman-anims.js?v=20260706a';
 
 export class BotRenderer {
   /** @param {BABYLON.Scene} scene */
@@ -117,6 +117,16 @@ export class BotRenderer {
           const dmg = entry._lastHp - bot.hp;
           entry._flinch = Math.min(1, 0.35 + dmg / 30); // intensity 0.35..1 by hit size
           entry._flinchT = 0.18;                         // seconds, decays in interpolate()
+          // Directional reaction: face the recoil AWAY from the attacker when
+          // the hit source is fresh (set by the engine's contact-synced effect
+          // path or event handlers); otherwise assume a frontal hit.
+          const fresh = entry._hitFromT && (performance.now() - entry._hitFromT) < 400;
+          entry._hitYaw = fresh
+            ? Math.atan2(entry._hitFromX - bot.position[0], entry._hitFromZ - bot.position[1])
+            : entry.root.rotation.y;
+          if (entry.isSwordsman) {
+            triggerSwordsmanHit(entry.anim, entry._hitYaw, entry._flinch);
+          }
         }
         entry._lastHp = bot.hp;
         const hpRatio = bot.hp / bot.max_hp;
@@ -163,12 +173,19 @@ export class BotRenderer {
           if (adx !== 0 || adz !== 0) {
             entry.anim.targetRotY = Math.atan2(adx, adz);
           }
-          // Notify effects system with weapon type
+          // Notify effects system with weapon type. contactDelay lets the
+          // engine land impact effects and the victim reaction at the moment
+          // the swing visually connects instead of at swing start.
           if (this.onAttack) {
+            const dur = liveCooldown > 0.16 ? liveCooldown : 0.5;
+            const contactDelay = entry.isSwordsman
+              ? 0.55 * dur // contact keyframe t in the swordsman choreography
+              : meleeContactDelay(weaponType, liveCooldown);
             this.onAttack(bot.position[0], bot.position[1],
                           targetPos[0], targetPos[1], bot.avatar_color, weaponType, {
                             targetId: bot.target_id || null,
                             targetPosition: explicitTargetPos,
+                            contactDelay,
                           });
           }
         }
@@ -220,9 +237,14 @@ export class BotRenderer {
       // Death flash
       if (!bot.is_alive && entry._wasAlive) {
         this._deathFlash(entry);
-        // Release the flinch channel so a respawn starts at rest scale.
+        // Release the flinch channel so a respawn starts at rest scale,
+        // and zero the hit-reaction rotations so a respawn stands straight.
         entry._flinchT = 0;
         entry.root.scaling.setAll(1);
+        if (!entry.isSwordsman) {
+          if (entry.head) { entry.head.rotation.x = 0; entry.head.rotation.z = 0; }
+          if (entry.body) { entry.body.rotation.x = 0; entry.body.rotation.z = 0; }
+        }
       }
       entry._wasAlive = bot.is_alive;
       entry.isAlive = bot.is_alive;
@@ -275,7 +297,7 @@ export class BotRenderer {
         updateBotAnim(
           entry.anim, entry.root, entry.weapon,
           entry.root.position.x, entry.root.position.z,
-          entry.isAlive, dt, entry.bodyMat
+          entry.isAlive, dt, entry.bodyMat, entry
         );
       }
 
@@ -297,9 +319,26 @@ export class BotRenderer {
         } else if (entry._flinchT <= 0) {
           entry._flinchT = 0;
           entry.root.scaling.setAll(1); // release to rest
+          if (!entry.isSwordsman) {
+            // Rest the directional reaction channels exactly at zero.
+            if (entry.head) { entry.head.rotation.x = 0; entry.head.rotation.z = 0; }
+            if (entry.body) { entry.body.rotation.x = 0; entry.body.rotation.z = 0; }
+          }
         } else {
           const k = entry._flinchT / 0.18; // 1 at impact -> 0 at rest
           entry.root.scaling.setAll(1 - 0.14 * entry._flinch * k);
+          if (!entry.isSwordsman && entry.head && entry.body) {
+            // Directional head snap + torso lean AWAY from the attacker.
+            // head and this body child mesh are uncontended channels
+            // (updateBotAnim poses entry.root, never these two). Two trig
+            // calls per flinching bot, zero allocations.
+            const rel = (entry._hitYaw ?? entry.root.rotation.y) - entry.root.rotation.y;
+            const amp = entry._flinch * k;
+            entry.head.rotation.x = -0.5 * amp * Math.cos(rel);
+            entry.head.rotation.z = 0.35 * amp * Math.sin(rel);
+            entry.body.rotation.x = -0.25 * amp * Math.cos(rel);
+            entry.body.rotation.z = 0.18 * amp * Math.sin(rel);
+          }
         }
       }
     }
@@ -369,9 +408,16 @@ export class BotRenderer {
     this.scene.beginDirectAnimation(entry.headMat, [headAnim], 0, 30, false);
   }
 
-  playImpactReaction(botId) {
+  playImpactReaction(botId, fromX, fromZ) {
     const entry = this.entries.get(botId);
     if (!entry || !entry.bodyMat || !entry.headMat) return;
+    // Stamp the hit source (scalars only) so the damage flinch on the next
+    // HP tick can recoil directionally away from the attacker.
+    if (typeof fromX === 'number' && typeof fromZ === 'number') {
+      entry._hitFromX = fromX;
+      entry._hitFromZ = fromZ;
+      entry._hitFromT = performance.now();
+    }
     const B = window.BABYLON;
     const bodyOrig = entry.bodyMat.emissiveColor.clone();
     const headOrig = entry.headMat.emissiveColor.clone();
