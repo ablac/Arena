@@ -162,6 +162,12 @@ function startAutoRefresh(state, podiumEl, leaderboardBody, bountyBody, weaponPo
   ), 15000);
 }
 
+// Rank-change memory for standings motion: previous rank per bot, keyed to
+// the sort/period the ranks came from so a tab switch never produces a wall
+// of false flashes. Rebuilt each render (departed bots drop out naturally).
+const _prevRanks = new Map();
+let _prevRanksKey = '';
+
 function renderLeaderboard(data, podiumEl, tbody, state) {
   tbody.innerHTML = '';
   const entries = data.entries || data.leaderboard || [];
@@ -175,6 +181,10 @@ function renderLeaderboard(data, podiumEl, tbody, state) {
     return;
   }
 
+  const ranksKey = `${state.sort}|${state.period}`;
+  const compare = ranksKey === _prevRanksKey;
+  const nextRanks = new Map();
+
   entries.forEach((entry, index) => {
     const rank = entry.rank || index + 1;
     const statValue = getStatValue(entry, state.sort);
@@ -185,8 +195,22 @@ function renderLeaderboard(data, podiumEl, tbody, state) {
       <td>${entry.deaths > 0 ? (entry.kills / entry.deaths).toFixed(1) : `${entry.kills}.0`}</td>
       <td>${entry.elo}</td>`;
     if (rank <= 3) tr.className = `rank-${rank}`;
+    // Motion classes only when the row's rank ACTUALLY changed since the
+    // last refresh of the same view, so steady-state refreshes stay still.
+    // classList.add appends (the top-3 className assignment above stays).
+    if (compare) {
+      const prev = _prevRanks.get(entry.name);
+      if (prev === undefined && _prevRanks.size > 0) tr.classList.add('rank-new');
+      else if (prev !== undefined && rank < prev) tr.classList.add('rank-up');
+      else if (prev !== undefined && rank > prev) tr.classList.add('rank-down');
+    }
+    nextRanks.set(entry.name, rank);
     tbody.appendChild(tr);
   });
+
+  _prevRanks.clear();
+  for (const [k, v] of nextRanks) _prevRanks.set(k, v);
+  _prevRanksKey = ranksKey;
 }
 
 function renderBountyBoard(data, tbody) {

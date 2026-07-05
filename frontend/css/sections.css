@@ -211,8 +211,41 @@
   box-shadow: var(--shadow-lg);
   overflow: hidden;
   isolation: isolate;
-  animation: arena-surface-drift 12s ease-in-out infinite;
+  /* arena-surface-drift removed: it animated box-shadow (a paint property)
+     on a ~1400px shell every frame, re-rasterizing a large soft-shadow
+     region in the same frame budget the WebGL canvas needs. */
   transition: padding 0.28s ease, border-radius 0.28s ease, box-shadow 0.28s ease, background 0.28s ease;
+}
+
+/* Combat-reactive overlay: pre-rasterized, opacity-only one-shot flashes
+   driven by app.js (combat-flash on kills, round-sweep on round start).
+   Composites on the GPU; costs nothing between events. */
+.arena-shell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 2;
+  background: radial-gradient(circle at 50% 40%, rgba(255, 95, 87, 0.2), transparent 65%);
+  box-shadow: inset 0 0 0 2px rgba(255, 95, 87, 0.4);
+}
+
+.arena-shell.combat-flash::after {
+  animation: shell-flash 0.7s ease-out;
+}
+
+.arena-shell.round-sweep::after {
+  background: radial-gradient(circle at 50% 40%, rgba(71, 215, 255, 0.18), transparent 65%);
+  box-shadow: inset 0 0 0 2px rgba(71, 215, 255, 0.4);
+  animation: shell-flash 0.9s ease-out;
+}
+
+@keyframes shell-flash {
+  0% { opacity: 0; }
+  25% { opacity: 0.85; }
+  100% { opacity: 0; }
 }
 
 .arena-shell::before {
@@ -466,6 +499,7 @@ body.arena-fullscreen {
 }
 
 .killfeed-entry {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -474,6 +508,21 @@ body.arena-fullscreen {
   border-radius: 16px;
   border: 1px solid rgba(126, 166, 207, 0.08);
   background: linear-gradient(180deg, rgba(14, 24, 38, 0.82), rgba(8, 14, 24, 0.78));
+}
+
+/* One-shot red glow flash behind a fresh kill entry (opacity-only). */
+.killfeed-entry::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(255, 95, 87, 0.16);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.killfeed-entry.killfeed-new::before {
+  animation: killfeed-flash 0.6s ease-out;
 }
 
 .killfeed-entry.killfeed-new {
@@ -494,13 +543,19 @@ body.arena-fullscreen {
 }
 
 @keyframes killfeed-in {
-  from { transform: translateY(-8px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from { transform: translateX(-16px) scale(0.96); opacity: 0; }
+  to { transform: translateX(0) scale(1); opacity: 1; }
 }
 
 @keyframes killfeed-fade {
-  from { opacity: 1; }
-  to { opacity: 0; }
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(6px) scale(0.98); }
+}
+
+@keyframes killfeed-flash {
+  0% { opacity: 0; }
+  30% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 .hud-players,
@@ -852,6 +907,7 @@ body.arena-fullscreen {
 }
 
 .ws-status .dot {
+  position: relative;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -862,6 +918,27 @@ body.arena-fullscreen {
 .ws-status.connected .dot {
   background: #22c55e;
   box-shadow: 0 0 12px rgba(34, 197, 94, 0.4);
+  animation: live-dot-pulse 1.6s ease-in-out infinite;
+}
+
+/* Halo breathes via opacity on a pseudo (never animate box-shadow). */
+.ws-status.connected .dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 14px 4px rgba(34, 197, 94, 0.5);
+  animation: live-dot-halo 1.6s ease-in-out infinite;
+}
+
+@keyframes live-dot-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.35); }
+}
+
+@keyframes live-dot-halo {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0; }
 }
 
 /* Leaderboard */
@@ -1983,10 +2060,22 @@ pre.code-block {
   to { transform: rotate(0deg); }
 }
 
-@keyframes arena-surface-drift {
-  0%, 100% { box-shadow: var(--shadow-lg); }
-  50% { box-shadow: 0 28px 90px rgba(0, 0, 0, 0.46); }
+/* Rank-change motion for the standings refresh (classes applied by
+   leaderboard.js only when a row's rank actually changed, so steady-state
+   refreshes stay motionless). */
+@keyframes rank-flash-up {
+  0% { background-color: rgba(51, 209, 122, 0.18); transform: translateY(6px); }
+  100% { background-color: transparent; transform: translateY(0); }
 }
+
+@keyframes rank-flash-down {
+  0% { background-color: rgba(255, 95, 87, 0.16); transform: translateY(-6px); }
+  100% { background-color: transparent; transform: translateY(0); }
+}
+
+tr.rank-up { animation: rank-flash-up 1.2s ease-out; }
+tr.rank-down { animation: rank-flash-down 1.2s ease-out; }
+tr.rank-new { animation: killfeed-in 0.45s cubic-bezier(0.22, 1, 0.36, 1); }
 
 /* Responsive */
 @media (max-width: 980px) {
@@ -2101,5 +2190,26 @@ pre.code-block {
 
   .weapon-stats-updated {
     white-space: normal;
+  }
+}
+
+/* Reduced motion: zero out infinite ambient loops and one-shot flashes;
+   content is never motion-gated. */
+@media (prefers-reduced-motion: reduce) {
+  .hero-ticker span,
+  .keygen-orbit-a,
+  .keygen-orbit-b,
+  .leaderboard-mode-tabs button.active,
+  .ws-status.connected .dot,
+  .ws-status.connected .dot::after,
+  .arena-shell.combat-flash::after,
+  .arena-shell.round-sweep::after,
+  .killfeed-entry.killfeed-new,
+  .killfeed-entry.killfeed-new::before,
+  .killfeed-entry.killfeed-out,
+  tr.rank-up,
+  tr.rank-down,
+  tr.rank-new {
+    animation: none;
   }
 }
