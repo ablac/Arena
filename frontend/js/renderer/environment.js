@@ -31,6 +31,7 @@ export class EnvironmentRenderer {
     this._createPylonRings();
     this._createUndersideThrusters();
     this._createEdgeWaterfalls();
+    this._createHoloTitle();
     this._initZoneMaterials();
     this._createAmbientParticles();
   }
@@ -1000,10 +1001,11 @@ export class EnvironmentRenderer {
     ctx.fillText('AI BATTLE ARENA', texW/2, texH/2);
     tex.update();
 
+    // Sized and raised to clear the corner-pylon beams at overview zoom.
     const plane = B.MeshBuilder.CreatePlane('holoTitle', {
-      width: 400, height: 50
+      width: 520, height: 65
     }, this.scene);
-    plane.position.set(this.w / 2, 160, this.h / 2);
+    plane.position.set(this.w / 2, 200, this.h / 2);
     plane.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
     plane.isPickable = false;
 
@@ -1017,16 +1019,19 @@ export class EnvironmentRenderer {
     mat.alpha = 0.85;
     plane.material = mat;
 
-    // Subtle float animation
-    const baseY = 160;
-    this.scene.registerBeforeRender(() => {
+    // Subtle float animation (observer stored so dispose() can remove it —
+    // the arena-resize rebuild path must not leak per-frame work).
+    const baseY = 200;
+    this._holoTitleObs = this.scene.onBeforeRenderObservable.add(() => {
       const t = performance.now() / 1000;
       plane.position.y = baseY + Math.sin(t * 0.5) * 5;
       // Subtle pulse
-      plane.material.alpha = 0.75 + 0.1 * Math.sin(t * 1.5);
+      mat.alpha = 0.75 + 0.1 * Math.sin(t * 1.5);
     });
 
     this._holoTitle = plane;
+    this._holoTitleTex = tex;
+    this._holoTitleMat = mat;
   }
 
   /** @private Ambient floating dust/ember particles for atmosphere. */
@@ -1183,6 +1188,7 @@ export class EnvironmentRenderer {
     // Register lerp animation if not already running
     if (!this._zoneLerpRegistered) {
       this._zoneLerpRegistered = true;
+      this._zonePulseT = 0;
       this.scene.registerBeforeRender(() => {
         if (this._zoneTargetR === undefined || !this._zoneRing) return;
         // dt-based smoothing so convergence speed is framerate-independent
@@ -1194,6 +1200,22 @@ export class EnvironmentRenderer {
         this._zoneCurCy += (this._zoneTargetCy - this._zoneCurCy) * lerpSpeed;
         this._zoneRing.scaling.set(this._zoneCurR * 2, this._zoneCurR * 2, this._zoneCurR * 2);
         this._zoneRing.position.set(this._zoneCurCx, 2, this._zoneCurCy);
+
+        // Urgency pulse: the ring breathes calm blue while stable and shifts
+        // to a faster red-orange pulse while actively shrinking, so
+        // spectators read "the zone is closing" from across the room.
+        // Material mutation only (the zone mat is not frozen); copyFromFloats
+        // keeps this allocation-free. Alpha floor stays >= 0.6 for legibility.
+        this._zonePulseT += Math.min(dt, 0.1);
+        const shrinking = this._zoneTargetR < this._zoneCurR - 1;
+        const speed = shrinking ? 6 : 2;
+        const pulse = 0.75 + 0.25 * Math.sin(this._zonePulseT * speed);
+        this._zoneMat.alpha = 0.45 + 0.35 * pulse;
+        if (shrinking) {
+          this._zoneMat.emissiveColor.copyFromFloats(1.0 * pulse, 0.35 * pulse, 0.15 * pulse);
+        } else {
+          this._zoneMat.emissiveColor.copyFromFloats(0.1 * pulse + 0.05, 0.5 * pulse, 1.0 * pulse);
+        }
       });
     }
   }
@@ -1260,5 +1282,18 @@ export class EnvironmentRenderer {
     if (this._targetRing) { this._targetRing.dispose(); this._targetRing = null; }
     if (this._shadowGen) { this._shadowGen.dispose(); this._shadowGen = null; }
     if (this._skybox) { this._skybox.dispose(); this._skybox = null; }
+
+    if (this._holoTitle) {
+      if (this._holoTitleObs) {
+        this.scene.onBeforeRenderObservable.remove(this._holoTitleObs);
+        this._holoTitleObs = null;
+      }
+      this._holoTitleTex.dispose();
+      this._holoTitleMat.dispose();
+      this._holoTitle.dispose();
+      this._holoTitle = null;
+      this._holoTitleTex = null;
+      this._holoTitleMat = null;
+    }
   }
 }

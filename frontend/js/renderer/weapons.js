@@ -244,11 +244,20 @@ function staff(id, scene) {
     diameter: 5.8, thickness: 0.35, tessellation: 20
   }, scene);
   halo.position.set(8, 18, 0);
-  halo.rotation.x = Math.PI / 2;
+  // Slight tilt so the idle y-spin below reads as a visible precession
+  // (a flat torus spinning around its own axis of symmetry shows nothing).
+  halo.rotation.x = Math.PI / 2 - 0.14;
   halo.parent = root;
   halo.material = _mat('w-staff-halo', scene, new (B().Color3)(0.78, 0.5, 1.0), {
     emissiveFactor: 0.95, noLight: true
   });
+
+  // Idle micro-animation: halo precession + orb breathe, so casters look
+  // magical even between fights (transform-only; materials are shared and
+  // frozen and must never be animated). Babylon Animatables run at zero
+  // per-frame JS cost. Randomized speed desynchronizes bots.
+  _idleSpin(scene, halo, 0.4 + Math.random() * 0.2);
+  _idleBreathe(scene, orb, 1.12, 40, 0.8 + Math.random() * 0.4);
 
   const prongL = B().MeshBuilder.CreateCylinder(`staff-prongl-${id}`, {
     height: 4.8, diameterTop: 0.08, diameterBottom: 0.55, tessellation: 5
@@ -377,13 +386,51 @@ function grapple(id, scene) {
   glow.material = _mat('w-grapple-glow', scene, new (B().Color3)(0.2, 0.9, 1.0), {
     emissiveFactor: 0.9, noLight: true
   });
+  // Idle breathe on the emitter glow (transform-only, see staff note).
+  _idleBreathe(scene, glow, 1.18, 42, 0.8 + Math.random() * 0.4);
 
   root._children = [handle, cable, hub, clawA, clawB, clawC, glow];
   return root;
 }
 
+/** @private Looping y-rotation Animatable (visible on tilted/featured meshes). */
+function _idleSpin(scene, node, speed) {
+  const anim = new (B().Animation)(
+    `idle-spin-${node.name}`, 'rotation.y', 30,
+    B().Animation.ANIMATIONTYPE_FLOAT, B().Animation.ANIMATIONLOOPMODE_CYCLE
+  );
+  anim.setKeys([
+    { frame: 0, value: 0 },
+    { frame: 60, value: Math.PI * 2 },
+  ]);
+  scene.beginDirectAnimation(node, [anim], 0, 60, true, speed);
+}
+
+/** @private Looping uniform scale breathe between 1 and `peak`. */
+function _idleBreathe(scene, node, peak, frames, speed) {
+  const V3 = B().Vector3;
+  const anim = new (B().Animation)(
+    `idle-breathe-${node.name}`, 'scaling', 30,
+    B().Animation.ANIMATIONTYPE_VECTOR3, B().Animation.ANIMATIONLOOPMODE_CYCLE
+  );
+  anim.setKeys([
+    { frame: 0, value: new V3(1, 1, 1) },
+    { frame: frames / 2, value: new V3(peak, peak, peak) },
+    { frame: frames, value: new V3(1, 1, 1) },
+  ]);
+  scene.beginDirectAnimation(node, [anim], 0, frames, true, speed);
+}
+
 export function disposeWeapon(weapon) {
   if (!weapon) return;
+  // Stop idle Animatables before disposing so they don't linger against
+  // disposed nodes (mirrors pickups.js dispose discipline).
+  if (weapon._children) {
+    const scene = typeof weapon.getScene === 'function' ? weapon.getScene() : null;
+    if (scene) {
+      weapon._children.forEach(c => scene.stopAnimation(c));
+    }
+  }
   // Don't dispose shared materials
   if (weapon._children) {
     weapon._children.forEach(c => c.dispose());

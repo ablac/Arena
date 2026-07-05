@@ -148,6 +148,19 @@ export class ArenaEngine {
       pipeline.imageProcessing.toneMappingType = B.ImageProcessingConfiguration.TONEMAPPING_ACES;
       pipeline.imageProcessing.exposure = 1.0;
       pipeline.imageProcessing.contrast = 1.1;
+      // Bloom: the scene is built almost entirely from emissive materials and
+      // additive particles (trims, rings, trails, explosions) but nothing glowed.
+      // High threshold so only genuine highlights bloom; ACES keeps them controlled.
+      // bloomScale 0.5 halves the post-pass cost for projector laptops.
+      pipeline.bloomEnabled = true;
+      pipeline.bloomThreshold = 0.75;
+      pipeline.bloomWeight = 0.3;
+      pipeline.bloomKernel = 48;
+      pipeline.bloomScale = 0.5;
+      // Subtle vignette frames the arena on a big screen.
+      pipeline.imageProcessing.vignetteEnabled = true;
+      pipeline.imageProcessing.vignetteWeight = 1.6;
+      pipeline.imageProcessing.vignetteColor = new B.Color4(0, 0, 0.05, 0);
     }
 
     const self = this;
@@ -335,6 +348,7 @@ export class ArenaEngine {
           ev.position[0], ev.position[1],
           ev.color || '#59f1ff'
         );
+        this._shakeAt(ev.position[0], ev.position[1], 4);
         if (ev.target_id && this.botRenderer) {
           this.botRenderer.playImpactReaction(ev.target_id);
         }
@@ -342,6 +356,7 @@ export class ArenaEngine {
         // CTF capture: celebratory burst at the base.
         this.effectRenderer.spawnMineExplosion(ev.position[0], ev.position[1], 30);
         this.effectRenderer.spawnHitSparks(ev.position[0], ev.position[1], '#ffd700', 'sword');
+        this._shakeAt(ev.position[0], ev.position[1], 5);
       } else if ((ev.type === 'flag_taken' || ev.type === 'flag_returned' || ev.type === 'flag_dropped') && ev.position) {
         this.effectRenderer.spawnHitSparks(
           ev.position[0], ev.position[1],
@@ -353,12 +368,14 @@ export class ArenaEngine {
           ev.position[0], ev.position[1],
           (ev.radius || 1) * 20
         );
+        this._shakeAt(ev.position[0], ev.position[1], 6 + (ev.radius || 1) * 3);
       } else if (ev.type === 'staff_detonated' && ev.position) {
         this.effectRenderer.spawnStaffExplosion(
           ev.position[0], ev.position[1],
           (ev.radius || 1) * 20,
           ev.color || '#8d4dff'
         );
+        this._shakeAt(ev.position[0], ev.position[1], 6 + (ev.radius || 1) * 3);
       } else if (ev.type === 'capture_pad_captured' && ev.position) {
         this.effectRenderer.spawnCapturePadPulse(
           ev.position[0], ev.position[1],
@@ -367,6 +384,19 @@ export class ArenaEngine {
         );
       }
     }
+  }
+
+  /**
+   * Camera shake attenuated by distance from the current camera target, so
+   * off-screen detonations do not jolt the view. Intensities stay small
+   * (<= ~12 world units) so a wall-projected image never reads as judder.
+   */
+  _shakeAt(x, z, intensity) {
+    if (!this.camera || typeof this.camera.shake !== 'function') return;
+    const d = Math.hypot(x - this.camera.targetX, z - this.camera.targetZ);
+    const atten = Math.max(0, 1 - d / 900);
+    if (atten <= 0.05) return;
+    this.camera.shake(Math.min(12, intensity * atten));
   }
 
   setZoom(z) { if (this.camera) this.camera.setZoom(z); }

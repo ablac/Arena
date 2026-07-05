@@ -553,6 +553,91 @@ export class EffectRenderer {
     ps.targetStopDuration = 0.1;
     ps.disposeOnStop = true;
     ps.start();
+
+    // A kill is the most spectator-tracked event; the burst alone was the
+    // smallest effect in this file. Three additions, all self-disposing
+    // patterns proven elsewhere in this file. Deaths are rare events, so the
+    // extra ~2 meshes + 1 particle system per death are negligible.
+
+    // (1) Expanding avatar-tinted shockwave ring (shield-bash ring pattern).
+    const ring = B.MeshBuilder.CreateTorus(`death-ring-${++_psCounter}`, {
+      diameter: 26,
+      thickness: 2,
+      tessellation: 28,
+    }, this.scene);
+    ring.position.set(x, 2.2, z);
+    ring.rotation.x = Math.PI / 2;
+    const ringMat = new B.StandardMaterial(`death-ring-mat-${_psCounter}`, this.scene);
+    ringMat.diffuseColor = B.Color3.Black();
+    ringMat.emissiveColor = new B.Color3(Math.min(1, c.r + 0.2), Math.min(1, c.g + 0.2), Math.min(1, c.b + 0.2));
+    ringMat.disableLighting = true;
+    ring.material = ringMat;
+    const ringStart = performance.now();
+    const ringObs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - ringStart) / 320;
+      if (t >= 1) {
+        this.scene.onBeforeRenderObservable.remove(ringObs);
+        ring.dispose();
+        ringMat.dispose();
+        return;
+      }
+      const s = 1 + t * 1.6;
+      ring.scaling.set(s, s, 1);
+      ringMat.alpha = 1 - t;
+    });
+
+    // (2) Vertical light pillar (teleport-shell pattern): a brief beam that
+    // marks the elimination spot even at overview zoom.
+    const pillar = B.MeshBuilder.CreateCylinder(`death-pillar-${++_psCounter}`, {
+      height: 22,
+      diameter: 6,
+      tessellation: 12,
+    }, this.scene);
+    pillar.position.set(x, 11, z);
+    const pillarMat = new B.StandardMaterial(`death-pillar-mat-${_psCounter}`, this.scene);
+    pillarMat.diffuseColor = B.Color3.Black();
+    pillarMat.emissiveColor = new B.Color3(Math.min(1, c.r + 0.2), Math.min(1, c.g + 0.2), Math.min(1, c.b + 0.2));
+    pillarMat.disableLighting = true;
+    pillarMat.alpha = 0.35;
+    pillar.material = pillarMat;
+    const pillarStart = performance.now();
+    const pillarObs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - pillarStart) / 400;
+      if (t >= 1) {
+        this.scene.onBeforeRenderObservable.remove(pillarObs);
+        pillar.dispose();
+        pillarMat.dispose();
+        return;
+      }
+      const ys = 0.6 + t * 0.8;
+      pillar.scaling.set(1, ys, 1);
+      pillar.position.y = 11 * ys;
+      pillarMat.alpha = 0.35 * (1 - t);
+    });
+
+    // (3) Slow lingering embers that hang in the air after the flash.
+    const embers = new B.ParticleSystem(`death-embers-${++_psCounter}`, 14, this.scene);
+    embers.emitter = new B.Vector3(x, 12, z);
+    embers.createPointEmitter(new B.Vector3(-0.6, 0.4, -0.6), new B.Vector3(0.6, 1, 0.6));
+    embers.color1 = new B.Color4(Math.min(1, c.r + 0.3), Math.min(1, c.g + 0.3), Math.min(1, c.b + 0.3), 0.9);
+    embers.color2 = new B.Color4(1, 0.8, 0.5, 0.8);
+    embers.colorDead = new B.Color4(c.r * 0.3, c.g * 0.3, c.b * 0.3, 0);
+    embers.minSize = 1; embers.maxSize = 2.5;
+    embers.minLifeTime = 0.4; embers.maxLifeTime = 0.9;
+    embers.emitRate = 90;
+    embers.minEmitPower = 8; embers.maxEmitPower = 20;
+    embers.gravity = new B.Vector3(0, -8, 0);
+    embers.blendMode = B.ParticleSystem.BLENDMODE_ADD;
+    embers.targetStopDuration = 0.15;
+    embers.disposeOnStop = true;
+    embers.start();
+
+    // Small distance-attenuated shake through the engine-provided camera hook.
+    if (this.camera && typeof this.camera.shake === 'function') {
+      const d = Math.hypot(x - this.camera.targetX, z - this.camera.targetZ);
+      const atten = Math.max(0, 1 - d / 900);
+      if (atten > 0.05) this.camera.shake(4 * atten);
+    }
   }
 
   /**
