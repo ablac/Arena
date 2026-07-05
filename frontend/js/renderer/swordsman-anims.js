@@ -188,54 +188,122 @@ const GUARD_POSES = {
 // from the Arena's top-down camera. Replace them with your 13-keyframe
 // animations for full fidelity.
 
-function _quickSwing(guardPose, swingAxis, swingRange, returnPct) {
-  // Generate a simple 5-keyframe swing from guard -> windup -> strike -> follow -> return
+// Rich 8-beat generators (2026-07-05): full-body strike choreography built
+// for close-up viewing. Guard-relative so all 12 stance variants keep their
+// flavor. Beats: guard -> anticipation (torso twist away, elbow coil, blade
+// lag, crouch load, eyes on target) -> windup HOLD (a near-duplicate
+// keyframe = readable pause, free from the smoothstep easing) -> launch ->
+// CONTACT (arm swept through, wrist-whip overshoot on the sword) -> contact
+// HOLD (built-in hit-stop) -> follow-through -> near-guard (the idle guard
+// elerp absorbs the last few degrees). Arrays are built once at module load
+// and never mutated (the bracket-keys WeakMap cache depends on that).
+// Channels: head.y tracks the target; head.x/head.z/body-pitch are reserved
+// for the additive hit-recoil layer and never appear in keyframe data.
+function _quickSwing(guardPose, swingAxis, swingRange) {
+  const s = Math.sign(swingRange) || 1;
+  const g = (k) => guardPose[k] || 0;
   const rest = { ...guardPose };
-  const windup = { ...guardPose };
-  const strike = { ...guardPose };
+
+  const anticip = { ...guardPose };
+  anticip['torso.y'] = g('torso.y') - 28 * s;
+  anticip['rightArm.x'] = g('rightArm.x') - Math.abs(swingRange) * 0.55;
+  anticip['rightArm.' + swingAxis] = g('rightArm.' + swingAxis) - swingRange * 0.45;
+  anticip['rightLowerArm.x'] = -70;
+  anticip['sword.z'] = 20 * s;
+  anticip['head.y'] = g('head.y') + 24 * s;
+  anticip['leftArm.x'] = g('leftArm.x') + 30;
+  anticip['body.y'] = -3;
+
+  const hold = { ...anticip };
+  hold['body.y'] = -3.5;
+  hold['rightArm.x'] = anticip['rightArm.x'] - 3;
+
+  const launch = { ...guardPose };
+  launch['torso.y'] = g('torso.y') + 10 * s;
+  launch['rightArm.x'] = g('rightArm.x') + Math.abs(swingRange) * 0.2;
+  launch['rightArm.' + swingAxis] = g('rightArm.' + swingAxis) + swingRange * 0.1;
+  launch['rightLowerArm.x'] = -35;
+  launch['head.y'] = g('head.y') + 10 * s;
+  launch['body.y'] = 0;
+
+  const contact = { ...guardPose };
+  contact['torso.y'] = g('torso.y') + 34 * s;
+  contact['rightArm.x'] = g('rightArm.x') + Math.abs(swingRange) * 0.85;
+  contact['rightArm.' + swingAxis] = g('rightArm.' + swingAxis) + swingRange * 0.7;
+  contact['rightLowerArm.x'] = -10;
+  contact['sword.z'] = -14 * s;
+  contact['leftArm.x'] = g('leftArm.x') - 15;
+  contact['body.y'] = 2;
+
+  const chold = { ...contact };
+  chold['sword.z'] = -8 * s;
+  chold['body.y'] = 1.6;
+
   const follow = { ...guardPose };
-
-  windup['rightArm.x'] = (guardPose['rightArm.x'] || 0) - swingRange * 0.4;
-  windup['rightArm.' + swingAxis] = (guardPose['rightArm.' + swingAxis] || 0) - swingRange * 0.3;
-
-  strike['rightArm.x'] = (guardPose['rightArm.x'] || 0) + swingRange * 0.8;
-  strike['rightArm.' + swingAxis] = (guardPose['rightArm.' + swingAxis] || 0) + swingRange * 0.6;
-  strike['body.y'] = 2;
-
-  follow['rightArm.x'] = (guardPose['rightArm.x'] || 0) + swingRange * 0.5;
-  follow['rightArm.' + swingAxis] = (guardPose['rightArm.' + swingAxis] || 0) + swingRange * 0.3;
-  follow['body.y'] = 1;
+  follow['torso.y'] = g('torso.y') + 44 * s;
+  follow['rightArm.x'] = g('rightArm.x') + Math.abs(swingRange) * 0.45;
+  follow['rightArm.' + swingAxis] = g('rightArm.' + swingAxis) + swingRange * 0.35;
+  follow['sword.z'] = 0;
+  follow['body.y'] = -1;
 
   return [
     { t: 0.00, pose: rest },
-    { t: 0.15, pose: windup },
-    { t: 0.45, pose: strike },
-    { t: 0.70, pose: follow },
+    { t: 0.18, pose: anticip },
+    { t: 0.30, pose: hold },
+    { t: 0.44, pose: launch },
+    { t: 0.52, pose: contact },
+    { t: 0.62, pose: chold },
+    { t: 0.80, pose: follow },
     { t: 1.00, pose: rest },
   ];
 }
 
 function _quickThrust(guardPose) {
+  const g = (k) => guardPose[k] || 0;
   const rest = { ...guardPose };
-  const windup = { ...guardPose };
-  const thrust = { ...guardPose };
+
+  const coil = { ...guardPose };
+  coil['torso.y'] = g('torso.y') - 14;
+  coil['rightArm.x'] = g('rightArm.x') - 35;
+  coil['rightLowerArm.x'] = -55;
+  coil['leftArm.x'] = g('leftArm.x') + 25;
+  coil['body.y'] = -2;
+
+  const hold = { ...coil };
+  hold['body.y'] = -2.5;
+  hold['rightLowerArm.x'] = -58;
+
+  const launch = { ...guardPose };
+  launch['rightArm.x'] = g('rightArm.x') + 25;
+  launch['rightLowerArm.x'] = -30;
+  launch['body.y'] = 0.5;
+
+  const contact = { ...guardPose };
+  contact['torso.y'] = g('torso.y') + 6;
+  contact['rightArm.x'] = g('rightArm.x') + 62;
+  contact['rightLowerArm.x'] = -4;
+  contact['rightLeg.x'] = -24;   // lunge step
+  contact['leftLeg.x'] = 20;
+  contact['body.y'] = 3;
+
+  const chold = { ...contact };
+  chold['body.y'] = 2.6;
+  chold['rightArm.x'] = contact['rightArm.x'] - 3;
+
   const recover = { ...guardPose };
-
-  windup['rightArm.x'] = (guardPose['rightArm.x'] || 0) - 30;
-  windup['rightLowerArm.x'] = (guardPose['rightLowerArm.x'] || 0) - 20;
-
-  thrust['rightArm.x'] = (guardPose['rightArm.x'] || 0) + 60;
-  thrust['rightLowerArm.x'] = -10;
-  thrust['body.y'] = 3;
-
-  recover['rightArm.x'] = (guardPose['rightArm.x'] || 0) + 20;
+  recover['rightArm.x'] = g('rightArm.x') + 20;
+  recover['rightLeg.x'] = -8;
+  recover['leftLeg.x'] = 7;
   recover['body.y'] = 1;
 
   return [
     { t: 0.00, pose: rest },
-    { t: 0.20, pose: windup },
-    { t: 0.50, pose: thrust },
-    { t: 0.75, pose: recover },
+    { t: 0.18, pose: coil },
+    { t: 0.30, pose: hold },
+    { t: 0.44, pose: launch },
+    { t: 0.52, pose: contact },
+    { t: 0.62, pose: chold },
+    { t: 0.80, pose: recover },
     { t: 1.00, pose: rest },
   ];
 }
@@ -324,9 +392,52 @@ export class SwordsmanAnimState {
     this.smoothBodyY = 0;
     this.breathPhase = Math.random() * Math.PI * 2;
 
+    // Hit recoil (additive layer over attack/idle; never cancels a swing).
+    // Owns head.x, head.z and body pitch absolutely - keyframe data never
+    // touches those channels.
+    this.hitTimer = -1;
+    this.hitYaw = 0;
+    this.hitAmp = 0;
+
     // Track HP for stance selection
     this._lastHpRatio = 1;
   }
+}
+
+/**
+ * Trigger a directional hit recoil: head snap + torso lean away from the
+ * attacker, amplitude from the damage-scaled flinch. Additive - the current
+ * swing keeps playing underneath.
+ */
+export function triggerSwordsmanHit(anim, yaw, amp) {
+  if (anim.deathTimer >= 0) return;
+  anim.hitTimer = 0;
+  anim.hitYaw = yaw || 0;
+  anim.hitAmp = Math.min(1, amp || 0.5);
+}
+
+/**
+ * Apply the recoil AFTER the base pose has been written for this frame
+ * (applyPose writes rotations absolutely). Owns its channels: writes exact
+ * zeros when the recoil expires so they always rest clean.
+ */
+function _applyHitRecoil(entry, anim, dt) {
+  const joints = entry.joints;
+  if (anim.hitTimer < 0) return;
+  anim.hitTimer += dt;
+  const t = anim.hitTimer / 0.25;
+  if (t >= 1) {
+    anim.hitTimer = -1;
+    joints.head.rotation.x = 0;
+    joints.head.rotation.z = 0;
+    joints.body.rotation.x = 0;
+    return;
+  }
+  const k = (1 - t) * anim.hitAmp;
+  const rel = anim.hitYaw - entry.root.rotation.y;
+  joints.head.rotation.x = -0.55 * k * Math.cos(rel);
+  joints.head.rotation.z = 0.4 * k * Math.sin(rel);
+  joints.body.rotation.x = -0.28 * k * Math.cos(rel);
 }
 
 // ─── Main update function ───────────────────────────────────────────────────
@@ -376,8 +487,12 @@ export function updateSwordsmanAnim(entry, dt) {
     anim.dodgeTimer = -1;
     anim.attackTimer = -1;
     anim.attackKeyframes = null;
+    anim.hitTimer = -1;
     joints.body.rotation.z = 0;
+    joints.body.rotation.x = 0;
     joints.body.scaling.y = 1;
+    joints.head.rotation.x = 0;
+    joints.head.rotation.z = 0;
     if (bodyMat) bodyMat.alpha = 1;
   }
   if (anim.respawnTimer >= 0) {
@@ -448,11 +563,14 @@ export function updateSwordsmanAnim(entry, dt) {
       anim.attackTimer = -1;
       anim.attackKeyframes = null;
     }
+    // Recoil rides on top of the swing (applyPose wrote absolutely above).
+    _applyHitRecoil(entry, anim, dt);
     return;
   }
 
   // ── Idle / movement ──
   _updateIdle(anim, joints, dt);
+  _applyHitRecoil(entry, anim, dt);
 }
 
 // ─── Idle animation (breathing, guard pose, walk cycle) ─────────────────────

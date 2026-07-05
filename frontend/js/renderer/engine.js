@@ -6,7 +6,7 @@
  */
 
 import { CameraController } from './camera.js?v=20260705c';
-import { BotRenderer } from './bots.js?v=20260705a';
+import { BotRenderer } from './bots.js?v=20260706a';
 import { EnvironmentRenderer } from './environment.js?v=20260705c';
 import { ObstacleRenderer } from './obstacles.js?v=20260521h';
 import { PickupRenderer } from './pickups.js?v=20260521m';
@@ -113,14 +113,28 @@ export class ArenaEngine {
     });
 
     // Wire up attack → direct combat effects for non-event-driven weapons.
-    this.botRenderer.onAttack = (ax, az, tx, tz, color, weapon) => {
+    // Effects are delayed to the CONTACT moment of the swing (opts.contactDelay,
+    // computed from the weapon's windup+active phases) so sparks, the strike
+    // read, and the victim's reaction land when the blow visually connects
+    // instead of at swing start. setTimeout at event rate is fine; per-frame
+    // work stays allocation-free.
+    this.botRenderer.onAttack = (ax, az, tx, tz, color, weapon, opts) => {
       if (weapon === 'bow' || weapon === 'staff') {
         return;
-      } else {
-        // Melee/control weapons: immediate impact sparks plus a fast strike read.
+      }
+      const delayMs = Math.max(0, (opts?.contactDelay || 0) * 1000);
+      const targetId = opts?.targetId || null;
+      setTimeout(() => {
+        if (!this.effectRenderer) return; // engine may have been disposed
         this.effectRenderer.spawnWeaponStrike(ax, az, tx, tz, color, weapon);
         this.effectRenderer.spawnHitSparks(tx, tz, color, weapon);
-      }
+        if (targetId && this.botRenderer) {
+          const victim = this.botRenderer.entries.get(targetId);
+          if (victim && victim.isAlive) {
+            this.botRenderer.playImpactReaction(targetId, ax, az);
+          }
+        }
+      }, delayMs);
     };
 
     // Wire up dodge → afterimage shimmer
