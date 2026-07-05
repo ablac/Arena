@@ -5,7 +5,7 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260705c';
+import { ArenaEngine } from './renderer/engine.js?v=20260705d';
 import { HudRenderer } from './renderer/hud.js?v=20260523a';
 import { Minimap } from './renderer/minimap.js';
 import { SpectatorSocket } from './spectator-ws.js';
