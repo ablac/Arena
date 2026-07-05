@@ -27,18 +27,6 @@ export class CameraController {
     this.bots = [];
     this.onZoomChange = null;
 
-    // Idle-attract: after 8s without input the camera drifts into a slow
-    // cinematic orbit so the arena never sits on a dead static angle.
-    // Honors prefers-reduced-motion (checked once; kiosk operators can
-    // still orbit manually).
-    this._idleTime = 0;
-    this._idleBaseBeta = null;
-    this._reducedMotion = typeof window.matchMedia === 'function'
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    // Smoothed zoom: setZoom() writes the target, _tick() lerps toward it.
-    this._targetRadius = BASE_RADIUS;
-
     // Track held keys
     this._keys = new Set();
 
@@ -67,10 +55,6 @@ export class CameraController {
     let lastX = 0, lastY = 0;
 
     canvas.addEventListener('pointerdown', (e) => {
-      // Any pointer interaction (including left-drag orbit handled by
-      // attachControl) cancels the idle-attract drift.
-      this._idleTime = 0;
-      this._idleBaseBeta = null;
       if (e.button === 1 || e.button === 2) {
         dragging = true;
         lastX = e.clientX;
@@ -97,8 +81,6 @@ export class CameraController {
 
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      this._idleTime = 0;
-      this._idleBaseBeta = null;
       const delta = e.deltaY > 0 ? -0.15 : 0.15;
       this.setZoom(this.zoom + delta);
     }, { passive: false });
@@ -107,8 +89,6 @@ export class CameraController {
     window.addEventListener('keydown', (e) => {
       const key = e.key.toLowerCase();
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
-        this._idleTime = 0;
-        this._idleBaseBeta = null;
         this._keys.add(key);
         // Stop following/auto-pan when manually panning
         if (this.followId || this.autoPan) {
@@ -175,31 +155,6 @@ export class CameraController {
     t.x += (this.targetX - t.x) * lerp;
     t.z += (this.targetZ - t.z) * lerp;
     t.y = 0;
-
-    // Idle-attract cinematic drift: slow orbit (~2 min per revolution) with a
-    // gentle beta breathe around wherever the camera was left, plus a slight
-    // radius push-in/out. Kicks in after 8s of no input. Reduced-motion
-    // suppresses the ambient version, but an EXPLICIT Auto-Pan toggle
-    // overrides it (deliberate operator intent, e.g. a showcase kiosk whose
-    // OS has animations off) with a shorter 2s idle gate so it still never
-    // fights active dragging. All scalar math, zero allocations.
-    this._idleTime += Math.min(dt, 0.1);
-    const driftActive = this.autoPan
-      ? this._idleTime > 2
-      : (!this._reducedMotion && this._idleTime > 8);
-    if (driftActive) {
-      if (this._idleBaseBeta === null) this._idleBaseBeta = this.camera.beta;
-      this.camera.alpha += dt * 0.05;
-      this.camera.beta = this._idleBaseBeta + Math.sin(this._idleTime * 0.13) * 0.07;
-    }
-
-    // Smoothed zoom toward the target radius, with a slow oscillation while
-    // drifting so the shot breathes. Reuses the same dt-lerp shape as the target.
-    let radiusGoal = this._targetRadius;
-    if (driftActive) {
-      radiusGoal = this._targetRadius * (1 + Math.sin(this._idleTime * 0.07) * 0.06);
-    }
-    this.camera.radius += (radiusGoal - this.camera.radius) * lerp;
   }
 
   _autoPanToAction() {
@@ -213,9 +168,7 @@ export class CameraController {
 
   setZoom(zoom) {
     this.zoom = Math.max(0.3, Math.min(6.0, zoom));
-    // _tick() lerps camera.radius toward this each frame (buttery zoom
-    // instead of a hard snap).
-    this._targetRadius = BASE_RADIUS / this.zoom;
+    this.camera.radius = BASE_RADIUS / this.zoom;
     if (this.onZoomChange) this.onZoomChange(this.zoom);
   }
 

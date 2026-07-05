@@ -1188,7 +1188,6 @@ export class EnvironmentRenderer {
     // Register lerp animation if not already running
     if (!this._zoneLerpRegistered) {
       this._zoneLerpRegistered = true;
-      this._zonePulseT = 0;
       this.scene.registerBeforeRender(() => {
         if (this._zoneTargetR === undefined || !this._zoneRing) return;
         // dt-based smoothing so convergence speed is framerate-independent
@@ -1201,21 +1200,6 @@ export class EnvironmentRenderer {
         this._zoneRing.scaling.set(this._zoneCurR * 2, this._zoneCurR * 2, this._zoneCurR * 2);
         this._zoneRing.position.set(this._zoneCurCx, 2, this._zoneCurCy);
 
-        // Urgency pulse: the ring breathes calm blue while stable and shifts
-        // to a faster red-orange pulse while actively shrinking, so
-        // spectators read "the zone is closing" from across the room.
-        // Material mutation only (the zone mat is not frozen); copyFromFloats
-        // keeps this allocation-free. Alpha floor stays >= 0.6 for legibility.
-        this._zonePulseT += Math.min(dt, 0.1);
-        const shrinking = this._zoneTargetR < this._zoneCurR - 1;
-        const speed = shrinking ? 6 : 2;
-        const pulse = 0.75 + 0.25 * Math.sin(this._zonePulseT * speed);
-        this._zoneMat.alpha = 0.45 + 0.35 * pulse;
-        if (shrinking) {
-          this._zoneMat.emissiveColor.copyFromFloats(1.0 * pulse, 0.35 * pulse, 0.15 * pulse);
-        } else {
-          this._zoneMat.emissiveColor.copyFromFloats(0.1 * pulse + 0.05, 0.5 * pulse, 1.0 * pulse);
-        }
       });
     }
   }

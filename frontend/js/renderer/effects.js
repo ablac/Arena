@@ -631,13 +631,6 @@ export class EffectRenderer {
     embers.targetStopDuration = 0.15;
     embers.disposeOnStop = true;
     embers.start();
-
-    // Small distance-attenuated shake through the engine-provided camera hook.
-    if (this.camera && typeof this.camera.shake === 'function') {
-      const d = Math.hypot(x - this.camera.targetX, z - this.camera.targetZ);
-      const atten = Math.max(0, 1 - d / 900);
-      if (atten > 0.05) this.camera.shake(4 * atten);
-    }
   }
 
   /**

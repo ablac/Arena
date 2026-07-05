@@ -5,12 +5,12 @@
  * @module renderer/engine
  */
 
-import { CameraController } from './camera.js?v=20260705a';
+import { CameraController } from './camera.js?v=20260705c';
 import { BotRenderer } from './bots.js?v=20260705a';
-import { EnvironmentRenderer } from './environment.js?v=20260705a';
+import { EnvironmentRenderer } from './environment.js?v=20260705c';
 import { ObstacleRenderer } from './obstacles.js?v=20260521h';
 import { PickupRenderer } from './pickups.js?v=20260521m';
-import { EffectRenderer } from './effects.js?v=20260705a';
+import { EffectRenderer } from './effects.js?v=20260705c';
 import { TrailRenderer } from './trails.js?v=20260705a';
 import { ProjectileRenderer } from './projectiles.js?v=20260521l';
 import { GameplayRenderer } from './gameplay.js?v=20260705a';
@@ -348,7 +348,6 @@ export class ArenaEngine {
           ev.position[0], ev.position[1],
           ev.color || '#59f1ff'
         );
-        this._shakeAt(ev.position[0], ev.position[1], 4);
         if (ev.target_id && this.botRenderer) {
           this.botRenderer.playImpactReaction(ev.target_id);
         }
@@ -356,7 +355,6 @@ export class ArenaEngine {
         // CTF capture: celebratory burst at the base.
         this.effectRenderer.spawnMineExplosion(ev.position[0], ev.position[1], 30);
         this.effectRenderer.spawnHitSparks(ev.position[0], ev.position[1], '#ffd700', 'sword');
-        this._shakeAt(ev.position[0], ev.position[1], 5);
       } else if ((ev.type === 'flag_taken' || ev.type === 'flag_returned' || ev.type === 'flag_dropped') && ev.position) {
         this.effectRenderer.spawnHitSparks(
           ev.position[0], ev.position[1],
@@ -368,14 +366,12 @@ export class ArenaEngine {
           ev.position[0], ev.position[1],
           (ev.radius || 1) * 20
         );
-        this._shakeAt(ev.position[0], ev.position[1], 6 + (ev.radius || 1) * 3);
       } else if (ev.type === 'staff_detonated' && ev.position) {
         this.effectRenderer.spawnStaffExplosion(
           ev.position[0], ev.position[1],
           (ev.radius || 1) * 20,
           ev.color || '#8d4dff'
         );
-        this._shakeAt(ev.position[0], ev.position[1], 6 + (ev.radius || 1) * 3);
       } else if (ev.type === 'capture_pad_captured' && ev.position) {
         this.effectRenderer.spawnCapturePadPulse(
           ev.position[0], ev.position[1],
@@ -384,19 +380,6 @@ export class ArenaEngine {
         );
       }
     }
-  }
-
-  /**
-   * Camera shake attenuated by distance from the current camera target, so
-   * off-screen detonations do not jolt the view. Intensities stay small
-   * (<= ~12 world units) so a wall-projected image never reads as judder.
-   */
-  _shakeAt(x, z, intensity) {
-    if (!this.camera || typeof this.camera.shake !== 'function') return;
-    const d = Math.hypot(x - this.camera.targetX, z - this.camera.targetZ);
-    const atten = Math.max(0, 1 - d / 900);
-    if (atten <= 0.05) return;
-    this.camera.shake(Math.min(12, intensity * atten));
   }
 
   setZoom(z) { if (this.camera) this.camera.setZoom(z); }
