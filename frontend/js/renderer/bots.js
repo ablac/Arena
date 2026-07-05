@@ -6,9 +6,9 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260706a';
+import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260706d';
 import { updateBotAnim, triggerAttack, triggerDodge, triggerShove, meleeContactDelay } from './animations.js?v=20260706b';
-import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance, triggerSwordsmanHit } from './swordsman-anims.js?v=20260706b';
+import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance, triggerSwordsmanHit } from './swordsman-anims.js?v=20260706d';
 
 export class BotRenderer {
   /** @param {BABYLON.Scene} scene */

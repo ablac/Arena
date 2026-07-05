@@ -19,6 +19,11 @@
  * @module renderer/swordsman-anims
  */
 
+// Circular with swordsman-body.js (it imports SwordsmanAnimState from here);
+// safe because both sides only use the other's export at runtime, never at
+// module top level. The ?v= MUST match every other import of that module.
+import { makeSwordTrail } from './swordsman-body.js?v=20260706d';
+
 const DEG = Math.PI / 180;
 const ATTACK_DURATION = 0.50; // Match server sword cooldown (0.5s)
 
@@ -380,6 +385,7 @@ export class SwordsmanAnimState {
     this.attackKeyframes = null;
     this.attackComboIndex = 0;
     this.attackDuration = ATTACK_DURATION;
+    this._trailOn = false;
 
     // Base anim compat
     this.deathTimer = -1;
@@ -477,6 +483,12 @@ export function updateSwordsmanAnim(entry, dt) {
     joints.body.rotation.z = t * (Math.PI / 2);
     joints.body.scaling.y = Math.max(0.1, 1 - t * 0.8);
     if (bodyMat) bodyMat.alpha = 1 - t;
+    // A death mid-swing must not leave a frozen blade trail hanging.
+    if (anim._trailOn && entry._trail) {
+      entry._trail.stop();
+      entry._trail.setEnabled(false);
+      anim._trailOn = false;
+    }
     return;
   }
 
@@ -608,9 +620,33 @@ export function updateSwordsmanAnim(entry, dt) {
       12, dt
     );
 
+    // Blade swing trail, visible only through the strike arc. Lazily built
+    // on the first swing (undefined = never tried, null = unavailable) and
+    // reused; the dirty check keeps this to one comparison per frame.
+    const inSwing = progress > 0.30 && progress < 0.85;
+    if (inSwing !== anim._trailOn) {
+      if (inSwing) {
+        if (entry._trail === undefined) entry._trail = makeSwordTrail(entry);
+        if (entry._trail) {
+          if (entry._trail.reset) entry._trail.reset();
+          entry._trail.setEnabled(true);
+          entry._trail.start();
+        }
+      } else if (entry._trail) {
+        entry._trail.stop();
+        entry._trail.setEnabled(false);
+      }
+      anim._trailOn = !!entry._trail && inSwing;
+    }
+
     if (progress >= 1) {
       anim.attackTimer = -1;
       anim.attackKeyframes = null;
+      if (anim._trailOn && entry._trail) {
+        entry._trail.stop();
+        entry._trail.setEnabled(false);
+        anim._trailOn = false;
+      }
     }
     // Recoil rides on top of the swing (applyPose wrote absolutely above).
     _applyHitRecoil(entry, anim, dt);
