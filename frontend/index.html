@@ -8,12 +8,12 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/arena.css?v=20260705b">
-  <link rel="stylesheet" href="css/sections.css?v=20260705b">
+  <link rel="stylesheet" href="css/sections.css?v=20260706c">
   <script src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/materialsLibrary/babylonjs.materials.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/gui/babylon.gui.min.js"></script>
-  <script type="module" src="js/app.js?v=20260706b"></script>
+  <script type="module" src="js/app.js?v=20260706c"></script>
 </head>
 <body>
   <div class="page-backdrop">
@@ -36,6 +36,7 @@
       <button type="button" class="site-nav-action" data-overlay-open="toolkit-overlay">Toolkit</button>
       <button type="button" class="site-nav-action" data-overlay-open="dashboard-overlay">Dashboard</button>
       <button type="button" class="site-nav-action" data-overlay-open="onboarding-overlay" data-overlay-target="#api-reference">API</button>
+      <button type="button" class="site-nav-action" data-overlay-open="about-overlay">About</button>
       <a href="/m/">Mobile view</a>
     </nav>
     <div class="site-live-pill" id="site-live-pill"><span class="dot"></span> Spectator syncing</div>
@@ -1417,6 +1418,42 @@ wss://arena.angel-serv.com/ws/spectator
     </aside>
   </div>
 
+  <div class="onboarding-overlay overlay-about" id="about-overlay" aria-hidden="true" data-overlay-side="right">
+    <div class="onboarding-scrim" data-close-overlay="about-overlay"></div>
+    <aside class="onboarding-drawer" aria-labelledby="about-title" role="dialog" aria-modal="true">
+      <div class="onboarding-drawer-scroll">
+        <div class="drawer-shell-label">//About</div>
+        <div class="onboarding-flow">
+          <section class="onboarding-section" id="about-panel">
+            <div class="card">
+              <p class="onboarding-kicker">Arena Network</p>
+              <h3 class="onboarding-section-title" id="about-title">AI Battle Arena</h3>
+              <p class="subtitle">Multiplayer AI battle simulator — user-created bots compete in a real-time 3D arena with rotating maps, weapons, and objectives.</p>
+              <div class="about-meta" id="about-meta">
+                <div class="about-meta-row">
+                  <span class="about-meta-label">Live version</span>
+                  <span class="about-meta-value"><a id="about-commit-link" href="https://github.com/ablac/Arena" target="_blank" rel="noopener"><code id="about-commit">loading…</code></a></span>
+                </div>
+                <div class="about-meta-row">
+                  <span class="about-meta-label">Built</span>
+                  <span class="about-meta-value" id="about-build-time">—</span>
+                </div>
+                <div class="about-meta-row">
+                  <span class="about-meta-label">Server</span>
+                  <span class="about-meta-value" id="about-go-version">—</span>
+                </div>
+                <div class="about-meta-row">
+                  <span class="about-meta-label">Source</span>
+                  <span class="about-meta-value"><a href="https://github.com/ablac/Arena" target="_blank" rel="noopener">github.com/ablac/Arena</a></span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </aside>
+  </div>
+
   <div class="onboarding-overlay" id="onboarding-overlay" aria-hidden="true" data-overlay-side="right">
     <div class="onboarding-scrim" data-close-overlay="onboarding-overlay"></div>
     <aside class="onboarding-drawer" aria-labelledby="onboarding-title" role="dialog" aria-modal="true">
@@ -1525,6 +1562,7 @@ wss://arena.angel-serv.com/ws/spectator
         <button type="button" class="footer-link-btn" data-overlay-open="onboarding-overlay" data-overlay-target="#api-reference">API Reference</button>
         <button type="button" class="footer-link-btn" data-overlay-open="onboarding-overlay" data-overlay-target="#onboarding-example">Example Bot</button>
         <button type="button" class="footer-link-btn" data-overlay-open="standings-overlay">Standings</button>
+        <button type="button" class="footer-link-btn" data-overlay-open="about-overlay">About</button>
       </div>
       <p class="footer-stats" id="footer-stats">Loading stats...</p>
     </div>

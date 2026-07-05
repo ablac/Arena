@@ -5,7 +5,7 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260706b';
+import { ArenaEngine } from './renderer/engine.js?v=20260706c';
 import { HudRenderer } from './renderer/hud.js?v=20260523a';
 import { Minimap } from './renderer/minimap.js';
 import { SpectatorSocket } from './spectator-ws.js';
@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   normalizeOnboardingScrollShells();
   setupRevealAnimations();
   setupOverlays();
+  initAboutPanel();
 
   // Arena renderer
   const canvas = document.getElementById('arena-canvas');
@@ -509,6 +510,36 @@ function initLeaderboardWidgets() {
 
     initLeaderboardWidget(widget);
   });
+}
+
+/**
+ * Populate the About drawer with the live server build identity from
+ * GET /api/v1/version (commit hash linked to GitHub, build time, Go version).
+ */
+function initAboutPanel() {
+  const commitEl = document.getElementById('about-commit');
+  if (!commitEl) return;
+  fetch('/api/v1/version')
+    .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+    .then((v) => {
+      commitEl.textContent = v.commit_short || 'unknown';
+      const link = document.getElementById('about-commit-link');
+      if (link && v.commit && v.commit !== 'unknown') {
+        link.href = `${v.repo || 'https://github.com/ablac/Arena'}/commit/${v.commit}`;
+        link.title = v.commit;
+      }
+      const buildEl = document.getElementById('about-build-time');
+      if (buildEl && v.build_time && v.build_time !== 'unknown') {
+        const parsed = new Date(v.build_time);
+        buildEl.textContent = Number.isNaN(parsed.getTime()) ? v.build_time : parsed.toLocaleString();
+      }
+      const goEl = document.getElementById('about-go-version');
+      if (goEl && v.go_version) goEl.textContent = v.go_version;
+    })
+    .catch((err) => {
+      console.warn('[About] version fetch failed:', err);
+      commitEl.textContent = 'unavailable';
+    });
 }
 
 function setupOverlays() {

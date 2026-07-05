@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"arena-server/internal/demobots"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
+	"arena-server/internal/version"
 	"arena-server/internal/ws"
 
 	"github.com/go-chi/chi/v5"
@@ -108,6 +110,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		// Health check (public).
 		api.Get("/health", healthHandler(engine))
 
+		// Build identity (public) — commit hash of the running server.
+		api.Get("/version", versionHandler())
+
 		// Bot setup reference (public — no auth).
 		api.Get("/bot-setup", BotSetup())
 
@@ -164,6 +169,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 		ar.Route("/api/v1", func(api chi.Router) {
 			api.Get("/health", healthHandler(engine))
+			api.Get("/version", versionHandler())
 			api.Get("/bot-setup", BotSetup())
 			api.With(
 				security.RateLimitMiddleware(config.C.RateLimitRegisterPerHour),
@@ -216,6 +222,23 @@ func healthHandler(engine *game.GameEngine) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, HealthResponse{
 			Status:     "ok",
 			BotsOnline: engine.ConnectedBotCount(),
+			Commit:     version.ShortCommit(),
+		})
+	}
+}
+
+// versionHandler returns a handler for GET /api/v1/version — the build
+// identity of the running server (git commit, build time), used by the
+// frontend About dialog.
+func versionHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, VersionResponse{
+			Status:      "ok",
+			Commit:      version.ResolvedCommit(),
+			CommitShort: version.ShortCommit(),
+			BuildTime:   version.BuildTime,
+			GoVersion:   runtime.Version(),
+			Repo:        "https://github.com/ablac/Arena",
 		})
 	}
 }

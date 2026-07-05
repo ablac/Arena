@@ -37,6 +37,10 @@ services:
     build:
       context: .
       dockerfile: go-arena/Dockerfile
+      args:
+        # Set by the deploy step: GIT_COMMIT=$(git rev-parse HEAD)
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
     container_name: arena-server
     restart: unless-stopped
     ports:

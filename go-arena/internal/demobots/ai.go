@@ -509,10 +509,28 @@ func bfsStepConstrained(sc, sr, gc, gr int, danger *dangerSet) ([2]int, bool) {
 		}
 	}
 
-	for i := 0; i < len(s.queue) && i < 200*9; i++ {
+	// Track the explored cell that gets closest to the goal: when the goal is
+	// unreachable (wall cell, disconnected pocket), stepping toward the
+	// closest reachable cell beats the greedy fallback that grinds into the
+	// nearest wall face.
+	goal := [2]int{gc, gr}
+	bestDist := intChebyshev([2]int{sc, sr}, goal)
+	var bestStep [2]int
+	haveBest := false
+
+	// No artificial node budget: the visited stamps already bound the walk to
+	// one visit per grid cell. A capped walk (formerly 1800 nodes ≈ 20 tiles
+	// of radius) exhausted on every cross-map caves path, dropping bots into
+	// the greedy fallback where they ground against walls.
+	for i := 0; i < len(s.queue); i++ {
 		n := s.queue[i]
 		if n.col == gc && n.row == gr {
 			return [2]int{n.firstDC, n.firstDR}, true
+		}
+		if d := intChebyshev([2]int{n.col, n.row}, goal); d < bestDist {
+			bestDist = d
+			bestStep = [2]int{n.firstDC, n.firstDR}
+			haveBest = true
 		}
 		for dc := -1; dc <= 1; dc++ {
 			for dr := -1; dr <= 1; dr++ {
@@ -527,6 +545,11 @@ func bfsStepConstrained(sc, sr, gc, gr int, danger *dangerSet) ([2]int, bool) {
 				}
 			}
 		}
+	}
+
+	// Goal unreachable — approach the closest reachable cell instead.
+	if haveBest {
+		return bestStep, true
 	}
 
 	// BFS exhausted — fall back to direct direction toward goal.
@@ -1328,16 +1351,11 @@ func bestShieldBashTarget(pos [2]float64, enemies []entity, wrange float64) *ent
 }
 
 func terrainBlocked(col, row int) bool {
-	terrainMu.RLock()
-	t := cachedTerrain
-	terrainMu.RUnlock()
+	t := getTerrain()
 	if t == nil {
 		return false
 	}
-	if col < 0 || row < 0 || col >= t.Width || row >= t.Height {
-		return true
-	}
-	return t.Cells[col][row] != 0
+	return t.isBlocked(col, row)
 }
 
 // gridLineBlocked reports whether any wall/void cell lies on the grid line
