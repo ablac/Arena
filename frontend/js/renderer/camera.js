@@ -46,6 +46,12 @@ export class CameraController {
     this.camera.inputs.removeByType('ArcRotateCameraKeyboardMoveInput');
     this.camera.inputs.removeByType('ArcRotateCameraMouseWheelInput');
 
+    // Babylon's pointer input orbits on ALL mouse buttons by default, which
+    // fought our right/middle-drag pan (the view orbited while panning).
+    // Left button = orbit; right/middle are pan-only (handled below).
+    const pointers = this.camera.inputs.attached.pointers;
+    if (pointers) pointers.buttons = [0];
+
     this._setupInput(canvas);
     scene.registerBeforeRender(() => this._tick());
   }
@@ -59,7 +65,10 @@ export class CameraController {
         dragging = true;
         lastX = e.clientX;
         lastY = e.clientY;
+        // Manual pan takes over from follow AND auto-pan (matching WASD);
+        // otherwise auto-pan rewrites the target every frame mid-drag.
         this.followId = null;
+        this.autoPan = false;
         e.preventDefault();
       }
     });
@@ -68,10 +77,15 @@ export class CameraController {
       const scale = this.camera.radius / 500;
       const dx = (e.clientX - lastX) * scale;
       const dy = (e.clientY - lastY) * scale;
+      // Grab-pan: the world follows the pointer. Camera forward on the ground
+      // plane is F = (-cosA, -sinA), camera right is R = (-sinA, cosA); move
+      // the target opposite the drag along R and along F for vertical drags.
+      // (The old mapping used F/R swapped, so pans came out rotated 90° —
+      // dragging right moved the view along the forward axis instead.)
       const cosA = Math.cos(this.camera.alpha);
       const sinA = Math.sin(this.camera.alpha);
-      this.targetX += dx * cosA - dy * sinA;
-      this.targetZ += dx * sinA + dy * cosA;
+      this.targetX += dx * sinA - dy * cosA;
+      this.targetZ += -dx * cosA - dy * sinA;
       lastX = e.clientX;
       lastY = e.clientY;
     });

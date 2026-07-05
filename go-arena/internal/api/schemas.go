@@ -186,4 +186,16 @@ type ErrorResponse struct {
 type HealthResponse struct {
 	Status     string `json:"status"`
 	BotsOnline int    `json:"bots_online"`
+	Commit     string `json:"commit,omitempty"`
+}
+
+// VersionResponse identifies the running build for the About dialog and ops
+// tooling.
+type VersionResponse struct {
+	Status      string `json:"status"`
+	Commit      string `json:"commit"`
+	CommitShort string `json:"commit_short"`
+	BuildTime   string `json:"build_time"`
+	GoVersion   string `json:"go_version"`
+	Repo        string `json:"repo"`
 }
