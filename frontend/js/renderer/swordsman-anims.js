@@ -490,7 +490,9 @@ export function updateSwordsmanAnim(entry, dt) {
     anim.hitTimer = -1;
     joints.body.rotation.z = 0;
     joints.body.rotation.x = 0;
-    joints.body.scaling.y = 1;
+    // Dodge writes scaling.x/z too; a dodge interrupted by death used to
+    // leave them at up to 1.2 forever. Restore the full vector.
+    joints.body.scaling.set(1, 1, 1);
     joints.head.rotation.x = 0;
     joints.head.rotation.z = 0;
     if (bodyMat) bodyMat.alpha = 1;
@@ -684,6 +686,9 @@ function _updateIdle(anim, joints, dt) {
  * @param {SwordsmanAnimState} anim
  */
 export function triggerSwordsmanAttack(anim, durationOverride) {
+  // Match triggerSwordsmanDodge: while a respawn reset is pending, starting
+  // an attack is pointless (the reset clobbers it on the next frame).
+  if (anim.deathTimer >= 0) return;
   if (anim.dodgeTimer >= 0) return;
   if (anim.attackTimer >= 0) {
     // Allow interrupt only in last 30% of attack (recovery)
