@@ -1199,7 +1199,6 @@ export class EnvironmentRenderer {
         this._zoneCurCy += (this._zoneTargetCy - this._zoneCurCy) * lerpSpeed;
         this._zoneRing.scaling.set(this._zoneCurR * 2, this._zoneCurR * 2, this._zoneCurR * 2);
         this._zoneRing.position.set(this._zoneCurCx, 2, this._zoneCurCy);
-
       });
     }
   }

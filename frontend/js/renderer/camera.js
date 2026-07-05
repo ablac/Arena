@@ -172,27 +172,6 @@ export class CameraController {
     if (this.onZoomChange) this.onZoomChange(this.zoom);
   }
 
-  /**
-   * Trigger a screen shake effect (e.g. on kill).
-   * @param {number} [intensity=8] - max displacement in world units
-   */
-  shake(intensity = 8) {
-    const start = performance.now();
-    const duration = 300; // ms
-    const obs = this.scene.onBeforeRenderObservable.add(() => {
-      const elapsed = performance.now() - start;
-      if (elapsed >= duration) {
-        this.scene.onBeforeRenderObservable.remove(obs);
-        return;
-      }
-      const decay = Math.exp(-elapsed / (duration * 0.3));
-      const ox = (Math.random() * 2 - 1) * intensity * decay;
-      const oz = (Math.random() * 2 - 1) * intensity * decay;
-      this.camera.target.x += ox;
-      this.camera.target.z += oz;
-    });
-  }
-
   followBot(botId) { this.followId = botId; }
   setAutoPan(enabled) { this.autoPan = enabled; if (enabled) this.followId = null; }
   updateBotPositions(bots) { this.bots = bots || []; }
