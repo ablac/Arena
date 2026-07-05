@@ -523,6 +523,25 @@ export function updateSwordsmanAnim(entry, dt) {
       bodyNode.scaling.z = Math.abs(bodyNode.scaling.z - 1) < 0.01
         ? 1 : elerp(bodyNode.scaling.z, 1, 6, dt);
     }
+    // Hit-recoil channels (head pitch/roll, body pitch). The recoil writes
+    // them absolutely while hitTimer runs and zeroes them on expiry, but a
+    // lost hitTimer would strand them the same way the death roll was
+    // stranded. Heal them whenever no recoil owns the channels.
+    if (anim.hitTimer < 0) {
+      const headNode = joints.head;
+      if (headNode.rotation.x !== 0) {
+        headNode.rotation.x = Math.abs(headNode.rotation.x) < 0.01
+          ? 0 : elerp(headNode.rotation.x, 0, 6, dt);
+      }
+      if (headNode.rotation.z !== 0) {
+        headNode.rotation.z = Math.abs(headNode.rotation.z) < 0.01
+          ? 0 : elerp(headNode.rotation.z, 0, 6, dt);
+      }
+      if (bodyNode.rotation.x !== 0) {
+        bodyNode.rotation.x = Math.abs(bodyNode.rotation.x) < 0.01
+          ? 0 : elerp(bodyNode.rotation.x, 0, 6, dt);
+      }
+    }
   }
 
   if (anim.respawnTimer >= 0) {
