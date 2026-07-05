@@ -45,6 +45,12 @@ export class CameraController {
     // Remove default keyboard input so WASD doesn't conflict
     this.camera.inputs.removeByType('ArcRotateCameraKeyboardMoveInput');
     this.camera.inputs.removeByType('ArcRotateCameraMouseWheelInput');
+    // Orbit on LEFT button only. With panningSensibility=0 Babylon's pointer
+    // input otherwise treats right/middle drags as orbit too, so every drag
+    // through the custom pan below ALSO rotated the camera at the same time.
+    if (this.camera.inputs.attached.pointers) {
+      this.camera.inputs.attached.pointers.buttons = [0];
+    }
 
     this._setupInput(canvas);
     scene.registerBeforeRender(() => this._tick());
@@ -60,6 +66,9 @@ export class CameraController {
         lastX = e.clientX;
         lastY = e.clientY;
         this.followId = null;
+        // Auto-pan re-targets every tick and would fight the drag, so a
+        // manual drag takes over just like WASD does.
+        this.autoPan = false;
         e.preventDefault();
       }
     });
@@ -68,10 +77,22 @@ export class CameraController {
       const scale = this.camera.radius / 500;
       const dx = (e.clientX - lastX) * scale;
       const dy = (e.clientY - lastY) * scale;
-      const cosA = Math.cos(this.camera.alpha);
-      const sinA = Math.sin(this.camera.alpha);
-      this.targetX += dx * cosA - dy * sinA;
-      this.targetZ += dx * sinA + dy * cosA;
+      // Grab-style pan: the world follows the cursor. Directions come from
+      // the camera's actual view vectors (same approach as the WASD block in
+      // _tick), so the mapping stays correct at any orbit angle. The old
+      // hand-rolled cos/sin(alpha) mapping was rotated 90 degrees at the
+      // default angle and drifted further off as the camera orbited.
+      const fwd = this.camera.target.subtract(this.camera.position);
+      fwd.y = 0;
+      const flen = Math.sqrt(fwd.x * fwd.x + fwd.z * fwd.z);
+      if (flen > 1e-6) {
+        const fx = fwd.x / flen, fz = fwd.z / flen;
+        const rightX = fz, rightZ = -fx;
+        // drag right: world moves right on screen, so the target moves left;
+        // drag down: world moves toward the viewer, so the target moves forward
+        this.targetX += -dx * rightX + dy * fx;
+        this.targetZ += -dx * rightZ + dy * fz;
+      }
       lastX = e.clientX;
       lastY = e.clientY;
     });
