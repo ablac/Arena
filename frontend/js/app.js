@@ -9,7 +9,7 @@ import { ArenaEngine } from './renderer/engine.js?v=20260705a';
 import { HudRenderer } from './renderer/hud.js?v=20260523a';
 import { Minimap } from './renderer/minimap.js';
 import { SpectatorSocket } from './spectator-ws.js';
-import { initLeaderboardWidget } from './leaderboard.js?v=20260521m';
+import { initLeaderboardWidget } from './leaderboard.js?v=20260705b';
 import { initKeyGenerator } from './key-generator.js';
 
 const ARENA_WIDTH = 2000;
@@ -60,9 +60,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   // they're throttled independently to cut redundant layout/reflow work.
   const UI_UPDATE_INTERVAL_MS = 200;
   let lastUiUpdate = 0;
+  // Combat-reactive page pulse: flash the arena shell on each new kill and
+  // sweep it on round start, so the whole broadcast frame reacts to the
+  // action (readable across a conference hall). Pre-rasterized ::after
+  // overlays animating opacity only, so steady-state cost is zero.
+  const arenaShell = document.querySelector('.arena-shell');
+  let lastKillSig = '';
+  let lastPhase = '';
+  const pulseShell = (cls) => {
+    if (!arenaShell || arenaShell.classList.contains(cls)) return;
+    arenaShell.classList.add(cls);
+    arenaShell.addEventListener('animationend', () => arenaShell.classList.remove(cls), { once: true });
+  };
   const spectator = new SpectatorSocket(wsUrl,
     (state) => {
       arenaEngine.setState(state);
+      if (state.type === 'arena_state' && Array.isArray(state.kill_feed) && state.kill_feed.length > 0) {
+        const k = state.kill_feed[state.kill_feed.length - 1];
+        const sig = `${k.killer}|${k.victim}|${k.tick}`;
+        // Rapid multi-kills within one tick coalesce into a single flash.
+        if (lastKillSig && sig !== lastKillSig) pulseShell('combat-flash');
+        lastKillSig = sig;
+      }
+      if (state.type === 'arena_state' && lastPhase === 'lobby_state') pulseShell('round-sweep');
+      if (state.type === 'arena_state' || state.type === 'lobby_state') lastPhase = state.type;
       const now = performance.now();
       if (now - lastUiUpdate >= UI_UPDATE_INTERVAL_MS) {
         lastUiUpdate = now;

@@ -274,6 +274,7 @@ body.arena-fullscreen .site-header {
 }
 
 .site-live-pill .dot {
+  position: relative;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -284,6 +285,28 @@ body.arena-fullscreen .site-header {
 .site-live-pill.connected .dot {
   background: #33d17a;
   box-shadow: 0 0 12px rgba(51, 209, 122, 0.45);
+  animation: pill-dot-pulse 1.6s ease-in-out infinite;
+}
+
+/* ON AIR heartbeat: halo breathes via opacity on a pseudo-element with a
+   static box-shadow (never animate box-shadow itself). */
+.site-live-pill.connected .dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 14px 4px rgba(51, 209, 122, 0.5);
+  animation: pill-dot-halo 1.6s ease-in-out infinite;
+}
+
+@keyframes pill-dot-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.35); }
+}
+
+@keyframes pill-dot-halo {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0; }
 }
 
 .site-main {
@@ -1143,5 +1166,25 @@ body.arena-fullscreen .site-header {
 
   .dashboard-header {
     padding: 0;
+  }
+}
+
+/* Reduced motion: zero out infinite ambient loops and never motion-gate
+   content. User-initiated hover/drawer transitions stay (short,
+   non-vestibular). */
+@media (prefers-reduced-motion: reduce) {
+  .aurora {
+    animation: none;
+  }
+
+  .site-live-pill.connected .dot,
+  .site-live-pill.connected .dot::after {
+    animation: none;
+  }
+
+  .reveal-on-scroll {
+    opacity: 1;
+    transform: none;
+    transition: none;
   }
 }
