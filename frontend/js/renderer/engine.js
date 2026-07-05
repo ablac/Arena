@@ -124,8 +124,14 @@ export class ArenaEngine {
       }
       const delayMs = Math.max(0, (opts?.contactDelay || 0) * 1000);
       const targetId = opts?.targetId || null;
+      // Capture the scene live at schedule time. The between-round
+      // _rebuildForArenaSize disposes and re-inits the scene, so a delayed
+      // contact callback could otherwise fire against a disposed scene (final
+      // teardown) or spawn a stale strike on the fresh scene (rebuild). Bail
+      // unless the exact scene that owned this swing is still the live one.
+      const swingScene = this.scene;
       setTimeout(() => {
-        if (!this.effectRenderer) return; // engine may have been disposed
+        if (!this.effectRenderer || this.scene !== swingScene || swingScene.isDisposed) return;
         this.effectRenderer.spawnWeaponStrike(ax, az, tx, tz, color, weapon);
         this.effectRenderer.spawnHitSparks(tx, tz, color, weapon);
         if (targetId && this.botRenderer) {
