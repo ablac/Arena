@@ -5,7 +5,7 @@
  * @module renderer/engine
  */
 
-import { CameraController } from './camera.js?v=20260705c';
+import { CameraController } from './camera.js?v=20260706c';
 import { BotRenderer } from './bots.js?v=20260706b';
 import { EnvironmentRenderer } from './environment.js?v=20260705c';
 import { ObstacleRenderer } from './obstacles.js?v=20260521h';

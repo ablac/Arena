@@ -79,6 +79,37 @@ func (g *TerrainGrid) IsBlocked(x, y int) bool {
 	return g.Cells[x][y] == '#'
 }
 
+// NearestOpenCell returns the closest unblocked cell to start, scanning
+// complete rings of increasing Chebyshev radius (so no direction is ever
+// skipped, unlike a fixed-ray probe). maxRadius <= 0 searches the whole grid.
+// Returns start unchanged with ok=false when nothing open is found.
+func (g *TerrainGrid) NearestOpenCell(start [2]int, maxRadius int) ([2]int, bool) {
+	if !g.IsBlocked(start[0], start[1]) {
+		return start, true
+	}
+	limit := maxRadius
+	if limit <= 0 {
+		limit = g.Width
+		if g.Height > limit {
+			limit = g.Height
+		}
+	}
+	for radius := 1; radius <= limit; radius++ {
+		for dx := -radius; dx <= radius; dx++ {
+			for dy := -radius; dy <= radius; dy++ {
+				if dx != -radius && dx != radius && dy != -radius && dy != radius {
+					continue // ring perimeter only
+				}
+				nc := [2]int{start[0] + dx, start[1] + dy}
+				if !g.IsBlocked(nc[0], nc[1]) {
+					return nc, true
+				}
+			}
+		}
+	}
+	return start, false
+}
+
 // WorldToGrid converts a world-space Vec2 to grid cell coordinates.
 func (g *TerrainGrid) WorldToGrid(pos Vec2) [2]int {
 	cx := int(math.Floor(pos.X() / g.CellSize))

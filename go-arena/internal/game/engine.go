@@ -298,7 +298,14 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 				bot.StuckTicks = 0
 				bot.StillTicks = 0
 			}
-			if bot.StuckTicks >= 10 {
+			// Only nudge bots that are actually trying to move: shuffling a
+			// deliberately-idle bot (territorial guards, braced spears) makes
+			// it twitch in place every second for no reason.
+			wantsMove := bot.PendingAction != nil &&
+				(bot.PendingAction.Type == ActionMove ||
+					bot.PendingAction.Type == ActionMoveTo ||
+					bot.PendingAction.Type == ActionDodge)
+			if bot.StuckTicks >= 10 && wantsMove {
 				// Try each direction randomly until we find a passable cell
 				for _, d := range directions {
 					if !ActiveTerrain.IsMoveBlocked(cell[0], cell[1], d.dx, d.dy) {
@@ -393,22 +400,15 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 				if !ActiveTerrain.IsBlocked(prevCell[0], prevCell[1]) {
 					bot.Position = bot.LastValidPosition
 				} else {
-					// Last valid position is also blocked (shouldn't happen).
-					// Spiral outward toward arena center to find an open cell.
-					found := false
-					for radius := 1; radius <= 15 && !found; radius++ {
-						for _, d := range directions {
-							nc := [2]int{cell[0] + d.dx*radius, cell[1] + d.dy*radius}
-							if !ActiveTerrain.IsBlocked(nc[0], nc[1]) {
-								bot.Position = ActiveTerrain.GridToWorld(nc)
-								found = true
-								break
-							}
-						}
-					}
-					// If spiral failed, don't update LastValidPosition so next
-					// tick retries rather than locking in a blocked cell.
-					if !found {
+					// Last valid position is also blocked (deep-wall spawn or a
+					// map swap under the bot). Take the nearest open cell —
+					// scanning full rings, not 8 fixed rays, so thick caves
+					// walls can't strand the bot inside terrain forever.
+					if nc, ok := ActiveTerrain.NearestOpenCell(cell, 0); ok {
+						bot.Position = ActiveTerrain.GridToWorld(nc)
+					} else {
+						// Entire grid blocked (cannot happen with valid maps):
+						// keep LastValidPosition unset so next tick retries.
 						e.Grid.Update(bot.BotID, bot.Position)
 						continue
 					}
@@ -623,6 +623,15 @@ func (e *GameEngine) startRound() {
 	for _, bot := range e.Bots {
 		SendRoundStart(bot, e.Round, e.Bots, e.Arena)
 	}
+
+	// Force the next spectator broadcast to be a keyframe so clients swap to
+	// this round's walls immediately. Without it, renderers keep the previous
+	// round's obstacles for up to a full keyframe interval while bots already
+	// stand at new-map positions — on shape changes they appear embedded in
+	// walls ("stuck in the ground") until the keyframe lands.
+	e.spectatorsMu.Lock()
+	e.forceKeyframe = true
+	e.spectatorsMu.Unlock()
 
 	slog.Info("round started",
 		"round", e.Round.RoundNumber,

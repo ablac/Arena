@@ -2213,3 +2213,52 @@ tr.rank-new { animation: killfeed-in 0.45s cubic-bezier(0.22, 1, 0.36, 1); }
     animation: none;
   }
 }
+
+/* --- About drawer ------------------------------------------------------- */
+
+.about-meta {
+  margin-top: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.about-meta-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  border: 1px solid rgba(138, 223, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(8, 12, 20, 0.55);
+}
+
+.about-meta-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text2, #8aa0b8);
+  white-space: nowrap;
+}
+
+.about-meta-value {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.85rem;
+  text-align: right;
+  word-break: break-all;
+}
+
+.about-meta-value a {
+  color: var(--accent-blue, #4fc3f7);
+  text-decoration: none;
+}
+
+.about-meta-value a:hover {
+  text-decoration: underline;
+}
+
+.about-meta-value code {
+  background: rgba(79, 195, 247, 0.12);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
