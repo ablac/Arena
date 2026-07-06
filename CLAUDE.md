@@ -84,6 +84,8 @@ cd sdk/nodejs && npm install
 | 3D rendering | `frontend/js/renderer/*.js` |
 | Admin features | `go-arena/internal/api/admin.go` |
 | Demo bot AI | `go-arena/internal/demobots/ai.go` |
+| Graphics/animation toggle (settings panel) | `docs/settings-system.md` - read before adding any new visual effect |
+| Build, deploy, or anything touching security headers/static caching | `docs/build-and-deploy.md` - read before touching `security_headers.go` or `noCacheStaticHandler`; has a list of regressions that already shipped once |
 
 ## Game Mechanics Quick Ref
 

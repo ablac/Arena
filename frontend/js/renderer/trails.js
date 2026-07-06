@@ -7,6 +7,8 @@
  * @module renderer/trails
  */
 
+import { isEnabled } from '../settings.js';
+
 const MAX_HISTORY = 20;
 const SAMPLE_INTERVAL = 0.03;
 const TRAIL_WIDTH = 6;
@@ -27,6 +29,18 @@ export class TrailRenderer {
    */
   render(botEntries, dt) {
     if (!botEntries) return;
+
+    if (!isEnabled('movementTrails', 'botTrails')) {
+      // Meshes are reused/updated in place across frames rather than
+      // recreated, so a bare early-return here would leave the last-built
+      // ribbon frozen and visible. Hide any already-built trail meshes and
+      // bail before doing any sampling/geometry work.
+      for (const [, trail] of this.trails) {
+        if (trail.mesh) trail.mesh.setEnabled(false);
+      }
+      return;
+    }
+
     const B = window.BABYLON;
     const seen = new Set();
 
@@ -68,6 +82,12 @@ export class TrailRenderer {
         };
         this.trails.set(botId, trail);
       }
+
+      // Re-enable a mesh that was hidden while the effect was toggled off.
+      // Unconditional/idempotent so a stationary bot's trail (which can skip
+      // the dirty-geometry path below for many frames) still reappears the
+      // instant the toggle flips back on, not just next time it moves.
+      if (trail.mesh && !trail.mesh.isEnabled()) trail.mesh.setEnabled(true);
 
       // Sample position at fixed interval
       trail.timer += dt;
@@ -142,16 +162,22 @@ export class TrailRenderer {
           });
         }
 
-        // Update vertex colors in the pre-allocated buffer
+        // Update vertex colors in the pre-allocated buffer. Brightness toggle
+        // checked here (not just at material-creation time) so it applies
+        // live on the next geometry update rather than needing a reload.
         const c = trail.mat.emissiveColor;
+        const bright = isEnabled('movementTrails', 'trailBrightness');
+        const cr = bright ? c.r : c.r * 0.55;
+        const cg = bright ? c.g : c.g * 0.55;
+        const cb = bright ? c.b : c.b * 0.55;
         const vc = trail.mesh.getTotalVertices();
         const pps = MAX_HISTORY; // points per side
         for (let v = 0; v < vc; v++) {
           const idx = v % pps;
           const a = idx < n ? (idx / (n - 1)) * 0.3 : 0;
-          trail.colors[v * 4] = c.r;
-          trail.colors[v * 4 + 1] = c.g;
-          trail.colors[v * 4 + 2] = c.b;
+          trail.colors[v * 4] = cr;
+          trail.colors[v * 4 + 1] = cg;
+          trail.colors[v * 4 + 2] = cb;
           trail.colors[v * 4 + 3] = a;
         }
         trail.mesh.setVerticesData(B.VertexBuffer.ColorKind, trail.colors, true);

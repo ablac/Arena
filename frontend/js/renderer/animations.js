@@ -6,6 +6,8 @@
  * @module renderer/animations
  */
 
+import { isEnabled } from '../settings.js';
+
 const IDLE_BOB_SPEED = 2.5;
 const IDLE_BOB_AMOUNT = 1.2;
 const MOVE_BOB_SPEED = 6;
@@ -198,7 +200,7 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat, en
     const t = anim.deathTimer / 0.6;
     body.rotation.z = t * (Math.PI / 2);
     body.scaling.y = Math.max(0.1, 1 - t * 0.8);
-    if (bodyMat) bodyMat.alpha = 1 - t;
+    if (bodyMat) bodyMat.alpha = isEnabled('deathEffects', 'corpseFade') ? 1 - t : 1;
     return;
   }
 

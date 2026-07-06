@@ -278,10 +278,20 @@ func requestLogger(next http.Handler) http.Handler {
 }
 
 // noCacheStaticHandler wraps a file server to set no-cache headers on JS/CSS
-// files so browsers always fetch the latest version.
+// files and on HTML documents (including extensionless directory routes
+// like "/", "/dashboard/", "/admin/", "/m/" that http.FileServer resolves to
+// an index.html) so browsers always fetch the latest version. Without this,
+// a browser that cached a bad response for one of these routes keeps
+// serving it from cache after the server is fixed, since nothing tells it
+// to revalidate. Other static assets (textures, fonts, favicon) keep normal
+// caching.
 func noCacheStaticHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, ".js") || strings.HasSuffix(r.URL.Path, ".css") {
+		path := r.URL.Path
+		lastSegment := path[strings.LastIndex(path, "/")+1:]
+		isVersionedAsset := strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css")
+		isHTMLDocument := strings.HasSuffix(path, ".html") || !strings.Contains(lastSegment, ".")
+		if isVersionedAsset || isHTMLDocument {
 			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 			w.Header().Set("Pragma", "no-cache")
 			w.Header().Set("Expires", "0")

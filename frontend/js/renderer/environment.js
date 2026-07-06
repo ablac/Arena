@@ -6,8 +6,10 @@
  */
 
 import { makeMat } from './utils.js';
+import { isEnabled } from '../settings.js';
 
 const ZONE_RING_SEGMENTS = 256;
+const ZONE_RING_BASE_ALPHA = 0.7;
 
 export class EnvironmentRenderer {
   /** @param {BABYLON.Scene} scene @param {number} w @param {number} h */
@@ -198,9 +200,12 @@ export class EnvironmentRenderer {
     skybox.material = skyMat;
     skybox.isPickable = false;
 
-    // Animate twinkling
+    // Animate twinkling + live settings check (setEnabled is cheap enough
+    // to call every frame; avoids needing a separate settings-change hook).
     this.scene.registerBeforeRender(() => {
-      skyMat.setFloat('time', performance.now() / 1000);
+      const on = isEnabled('arenaAmbience', 'skybox');
+      skybox.setEnabled(on);
+      if (on) skyMat.setFloat('time', performance.now() / 1000);
     });
 
     this._skybox = skybox;
@@ -470,11 +475,26 @@ export class EnvironmentRenderer {
       this._spaceObjects.push(obj);
     }
 
+    const COMET_TRAIL_EMIT_RATE = 60;
+
     // Animation loop
     scene.registerBeforeRender(() => {
+      const on = isEnabled('arenaAmbience', 'spaceObjects');
+      if (!on) {
+        // Hide and freeze in place rather than disposing/skipping elapsed
+        // advance — keeps respawn timing sane for when it's re-enabled.
+        for (const obj of this._spaceObjects) {
+          obj.plane.setEnabled(false);
+          if (obj.trail) obj.trail.emitRate = 0;
+        }
+        return;
+      }
+
       const dt = scene.getEngine().getDeltaTime() / 1000;
       for (let i = 0; i < this._spaceObjects.length; i++) {
         const obj = this._spaceObjects[i];
+        obj.plane.setEnabled(true);
+        if (obj.trail) obj.trail.emitRate = COMET_TRAIL_EMIT_RATE;
         obj.elapsed += dt;
         const pos = obj.start.add(obj.dir.scale(obj.speed * obj.elapsed));
 
@@ -626,8 +646,12 @@ export class EnvironmentRenderer {
     glow.material = glowMat;
     glow.isPickable = false;
 
+    // Gate ONLY this glow overlay layer — the base textured ground mesh
+    // above is the actual floor and stays on regardless of this setting.
     this.scene.registerBeforeRender(() => {
-      glowMat.setFloat('time', performance.now() / 1000);
+      const on = isEnabled('arenaAmbience', 'floorEnergyGlow');
+      glow.setEnabled(on);
+      if (on) glowMat.setFloat('time', performance.now() / 1000);
     });
 
     this._ground = ground;
@@ -756,7 +780,8 @@ export class EnvironmentRenderer {
       beam.maxLifeTime = 2.0;
       beam.minSize = 5;
       beam.maxSize = 12;
-      beam.emitRate = 15;
+      const PYLON_BEAM_EMIT_RATE = 15;
+      beam.emitRate = PYLON_BEAM_EMIT_RATE;
       beam.gravity = new B.Vector3(0, 5, 0);
       beam.color1 = new B.Color4(0.2, 0.5, 1.0, 0.7);
       beam.color2 = new B.Color4(0.1, 0.3, 0.8, 0.4);
@@ -773,15 +798,22 @@ export class EnvironmentRenderer {
       ring.isPickable = false;
       ring.freezeWorldMatrix();
 
-      this._pylons.push({ pylon, beacon, beam, ring });
+      this._pylons.push({ pylon, beacon, beam, ring, baseBeamEmitRate: PYLON_BEAM_EMIT_RATE });
     }
 
-    // Animate beacon pulse
+    // Animate beacon pulse + live settings check (beams, beacons, pylon
+    // bodies, and base rings are one "corner pylons" toggle).
     let t = 0;
     this.scene.registerBeforeRender(() => {
       t += this.scene.getEngine().getDeltaTime() / 1000;
       const pulse = 0.7 + 0.3 * Math.sin(t * 2);
+      const on = isEnabled('arenaAmbience', 'cornerPylons');
       for (const p of this._pylons) {
+        p.pylon.setEnabled(on);
+        p.beacon.setEnabled(on);
+        p.ring.setEnabled(on);
+        p.beam.emitRate = on ? p.baseBeamEmitRate : 0;
+        if (!on) continue;
         p.beacon.scaling.setAll(pulse);
       }
     });
@@ -860,7 +892,8 @@ export class EnvironmentRenderer {
       jet.maxLifeTime = 1.0;
       jet.minSize = 10;
       jet.maxSize = 25;
-      jet.emitRate = 35;
+      const THRUSTER_JET_EMIT_RATE = 35;
+      jet.emitRate = THRUSTER_JET_EMIT_RATE;
       jet.gravity = new B.Vector3(0, -15, 0);
       jet.color1 = new B.Color4(1.0, 0.6, 0.2, 0.9);
       jet.color2 = new B.Color4(0.6, 0.3, 0.8, 0.5);
@@ -868,8 +901,19 @@ export class EnvironmentRenderer {
       jet.blendMode = B.ParticleSystem.BLENDMODE_ADD;
       jet.start();
 
-      this._thrusters.push({ nozzle, glow, jet });
+      this._thrusters.push({ nozzle, glow, jet, baseJetEmitRate: THRUSTER_JET_EMIT_RATE });
     }
+
+    // Live settings check — nozzle housing, glow ring, and jet particles
+    // are one "underside thrusters" toggle.
+    this.scene.registerBeforeRender(() => {
+      const on = isEnabled('arenaAmbience', 'thrusters');
+      for (const t of this._thrusters) {
+        t.nozzle.setEnabled(on);
+        t.glow.setEnabled(on);
+        t.jet.emitRate = on ? t.baseJetEmitRate : 0;
+      }
+    });
   }
 
   /** @private Energy waterfalls cascading off the arena edges. */
@@ -966,10 +1010,17 @@ export class EnvironmentRenderer {
       this._pylonRings.push({ ring1, ring2, cx, cz });
     }
 
-    // Animate rotation
+    // Animate rotation + live settings check. Not its own toggle in the
+    // schema — these orbit rings decorate the same corner-pylon structures
+    // gated by _createCornerPylons(), so they ride the 'cornerPylons' key
+    // too (leaving them on while the pylons vanish would look broken).
     this.scene.registerBeforeRender(() => {
+      const on = isEnabled('arenaAmbience', 'cornerPylons');
       const dt = this.scene.getEngine().getDeltaTime() / 1000;
       for (const pr of this._pylonRings) {
+        pr.ring1.setEnabled(on);
+        pr.ring2.setEnabled(on);
+        if (!on) continue;
         pr.ring1.rotation.y += dt * 0.8;
         pr.ring1.rotation.x = Math.sin(pr.ring1.rotation.y) * 0.3;
         pr.ring2.rotation.y -= dt * 1.2;
@@ -1023,6 +1074,9 @@ export class EnvironmentRenderer {
     // the arena-resize rebuild path must not leak per-frame work).
     const baseY = 200;
     this._holoTitleObs = this.scene.onBeforeRenderObservable.add(() => {
+      const on = isEnabled('arenaAmbience', 'holoTitle');
+      plane.setEnabled(on);
+      if (!on) return;
       const t = performance.now() / 1000;
       plane.position.y = baseY + Math.sin(t * 0.5) * 5;
       // Subtle pulse
@@ -1067,7 +1121,8 @@ export class EnvironmentRenderer {
     ps.maxLifeTime = 6;
 
     // Emission rate — slow and sparse
-    ps.emitRate = 5;
+    const AMBIENT_EMIT_RATE = 5;
+    ps.emitRate = AMBIENT_EMIT_RATE;
 
     // Warm amber/orange fading to transparent
     ps.color1 = new B.Color4(1.0, 0.7, 0.3, 0.4);
@@ -1081,6 +1136,13 @@ export class EnvironmentRenderer {
     ps.gravity = new B.Vector3(0, -0.5, 0);
 
     ps.start();
+
+    // Live settings check — zero the emit rate rather than stop() so a
+    // toggle takes effect immediately without losing emitter state.
+    this.scene.registerBeforeRender(() => {
+      ps.emitRate = isEnabled('arenaAmbience', 'ambientParticles') ? AMBIENT_EMIT_RATE : 0;
+    });
+
     this._ambientParticles = ps;
   }
 
@@ -1093,7 +1155,7 @@ export class EnvironmentRenderer {
     this._zoneMat.diffuseColor = new B.Color3(0, 0, 0);
     this._zoneMat.specularColor = B.Color3.Black();
     this._zoneMat.disableLighting = true;
-    this._zoneMat.alpha = 0.7;
+    this._zoneMat.alpha = ZONE_RING_BASE_ALPHA;
     this._zoneMat.backFaceCulling = false;
 
     // Target zone — dim white
@@ -1190,6 +1252,11 @@ export class EnvironmentRenderer {
       this._zoneLerpRegistered = true;
       this.scene.registerBeforeRender(() => {
         if (this._zoneTargetR === undefined || !this._zoneRing) return;
+        // This ring is functionally informative (shows the shrinking safe
+        // zone), not pure decoration, but still user-toggleable. Gate via
+        // alpha rather than setEnabled so a spectator relying on it can
+        // toggle it back on mid-round without any state loss.
+        this._zoneMat.alpha = isEnabled('gameplayZoneIndicators', 'safeZoneRing') ? ZONE_RING_BASE_ALPHA : 0;
         // dt-based smoothing so convergence speed is framerate-independent
         // (a fixed per-frame factor converges 2.4x faster at 144Hz than 60Hz).
         const dt = this.scene.getEngine().getDeltaTime() / 1000;

@@ -5,6 +5,8 @@
  * @module leaderboard
  */
 
+import { isEnabled } from './settings.js';
+
 const SORT_OPTIONS = {
   elo: 'ELO Rating',
   kills: 'Most Kills',
@@ -198,7 +200,7 @@ function renderLeaderboard(data, podiumEl, tbody, state) {
     // Motion classes only when the row's rank ACTUALLY changed since the
     // last refresh of the same view, so steady-state refreshes stay still.
     // classList.add appends (the top-3 className assignment above stays).
-    if (compare) {
+    if (compare && isEnabled('siteMotion', 'rankChangeFlash')) {
       const prev = _prevRanks.get(entry.name);
       if (prev === undefined && _prevRanks.size > 0) tr.classList.add('rank-new');
       else if (prev !== undefined && rank < prev) tr.classList.add('rank-up');
