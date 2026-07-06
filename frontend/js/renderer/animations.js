@@ -7,6 +7,7 @@
  */
 
 import { isEnabled } from '../settings.js';
+import { makeWeaponTrails } from './weapons.js?v=20260707a';
 
 const IDLE_BOB_SPEED = 2.5;
 const IDLE_BOB_AMOUNT = 1.2;
@@ -30,8 +31,8 @@ const MOVE_TILT = 0.15;
 const WEAPON_ANIMS = {
   sword:   { duration: 0.42, windupPct: 0.18, activePct: 0.48, restZ: -0.4, windupZ: -1.35, swingZ: 2.25, lunge: 0.28, bob: 2.4, weaponX: 0.75, weaponY: 0.65, pitch: 0.18, yaw: 0.10, glow: 0.0, armRaise: 1.5, contactHold: 0.12 },
   bow:     { duration: 0.78, windupPct: 0.34, activePct: 0.12, restZ: 0.02, windupZ: 0.42, swingZ: -0.62, lunge: -0.08, bob: 0.7, weaponX: -0.25, weaponY: 0.85, pitch: -0.12, yaw: -0.08, glow: 0.0, armRaise: 0.5, contactHold: 0 },
-  daggers: { duration: 0.24, windupPct: 0.14, activePct: 0.56, restZ: 0.05, windupZ: -0.48, swingZ: 1.75, lunge: 0.34, bob: 1.8, weaponX: 0.55, weaponY: 0.45, pitch: 0.12, yaw: 0.16, glow: 0.0, armRaise: 1.2, contactHold: 0.07 },
-  spear:   { duration: 0.56, windupPct: 0.24, activePct: 0.42, restZ: -0.26, windupZ: -0.92, swingZ: 0.62, lunge: 0.38, bob: 3.1, weaponX: 1.6, weaponY: 0.32, pitch: -0.08, yaw: 0.12, glow: 0.0, armRaise: 1.3, contactHold: 0.12 },
+  daggers: { duration: 0.24, windupPct: 0.14, activePct: 0.56, restZ: 0.05, windupZ: -0.48, swingZ: 1.75, lunge: 0.34, bob: 1.8, weaponX: 0.55, weaponY: 0.45, pitch: 0.12, yaw: 0.16, glow: 0.0, armRaise: 1.2, contactHold: 0.07, trail: 0.45 },
+  spear:   { duration: 0.56, windupPct: 0.24, activePct: 0.42, restZ: -0.26, windupZ: -0.92, swingZ: 0.62, lunge: 0.38, bob: 3.1, weaponX: 1.6, weaponY: 0.32, pitch: -0.08, yaw: 0.12, glow: 0.0, armRaise: 1.3, contactHold: 0.12, trail: 0.62 },
   staff:   { duration: 0.96, windupPct: 0.42, activePct: 0.26, restZ: 0.05, windupZ: 0.72, swingZ: -0.36, lunge: 0.16, bob: 4.2, weaponX: 0.28, weaponY: 1.1, pitch: -0.12, yaw: 0.18, glow: 1.0, armRaise: 0.9, contactHold: 0.05 },
   shield:  { duration: 0.64, windupPct: 0.24, activePct: 0.34, restZ: 0.08, windupZ: 0.52, swingZ: -1.02, lunge: 0.32, bob: 2.2, weaponX: -0.95, weaponY: 0.28, pitch: 0.08, yaw: -0.18, glow: 0.25, armRaise: 1.0, contactHold: 0.12, armSide: 'L' },
   grapple: { duration: 0.48, windupPct: 0.18, activePct: 0.36, restZ: -0.10, windupZ: -0.58, swingZ: 0.94, lunge: 0.26, bob: 1.8, weaponX: 0.9, weaponY: 0.28, pitch: -0.04, yaw: 0.2, glow: 0.2, armRaise: 1.1, contactHold: 0.07 },
@@ -39,6 +40,13 @@ const WEAPON_ANIMS = {
 };
 
 const DODGE_DURATION = 0.3;
+
+// Directional death choreography: total time, phase boundaries, and the
+// standing base height the fall sinks from (idle/attack target 10 + bob).
+const DEATH_TOTAL = 0.9;
+const DEATH_STAGGER_END = 0.20;
+const DEATH_FALL_END = 0.62;
+const BODY_BASE_Y = 10;
 
 /**
  * Exponential smoothing helper.
@@ -80,6 +88,8 @@ export class BotAnimState {
     this.smoothArmL = 0;
     this.smoothArmR = 0;
     this.walkPhase = 0;
+    this._trailOn = false;
+    this.deathYaw = 0;
   }
 }
 
@@ -166,6 +176,35 @@ function resetWeaponPose(weapon) {
   }
 }
 
+// Swing-trail state transitions. Trails are built lazily on first use and
+// tri-stated per weapon (_trails undefined = never tried, null = unavailable,
+// never retried). Only runs on state changes, so steady state costs nothing.
+function _setWeaponTrail(anim, weapon, on, bodyMat, diam) {
+  if (on) {
+    if (weapon._trails === undefined) {
+      weapon._trails = makeWeaponTrails(weapon, bodyMat ? bodyMat.diffuseColor : null, diam);
+    }
+    if (weapon._trails) {
+      for (let i = 0; i < weapon._trails.length; i++) {
+        const tr = weapon._trails[i];
+        if (tr.reset) tr.reset();
+        tr.setEnabled(true);
+        tr.start();
+      }
+    }
+    anim._trailOn = !!weapon._trails;
+  } else {
+    if (weapon._trails) {
+      for (let i = 0; i < weapon._trails.length; i++) {
+        weapon._trails[i].stop();
+        weapon._trails[i].setEnabled(false);
+      }
+    }
+    anim._trailOn = false;
+  }
+}
+
+
 /**
  * Update animation state and apply transforms.
  * Priority order: death > respawn > dodge > attack > idle/movement.
@@ -195,12 +234,69 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat, en
 
   // --- Priority 1: Death animation (NEVER interrupted) ---
   if (!isAlive) {
-    if (anim.deathTimer < 0) anim.deathTimer = 0;
-    anim.deathTimer = Math.min(anim.deathTimer + dt, 0.6);
-    const t = anim.deathTimer / 0.6;
-    body.rotation.z = t * (Math.PI / 2);
-    body.scaling.y = Math.max(0.1, 1 - t * 0.8);
-    if (bodyMat) bodyMat.alpha = isEnabled('deathEffects', 'corpseFade') ? 1 - t : 1;
+    // A death mid-swing must not leave a frozen weapon trail running (this
+    // branch early-returns before the attack machine and its residue guard).
+    if (anim._trailOn && weapon) _setWeaponTrail(anim, weapon, false);
+    if (anim.deathTimer < 0) {
+      anim.deathTimer = 0;
+      // Capture the fall bearing once, on the first dead frame: toward the
+      // killer when the hit stamp is fresh (bots.js stamps it at the death
+      // transition), else fall straight backward from current facing.
+      const fresh = entry && entry._hitFromT && (performance.now() - entry._hitFromT) < 1200;
+      anim.deathYaw = fresh
+        ? Math.atan2(entry._hitFromX - x, entry._hitFromZ - z)
+        : body.rotation.y + Math.PI;
+      // Clear any dodge squash frozen by the interrupt before the fall.
+      body.scaling.set(1, 1, 1);
+    }
+    if (isEnabled('deathEffects', 'directionalDeath')) {
+      anim.deathTimer = Math.min(anim.deathTimer + dt, DEATH_TOTAL);
+      const tn = anim.deathTimer / DEATH_TOTAL;
+      // Fall AWAY from the killer: the bearing relative to facing drives
+      // pitch and roll together (sign convention matches the flinch layer).
+      // Euler writes only; never set rotationQuaternion on this node.
+      const rel = anim.deathYaw - body.rotation.y;
+      let topple;
+      if (tn < DEATH_STAGGER_END) {
+        // Stagger: knees buckle, slight sink, barely tipping yet.
+        const q = tn / DEATH_STAGGER_END;
+        topple = 0.12 * q;
+        body.position.y = BODY_BASE_Y - 1.5 * q;
+        body.scaling.y = 1 - 0.06 * q;
+      } else if (tn < DEATH_FALL_END) {
+        // Fall: gravity-like acceleration, overshooting past flat.
+        const q = (tn - DEATH_STAGGER_END) / (DEATH_FALL_END - DEATH_STAGGER_END);
+        topple = 0.12 + q * q * 0.98;
+        body.position.y = BODY_BASE_Y - 1.5 - 4.5 * q * q;
+        body.scaling.y = 0.94 - 0.09 * q;
+      } else {
+        // Settle: a small bounce back to flat, then hold.
+        const q = Math.min(1, (tn - DEATH_FALL_END) / 0.1);
+        topple = 1.10 - 0.10 * q;
+        body.position.y = BODY_BASE_Y - 6.0;
+        body.scaling.y = 0.85;
+      }
+      const amount = topple * (Math.PI / 2);
+      body.rotation.x = -Math.cos(rel) * amount;
+      body.rotation.z = Math.sin(rel) * amount;
+      // The body visibly hits the ground BEFORE dissolving: alpha holds
+      // through the fall, then fades across the settle window.
+      if (bodyMat) {
+        const fade = tn <= DEATH_FALL_END ? 1 : 1 - (tn - DEATH_FALL_END) / (1 - DEATH_FALL_END);
+        const a = isEnabled('deathEffects', 'corpseFade') ? Math.max(0, fade) : 1;
+        bodyMat.alpha = a;
+        // The head has its own material; fading only the body leaves a
+        // floating head on the now-visible corpse.
+        if (entry && entry.headMat) entry.headMat.alpha = a;
+      }
+    } else {
+      // Legacy fixed-axis topple (directionalDeath toggled off).
+      anim.deathTimer = Math.min(anim.deathTimer + dt, 0.6);
+      const t = anim.deathTimer / 0.6;
+      body.rotation.z = t * (Math.PI / 2);
+      body.scaling.y = Math.max(0.1, 1 - t * 0.8);
+      if (bodyMat) bodyMat.alpha = isEnabled('deathEffects', 'corpseFade') ? 1 - t : 1;
+    }
     return;
   }
 
@@ -212,9 +308,17 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat, en
     anim.attackTimer = -1;
     anim.attackType = null;
     body.rotation.z = 0;
+    body.rotation.x = 0;
+    body.position.y = BODY_BASE_Y;
+    // Zero the smoothed channels too, or the next idle frame overwrites the
+    // reset with stale pre-death values for the first half second.
+    anim.smoothRotX = 0;
+    anim.smoothRotZ = 0;
+    anim.smoothY = BODY_BASE_Y;
     // Dodge writes scaling.x/z too; restore the full vector.
     body.scaling.set(1, 1, 1);
     if (bodyMat) bodyMat.alpha = 1;
+    if (entry && entry.headMat) entry.headMat.alpha = 1;
   }
   if (anim.respawnTimer >= 0) {
     anim.respawnTimer += dt;
@@ -244,6 +348,13 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat, en
       if (Math.abs(sc.x - 1) < 0.001 && Math.abs(sc.y - 1) < 0.001 &&
           Math.abs(sc.z - 1) < 0.001) sc.set(1, 1, 1);
     }
+  }
+
+  // One-shot residue rule: a swing trail must never outlive its attack.
+  // Dodge cancels attacks without a trail hook, so force it off whenever no
+  // attack owns it. Two scalar compares per bot per frame at steady state.
+  if (anim._trailOn && anim.attackTimer < 0 && weapon) {
+    _setWeaponTrail(anim, weapon, false);
   }
 
   // Smooth rotation toward target when set
@@ -339,6 +450,20 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat, en
       applyWeaponPose(weapon, cfg, weaponPoseT, glowT);
     }
     if (anim.attackType === 'bow') updateBowDraw(weapon, bowDraw);
+
+    // Melee swing trail: level-based desired state (window = the active
+    // phase), dirty-checked so transitions are the only work. A frame that
+    // skips the whole window simply never turns it on. isEnabled goes last
+    // in the chain as the rarest-changing check.
+    if (weapon) {
+      const wantTrail = !!cfg.trail && !!weapon._trailTips &&
+        weapon._trails !== null &&
+        progress >= windupEnd && progress < activeEnd &&
+        isEnabled('weaponImpactVfx', 'meleeSwingTrails');
+      if (wantTrail !== anim._trailOn) {
+        _setWeaponTrail(anim, weapon, wantTrail, bodyMat, cfg.trail);
+      }
+    }
     anim.smoothRotX = lerp(anim.smoothRotX, targetRotX, 8, dt);
     anim.smoothY = lerp(anim.smoothY, targetY, 12, dt);
     body.rotation.x = anim.smoothRotX;

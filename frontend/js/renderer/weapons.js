@@ -174,6 +174,14 @@ function spear(id, scene) {
   butt.parent = root;
   butt.material = steelMat;
 
+  // Blade-apex anchor for the swing trail (sampled while a trail runs).
+  // Deliberately NOT in _children: root dispose cascades to it, and it must
+  // stay out of the per-attack-end child sweep in resetWeaponPose.
+  const trailTip = new (B().TransformNode)(`sp-trailtip-${id}`, scene);
+  trailTip.position.set(8, 25.5, 0);
+  trailTip.parent = root;
+  root._trailTips = [trailTip];
+
   root.rotation.z = -0.3;
   root._children = [shaft, tip, wingL, wingR, butt];
   return root;
@@ -187,6 +195,7 @@ function daggers(id, scene) {
   const gripMat = _mat('w-daggers-grip', scene, new (B().Color3)(0.3, 0.22, 0.18), {
     emissiveFactor: 0.18
   });
+  const _trailTips = [];
   const mkBlade = (name, xOff) => {
     const blade = B().MeshBuilder.CreateBox(`${name}-blade`, {
       width: 0.8, height: 7.6, depth: 0.45
@@ -217,9 +226,16 @@ function daggers(id, scene) {
     handle.position.set(0, 0, 0);
     handle.rotation.z = -0.52 + (xOff < 0 ? 0.1 : -0.1);
     handle.parent = root;
+    // Blade-apex anchor: parented to the HANDLE (not root) so it inherits the
+    // handle's z-rotation and rides the actual blade line. Not in _children.
+    const trailTip = new (B().TransformNode)(`${name}-trailtip`, scene);
+    trailTip.position.set(xOff, 9.0, 0);
+    trailTip.parent = handle;
+    _trailTips.push(trailTip);
     return [blade, tip, grip, guard, handle];
   };
   root._children = [...mkBlade(`dg1-${id}`, 7), ...mkBlade(`dg2-${id}`, -7)];
+  root._trailTips = _trailTips;
   return root;
 }
 
@@ -453,6 +469,43 @@ function _idleBreathe(scene, node, peak, frames, speed) {
   _gateIdleAnimatable(scene, node, animatable);
 }
 
+/**
+ * Lazily build swing trails for a generic weapon that declares tip anchors.
+ * Direct generalization of the swordsman makeSwordTrail: one shared per-bot
+ * material, one TrailMesh per tip anchor. Returns null when the weapon has
+ * no tip anchors or TrailMesh is unavailable; callers tri-state the result
+ * (undefined = never tried, null = unavailable, never retried).
+ */
+export function makeWeaponTrails(weapon, baseColor, diam) {
+  const BB = B();
+  if (!weapon || !weapon._trailTips || !BB.TrailMesh) return null;
+  const scene = weapon.getScene();
+  const mat = new BB.StandardMaterial(`${weapon.name}-trailmat`, scene);
+  const base = baseColor || new BB.Color3(0.8, 0.8, 0.9);
+  // Steel flash tinted toward the bot color, standard alpha blend (the
+  // additive movement-trail look was reverted in #55; do not reintroduce it).
+  mat.emissiveColor = new BB.Color3(
+    Math.min(1, 0.55 + base.r * 0.45),
+    Math.min(1, 0.55 + base.g * 0.45),
+    Math.min(1, 0.55 + base.b * 0.45)
+  );
+  mat.diffuseColor = BB.Color3.Black();
+  mat.disableLighting = true;
+  mat.backFaceCulling = false;
+  mat.alpha = 0.4;
+  const trails = [];
+  for (let i = 0; i < weapon._trailTips.length; i++) {
+    const trail = new BB.TrailMesh(`${weapon.name}-trail${i}`, weapon._trailTips[i], scene, diam, 24, false);
+    trail.material = mat;
+    trail.isPickable = false;
+    trail.alwaysSelectAsActiveMesh = true;
+    trail.setEnabled(false);
+    trails.push(trail);
+  }
+  weapon._trailMat = mat;
+  return trails;
+}
+
 export function disposeWeapon(weapon) {
   if (!weapon) return;
   // Stop idle Animatables before disposing so they don't linger against
@@ -463,6 +516,14 @@ export function disposeWeapon(weapon) {
       weapon._children.forEach(c => scene.stopAnimation(c));
     }
   }
+  // Swing trails are scene-parented (outside the root cascade) and their
+  // material is per-bot, not shared. Dispose them BEFORE the children: the
+  // dagger tip anchors are parented to handles inside _children, and a
+  // TrailMesh must not outlive its generator.
+  if (weapon._trails) {
+    weapon._trails.forEach(tr => tr.dispose());
+  }
+  if (weapon._trailMat) weapon._trailMat.dispose();
   // Don't dispose shared materials
   if (weapon._children) {
     weapon._children.forEach(c => c.dispose());

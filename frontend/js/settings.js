@@ -30,6 +30,7 @@ export const SETTINGS_SCHEMA = {
       deathFlash: { label: 'Death flash (white pulse)' },
       deathBurst: { label: 'Death burst (particles, ring, light pillar)' },
       corpseFade: { label: 'Corpse fade (translucent after death)' },
+      directionalDeath: { label: 'Directional death fall' },
     },
   },
   hitReactions: {
@@ -54,6 +55,7 @@ export const SETTINGS_SCHEMA = {
       backstab: { label: 'Backstab mark' },
       shoveShockwave: { label: 'Shove shockwave' },
       dodgeAfterimage: { label: 'Dodge afterimage' },
+      meleeSwingTrails: { label: 'Melee swing trails' },
       grappleLine: { label: 'Grapple line & hook' },
       grappleSlam: { label: 'Grapple slam ring' },
       mineExplosion: { label: 'Mine explosion' },

@@ -22,7 +22,8 @@
 // Circular with swordsman-body.js (it imports SwordsmanAnimState from here);
 // safe because both sides only use the other's export at runtime, never at
 // module top level. The ?v= MUST match every other import of that module.
-import { makeSwordTrail } from './swordsman-body.js?v=20260706f';
+import { makeSwordTrail } from './swordsman-body.js?v=20260707a';
+import { isEnabled } from '../settings.js';
 
 const DEG = Math.PI / 180;
 const ATTACK_DURATION = 0.50; // Match server sword cooldown (0.5s)
@@ -386,6 +387,7 @@ export class SwordsmanAnimState {
     this.attackComboIndex = 0;
     this.attackDuration = ATTACK_DURATION;
     this._trailOn = false;
+    this.deathYaw = 0;
 
     // Base anim compat
     this.deathTimer = -1;
@@ -475,19 +477,70 @@ export function updateSwordsmanAnim(entry, dt) {
   anim.prevZ = root.position.z;
 
   // ── Death (never interrupted) ──
+  // Keep this choreography in sync with the generic death block in
+  // animations.js (same beats, mirrored per-rig node math).
   if (!entry.isAlive) {
-    if (anim.deathTimer < 0) anim.deathTimer = 0;
-    anim.deathTimer = Math.min(anim.deathTimer + dt, 0.6);
-    const t = anim.deathTimer / 0.6;
-    // Topple the whole body group
-    joints.body.rotation.z = t * (Math.PI / 2);
-    joints.body.scaling.y = Math.max(0.1, 1 - t * 0.8);
-    if (bodyMat) bodyMat.alpha = 1 - t;
     // A death mid-swing must not leave a frozen blade trail hanging.
     if (anim._trailOn && entry._trail) {
       entry._trail.stop();
       entry._trail.setEnabled(false);
       anim._trailOn = false;
+    }
+    if (anim.deathTimer < 0) {
+      anim.deathTimer = 0;
+      // Capture the fall bearing once, on the first dead frame: toward the
+      // killer when the hit stamp is fresh, else backward from facing.
+      const fresh = entry._hitFromT && (performance.now() - entry._hitFromT) < 1200;
+      anim.deathYaw = fresh
+        ? Math.atan2(entry._hitFromX - root.position.x, entry._hitFromZ - root.position.z)
+        : root.rotation.y + Math.PI;
+      // Clear any dodge squash frozen by the interrupt before the fall.
+      joints.body.scaling.set(1, 1, 1);
+    }
+    const S_DEATH = 13;
+    const BODY_BASE = 0.75 * S_DEATH;
+    if (isEnabled('deathEffects', 'directionalDeath')) {
+      anim.deathTimer = Math.min(anim.deathTimer + dt, 0.9);
+      const tn = anim.deathTimer / 0.9;
+      // Fall AWAY from the killer. Euler writes only; never set
+      // rotationQuaternion on these nodes.
+      const rel = anim.deathYaw - root.rotation.y;
+      let topple;
+      if (tn < 0.20) {
+        const q = tn / 0.20;
+        topple = 0.12 * q;
+        joints.body.position.y = BODY_BASE - 0.12 * S_DEATH * q;
+        joints.body.scaling.y = 1 - 0.06 * q;
+      } else if (tn < 0.62) {
+        const q = (tn - 0.20) / 0.42;
+        topple = 0.12 + q * q * 0.98;
+        joints.body.position.y = BODY_BASE - 0.12 * S_DEATH - 0.35 * S_DEATH * q * q;
+        joints.body.scaling.y = 0.94 - 0.09 * q;
+      } else {
+        const q = Math.min(1, (tn - 0.62) / 0.1);
+        topple = 1.10 - 0.10 * q;
+        joints.body.position.y = BODY_BASE - 0.47 * S_DEATH;
+        joints.body.scaling.y = 0.85;
+      }
+      const amount = topple * (Math.PI / 2);
+      joints.body.rotation.x = -Math.cos(rel) * amount;
+      joints.body.rotation.z = Math.sin(rel) * amount;
+      // Body hits the ground before dissolving; fade rides the settle window.
+      if (bodyMat) {
+        const fade = tn <= 0.62 ? 1 : 1 - (tn - 0.62) / 0.38;
+        const a = isEnabled('deathEffects', 'corpseFade') ? Math.max(0, fade) : 1;
+        bodyMat.alpha = a;
+        // The head has its own material; fade it with the body so the
+        // now-visible corpse does not leave a floating head.
+        if (entry.headMat) entry.headMat.alpha = a;
+      }
+    } else {
+      // Legacy fixed-axis topple (directionalDeath toggled off).
+      anim.deathTimer = Math.min(anim.deathTimer + dt, 0.6);
+      const t = anim.deathTimer / 0.6;
+      joints.body.rotation.z = t * (Math.PI / 2);
+      joints.body.scaling.y = Math.max(0.1, 1 - t * 0.8);
+      if (bodyMat) bodyMat.alpha = isEnabled('deathEffects', 'corpseFade') ? 1 - t : 1;
     }
     return;
   }
@@ -507,7 +560,9 @@ export function updateSwordsmanAnim(entry, dt) {
     joints.body.scaling.set(1, 1, 1);
     joints.head.rotation.x = 0;
     joints.head.rotation.z = 0;
+    joints.body.position.y = 0.75 * 13; // standing base; idle bob re-owns it
     if (bodyMat) bodyMat.alpha = 1;
+    if (entry.headMat) entry.headMat.alpha = 1;
   }
 
   // ── Residue self-heal ──
@@ -534,6 +589,14 @@ export function updateSwordsmanAnim(entry, dt) {
     if (bodyNode.scaling.z !== 1) {
       bodyNode.scaling.z = Math.abs(bodyNode.scaling.z - 1) < 0.01
         ? 1 : elerp(bodyNode.scaling.z, 1, 6, dt);
+    }
+    // One-shot residue rule for the blade trail: a dodge cancels the attack
+    // (attackTimer = -1) without a trail hook, which stranded the ribbon
+    // through dodge and idle. Force it off whenever no attack owns it.
+    if (anim._trailOn && anim.attackTimer < 0 && entry._trail) {
+      entry._trail.stop();
+      entry._trail.setEnabled(false);
+      anim._trailOn = false;
     }
     // Hit-recoil channels (head pitch/roll, body pitch). The recoil writes
     // them absolutely while hitTimer runs and zeroes them on expiry, but a
@@ -623,7 +686,9 @@ export function updateSwordsmanAnim(entry, dt) {
     // Blade swing trail, visible only through the strike arc. Lazily built
     // on the first swing (undefined = never tried, null = unavailable) and
     // reused; the dirty check keeps this to one comparison per frame.
-    const inSwing = progress > 0.30 && progress < 0.85;
+    const inSwing = progress > 0.30 && progress < 0.85 &&
+      entry._trail !== null &&
+      isEnabled('weaponImpactVfx', 'meleeSwingTrails');
     if (inSwing !== anim._trailOn) {
       if (inSwing) {
         if (entry._trail === undefined) entry._trail = makeSwordTrail(entry);
