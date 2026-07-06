@@ -1992,7 +1992,7 @@ pre.code-block {
   max-width: 1240px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
   padding: 18px 22px;
@@ -2030,13 +2030,6 @@ pre.code-block {
 }
 
 .footer a:hover { text-decoration: underline; }
-
-.footer-links {
-  display: inline-flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 10px;
-}
 
 .footer-stats {
   font-family: var(--font-mono);
@@ -2176,10 +2169,6 @@ tr.rank-new { animation: killfeed-in 0.45s cubic-bezier(0.22, 1, 0.36, 1); }
     justify-items: start;
   }
 
-  .footer-links {
-    justify-content: flex-start;
-  }
-
   .footer-stats {
     white-space: normal;
   }
@@ -2212,6 +2201,160 @@ tr.rank-new { animation: killfeed-in 0.45s cubic-bezier(0.22, 1, 0.36, 1); }
   tr.rank-new {
     animation: none;
   }
+}
+
+/* Settings-panel equivalents of the block above, toggled individually via a
+   body class from settings.js (frontend/js/app.js syncCssOnlyEffectClasses)
+   instead of all-or-nothing at the OS level. Only effects with no JS trigger
+   point to gate directly need this - combat-flash/round-sweep/rank-change
+   are gated at their call site in app.js/leaderboard.js instead. */
+body.no-fx-heroChipFloat .hero-ticker span {
+  animation: none;
+}
+
+body.no-fx-orbitSpins .keygen-orbit-a,
+body.no-fx-orbitSpins .keygen-orbit-b {
+  animation: none;
+}
+
+body.no-fx-liveHeartbeat .ws-status.connected .dot,
+body.no-fx-liveHeartbeat .ws-status.connected .dot::after {
+  animation: none;
+}
+
+/* killfeed-new also drives the entry's slide-in appearance, which isn't
+   part of the "kill feed glow" toggle - only silence the ::before glow. */
+body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
+  animation: none;
+}
+
+/* ---------- Settings panel ---------- */
+
+/* A plain flex child of .onboarding-rail-stack (see arena.css) - no fixed
+   positioning of its own, so it always sits correctly above/beside the rail
+   regardless of how many rail buttons exist or how tall the stack is. */
+.settings-gear-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(126, 166, 207, 0.2);
+  background: rgba(8, 15, 24, 0.72);
+  backdrop-filter: blur(18px);
+  color: var(--text-primary);
+  cursor: pointer;
+  box-shadow: 0 20px 42px rgba(0, 0, 0, 0.28);
+  transition: transform 0.24s ease, border-color 0.24s ease, background 0.24s ease, color 0.24s ease;
+}
+
+.settings-gear-btn:hover {
+  transform: rotate(24deg);
+  border-color: rgba(71, 215, 255, 0.28);
+  background: rgba(10, 20, 32, 0.88);
+  color: var(--accent-blue);
+}
+
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  cursor: pointer;
+}
+
+.settings-toggle-row input[type='checkbox'] {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent-blue);
+  cursor: pointer;
+}
+
+.settings-master-card .settings-toggle-master {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-color);
+  font-weight: 600;
+}
+
+#settings-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.settings-section {
+  padding: 18px 20px;
+}
+
+.settings-section-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings-section-summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-section-summary::before {
+  content: '▸';
+  color: var(--accent-blue);
+  font-size: 0.85rem;
+  margin-right: 10px;
+  transition: transform 0.2s ease;
+}
+
+.settings-section[open] .settings-section-summary::before {
+  transform: rotate(90deg);
+}
+
+.settings-section-title {
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+  flex: 1;
+}
+
+.settings-master-checkbox {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent-blue);
+  cursor: pointer;
+}
+
+.settings-section-desc {
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  color: rgba(236, 244, 255, 0.6);
+}
+
+.settings-section-effects {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-color);
+}
+
+.settings-toggle-effect {
+  font-size: 0.88rem;
+  color: rgba(236, 244, 255, 0.85);
+}
+
+.settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
 }
 
 /* --- About drawer ------------------------------------------------------- */

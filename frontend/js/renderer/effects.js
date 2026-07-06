@@ -7,6 +7,7 @@
  */
 
 import { parseColor } from './utils.js';
+import { isEnabled } from '../settings.js';
 
 /** Max concurrent damage numbers to prevent buildup. */
 const MAX_DMG_NUMBERS = 12;
@@ -78,6 +79,7 @@ export class EffectRenderer {
    * @param {string} [weapon='sword'] - weapon type for effect selection
    */
   spawnHitSparks(x, z, hexColor, weapon) {
+    if (!isEnabled('weaponImpactVfx', 'hitSparks')) return;
     const cfg = HIT_EFFECTS[weapon] || HIT_EFFECTS.sword;
     const B = window.BABYLON;
     const ps = new B.ParticleSystem(`sparks-${++_psCounter}`, cfg.count, this.scene);
@@ -108,6 +110,7 @@ export class EffectRenderer {
    * @param {string} hexColor
    */
   spawnBowImpact(x, z, hexColor, didHit = true, intensity = 1) {
+    if (!isEnabled('weaponImpactVfx', 'bowImpact')) return;
     this.spawnHitSparks(x, z, hexColor, 'bow');
     const B = window.BABYLON;
     const c = parseColor(hexColor);
@@ -169,6 +172,7 @@ export class EffectRenderer {
    * @param {string} hexColor
    */
   spawnDodgeEffect(x, z, hexColor) {
+    if (!isEnabled('weaponImpactVfx', 'dodgeAfterimage')) return;
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     const ps = new B.ParticleSystem(`dodge-${++_psCounter}`, 10, this.scene);
@@ -198,6 +202,7 @@ export class EffectRenderer {
    * @param {string} hexColor - attacker avatar color
    */
   spawnShoveEffect(ax, az, tx, tz, hexColor) {
+    if (!isEnabled('weaponImpactVfx', 'shoveShockwave')) return;
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     // Direction from attacker to target
@@ -239,6 +244,7 @@ export class EffectRenderer {
    * @param {string} [weapon='sword']
    */
   spawnWeaponStrike(ax, az, tx, tz, hexColor, weapon = 'sword') {
+    if (!isEnabled('weaponImpactVfx', 'weaponStrike')) return;
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     const dx = tx - ax;
@@ -331,6 +337,7 @@ export class EffectRenderer {
   }
 
   spawnShieldBash(ax, az, tx, tz, hexColor = '#bfe3ff') {
+    if (!isEnabled('weaponImpactVfx', 'shieldBash')) return;
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     this.spawnWeaponStrike(ax, az, tx, tz, hexColor, 'shield');
@@ -365,6 +372,7 @@ export class EffectRenderer {
   }
 
   spawnSpearBrace(ax, az, tx, tz, hexColor = '#ffe38a') {
+    if (!isEnabled('weaponImpactVfx', 'spearBrace')) return;
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     this.spawnWeaponStrike(ax, az, tx, tz, hexColor, 'spear');
@@ -399,6 +407,7 @@ export class EffectRenderer {
   }
 
   spawnBackstab(ax, az, tx, tz, hexColor = '#ff8f47') {
+    if (!isEnabled('weaponImpactVfx', 'backstab')) return;
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     this.spawnWeaponStrike(ax, az, tx, tz, hexColor, 'daggers');
@@ -435,6 +444,7 @@ export class EffectRenderer {
   }
 
   spawnGrappleSlam(ax, az, tx, tz, hexColor = '#59f1ff') {
+    if (!isEnabled('weaponImpactVfx', 'grappleSlam')) return;
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     this.spawnHitSparks(tx, tz, hexColor, 'grapple');
@@ -467,6 +477,7 @@ export class EffectRenderer {
   }
 
   spawnDamageNumber(x, z, dmg) {
+    if (!isEnabled('hitReactions', 'floatingDamageNumbers')) return;
     if (this._dmgCount >= MAX_DMG_NUMBERS) return;
     this._dmgCount++;
 
@@ -536,6 +547,7 @@ export class EffectRenderer {
 
   /** @private */
   _deathBurst(x, z, hexColor) {
+    if (!isEnabled('deathEffects', 'deathBurst')) return;
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     const ps = new B.ParticleSystem(`death-${++_psCounter}`, 20, this.scene);
@@ -639,6 +651,7 @@ export class EffectRenderer {
    * `mode=anchor` means the chain stays anchored while the user is pulled in.
    */
   spawnGrappleEffect(ax, az, tx, tz, opts = {}) {
+    if (!isEnabled('weaponImpactVfx', 'grappleLine')) return;
     const B = window.BABYLON;
     const scene = this.scene;
     const color = parseColor(opts.color || '#59f1ff');
@@ -806,6 +819,7 @@ export class EffectRenderer {
    * @param {number} [radius=20]
    */
   spawnMineExplosion(x, z, radius = 20) {
+    if (!isEnabled('weaponImpactVfx', 'mineExplosion')) return;
     const B = window.BABYLON;
     const blastRadius = Math.max(12, radius);
 
@@ -893,6 +907,7 @@ export class EffectRenderer {
    * @param {string} [hexColor='#8d4dff']
    */
   spawnStaffExplosion(x, z, radius = 20, hexColor = '#8d4dff') {
+    if (!isEnabled('weaponImpactVfx', 'staffExplosion')) return;
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     const blastRadius = Math.max(16, radius);
@@ -978,6 +993,7 @@ export class EffectRenderer {
   }
 
   spawnCapturePadPulse(x, z, radius = 36, hexColor = '#7ef7ff') {
+    if (!isEnabled('objectiveIndicators', 'capturePadPulse')) return;
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     const baseRadius = Math.max(18, radius);
@@ -1055,6 +1071,7 @@ export class EffectRenderer {
    * @param {string} [hexColor='#00ffff']
    */
   spawnTeleportBurst(fromX, fromZ, toX, toZ, hexColor = '#00ffff') {
+    if (!isEnabled('weaponImpactVfx', 'teleportBurst')) return;
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     const burstAt = (x, z, invert = false) => {
