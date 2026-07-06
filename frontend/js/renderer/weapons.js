@@ -7,6 +7,7 @@
  */
 
 import { makeMat } from './utils.js';
+import { isEnabled } from '../settings.js';
 
 const B = () => window.BABYLON;
 
@@ -393,6 +394,35 @@ function grapple(id, scene) {
   return root;
 }
 
+/**
+ * @private Starts an Animatable already paused/resumed to match the current
+ * setting, then registers a per-frame check that pauses/resumes it whenever
+ * the setting changes - so an in-session toggle takes effect immediately,
+ * without a page reload, for every weapon instance (including ones created
+ * while the setting was off). Shared by _idleSpin and _idleBreathe.
+ *
+ * Self-unregisters once `node` is disposed (weapons are created/destroyed
+ * per-bot all game long via disposeWeapon(), which stops the Animatable but
+ * doesn't know about this closure - leaving it registered would leak one
+ * scene-level callback per weapon for the rest of the session).
+ */
+function _gateIdleAnimatable(scene, node, animatable) {
+  let wasEnabled = isEnabled('arenaAmbience', 'idleWeaponAnims');
+  if (!wasEnabled) animatable.pause();
+  const tick = () => {
+    if (node.isDisposed()) {
+      scene.unregisterBeforeRender(tick);
+      return;
+    }
+    const on = isEnabled('arenaAmbience', 'idleWeaponAnims');
+    if (on === wasEnabled) return;
+    wasEnabled = on;
+    if (on) animatable.restart();
+    else animatable.pause();
+  };
+  scene.registerBeforeRender(tick);
+}
+
 /** @private Looping y-rotation Animatable (visible on tilted/featured meshes). */
 function _idleSpin(scene, node, speed) {
   const anim = new (B().Animation)(
@@ -403,7 +433,8 @@ function _idleSpin(scene, node, speed) {
     { frame: 0, value: 0 },
     { frame: 60, value: Math.PI * 2 },
   ]);
-  scene.beginDirectAnimation(node, [anim], 0, 60, true, speed);
+  const animatable = scene.beginDirectAnimation(node, [anim], 0, 60, true, speed);
+  _gateIdleAnimatable(scene, node, animatable);
 }
 
 /** @private Looping uniform scale breathe between 1 and `peak`. */
@@ -418,7 +449,8 @@ function _idleBreathe(scene, node, peak, frames, speed) {
     { frame: frames / 2, value: new V3(peak, peak, peak) },
     { frame: frames, value: new V3(1, 1, 1) },
   ]);
-  scene.beginDirectAnimation(node, [anim], 0, frames, true, speed);
+  const animatable = scene.beginDirectAnimation(node, [anim], 0, frames, true, speed);
+  _gateIdleAnimatable(scene, node, animatable);
 }
 
 export function disposeWeapon(weapon) {

@@ -5,18 +5,42 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260706d';
+import { ArenaEngine } from './renderer/engine.js?v=20260706f';
 import { HudRenderer } from './renderer/hud.js?v=20260523a';
 import { Minimap } from './renderer/minimap.js';
 import { SpectatorSocket } from './spectator-ws.js';
-import { initLeaderboardWidget } from './leaderboard.js?v=20260705b';
+import { initLeaderboardWidget } from './leaderboard.js?v=20260706e';
 import { initKeyGenerator } from './key-generator.js';
+import { isEnabled, onSettingsChange } from './settings.js';
+import { initSettingsPanel } from './settings-panel.js';
 
 const ARENA_WIDTH = 2000;
 const ARENA_HEIGHT = 2000;
 
+// These CSS keyframe animations run continuously with no JS trigger point
+// (unlike combat-flash/round-sweep/rank-change/killfeed-in, which are only
+// ever applied by JS right before they should play). A body class is the
+// only way to gate them per-setting instead of all-or-nothing like the
+// existing `prefers-reduced-motion` media query.
+const CSS_ONLY_EFFECT_CLASSES = [
+  ['siteMotion', 'liveHeartbeat', 'no-fx-liveHeartbeat'],
+  ['siteMotion', 'auroraBackground', 'no-fx-auroraBackground'],
+  ['siteMotion', 'heroChipFloat', 'no-fx-heroChipFloat'],
+  ['siteMotion', 'orbitSpins', 'no-fx-orbitSpins'],
+  ['killFlash', 'killFeedGlow', 'no-fx-killFeedGlow'],
+];
+
+function syncCssOnlyEffectClasses() {
+  for (const [section, effect, cls] of CSS_ONLY_EFFECT_CLASSES) {
+    document.body.classList.toggle(cls, !isEnabled(section, effect));
+  }
+}
+
 /** Boot the application when DOM is ready. */
 document.addEventListener('DOMContentLoaded', async () => {
+  syncCssOnlyEffectClasses();
+  onSettingsChange(syncCssOnlyEffectClasses);
+  initSettingsPanel();
   mountOverlaySections();
   normalizeOnboardingScrollShells();
   setupRevealAnimations();
@@ -80,10 +104,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const k = state.kill_feed[state.kill_feed.length - 1];
         const sig = `${k.killer}|${k.victim}|${k.tick}`;
         // Rapid multi-kills within one tick coalesce into a single flash.
-        if (lastKillSig && sig !== lastKillSig) pulseShell('combat-flash');
+        if (lastKillSig && sig !== lastKillSig && isEnabled('killFlash', 'fullScreenFlash')) pulseShell('combat-flash');
         lastKillSig = sig;
       }
-      if (state.type === 'arena_state' && lastPhase === 'lobby_state') pulseShell('round-sweep');
+      if (state.type === 'arena_state' && lastPhase === 'lobby_state' && isEnabled('siteMotion', 'roundSweep')) pulseShell('round-sweep');
       if (state.type === 'arena_state' || state.type === 'lobby_state') lastPhase = state.type;
       const now = performance.now();
       if (now - lastUiUpdate >= UI_UPDATE_INTERVAL_MS) {
@@ -391,7 +415,7 @@ function syncHeroSummary({ phase, botsConnected, botsAlive }) {
 function setupRevealAnimations() {
   const nodes = Array.from(document.querySelectorAll('.reveal-on-scroll'));
   if (nodes.length === 0) return;
-  if (!('IntersectionObserver' in window)) {
+  if (!('IntersectionObserver' in window) || !isEnabled('siteMotion', 'revealOnScroll')) {
     nodes.forEach((node) => node.classList.add('is-visible'));
     return;
   }
@@ -543,13 +567,10 @@ function initAboutPanel() {
 }
 
 function setupOverlays() {
-  const onboardingOverlay = document.getElementById('onboarding-overlay');
   const backdrop = document.getElementById('overlay-backdrop');
-  const autoTrigger = document.querySelector('.arena-controls') || document.getElementById('arena');
   const openButtons = Array.from(document.querySelectorAll('[data-overlay-open]'));
   const closeButtons = Array.from(document.querySelectorAll('[data-close-overlay]'));
   const overlays = Array.from(document.querySelectorAll('.onboarding-overlay'));
-  let autoOpened = false;
   const openStack = [];
 
   const syncOverlayState = () => {
@@ -660,18 +681,4 @@ function setupOverlays() {
       if (topOverlayId) closeOverlay(topOverlayId);
     }
   });
-
-  if (!onboardingOverlay || !autoTrigger) return;
-
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (!entry.isIntersecting || autoOpened) return;
-      if (window.scrollY < window.innerHeight * 0.65) return;
-      autoOpened = true;
-      openOverlay('onboarding-overlay');
-      observer.disconnect();
-    });
-  }, { threshold: 0.28 });
-
-  observer.observe(autoTrigger);
 }

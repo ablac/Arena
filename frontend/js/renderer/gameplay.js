@@ -7,6 +7,7 @@
  */
 
 import { makeMat, parseColor } from './utils.js';
+import { isEnabled } from '../settings.js';
 
 export class GameplayRenderer {
   /** @param {BABYLON.Scene} scene */
@@ -507,11 +508,27 @@ export class GameplayRenderer {
       entry.reveal = reveal; // outer-ring pulse applied per-frame in _animateAmbient
       entry.outer.position.set(pos[0], 1.2, pos[1]);
       entry.disc.position.set(pos[0], 0.2, pos[1]);
-      entry.disc.scaling.set(0.9 + reveal * 0.18, 0.9 + reveal * 0.18, 1);
-      entry.outerMat.emissiveColor.set(0.24 + reveal * 0.52, 0.08 + reveal * 0.28, 0.46 + urgency * 0.5);
-      entry.discMat.emissiveColor.set(0.14 + reveal * 0.32, 0.05 + reveal * 0.14, 0.30 + urgency * 0.45);
-      entry.outerMat.alpha = 0.04 + reveal * 0.28 + urgency * 0.18;
-      entry.discMat.alpha = 0.015 + reveal * 0.11 + urgency * 0.10;
+      // reveal/urgency-driven scale + emissive shift is the visual "staffImpactRings"
+      // effect; reveal itself keeps being computed above (read by _animateAmbient's
+      // pulse and by the disabled-branch below) regardless of the toggle.
+      if (isEnabled('gameplayZoneIndicators', 'staffImpactRings')) {
+        entry.disc.scaling.set(0.9 + reveal * 0.18, 0.9 + reveal * 0.18, 1);
+        entry.outerMat.emissiveColor.set(0.24 + reveal * 0.52, 0.08 + reveal * 0.28, 0.46 + urgency * 0.5);
+        entry.discMat.emissiveColor.set(0.14 + reveal * 0.32, 0.05 + reveal * 0.14, 0.30 + urgency * 0.45);
+        entry.outerMat.alpha = 0.04 + reveal * 0.28 + urgency * 0.18;
+        entry.discMat.alpha = 0.015 + reveal * 0.11 + urgency * 0.10;
+      } else {
+        // Static base appearance: reveal=0, urgency=0 equivalent (the ring's
+        // resting look right after it spawns), no countdown-driven scale/color/alpha.
+        // Also pins entry.outer.scaling here (normally driven by _animateAmbient's
+        // per-frame pulse, which is skipped entirely while this toggle is off).
+        entry.disc.scaling.set(0.9, 0.9, 1);
+        entry.outer.scaling.set(0.88, 0.88, 1);
+        entry.outerMat.emissiveColor.set(0.24, 0.08, 0.46);
+        entry.discMat.emissiveColor.set(0.14, 0.05, 0.30);
+        entry.outerMat.alpha = 0.04;
+        entry.discMat.alpha = 0.015;
+      }
     }
 
     for (const [id, entry] of this.staffImpacts) {
@@ -684,6 +701,13 @@ export class GameplayRenderer {
         // Dim outline, no electricity
         entry.edgeMat.emissiveColor.set(0.3, 0.05, 0.02);
         entry.edgeMat.alpha = 0.25;
+        entry.zaps.emitRate = 0;
+        entry.sparks.emitRate = 0;
+      }
+      // Effect toggle overrides whatever emitRate the active/inactive branch
+      // above just set: particles off regardless of zone state, without
+      // touching the active-state logic (outline color/alpha, pulse) itself.
+      if (!isEnabled('gameplayZoneIndicators', 'hazardZoneEffects')) {
         entry.zaps.emitRate = 0;
         entry.sparks.emitRate = 0;
       }
@@ -933,6 +957,14 @@ export class GameplayRenderer {
     this._animateAmbient(d);
 
     if (!this.bountyGroup || !this.bountyTargetId) return;
+    if (!isEnabled('objectiveIndicators', 'bountyCrown')) {
+      // Hide the ring and stop the sparkle drip, but keep bountyTargetId/
+      // bountyGroup tracking alive in _updateBounty() so re-enabling snaps
+      // back to the correct target instantly instead of waiting a beat.
+      this.bountyGroup.ring.visibility = 0;
+      if (this.bountyGroup.sparkle) this.bountyGroup.sparkle.emitRate = 0;
+      return;
+    }
     const targetEntry = botEntries && botEntries.get ? botEntries.get(this.bountyTargetId) : null;
     const fallback = this.bountyBots.find((b) => b.bot_id === this.bountyTargetId || b.id === this.bountyTargetId);
     const sourcePos = targetEntry?.root?.position
@@ -1026,18 +1058,31 @@ export class GameplayRenderer {
       e.ring.scaling.set(pulse, pulse, 1);
     }
 
-    for (const [, e] of this.staffImpacts) {
-      if (e.reveal === undefined) continue;
-      const scale = 0.88 + e.reveal * 0.22 + Math.sin(t * 0.15) * (0.015 + e.reveal * 0.025);
-      e.outer.scaling.set(scale, scale, 1);
+    if (isEnabled('gameplayZoneIndicators', 'staffImpactRings')) {
+      for (const [, e] of this.staffImpacts) {
+        if (e.reveal === undefined) continue;
+        const scale = 0.88 + e.reveal * 0.22 + Math.sin(t * 0.15) * (0.015 + e.reveal * 0.025);
+        e.outer.scaling.set(scale, scale, 1);
+      }
     }
+    // When disabled, _updateStaffImpacts already pins entry.outer.scaling to
+    // its static base value every 10Hz tick, so this per-frame pulse is simply
+    // skipped rather than needing its own frozen-scale branch here.
 
+    const burnPulseOn = isEnabled('gameplayZoneIndicators', 'burnFieldPulse');
     for (const [, e] of this.burnFields) {
       if (e.x === undefined) continue;
-      const pulse = 1 + Math.sin(t * 0.16) * 0.06;
-      e.ring.position.set(e.x, 0.8 + Math.sin(t * 0.08) * 0.18, e.z);
-      e.disc.scaling.set(pulse, pulse, 1);
-      e.ring.scaling.set(0.96 + pulse * 0.08, 0.96 + pulse * 0.08, 1);
+      if (burnPulseOn) {
+        const pulse = 1 + Math.sin(t * 0.16) * 0.06;
+        e.ring.position.set(e.x, 0.8 + Math.sin(t * 0.08) * 0.18, e.z);
+        e.disc.scaling.set(pulse, pulse, 1);
+        e.ring.scaling.set(0.96 + pulse * 0.08, 0.96 + pulse * 0.08, 1);
+      } else {
+        // Static rest state: mid-pulse Y height, unscaled disc/ring (pulse == 1).
+        e.ring.position.set(e.x, 0.8, e.z);
+        e.disc.scaling.set(1, 1, 1);
+        e.ring.scaling.set(1.04, 1.04, 1);
+      }
     }
 
     for (const mesh of this.landmines.values()) {
@@ -1055,12 +1100,19 @@ export class GameplayRenderer {
       }
     }
 
+    const gravitySwirlOn = isEnabled('gameplayZoneIndicators', 'gravityWellSwirl');
     for (const [, e] of this.gravityWells) {
       if (e.x === undefined) continue;
-      e.ring.rotation.y += 0.6 * dt;
-      e.ring.rotation.x = Math.sin(t * 0.03) * 0.3;
-      e.inner.rotation.y -= 1.0 * dt;
-      e.ring.material.alpha = 0.4 + 0.3 * Math.sin(t * 0.08);
+      if (gravitySwirlOn) {
+        e.ring.rotation.y += 0.6 * dt;
+        e.ring.rotation.x = Math.sin(t * 0.03) * 0.3;
+        e.inner.rotation.y -= 1.0 * dt;
+        e.ring.material.alpha = 0.4 + 0.3 * Math.sin(t * 0.08);
+      } else {
+        // Freeze rotation (no increment) rather than removing the mesh;
+        // hold alpha at its pulse midpoint for a static look.
+        e.ring.material.alpha = 0.4;
+      }
     }
 
     if (this.flags) {
@@ -1083,7 +1135,7 @@ export class GameplayRenderer {
           e.trail.emitter.x = e.curX;
           e.trail.emitter.y = 14;
           e.trail.emitter.z = e.curZ;
-          e.trail.emitRate = carried ? 28 : 0;
+          e.trail.emitRate = (carried && isEnabled('objectiveIndicators', 'flagComet')) ? 28 : 0;
         }
       }
     }

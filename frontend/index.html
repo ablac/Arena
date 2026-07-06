@@ -7,13 +7,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/arena.css?v=20260705b">
-  <link rel="stylesheet" href="css/sections.css?v=20260706c">
+  <link rel="stylesheet" href="css/arena.css?v=20260706f">
+  <link rel="stylesheet" href="css/sections.css?v=20260706f">
   <script src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/materialsLibrary/babylonjs.materials.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/gui/babylon.gui.min.js"></script>
-  <script type="module" src="js/app.js?v=20260706d"></script>
+  <script type="module" src="js/app.js?v=20260706f"></script>
 </head>
 <body>
   <div class="page-backdrop">
@@ -29,16 +29,6 @@
       <span class="site-brand-mark"></span>
       <span>AI Battle Arena</span>
     </a>
-    <nav class="site-nav">
-      <a href="#arena">Arena</a>
-      <button type="button" class="site-nav-action" data-overlay-open="onboarding-overlay">Get Started</button>
-      <button type="button" class="site-nav-action" data-overlay-open="standings-overlay">Standings</button>
-      <button type="button" class="site-nav-action" data-overlay-open="toolkit-overlay">Toolkit</button>
-      <button type="button" class="site-nav-action" data-overlay-open="dashboard-overlay">Dashboard</button>
-      <button type="button" class="site-nav-action" data-overlay-open="onboarding-overlay" data-overlay-target="#api-reference">API</button>
-      <button type="button" class="site-nav-action" data-overlay-open="about-overlay">About</button>
-      <a href="/m/">Mobile view</a>
-    </nav>
     <div class="site-live-pill" id="site-live-pill"><span class="dot"></span> Spectator syncing</div>
   </header>
 
@@ -1312,10 +1302,17 @@ wss://arena.angel-serv.com/ws/spectator
   </main>
 
   <div class="onboarding-rail-stack">
+    <button type="button" class="settings-gear-btn" id="settings-gear" data-overlay-open="settings-overlay" aria-label="Settings" title="Graphics &amp; animation settings">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+    </button>
     <button type="button" class="onboarding-rail onboarding-rail-top" id="onboarding-rail" data-overlay-open="onboarding-overlay">Get Started</button>
     <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="standings-overlay">Standings</button>
     <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="toolkit-overlay">Toolkit</button>
-    <button type="button" class="onboarding-rail onboarding-rail-bottom onboarding-rail-secondary" data-overlay-open="dashboard-overlay">Dashboard</button>
+    <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="dashboard-overlay">Dashboard</button>
+    <button type="button" class="onboarding-rail onboarding-rail-bottom onboarding-rail-secondary" data-overlay-open="about-overlay">About</button>
   </div>
 
   <div class="onboarding-overlay dashboard-overlay" id="dashboard-overlay" aria-hidden="true" data-overlay-side="left">
@@ -1326,7 +1323,7 @@ wss://arena.angel-serv.com/ws/spectator
         <iframe
           id="dashboard-frame"
           class="dashboard-frame"
-          data-src="/dashboard/?view=private"
+          data-src="/dashboard/?view=private&v=20260706d"
           title="Arena Bot Dashboard"
           loading="lazy"
           referrerpolicy="same-origin"></iframe>
@@ -1342,7 +1339,7 @@ wss://arena.angel-serv.com/ws/spectator
         <iframe
           id="toolkit-frame"
           class="dashboard-frame"
-          data-src="/dashboard/?view=public"
+          data-src="/dashboard/?view=public&v=20260706d"
           title="Arena Toolkit"
           loading="lazy"
           referrerpolicy="same-origin"></iframe>
@@ -1454,6 +1451,32 @@ wss://arena.angel-serv.com/ws/spectator
     </aside>
   </div>
 
+  <div class="onboarding-overlay" id="settings-overlay" aria-hidden="true" data-overlay-side="right">
+    <div class="onboarding-scrim" data-close-overlay="settings-overlay"></div>
+    <aside class="onboarding-drawer settings-drawer" aria-labelledby="settings-title" role="dialog" aria-modal="true">
+      <div class="onboarding-drawer-scroll">
+        <div class="drawer-shell-label">//Settings</div>
+        <div class="onboarding-flow">
+          <section class="onboarding-section" id="settings-panel">
+            <div class="card settings-master-card">
+              <p class="onboarding-kicker">Accessibility</p>
+              <h3 class="onboarding-section-title" id="settings-title">Graphics &amp; Animation</h3>
+              <p class="subtitle">Every effect below defaults to on, exactly as the site ships. Turn off anything you don't want - your choices are saved to this browser only.</p>
+              <label class="settings-toggle-row settings-toggle-master">
+                <span>Reduced motion (Kill Flash + Site Motion sections)</span>
+                <input type="checkbox" id="settings-reduced-motion" />
+              </label>
+            </div>
+            <div id="settings-sections"></div>
+            <div class="settings-footer">
+              <button type="button" class="btn btn-secondary" id="settings-reset">Reset to defaults</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </aside>
+  </div>
+
   <div class="onboarding-overlay" id="onboarding-overlay" aria-hidden="true" data-overlay-side="right">
     <div class="onboarding-scrim" data-close-overlay="onboarding-overlay"></div>
     <aside class="onboarding-drawer" aria-labelledby="onboarding-title" role="dialog" aria-modal="true">
@@ -1557,12 +1580,6 @@ wss://arena.angel-serv.com/ws/spectator
       <div class="footer-branding">
         <p class="footer-kicker">Arena Network</p>
         <p class="footer-title">arena.angel-serv.com</p>
-      </div>
-      <div class="footer-links">
-        <button type="button" class="footer-link-btn" data-overlay-open="onboarding-overlay" data-overlay-target="#api-reference">API Reference</button>
-        <button type="button" class="footer-link-btn" data-overlay-open="onboarding-overlay" data-overlay-target="#onboarding-example">Example Bot</button>
-        <button type="button" class="footer-link-btn" data-overlay-open="standings-overlay">Standings</button>
-        <button type="button" class="footer-link-btn" data-overlay-open="about-overlay">About</button>
       </div>
       <p class="footer-stats" id="footer-stats">Loading stats...</p>
     </div>

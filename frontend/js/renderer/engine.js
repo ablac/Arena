@@ -6,14 +6,15 @@
  */
 
 import { CameraController } from './camera.js?v=20260706c';
-import { BotRenderer } from './bots.js?v=20260706d';
-import { EnvironmentRenderer } from './environment.js?v=20260705c';
+import { BotRenderer } from './bots.js?v=20260706f';
+import { EnvironmentRenderer } from './environment.js?v=20260706f';
 import { ObstacleRenderer } from './obstacles.js?v=20260521h';
 import { PickupRenderer } from './pickups.js?v=20260521m';
-import { EffectRenderer } from './effects.js?v=20260705c';
-import { TrailRenderer } from './trails.js?v=20260705d';
+import { EffectRenderer } from './effects.js?v=20260706f';
+import { TrailRenderer } from './trails.js?v=20260706f';
 import { ProjectileRenderer } from './projectiles.js?v=20260521l';
-import { GameplayRenderer } from './gameplay.js?v=20260705a';
+import { GameplayRenderer } from './gameplay.js?v=20260706f';
+import { isEnabled } from '../settings.js';
 
 // Bot positions are smoothed via exponential lerp each frame,
 // so no tick-interval-based alpha is needed.
@@ -182,6 +183,7 @@ export class ArenaEngine {
       pipeline.imageProcessing.vignetteWeight = 1.6;
       pipeline.imageProcessing.vignetteColor = new B.Color4(0, 0, 0.05, 0);
     }
+    this.pipeline = pipeline;
 
     const self = this;
     let _lastFrame = performance.now();
@@ -200,6 +202,12 @@ export class ArenaEngine {
       }
       if (self.gameplayRenderer) {
         self.gameplayRenderer.animate(self.botRenderer ? self.botRenderer.entries : null, dt);
+      }
+      // Cheap boolean assignments so bloom/vignette toggles apply live,
+      // without needing a page reload.
+      if (self.pipeline && self.pipeline.isSupported) {
+        self.pipeline.bloomEnabled = isEnabled('rendering', 'bloom');
+        self.pipeline.imageProcessing.vignetteEnabled = isEnabled('rendering', 'vignette');
       }
       scene.render();
     });

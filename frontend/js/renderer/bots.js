@@ -6,9 +6,10 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260706d';
-import { updateBotAnim, triggerAttack, triggerDodge, triggerShove, meleeContactDelay } from './animations.js?v=20260706b';
-import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance, triggerSwordsmanHit } from './swordsman-anims.js?v=20260706d';
+import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260706f';
+import { updateBotAnim, triggerAttack, triggerDodge, triggerShove, meleeContactDelay } from './animations.js?v=20260706f';
+import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance, triggerSwordsmanHit } from './swordsman-anims.js?v=20260706f';
+import { isEnabled } from '../settings.js';
 
 export class BotRenderer {
   /** @param {BABYLON.Scene} scene */
@@ -241,7 +242,7 @@ export class BotRenderer {
 
       // Death flash
       if (!bot.is_alive && entry._wasAlive) {
-        this._deathFlash(entry);
+        if (isEnabled('deathEffects', 'deathFlash')) this._deathFlash(entry);
         // Release the flinch channel so a respawn starts at rest scale,
         // and zero the hit-reaction rotations so a respawn stands straight.
         entry._flinchT = 0;
@@ -321,7 +322,7 @@ export class BotRenderer {
         if (animOwnsScale) {
           // Anim is driving root scaling this frame; the flinch sits it out.
           // It resumes on a later free frame if any time is left.
-        } else if (entry._flinchT <= 0) {
+        } else if (entry._flinchT <= 0 || !isEnabled('hitReactions', 'damageFlinch')) {
           entry._flinchT = 0;
           entry.root.scaling.setAll(1); // release to rest
           if (!entry.isSwordsman) {
@@ -375,8 +376,9 @@ export class BotRenderer {
       // pulses in. When a bot dies while stunned/wounded, restore the baseline
       // before _deathFlash captures the material's original color.
       const hpRatio = bot.is_alive && bot.max_hp > 0 ? bot.hp / bot.max_hp : 1;
-      const wounded = bot.is_alive && hpRatio < 0.35;
-      const critical = bot.is_alive && hpRatio < 0.15;
+      const tintEnabled = isEnabled('hitReactions', 'woundedTint');
+      const wounded = tintEnabled && bot.is_alive && hpRatio < 0.35;
+      const critical = tintEnabled && bot.is_alive && hpRatio < 0.15;
       if (wounded || entry._stunActive || entry._woundedActive) {
         const dim = wounded ? 0.6 : 1;
         // ~1.2Hz sine from the wall clock (0..1), scaled into a red add.
@@ -420,12 +422,15 @@ export class BotRenderer {
     const entry = this.entries.get(botId);
     if (!entry || !entry.bodyMat || !entry.headMat) return;
     // Stamp the hit source (scalars only) so the damage flinch on the next
-    // HP tick can recoil directionally away from the attacker.
+    // HP tick can recoil directionally away from the attacker. This bookkeeping
+    // feeds the separate `hitReactions.damageFlinch` toggle, so it must run
+    // even when the impact flash below is disabled.
     if (typeof fromX === 'number' && typeof fromZ === 'number') {
       entry._hitFromX = fromX;
       entry._hitFromZ = fromZ;
       entry._hitFromT = performance.now();
     }
+    if (!isEnabled('hitReactions', 'impactFlash')) return;
     const B = window.BABYLON;
     const bodyOrig = entry.bodyMat.emissiveColor.clone();
     const headOrig = entry.headMat.emissiveColor.clone();
