@@ -19,7 +19,7 @@ const contentSecurityPolicy = "" +
 	"img-src 'self' data: blob:; " +
 	"connect-src 'self' ws: wss: https:; " +
 	"worker-src 'self' blob:; " +
-	"frame-ancestors 'none'; " +
+	"frame-ancestors 'self'; " +
 	"base-uri 'self'; " +
 	"form-action 'self'"
 
@@ -55,7 +55,10 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("X-Frame-Options", "DENY")
+		// SAMEORIGIN (not DENY): frontend/index.html embeds /dashboard/ in a
+		// same-origin <iframe> for the Toolkit and Dashboard overlays. DENY
+		// blocks ALL framing including same-origin, which breaks that embed.
+		h.Set("X-Frame-Options", "SAMEORIGIN")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
 		// Only takes effect over HTTPS (browsers ignore it over plain HTTP), so
