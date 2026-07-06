@@ -563,6 +563,7 @@ export function updateSwordsmanAnim(entry, dt) {
     joints.body.position.y = 0.75 * 13; // standing base; idle bob re-owns it
     if (bodyMat) bodyMat.alpha = 1;
     if (entry.headMat) entry.headMat.alpha = 1;
+    anim._trailOn = false;
   }
 
   // ── Residue self-heal ──
@@ -590,14 +591,6 @@ export function updateSwordsmanAnim(entry, dt) {
       bodyNode.scaling.z = Math.abs(bodyNode.scaling.z - 1) < 0.01
         ? 1 : elerp(bodyNode.scaling.z, 1, 6, dt);
     }
-    // One-shot residue rule for the blade trail: a dodge cancels the attack
-    // (attackTimer = -1) without a trail hook, which stranded the ribbon
-    // through dodge and idle. Force it off whenever no attack owns it.
-    if (anim._trailOn && anim.attackTimer < 0 && entry._trail) {
-      entry._trail.stop();
-      entry._trail.setEnabled(false);
-      anim._trailOn = false;
-    }
     // Hit-recoil channels (head pitch/roll, body pitch). The recoil writes
     // them absolutely while hitTimer runs and zeroes them on expiry, but a
     // lost hitTimer would strand them the same way the death roll was
@@ -617,6 +610,15 @@ export function updateSwordsmanAnim(entry, dt) {
           ? 0 : elerp(bodyNode.rotation.x, 0, 6, dt);
       }
     }
+  }
+
+  // One-shot residue rule for the blade trail: a dodge cancels the attack
+  // (attackTimer = -1) without a trail hook, which stranded the ribbon
+  // through dodge and idle. Force it off whenever no attack owns it.
+  if (anim._trailOn && anim.attackTimer < 0 && entry._trail) {
+    entry._trail.stop();
+    entry._trail.setEnabled(false);
+    anim._trailOn = false;
   }
 
   if (anim.respawnTimer >= 0) {
