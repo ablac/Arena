@@ -34,8 +34,8 @@
  */
 
 import { parseColor, makeMat } from './utils.js';
-import { getGuiTexture, _getTplShadow } from './bot-body.js?v=20260706a';
-import { SwordsmanAnimState } from './swordsman-anims.js?v=20260706a';
+import { getGuiTexture, _getTplShadow } from './bot-body.js?v=20260706d';
+import { SwordsmanAnimState } from './swordsman-anims.js?v=20260706d';
 
 // ─── Scale ───────────────────────────────────────────────────────────────────
 // Editor character is ~1.85 units tall. Arena bots are ~24 units tall.
@@ -169,10 +169,53 @@ function _buildSword(id, scene, parent) {
   pommel.isPickable = false;
   pommel.alwaysSelectAsActiveMesh = true;
 
+  // Blade-tip anchor: the swing-trail generator samples this node's world
+  // position each frame while a trail is running.
+  const tip = new B.TransformNode(`sw-tip-${id}`, scene);
+  tip.parent = swordRoot;
+  tip.position.y = BLADE_H + GUARD_H / 2;
+  swordRoot._trailTip = tip;
+
   // Orient sword so it points up from the hand by default
   // (initial idle rotation will be set by animation system)
 
   return swordRoot;
+}
+
+/**
+ * Lazily build the blade swing trail for a swordsman entry. Called from the
+ * attack playback the first time a swing wants a trail, so idle bots never
+ * pay for one. Returns null when the entry has no blade tip anchor.
+ * The per-bot material is pushed onto entry._swMats so the existing dispose
+ * path frees it; the TrailMesh itself is scene-parented and is disposed
+ * explicitly in disposeSwordsmanEntry.
+ */
+export function makeSwordTrail(entry) {
+  const B = window.BABYLON;
+  const tip = entry.weapon && entry.weapon._trailTip;
+  if (!tip || !B.TrailMesh) return null;
+  const scene = entry.root.getScene();
+  const id = entry.root.name.slice(7);
+  const mat = new B.StandardMaterial(`sw-trail-mat-${id}`, scene);
+  const base = entry.bodyMat ? entry.bodyMat.diffuseColor : new B.Color3(0.8, 0.8, 0.9);
+  // Steel flash tinted toward the bot color, standard alpha blend (the
+  // additive movement-trail look was reverted in #55; do not reintroduce it).
+  mat.emissiveColor = new B.Color3(
+    Math.min(1, 0.55 + base.r * 0.45),
+    Math.min(1, 0.55 + base.g * 0.45),
+    Math.min(1, 0.55 + base.b * 0.45)
+  );
+  mat.diffuseColor = B.Color3.Black();
+  mat.disableLighting = true;
+  mat.backFaceCulling = false;
+  mat.alpha = 0.4;
+  const trail = new B.TrailMesh(`sw-trail-${id}`, tip, scene, 0.05 * S, 24, false);
+  trail.material = mat;
+  trail.isPickable = false;
+  trail.alwaysSelectAsActiveMesh = true;
+  trail.setEnabled(false);
+  entry._swMats.push(mat);
+  return trail;
 }
 
 // ─── Main entry point ───────────────────────────────────────────────────────
@@ -426,6 +469,8 @@ export function disposeSwordsmanEntry(entry) {
   if (entry.nameLabel) entry.nameLabel.dispose();
   // Dispose shadow instance
   if (entry.shadow && !entry.shadow.isDisposed()) entry.shadow.dispose();
+  // Swing trail is scene-parented (not under root), so dispose it explicitly
+  if (entry._trail && !entry._trail.isDisposed()) entry._trail.dispose();
   if (entry.selector && !entry.selector.isDisposed()) entry.selector.dispose();
   // BABYLON.Material has no isDisposed check; these are per-bot materials
   // disposed exactly once here, so an unconditional dispose is correct.
