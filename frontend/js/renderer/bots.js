@@ -6,9 +6,9 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260707a';
-import { updateBotAnim, triggerAttack, triggerDodge, triggerShove, meleeContactDelay } from './animations.js?v=20260707a';
-import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance, triggerSwordsmanHit } from './swordsman-anims.js?v=20260707a';
+import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260707c';
+import { updateBotAnim, triggerAttack, triggerDodge, triggerShove, meleeContactDelay } from './animations.js?v=20260707c';
+import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance, triggerSwordsmanHit } from './swordsman-anims.js?v=20260707c';
 import { isEnabled } from '../settings.js';
 
 export class BotRenderer {
@@ -96,12 +96,22 @@ export class BotRenderer {
         entry._interpDur = 100;
         entry._interpReady = true;
       } else {
-        entry.prevPos = [entry.currPos[0], entry.currPos[1]];
-        entry.currPos = [bot.position[0], bot.position[1]];
-        // Measure actual interval between server updates for accurate lerp.
-        const elapsed = now - entry._interpStart;
-        if (elapsed > 30) entry._interpDur = elapsed;
-        entry._interpStart = now;
+        // A respawn keeps the entry (it was only disabled while dead), so a
+        // teleport to the spawn point would otherwise smooth across the arena
+        // through walls for ~0.5s with the respawn glow on. Re-snap on any
+        // jump far larger than a server-tick of movement.
+        const jx = bot.position[0] - entry.currPos[0];
+        const jz = bot.position[1] - entry.currPos[1];
+        if (jx * jx + jz * jz > 150 * 150) {
+          entry._interpReady = false;
+        } else {
+          entry.prevPos = [entry.currPos[0], entry.currPos[1]];
+          entry.currPos = [bot.position[0], bot.position[1]];
+          // Measure actual interval between server updates for accurate lerp.
+          const elapsed = now - entry._interpStart;
+          if (elapsed > 30) entry._interpDur = elapsed;
+          entry._interpStart = now;
+        }
       }
 
       // Death-transition bookkeeping must precede the visibility decision so
@@ -455,6 +465,11 @@ export class BotRenderer {
       entry._hitFromZ = fromZ;
       entry._hitFromT = performance.now();
     }
+    // Event-driven kill paths (bow, spear, shield, backstab, grapple) call
+    // this unguarded on the tick after death; the stamp above still feeds the
+    // directional fall, but the flash/squash below must not touch a corpse
+    // (it would white-flash and root-squash the death choreography).
+    if (!entry.isAlive) return;
     if (!isEnabled('hitReactions', 'impactFlash')) return;
     const B = window.BABYLON;
     const bodyOrig = entry.bodyMat.emissiveColor.clone();

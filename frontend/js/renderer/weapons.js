@@ -30,6 +30,10 @@ export function createWeaponMesh(weaponType, botId, scene, parent) {
   const builders = { sword, bow, spear, daggers, staff, shield, grapple };
   const builder = builders[weaponType] || sword;
   const mesh = builder(botId, scene);
+  // Stash the rest z-rotation the builder set (sword -0.4, spear -0.3, else 0)
+  // so the idle path can heal a swing that was cut short (dodge/death) instead
+  // of leaving the weapon frozen at full extension.
+  mesh._restZ = mesh.rotation.z;
   mesh.parent = parent;
   return mesh;
 }

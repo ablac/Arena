@@ -22,7 +22,7 @@
 // Circular with swordsman-body.js (it imports SwordsmanAnimState from here);
 // safe because both sides only use the other's export at runtime, never at
 // module top level. The ?v= MUST match every other import of that module.
-import { makeSwordTrail } from './swordsman-body.js?v=20260707a';
+import { makeSwordTrail } from './swordsman-body.js?v=20260707c';
 import { isEnabled } from '../settings.js';
 
 const DEG = Math.PI / 180;

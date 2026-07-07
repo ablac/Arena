@@ -7,7 +7,7 @@
  */
 
 import { isEnabled } from '../settings.js';
-import { makeWeaponTrails } from './weapons.js?v=20260707a';
+import { makeWeaponTrails } from './weapons.js?v=20260707c';
 
 const IDLE_BOB_SPEED = 2.5;
 const IDLE_BOB_AMOUNT = 1.2;
@@ -31,7 +31,7 @@ const MOVE_TILT = 0.15;
 const WEAPON_ANIMS = {
   sword:   { duration: 0.42, windupPct: 0.18, activePct: 0.48, restZ: -0.4, windupZ: -1.35, swingZ: 2.25, lunge: 0.28, bob: 2.4, weaponX: 0.75, weaponY: 0.65, pitch: 0.18, yaw: 0.10, glow: 0.0, armRaise: 1.5, contactHold: 0.12 },
   bow:     { duration: 0.78, windupPct: 0.34, activePct: 0.12, restZ: 0.02, windupZ: 0.42, swingZ: -0.62, lunge: -0.08, bob: 0.7, weaponX: -0.25, weaponY: 0.85, pitch: -0.12, yaw: -0.08, glow: 0.0, armRaise: 0.5, contactHold: 0 },
-  daggers: { duration: 0.24, windupPct: 0.14, activePct: 0.56, restZ: 0.05, windupZ: -0.48, swingZ: 1.75, lunge: 0.34, bob: 1.8, weaponX: 0.55, weaponY: 0.45, pitch: 0.12, yaw: 0.16, glow: 0.0, armRaise: 1.2, contactHold: 0.07, trail: 0.45 },
+  daggers: { duration: 0.24, windupPct: 0.14, activePct: 0.56, restZ: 0.05, windupZ: -0.48, swingZ: 1.75, lunge: 0.34, bob: 1.8, weaponX: 0.55, weaponY: 0.45, pitch: 0.12, yaw: 0.16, glow: 0.0, armRaise: 1.2, contactHold: 0.07, trail: 0.45, trailTail: 0.82 },
   spear:   { duration: 0.56, windupPct: 0.24, activePct: 0.42, restZ: -0.26, windupZ: -0.92, swingZ: 0.62, lunge: 0.38, bob: 3.1, weaponX: 1.6, weaponY: 0.32, pitch: -0.08, yaw: 0.12, glow: 0.0, armRaise: 1.3, contactHold: 0.12, trail: 0.62 },
   staff:   { duration: 0.96, windupPct: 0.42, activePct: 0.26, restZ: 0.05, windupZ: 0.72, swingZ: -0.36, lunge: 0.16, bob: 4.2, weaponX: 0.28, weaponY: 1.1, pitch: -0.12, yaw: 0.18, glow: 1.0, armRaise: 0.9, contactHold: 0.05 },
   shield:  { duration: 0.64, windupPct: 0.24, activePct: 0.34, restZ: 0.08, windupZ: 0.52, swingZ: -1.02, lunge: 0.32, bob: 2.2, weaponX: -0.95, weaponY: 0.28, pitch: 0.08, yaw: -0.18, glow: 0.25, armRaise: 1.0, contactHold: 0.12, armSide: 'L' },
@@ -442,7 +442,9 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat, en
     // Daggers special: rapid oscillating double-slash during active phase
     if (anim.attackType === 'daggers' && progress >= windupEnd && progress < activeEnd) {
       const t = (progress - windupEnd) / cfg.activePct;
-      weaponZ = cfg.windupZ + Math.sin(t * Math.PI * 3) * 1.5;
+      // 2 cycles (was 3): at ~8 sampled frames the 3-cycle weave aliased into
+      // a jagged flicker; 2 reads as a clean twin-arc weave.
+      weaponZ = cfg.windupZ + Math.sin(t * Math.PI * 2) * 1.5;
     }
 
     if (weapon) {
@@ -458,7 +460,7 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat, en
     if (weapon) {
       const wantTrail = !!cfg.trail && !!weapon._trailTips &&
         weapon._trails !== null &&
-        progress >= windupEnd && progress < activeEnd &&
+        progress >= windupEnd && progress < (cfg.trailTail || activeEnd) &&
         isEnabled('weaponImpactVfx', 'meleeSwingTrails');
       if (wantTrail !== anim._trailOn) {
         _setWeaponTrail(anim, weapon, wantTrail, bodyMat, cfg.trail);
@@ -532,6 +534,13 @@ export function updateBotAnim(anim, body, weapon, x, z, isAlive, dt, bodyMat, en
   if (entry && entry.lShoulder) entry.lShoulder.rotation.x = anim.smoothArmL;
   if (entry && entry.rShoulder) entry.rShoulder.rotation.x = anim.smoothArmR;
   updateBowDraw(weapon, 0);
+  // Heal a swing z-rotation stranded by a dodge-cancel or death (attacks write
+  // weapon.rotation.z absolutely; resetWeaponPose only covers x/y). Eases to
+  // the builder's rest angle, the same value the next windup assumes.
+  if (weapon && weapon._restZ !== undefined && weapon.rotation.z !== weapon._restZ) {
+    weapon.rotation.z = lerp(weapon.rotation.z, weapon._restZ, 8, dt);
+    if (Math.abs(weapon.rotation.z - weapon._restZ) < 0.005) weapon.rotation.z = weapon._restZ;
+  }
   resetWeaponPose(weapon);
 }
 

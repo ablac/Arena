@@ -7,9 +7,9 @@
  */
 
 import { parseColor, makeMat } from './utils.js';
-import { createWeaponMesh, disposeWeapon } from './weapons.js?v=20260707a';
-import { BotAnimState } from './animations.js?v=20260707a';
-import { createSwordsmanEntry, disposeSwordsmanEntry } from './swordsman-body.js?v=20260707a';
+import { createWeaponMesh, disposeWeapon } from './weapons.js?v=20260707c';
+import { BotAnimState } from './animations.js?v=20260707c';
+import { createSwordsmanEntry, disposeSwordsmanEntry } from './swordsman-body.js?v=20260707c';
 
 const BODY_H = 12;
 const BODY_R = 5;
