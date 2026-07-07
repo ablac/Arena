@@ -1,70 +1,99 @@
-# Contributing to AI Battle Arena ⚔️
+# Contributing To AI Battle Arena
 
-Thanks for contributing! Here's how we work.
+Thanks for helping improve Arena. This project welcomes bug reports, docs fixes, gameplay ideas, SDK improvements, and self-hosting polish.
 
 ## Workflow
 
-1. **Never push directly to `main`** — it's our production branch
-2. Create a feature branch from `develop`:
-   ```bash
-   git checkout develop
-   git pull origin develop
-   git checkout -b feature/your-feature-name
-   ```
-3. Make your changes, commit with clear messages
-4. Push your branch and open a PR to `develop`:
-   ```bash
-   git push origin feature/your-feature-name
-   ```
-5. Get at least 1 review approval
-6. Squash-merge into `develop`
-7. `develop` → `main` merges happen for releases
+1. Open or pick an issue when the change is larger than a small typo.
+2. Create a branch from current `main`.
+3. Make focused changes.
+4. Run the checks that match what you touched.
+5. Open a pull request into `main`.
 
-## Branch Naming
+Branch names:
 
-- `feature/description` — new features
-- `fix/description` — bug fixes
-- `docs/description` — documentation only
-- `refactor/description` — code restructuring
+- `feature/<short-description>`
+- `fix/<short-description>`
+- `docs/<short-description>`
+- `refactor/<short-description>`
+- `security/<short-description>`
 
-## Commit Messages
+Commit messages should be short and conventional when practical:
 
-Use clear, concise messages:
+```text
+feat: add bow charge telemetry
+fix: reject invalid loadout stats
+docs: update bot setup example
+refactor: split spectator renderer helper
 ```
-feat: add bow weapon type
-fix: bot disconnect during loadout phase
-docs: update API examples
-refactor: extract combat logic into module
+
+## Local Setup
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+The server listens on `http://localhost:8700`.
+
+Backend tests:
+
+```bash
+cd go-arena
+go test ./...
+```
+
+Frontend syntax checks:
+
+```bash
+node --check frontend/js/app.js
+```
+
+Python SDK checks:
+
+```bash
+python -m compileall sdk/python/arena_sdk sdk/python/examples bots
+```
+
+Node SDK setup:
+
+```bash
+cd sdk/nodejs
+npm install
 ```
 
 ## Project Structure
 
-```
-go-arena/           # Go server (production)
-├── cmd/            # Entry points
-├── internal/
-│   ├── api/        # REST endpoints, admin API
-│   ├── config/     # Configuration (env-based)
-│   ├── db/         # Database layer
-│   ├── game/       # Game engine, combat, movement, game modes, map shapes
-│   ├── demobots/   # Built-in demo bot AI
-│   ├── security/   # Auth, rate limiting
-│   └── ws/         # WebSocket handlers (bot + spectator)
-frontend/           # Spectator UI (HTML/JS/BabylonJS)
-sdk/python/         # Python bot SDK
-sdk/nodejs/         # Node.js bot SDK
-bots/               # User-created bots
-examples/           # API usage examples
+```text
+go-arena/           Go server
+frontend/           Browser spectator UI and toolkit
+sdk/python/         Python bot SDK
+sdk/nodejs/         Node.js bot SDK
+bots/               Example and local test bots
+docs/               Architecture, deployment, and feature notes
+examples/           API usage examples
 ```
 
-## Running Locally
+## Public-Repo Safety
 
-```bash
-docker compose up -d
-# Server runs at http://localhost:8700
-# Generate an API key: POST /api/v1/keys/generate
-```
+Do not commit:
 
-## Questions?
+- `.env`
+- API keys or admin tokens
+- database passwords
+- private hostnames, SSH ports, private IPs, or private server paths
+- binary assets without source and license/provenance notes
+- generated reports that are not useful to future contributors
 
-Open an issue or ask in the team chat!
+## Bot And API Changes
+
+If you change bot-facing behavior, update at least one of:
+
+- [BOT-GUIDE.md](BOT-GUIDE.md)
+- `GET /api/v1/bot-setup` in `go-arena/internal/api/botsetup.go`
+- SDK examples in `sdk/`
+- [frontend/llms.txt](frontend/llms.txt)
+
+## Security
+
+Do not open public issues for undisclosed vulnerabilities. Follow [SECURITY.md](SECURITY.md).

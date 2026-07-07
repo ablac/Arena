@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Go tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-arena/go.mod
+          cache-dependency-path: go-arena/go.sum
+      - name: Test backend
+        working-directory: go-arena
+        run: go test ./...
+
+  frontend-and-sdks:
+    name: Syntax and SDK checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate JSON manifests
+        shell: bash
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('sdk/nodejs/package.json', 'utf8'))"
+          node -e "JSON.parse(require('fs').readFileSync('sdk/nodejs/package-lock.json', 'utf8'))"
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          git ls-files 'frontend/**/*.js' 'sdk/nodejs/**/*.js' | xargs -r -n 1 node --check
+      - name: Check Python syntax
+        run: python -m compileall sdk/python/arena_sdk sdk/python/examples bots
+      - name: Check whitespace
+        run: git diff --check

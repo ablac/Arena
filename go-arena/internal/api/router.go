@@ -161,7 +161,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	r.Get("/ws/bot", ws.BotHandler(engine))
 	r.Get("/ws/spectator", ws.SpectatorHandler(engine))
 
-	// Caddy rewrites arena.angel-serv.com/* → /arena/*
+	// The public reverse proxy can mount the app behind an /arena prefix.
 	// Mount the same routes under /arena prefix for compatibility.
 	r.Route("/arena", func(ar chi.Router) {
 		ar.Get("/ws/bot", ws.BotHandler(engine))

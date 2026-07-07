@@ -1,93 +1,57 @@
 # Security
 
-This document summarizes the security controls in the AI Battle Arena backend
-and how to configure them safely. It is intended as both operator guidance
-and a reference for compliance reviews (e.g. SOC 2).
+This document summarizes vulnerability reporting and the main security controls in AI Battle Arena.
 
-## Reporting a vulnerability
+## Reporting A Vulnerability
 
-Open a private security advisory on the repository, or contact the
-maintainers directly. Do not open a public issue for undisclosed
-vulnerabilities.
+Use GitHub private vulnerability reporting or open a private security advisory. Do not open a public issue for undisclosed vulnerabilities.
 
-## Authentication & access control
+Please include:
 
-- **Bot API keys** are 32-byte random values, stored only as bcrypt hashes
-  (cost factor `ARENA_BCRYPT_ROUNDS`, default 12) plus a 12-character prefix
-  for lookup. The plaintext key is shown once at generation time and cannot
-  be recovered.
-- **Admin API** requires `X-Admin-Token` (compared in constant time),
-  a database-issued token, or an OIDC/SSO session cookie
-  (`HttpOnly`, `Secure`, `SameSite=Lax`). `ARENA_ADMIN_LOCALHOST_BYPASS`
-  (default `true`) allows unauthenticated admin access from loopback
-  addresses only — disable it (`ARENA_ADMIN_LOCALHOST_BYPASS=false`) if your
-  reverse proxy or container network could ever make requests appear to
-  originate from `127.0.0.1`/`::1`.
-- Set `ARENA_ADMIN_TOKEN` to a strong random value in every deployment. The
-  server logs a warning at startup if it is unset.
+- affected commit or version
+- affected endpoint, WebSocket message, SDK, or deployment surface
+- reproduction steps
+- expected impact
+- any logs or proof of concept that do not expose third-party secrets
+
+Maintainers will triage the report, coordinate a fix, and publish public details after the issue is addressed.
+
+## Supported Versions
+
+Security fixes target the current `main` branch unless a maintainer announces a release branch.
 
 ## Secrets
 
-- Never commit API keys, admin tokens, or database passwords to source
-  control. Bot scripts must read credentials from the environment (see
-  `bots/*/README.md` / `ARENA_API_KEY`).
-- `.env` is git-ignored; only `.env.example` (placeholder values) is
-  committed.
-- The server warns at startup if `ARENA_DB_PASSWORD` is left at its insecure
-  default value.
+- Never commit API keys, admin tokens, database passwords, OIDC client secrets, Cloudflare tokens, or private keys.
+- `.env` is ignored. `.env.example` contains placeholders only.
+- Bot scripts should read credentials from environment variables such as `ARENA_API_KEY`.
 
-## Network-facing hardening
+## Authentication And Access Control
 
-- **Rate limiting** (Redis-backed, fails open if Redis is unavailable so a
-  cache outage never blocks legitimate bots/players from connecting):
-  per-IP key registration, per-IP and per-API-key WebSocket connection rate
-  limits, per-endpoint HTTP rate limits, admin API rate limits.
-- **Input validation**: bot names are HTML-tag-stripped and character
-  allow-listed server-side; stats, weapons, fallback behaviors, and colors
-  are validated against fixed schemas before being applied.
-- **WebSocket hardening**: message size cap (`ARENA_WS_MESSAGE_MAX_BYTES`),
-  per-connection message rate limiting, heartbeat-based dead-connection
-  reaping, IP and API-key ban lists (with optional Cloudflare push).
-- **HTTP security headers** (`ARENA_SECURITY_HEADERS_ENABLED`, default
-  `true`): `Content-Security-Policy`, `Strict-Transport-Security`,
-  `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
-  `Permissions-Policy`.
-- **Request body size limits** (1 MiB) prevent oversized-payload memory
-  exhaustion on JSON API endpoints.
-- **Slowloris mitigation** via `ReadHeaderTimeout`/`IdleTimeout` on the HTTP
-  server; WebSocket connections manage their own read/write deadlines after
-  the upgrade handshake so long-lived bot/spectator connections are
-  unaffected.
-- CORS origins are configurable via `ARENA_CORS_ORIGINS` (comma-separated;
-  defaults to `*` for public read endpoints — tighten this for
-  production deployments that don't need cross-origin bot tooling).
+- Bot API keys are random values stored as bcrypt hashes with short lookup prefixes. Plaintext bot keys are shown once and cannot be recovered.
+- Admin APIs require `X-Admin-Token`, a database-issued admin token, or an OIDC/SSO session cookie when configured.
+- `ARENA_ADMIN_LOCALHOST_BYPASS` defaults to `true` for local development. Set it to `false` if a reverse proxy or container network could make untrusted traffic appear to originate from loopback.
+- Set `ARENA_ADMIN_TOKEN` to a strong random value in every deployment.
 
-## Data protection
+## Network-Facing Hardening
 
-- Passwords/keys are never logged. Admin endpoints that display API keys
-  mask everything except a short hint, except for the deliberately-visible
-  built-in demo bot keys (non-sensitive, local-only fixtures).
-- Database credentials, admin tokens, and third-party API tokens (e.g.
-  Cloudflare) are loaded exclusively from environment variables
-  (`go-arena/internal/config/config.go`), never hardcoded.
+- Redis-backed rate limiting covers key registration, WebSocket connection attempts, HTTP endpoints, and admin APIs.
+- Bot names, stats, weapons, fallback behaviors, colors, and action payloads are validated server-side.
+- WebSocket handlers enforce message size limits, heartbeat/dead-connection cleanup, and API key/IP bans.
+- Security headers are enabled by default and must preserve same-origin framing for the dashboard/toolkit iframe flow.
+- JSON request bodies are size-limited.
+- The HTTP server uses read-header and idle timeouts.
+- CORS origins are configurable with `ARENA_CORS_ORIGINS`.
 
-## Infrastructure
+## Data Protection
 
-- The production container runs as a non-root user (`distroless/static:nonroot`)
-  on a minimal base image with no shell or package manager.
-- Postgres and Redis are bound to `127.0.0.1` only in `docker-compose.yml`
-  and are not reachable from outside the host.
+- Passwords and keys should not be logged.
+- Admin key listings should mask key material except for safe hints.
+- Database credentials and third-party tokens are loaded from environment variables.
 
-## Anti-cheat
+## Self-Hosting Notes
 
-- The admin `anticheat` endpoint flags stat-budget violations, physically
-  impossible speed/damage/accuracy, and multi-account IP correlation, purely
-  as an operator-facing detection tool (not an automated ban).
-
-## Availability posture
-
-Every control above is designed to degrade gracefully rather than block
-legitimate traffic: rate limiting fails open if Redis is down, security
-headers and body-size limits are configurable escape hatches, and
-`ARENA_DB_OPTIONAL` allows the server to run in a degraded mode without
-persistence rather than refuse to start.
+- Keep Postgres and Redis bound to localhost or a private network.
+- Terminate TLS at a reverse proxy.
+- Rotate tokens after testing public demos or sharing logs.
+- Review [docs/build-and-deploy.md](docs/build-and-deploy.md) before exposing a deployment to the internet.

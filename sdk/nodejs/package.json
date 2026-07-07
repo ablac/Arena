@@ -2,9 +2,15 @@
   "name": "arena-bot-sdk",
   "version": "0.1.0",
   "description": "Node.js SDK for AI Battle Arena bots",
+  "license": "MIT",
   "type": "module",
   "main": "src/ArenaBot.js",
   "exports": "./src/ArenaBot.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ablac/Arena.git",
+    "directory": "sdk/nodejs"
+  },
   "dependencies": {
     "ws": "^8.16.0"
   }

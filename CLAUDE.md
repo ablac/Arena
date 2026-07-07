@@ -46,7 +46,7 @@ docker compose down
 GIT_COMMIT=$(git rev-parse HEAD) BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
   docker compose build arena-server
 
-# Arena CLI (/opt/ai-battle-arena/arena)
+# Arena CLI (set ARENA_DIR to override the default install path)
 arena start                     # Start all containers
 arena stop                      # Stop everything
 arena restart                   # Full rebuild + restart
