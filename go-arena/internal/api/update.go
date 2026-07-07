@@ -18,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -31,6 +32,10 @@ var fullSHARe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // githubHTTPClient is a shared client with a sane timeout for GitHub API calls.
 var githubHTTPClient = &http.Client{Timeout: 12 * time.Second}
+
+// updaterHTTPClient is intentionally separate from githubHTTPClient because the
+// sidecar is a local control-plane dependency with different semantics.
+var updaterHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 // versionInfoCache memoizes the GitHub-derived comparison for a short window so
 // every Admin-Panel load does not hit the GitHub API (and its 60/hr anonymous
@@ -185,6 +190,24 @@ func githubGetJSON(ctx context.Context, url, token string, out interface{}) erro
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+func updaterStatusURL(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", err
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	if strings.HasSuffix(u.Path, "/update") {
+		u.Path = strings.TrimSuffix(u.Path, "/update")
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	if u.Path == "" {
+		u.Path = "/status"
+	} else {
+		u.Path += "/status"
+	}
+	return u.String(), nil
+}
+
 // triggerUpdate forwards an "update to <commitSha>" request to the arena-updater
 // sidecar. It returns as soon as the sidecar accepts the job (202); progress is
 // polled via updateStatus, since arena-server itself gets recreated as the last
@@ -222,7 +245,7 @@ func triggerUpdate(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+config.C.UpdaterSharedSecret)
 
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	resp, err := updaterHTTPClient.Do(req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to reach updater: "+err.Error())
 		return
@@ -235,7 +258,7 @@ func triggerUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Warn("admin triggered self-update", "commit", reqBody.CommitSha)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "commitSha": reqBody.CommitSha})
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{"ok": true, "commitSha": reqBody.CommitSha})
 }
 
 // updateStatus proxies the sidecar's in-memory progress. It always returns 200:
@@ -249,7 +272,11 @@ func updateStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, unreachable)
 		return
 	}
-	statusURL := strings.TrimSuffix(config.C.UpdaterURL, "/update") + "/status"
+	statusURL, err := updaterStatusURL(config.C.UpdaterURL)
+	if err != nil {
+		writeJSON(w, http.StatusOK, unreachable)
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
@@ -260,7 +287,7 @@ func updateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Header.Set("Authorization", "Bearer "+config.C.UpdaterSharedSecret)
 
-	resp, err := githubHTTPClient.Do(req)
+	resp, err := updaterHTTPClient.Do(req)
 	if err != nil {
 		writeJSON(w, http.StatusOK, unreachable)
 		return

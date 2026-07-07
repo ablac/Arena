@@ -163,6 +163,9 @@ func EnsureCoreSchema(ctx context.Context) error {
 	if err := EnsureAdminTokensTable(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema admin_tokens: %w", err)
 	}
+	if err := EnsureAdminRegistryTables(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema admin_registry: %w", err)
+	}
 
 	return nil
 }
@@ -224,6 +227,46 @@ func InsertRoundBotStats(ctx context.Context, roundNumber int, botID, botName, w
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 		roundNumber, botID, botName, weapon, kills, deaths, dmgDealt, dmgTaken, longestLife, shotsFired, shotsHit, pickups, distance, elo, won)
 	return err
+}
+
+// EnsureAdminRegistryTables creates the small admin-managed registries used by
+// the Admin Panel. These tables store validated records, not arbitrary files.
+func EnsureAdminRegistryTables(ctx context.Context) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS admin_content_blocks (
+			key TEXT PRIMARY KEY,
+			label TEXT NOT NULL DEFAULT '',
+			value TEXT NOT NULL DEFAULT '',
+			published BOOLEAN NOT NULL DEFAULT true,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS demo_bot_templates (
+			name TEXT PRIMARY KEY,
+			weapon TEXT NOT NULL,
+			strategy TEXT NOT NULL,
+			color TEXT NOT NULL,
+			stats JSONB NOT NULL DEFAULT '{}'::jsonb,
+			enabled BOOLEAN NOT NULL DEFAULT true,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS custom_map_templates (
+			name TEXT PRIMARY KEY,
+			display_name TEXT NOT NULL,
+			base_shape TEXT NOT NULL,
+			seed BIGINT NOT NULL DEFAULT 1,
+			enabled BOOLEAN NOT NULL DEFAULT true,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+	}
+	for _, stmt := range statements {
+		if _, err := Pool.Exec(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ListRecentWeaponPerformance returns average per-weapon round score over the last N rounds.
@@ -386,12 +429,12 @@ func GetTimeBasedLeaderboard(ctx context.Context, since time.Time, sortBy string
 		return nil, ErrNoDatabase
 	}
 	validSorts := map[string]string{
-		"kills":      "SUM(r.kills) DESC",
-		"elo":        "MAX(r.elo) DESC",
-		"kd_ratio":   "CASE WHEN SUM(r.deaths)=0 THEN SUM(r.kills) ELSE SUM(r.kills)::float/SUM(r.deaths) END DESC",
+		"kills":       "SUM(r.kills) DESC",
+		"elo":         "MAX(r.elo) DESC",
+		"kd_ratio":    "CASE WHEN SUM(r.deaths)=0 THEN SUM(r.kills) ELSE SUM(r.kills)::float/SUM(r.deaths) END DESC",
 		"best_streak": "SUM(r.kills) DESC", // approx — no per-round streak tracking
-		"wins":       "SUM(CASE WHEN r.won THEN 1 ELSE 0 END) DESC",
-		"damage":     "SUM(r.damage_dealt) DESC",
+		"wins":        "SUM(CASE WHEN r.won THEN 1 ELSE 0 END) DESC",
+		"damage":      "SUM(r.damage_dealt) DESC",
 	}
 	order, ok := validSorts[sortBy]
 	if !ok {
@@ -706,12 +749,12 @@ func ListAllAPIKeys(ctx context.Context) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
 	for rows.Next() {
 		var (
-			keyID, keyPrefix                    string
-			createdAt                           time.Time
-			lastSeen                            *time.Time
-			isActive                            bool
+			keyID, keyPrefix                       string
+			createdAt                              time.Time
+			lastSeen                               *time.Time
+			isActive                               bool
 			ipCreated, botID, botName, avatarColor *string
-			kills, deaths, elo, roundsPlayed    int
+			kills, deaths, elo, roundsPlayed       int
 		)
 		if err := rows.Scan(&keyID, &keyPrefix, &createdAt, &lastSeen, &isActive, &ipCreated,
 			&botID, &botName, &avatarColor, &kills, &deaths, &elo, &roundsPlayed); err != nil {
@@ -1017,11 +1060,11 @@ func ListWeaponKillStats(ctx context.Context) ([]WeaponKillStats, error) {
 
 // validSortColumns maps allowed sort keys to SQL ORDER BY clauses.
 var validSortColumns = map[string]string{
-	"kills":      "s.kills DESC",
-	"elo":        "s.elo DESC",
-	"streak":     "s.best_streak DESC",
+	"kills":       "s.kills DESC",
+	"elo":         "s.elo DESC",
+	"streak":      "s.best_streak DESC",
 	"best_streak": "s.best_streak DESC",
-	"kd_ratio":   "CASE WHEN s.deaths = 0 THEN s.kills ELSE s.kills::float / s.deaths END DESC",
+	"kd_ratio":    "CASE WHEN s.deaths = 0 THEN s.kills ELSE s.kills::float / s.deaths END DESC",
 }
 
 // GetLeaderboard returns a paginated leaderboard with rank, sorted by the given column.

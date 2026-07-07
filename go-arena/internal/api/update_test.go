@@ -76,8 +76,8 @@ func TestTriggerUpdate_ForwardsToSidecar(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(`{"commitSha":"`+sha+`"}`))
 	triggerUpdate(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("want 200 on accepted update, got %d (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("want 202 on accepted update, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	if gotAuth != "Bearer the-secret" {
 		t.Errorf("sidecar got Authorization %q, want Bearer the-secret", gotAuth)
@@ -124,5 +124,27 @@ func TestUpdateStatus_ProxiesSidecar(t *testing.T) {
 	}
 	if body["phase"] != "building" {
 		t.Errorf("phase should be proxied through, got %v", body["phase"])
+	}
+}
+
+func TestUpdateStatus_HandlesUpdaterURLWithTrailingSlash(t *testing.T) {
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/status" {
+			t.Fatalf("expected normalized /status path, got %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"ok":true,"inProgress":false,"phase":"idle"}`))
+	}))
+	defer sidecar.Close()
+
+	withUpdaterConfig(t, sidecar.URL+"/update/", "secret")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/update/status", nil)
+	updateStatus(rec, req)
+
+	var body map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["reachable"] != true {
+		t.Fatalf("reachable should be true for a normalized trailing-slash updater URL, got %v", body["reachable"])
 	}
 }
