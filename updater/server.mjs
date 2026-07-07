@@ -304,8 +304,14 @@ async function runUpdate(commitSha, githubToken, onPhase) {
     });
 
     onPhase("recreating");
-    log(`Recreating the ${COMPOSE_SERVICE} container (docker compose ${composeBaseArgs.join(" ")} up -d ${COMPOSE_SERVICE})`);
-    await execFileAsync("docker", ["compose", ...composeBaseArgs, "up", "-d", COMPOSE_SERVICE], {
+    // --no-deps: recreate ONLY the app service, never its compose dependencies.
+    // arena-server depends_on arena-db + arena-redis, and a plain `up -d
+    // arena-server` also recreates those (verified: it recreates arena-db),
+    // which needlessly interrupts the database on every update. The dependencies
+    // are already running and healthy; the recreated app just reconnects to them
+    // over the network.
+    log(`Recreating the ${COMPOSE_SERVICE} container (docker compose ${composeBaseArgs.join(" ")} up -d --no-deps ${COMPOSE_SERVICE})`);
+    await execFileAsync("docker", ["compose", ...composeBaseArgs, "up", "-d", "--no-deps", COMPOSE_SERVICE], {
       cwd: DEPLOY_DIR,
       timeout: DOCKER_UP_TIMEOUT_MS
     });
