@@ -1,3 +1,11 @@
+# Pin the Compose project name so every `docker compose` invocation resolves to
+# the same project regardless of the directory it runs from. The self-update
+# sidecar (arena-updater) runs compose from the deploy dir mounted at its own
+# path; without a pinned name, compose would derive the project from the cwd
+# basename and could recreate arena-server in a different project (wrong
+# network, unable to reach arena-db/arena-redis). See docs/build-and-deploy.md.
+name: arena
+
 services:
   arena-db:
     image: postgres:16-alpine
@@ -52,6 +60,41 @@ services:
         condition: service_healthy
     env_file:
       - .env
+    networks:
+      arena_net:
+
+  # Self-update sidecar. Holds Docker-socket (host-root-equivalent) access so
+  # arena-server itself never needs it. Reachable only from other containers on
+  # arena_net by service name (no `ports:` mapping -- never bound to the host or
+  # tailnet), and gated behind the "updater" profile so a normal `docker compose
+  # up -d` never creates it. Enabling it requires `--profile updater` plus an
+  # ARENA_UPDATER_SHARED_SECRET. It fetches the target commit's tarball from the
+  # PUBLIC Arena repo (no token needed), rsyncs the source into the deploy dir,
+  # then rebuilds and recreates arena-server. See docs/build-and-deploy.md.
+  arena-updater:
+    build:
+      context: ./updater
+    image: arena-updater:local
+    container_name: arena-updater
+    restart: unless-stopped
+    profiles:
+      - updater
+    environment:
+      UPDATER_SHARED_SECRET: ${ARENA_UPDATER_SHARED_SECRET:-}
+      # Deploy dir mounted at its OWN host path (see volumes) so compose's
+      # relative build context resolves identically inside the sidecar and for
+      # the daemon. ${PWD} is the deploy dir (compose is always run from there).
+      DEPLOY_DIR: ${PWD}
+      # uid:gid the post-sync ownership restore chowns code back to (e.g.
+      # 1000:1001). Unset = fall back to the dir's own owner, skipping if root.
+      DEPLOY_OWNER: ${DEPLOY_OWNER:-}
+      COMPOSE_FILES: "docker-compose.yml"
+      COMPOSE_SERVICE: arena-server
+      GITHUB_OWNER: ablac
+      GITHUB_REPO: Arena
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PWD}:${PWD}
     networks:
       arena_net:
 
