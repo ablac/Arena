@@ -96,7 +96,13 @@ export class TrailRenderer {
         const last = trail.history[trail.history.length - 1];
         const dx = x - last.x;
         const dz = z - last.z;
-        if (dx * dx + dz * dz > 0.5) {
+        if (dx * dx + dz * dz > 150 * 150) {
+          // Teleport (respawn/round reset): break the ribbon instead of
+          // painting a full-width comet across the arena.
+          trail.history.length = 0;
+          trail.history.push({ x, z });
+          trail.dirty = true;
+        } else if (dx * dx + dz * dz > 0.5) {
           trail.history.push({ x, z });
           if (trail.history.length > MAX_HISTORY) {
             trail.history.shift();
