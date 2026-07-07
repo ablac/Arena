@@ -784,6 +784,17 @@ button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--g
     <!-- Controls Panel -->
     <div class="panel" id="panel-controls">
       <div class="ctrl-section">
+        <h3><span class="icon">&#8681;</span> Version &amp; Update</h3>
+        <div id="versionInfo" style="font-size:12px;color:var(--text2)">Loading version&hellip;</div>
+        <div class="ctrl-row" style="margin-top:10px">
+          <button onclick="loadVersionInfo()">Refresh</button>
+          <button class="btn-success" id="updateBtn" onclick="startUpdate()" style="display:none">Update to latest</button>
+        </div>
+        <div class="ctrl-result" id="updateResult"></div>
+        <div style="font-size:10px;color:var(--text2);margin-top:6px">Fetches, rebuilds, and recreates the arena-server container at the latest release commit. The database and Redis are untouched.</div>
+      </div>
+
+      <div class="ctrl-section">
         <h3><span class="icon">&#9654;</span> Game Controls</h3>
         <div class="ctrl-row">
           <button class="btn-warn" onclick="gameAction('pause')">Pause Game</button>
@@ -1148,7 +1159,7 @@ function switchTab(tabName) {
   if (currentTab === 'anticheat') { runAnticheatScan(); startACAutoScan(); } else stopACAutoScan();
   if (currentTab === 'errors') refreshErrors();
   if (currentTab === 'ratelimits') refreshRateLimits();
-  if (currentTab === 'controls') { loadGameConfig(); refreshIPBans(); }
+  if (currentTab === 'controls') { loadGameConfig(); refreshIPBans(); loadVersionInfo(); }
   if (currentTab === 'rounds') refreshRounds();
   if (currentTab === 'killfeed') renderKillFeedStats();
   if (currentTab === 'balance') refreshBalance();
@@ -2429,6 +2440,140 @@ async function forceGC() {
     showServerOutput(data);
     toast('Garbage collection triggered', 'success');
   } catch(e) { el.textContent = 'GC failed'; el.style.color = 'var(--red)'; }
+}
+
+// ========== Version & Self-Update ==========
+let _updateTargetSha = null;
+
+async function loadVersionInfo() {
+  const el = document.getElementById('versionInfo');
+  const btn = document.getElementById('updateBtn');
+  if (!el) return;
+  el.style.color = 'var(--text2)';
+  el.textContent = 'Loading version…';
+  btn.style.display = 'none';
+  _updateTargetSha = null;
+  try {
+    const v = await api('/version');
+    const runningShort = (v.running && v.running.short) || 'unknown';
+    const runningFull = (v.running && v.running.commit) || '';
+    let html = `<div>Running: <code>${esc(runningShort)}</code>`;
+    if (v.running && v.running.buildTime && v.running.buildTime !== 'unknown') {
+      html += ` <span style="color:var(--text2)">(built ${esc(new Date(v.running.buildTime).toLocaleString())})</span>`;
+    }
+    html += `</div>`;
+    if (v.latest && v.latest.commit) {
+      const latestShort = v.latest.short || v.latest.commit.slice(0, 7);
+      html += `<div style="margin-top:4px">Latest on <code>${esc(v.branch || 'main')}</code>: <code>${esc(latestShort)}</code>`;
+      if (v.latest.message) html += ` <span style="color:var(--text2)">${esc(v.latest.message)}</span>`;
+      html += `</div>`;
+      const behind = (typeof v.commitsBehind === 'number') ? v.commitsBehind : null;
+      if (behind === 0 || runningFull === v.latest.commit) {
+        html += `<div style="margin-top:4px;color:var(--green)">Up to date.</div>`;
+      } else if (behind !== null) {
+        html += `<div style="margin-top:4px;color:var(--orange)">${behind} commit${behind === 1 ? '' : 's'} behind.</div>`;
+      }
+      if (v.updaterConfigured && runningFull !== v.latest.commit) {
+        _updateTargetSha = v.latest.commit;
+        btn.textContent = 'Update to ' + latestShort;
+        btn.style.display = '';
+      } else if (!v.updaterConfigured) {
+        html += `<div style="margin-top:4px;color:var(--text2)">Self-update sidecar not configured on this server.</div>`;
+      }
+    } else if (v.latestError) {
+      html += `<div style="margin-top:4px;color:var(--text2)">Could not check latest (${esc(v.latestError)}).</div>`;
+    }
+    el.innerHTML = html;
+  } catch (e) {
+    el.textContent = 'Failed to load version: ' + e.message;
+    el.style.color = 'var(--red)';
+  }
+}
+
+async function startUpdate() {
+  if (!_updateTargetSha) return;
+  if (!confirm('Update arena-server to ' + _updateTargetSha.slice(0, 7) + '?\n\nThis rebuilds and recreates the server container (a few seconds of downtime). The database and Redis are NOT touched.')) return;
+  const res = document.getElementById('updateResult');
+  res.textContent = 'Starting update…';
+  res.style.color = 'var(--text2)';
+  try {
+    await api('/update', { method: 'POST', body: JSON.stringify({ commitSha: _updateTargetSha }) });
+  } catch (e) {
+    res.textContent = 'Update failed to start: ' + e.message;
+    res.style.color = 'var(--red)';
+    return;
+  }
+  showUpdateOverlay(_updateTargetSha);
+}
+
+function showUpdateOverlay(targetSha) {
+  let ov = document.getElementById('updateOverlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'updateOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:99999;display:flex;align-items:center;justify-content:center;color:#e6e6e6';
+    document.body.appendChild(ov);
+  }
+  ov.style.display = 'flex';
+  ov.innerHTML = `<div style="background:var(--bg2,#161616);border:1px solid var(--border,#333);border-radius:10px;padding:28px 34px;min-width:360px;text-align:center">
+    <div style="font-size:17px;margin-bottom:14px">Updating arena-server</div>
+    <div id="ovPhase" style="color:var(--cyan,#39c);margin-bottom:8px">Starting…</div>
+    <div id="ovElapsed" style="color:var(--text2,#888);font-size:12px">0s</div>
+    <div style="color:var(--text2,#888);font-size:11px;margin-top:10px">target ${esc(targetSha.slice(0, 12))}</div>
+  </div>`;
+  pollUpdate(Date.now(), targetSha);
+}
+
+async function pollUpdate(start, targetSha) {
+  const secs = Math.round((Date.now() - start) / 1000);
+  const elapsed = document.getElementById('ovElapsed');
+  const phase = document.getElementById('ovPhase');
+  if (elapsed) elapsed.textContent = secs + 's';
+
+  let st = null;
+  try {
+    const r = await fetch(API_BASE + '/update/status', { headers: { 'X-Admin-Token': token } });
+    if (r.ok) st = await r.json();
+  } catch (_) {}
+
+  if (!st || st.reachable === false) {
+    if (phase) phase.textContent = 'reconnecting… (server recreating)';
+    if (await versionMatches(targetSha)) return finishUpdate(true);
+  } else {
+    if (phase && st.phase) phase.textContent = st.phase;
+    if (st.phase === 'failed' || st.lastError) return finishUpdate(false, st.lastError || 'failed');
+    if (st.phase === 'done' || (!st.inProgress && st.lastCompletedCommit === targetSha)) {
+      if (await versionMatches(targetSha)) return finishUpdate(true);
+    }
+  }
+  if (secs > 900) return finishUpdate(false, 'timed out after 15 minutes');
+  setTimeout(() => pollUpdate(start, targetSha), 2500);
+}
+
+async function versionMatches(sha) {
+  try {
+    const r = await fetch(API_BASE + '/version', { headers: { 'X-Admin-Token': token } });
+    if (!r.ok) return false;
+    const v = await r.json();
+    return !!(v.running && v.running.commit === sha);
+  } catch (_) { return false; }
+}
+
+function finishUpdate(ok, err) {
+  const ov = document.getElementById('updateOverlay');
+  if (ov) {
+    ov.innerHTML = `<div style="background:var(--bg2,#161616);border:1px solid var(--border,#333);border-radius:10px;padding:28px 34px;min-width:360px;text-align:center">
+      <div style="font-size:17px;color:${ok ? 'var(--green,#3c9)' : 'var(--red,#e55)'}">${ok ? 'Update complete' : 'Update failed'}</div>
+      <div style="color:var(--text2,#888);font-size:12px;margin-top:10px">${ok ? 'arena-server is now running the new build.' : esc(err || 'unknown error')}</div>
+      <button style="margin-top:16px" onclick="document.getElementById('updateOverlay').style.display='none';loadVersionInfo()">Close</button>
+    </div>`;
+  }
+  const res = document.getElementById('updateResult');
+  if (res) {
+    res.textContent = ok ? 'Update complete.' : ('Update failed: ' + (err || ''));
+    res.style.color = ok ? 'var(--green)' : 'var(--red)';
+  }
+  toast(ok ? 'Update complete' : 'Update failed', ok ? 'success' : 'error');
 }
 
 async function deepHealth() {

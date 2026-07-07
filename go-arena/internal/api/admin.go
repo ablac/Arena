@@ -251,6 +251,11 @@ func (h *AdminHandler) Routes(r chi.Router) {
 	r.Get("/health/deep", h.deepHealthCheck)
 	r.Post("/server/gc", h.triggerGC)
 	r.Post("/server/restart", h.restartServer)
+
+	// Self-update: running vs latest commit, trigger, and progress. See update.go.
+	r.Get("/version", adminVersionInfo)
+	r.Post("/update", triggerUpdate)
+	r.Get("/update/status", updateStatus)
 }
 
 // ============================================================================
