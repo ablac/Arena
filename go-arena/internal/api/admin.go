@@ -32,9 +32,9 @@ import (
 
 // AdminHandler holds references needed by admin endpoints.
 type AdminHandler struct {
-	Engine       *game.GameEngine
-	DemoManager  *demobots.Manager
-	startTime    time.Time
+	Engine      *game.GameEngine
+	DemoManager *demobots.Manager
+	startTime   time.Time
 	// Cache of DB token hashes to avoid DB hit on every request.
 	tokenHashes []string
 	tokenMu     sync.RWMutex
@@ -53,8 +53,12 @@ func NewAdminHandler(engine *game.GameEngine, demoManager *demobots.Manager) *Ad
 		if err := db.EnsureAdminTokensTable(ctx); err != nil {
 			slog.Warn("failed to ensure admin_tokens table", "error", err)
 		}
+		if err := db.EnsureAdminRegistryTables(ctx); err != nil {
+			slog.Warn("failed to ensure admin registry tables", "error", err)
+		}
 		h.reloadTokenHashes()
 	}
+	h.loadAdminRegistries(ctx)
 	return h
 }
 
@@ -185,6 +189,10 @@ func (h *AdminHandler) Routes(r chi.Router) {
 	r.Post("/demobots/start", h.startDemoBots)
 	r.Post("/demobots/stop", h.stopDemoBots)
 	r.Delete("/demobots/{name}", h.stopDemoBotByName)
+	r.Get("/demobots/templates", h.listDemoTemplates)
+	r.Put("/demobots/templates/{name}", h.upsertDemoTemplate)
+	r.Delete("/demobots/templates/{name}", h.deleteDemoTemplate)
+	r.Post("/demobots/spawn-template", h.spawnDemoTemplate)
 
 	// Debug / inspection.
 	r.Get("/debug/connections", h.debugConnections)
@@ -207,6 +215,15 @@ func (h *AdminHandler) Routes(r chi.Router) {
 	r.Post("/game/restart-round", h.gameRestartRound)
 	r.Put("/game/config", h.updateGameConfig)
 	r.Get("/game/config", h.getGameConfig)
+	r.Get("/game/maps", h.getMapSettings)
+	r.Put("/game/maps", h.updateMapSettings)
+	r.Post("/game/maps/preview", h.previewMap)
+	r.Put("/game/maps/custom/{name}", h.upsertCustomMap)
+	r.Delete("/game/maps/custom/{name}", h.deleteCustomMap)
+
+	// Public-site content blocks.
+	r.Get("/content-blocks", h.listContentBlocks)
+	r.Put("/content-blocks/{key}", h.updateContentBlock)
 
 	// Data management.
 	r.Get("/db/stats", h.dbStats)
@@ -384,10 +401,10 @@ func (h *AdminHandler) debugMetrics(w http.ResponseWriter, r *http.Request) {
 			"pause_total_ms":  float64(memStats.PauseTotalNs) / 1e6,
 		},
 		"game": map[string]interface{}{
-			"tick_count":      h.Engine.GetTickCount(),
-			"bots_connected":  h.Engine.ConnectedBotCount(),
-			"spectators":      h.Engine.SpectatorCount(),
-			"tick_rate":       config.C.TickRate,
+			"tick_count":     h.Engine.GetTickCount(),
+			"bots_connected": h.Engine.ConnectedBotCount(),
+			"spectators":     h.Engine.SpectatorCount(),
+			"tick_rate":      config.C.TickRate,
 		},
 	}
 	writeJSON(w, http.StatusOK, metrics)
@@ -597,24 +614,36 @@ func (h *AdminHandler) gameRestartRound(w http.ResponseWriter, r *http.Request) 
 func (h *AdminHandler) getGameConfig(w http.ResponseWriter, r *http.Request) {
 	c := &config.C
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"tick_rate":          c.TickRate,
-		"max_bots":           c.MaxBots,
-		"max_spectators":     c.MaxSpectators,
-		"arena_width":        c.ArenaWidth,
-		"arena_height":       c.ArenaHeight,
-		"round_duration":     c.RoundDuration,
-		"intermission_time":  c.IntermissionTime,
-		"lobby_countdown":    c.LobbyCountdown,
-		"min_bots_to_start":  c.MinBotsToStart,
-		"stat_budget":        c.StatBudget,
-		"game_mode":          c.GameModeName,
-		"team_count":         c.TeamCount,
-		"friendly_fire":      c.FriendlyFire,
-		"map_shape":          c.MapShape,
-		"zone_damage":        c.ZoneDamagePerTick,
-		"zone_shrink_pct":    c.ZoneShrinkPercent,
-		"zone_shrink_interval": c.ZoneShrinkInterval,
-		"zone_min_radius":    c.ZoneMinRadius,
+		"tick_rate":              c.TickRate,
+		"max_bots":               c.MaxBots,
+		"max_spectators":         c.MaxSpectators,
+		"arena_width":            c.ArenaWidth,
+		"arena_height":           c.ArenaHeight,
+		"round_duration":         c.RoundDuration,
+		"intermission_time":      c.IntermissionTime,
+		"lobby_countdown":        c.LobbyCountdown,
+		"min_bots_to_start":      c.MinBotsToStart,
+		"stat_budget":            c.StatBudget,
+		"game_mode":              c.GameModeName,
+		"team_count":             c.TeamCount,
+		"friendly_fire":          c.FriendlyFire,
+		"round_modifier_chance":  c.RoundModifierChance,
+		"map_shape":              c.MapShape,
+		"map_shape_pool":         c.MapShapePool,
+		"zone_damage":            c.ZoneDamagePerTick,
+		"zone_shrink_pct":        c.ZoneShrinkPercent,
+		"zone_shrink_interval":   c.ZoneShrinkInterval,
+		"zone_min_radius":        c.ZoneMinRadius,
+		"zone_shrink_delay":      c.ZoneShrinkDelay,
+		"zone_initial_radius":    c.ZoneInitialRadius,
+		"zone_cover_map":         c.ZoneCoverMap,
+		"obstacle_count_min":     c.ObstacleCountMin,
+		"obstacle_count_max":     c.ObstacleCountMax,
+		"arena_size_dynamic":     c.ArenaSizeDynamic,
+		"arena_size_base_bots":   c.ArenaSizeBaseBots,
+		"arena_size_max_bots":    c.ArenaSizeMaxBots,
+		"arena_size_min_scale":   c.ArenaSizeMinScale,
+		"arena_size_max_scale":   c.ArenaSizeMaxScale,
 		"dodge_speed_mult":       c.DodgeSpeedMult,
 		"dodge_invuln_ticks":     c.DodgeInvulnTicks,
 		"dodge_cooldown_ticks":   c.DodgeCooldownTicks,
@@ -637,142 +666,7 @@ func (h *AdminHandler) updateGameConfig(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	c := &config.C
-	applied := make(map[string]interface{})
-
-	for key, val := range updates {
-		switch key {
-		case "tick_rate":
-			if v, ok := toInt(val); ok && v >= 1 && v <= 60 {
-				c.TickRate = v
-				applied[key] = v
-			}
-		case "max_bots":
-			if v, ok := toInt(val); ok && v >= 1 {
-				c.MaxBots = v
-				applied[key] = v
-			}
-		case "max_spectators":
-			if v, ok := toInt(val); ok && v >= 0 {
-				c.MaxSpectators = v
-				applied[key] = v
-			}
-		case "round_duration":
-			if v, ok := toFloat(val); ok && v >= 10 {
-				c.RoundDuration = v
-				applied[key] = v
-			}
-		case "intermission_time":
-			if v, ok := toFloat(val); ok && v >= 1 {
-				c.IntermissionTime = v
-				applied[key] = v
-			}
-		case "lobby_countdown":
-			if v, ok := toFloat(val); ok && v >= 1 {
-				c.LobbyCountdown = v
-				applied[key] = v
-			}
-		case "min_bots_to_start":
-			if v, ok := toInt(val); ok && v >= 1 {
-				c.MinBotsToStart = v
-				applied[key] = v
-			}
-		case "zone_damage":
-			if v, ok := toFloat(val); ok && v >= 0 {
-				c.ZoneDamagePerTick = v
-				applied[key] = v
-			}
-		case "game_mode":
-			if v, ok := val.(string); ok {
-				switch v {
-				case "ffa", "team_battle", "ctf":
-					c.GameModeName = v // takes effect at next round start
-					applied[key] = v
-				}
-			}
-		case "team_count":
-			if v, ok := toInt(val); ok && v >= 2 && v <= 8 {
-				c.TeamCount = v
-				applied[key] = v
-			}
-		case "friendly_fire":
-			if v, ok := val.(bool); ok {
-				c.FriendlyFire = v
-				applied[key] = v
-			}
-		case "map_shape":
-			if v, ok := val.(string); ok {
-				switch v {
-				case "square", "circle", "hexagon", "diamond", "cross", "caves", "random":
-					c.MapShape = v // takes effect when next round's terrain is generated
-					applied[key] = v
-				}
-			}
-		case "zone_shrink_pct":
-			if v, ok := toFloat(val); ok && v >= 0 && v <= 1 {
-				c.ZoneShrinkPercent = v
-				applied[key] = v
-			}
-		case "afk_timeout_ticks":
-			if v, ok := toInt(val); ok && v >= 0 {
-				c.AFKTimeoutTicks = v
-				applied[key] = v
-			}
-		// Stat multipliers
-		case "stat_hp_base":
-			if v, ok := toFloat(val); ok && v >= 0 {
-				c.StatHPBase = v
-				applied[key] = v
-			}
-		case "stat_hp_per_point":
-			if v, ok := toFloat(val); ok && v >= 0 {
-				c.StatHPPerPoint = v
-				applied[key] = v
-			}
-		case "stat_speed_base":
-			if v, ok := toFloat(val); ok && v >= 0 {
-				c.StatSpeedBase = v
-				applied[key] = v
-			}
-		case "stat_speed_per_point":
-			if v, ok := toFloat(val); ok && v >= 0 {
-				c.StatSpeedPerPoint = v
-				applied[key] = v
-			}
-		case "stat_attack_base":
-			if v, ok := toFloat(val); ok && v >= 0 {
-				c.StatAttackBase = v
-				applied[key] = v
-			}
-		case "stat_attack_per_point":
-			if v, ok := toFloat(val); ok && v >= 0 {
-				c.StatAttackPerPoint = v
-				applied[key] = v
-			}
-		case "stat_defense_per_point":
-			if v, ok := toFloat(val); ok && v >= 0 {
-				c.StatDefensePerPoint = v
-				applied[key] = v
-			}
-		case "dodge_speed_mult":
-			if v, ok := toFloat(val); ok && v >= 0 {
-				c.DodgeSpeedMult = v
-				applied[key] = v
-			}
-		case "dodge_invuln_ticks":
-			if v, ok := toInt(val); ok && v >= 0 {
-				c.DodgeInvulnTicks = v
-				applied[key] = v
-			}
-		case "dodge_cooldown_ticks":
-			if v, ok := toInt(val); ok && v >= 0 {
-				c.DodgeCooldownTicks = v
-				applied[key] = v
-			}
-		default:
-			// Ignore unknown keys.
-		}
-	}
+	applied := applyGameConfigUpdates(updates)
 
 	slog.Info("admin updated game config", "applied", applied)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -794,10 +688,10 @@ func (h *AdminHandler) dbStats(w http.ResponseWriter, r *http.Request) {
 	poolStats := db.Pool.Stat()
 	stats := map[string]interface{}{
 		"pool": map[string]interface{}{
-			"total_conns":      poolStats.TotalConns(),
-			"idle_conns":       poolStats.IdleConns(),
-			"acquired_conns":   poolStats.AcquiredConns(),
-			"max_conns":        poolStats.MaxConns(),
+			"total_conns":        poolStats.TotalConns(),
+			"idle_conns":         poolStats.IdleConns(),
+			"acquired_conns":     poolStats.AcquiredConns(),
+			"max_conns":          poolStats.MaxConns(),
 			"constructing_conns": poolStats.ConstructingConns(),
 		},
 	}
@@ -930,22 +824,22 @@ func (h *AdminHandler) getServerConfig(w http.ResponseWriter, r *http.Request) {
 	c := &config.C
 	// Return sanitized config (no secrets).
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"server_host":    c.ServerHost,
-		"server_port":    c.ServerPort,
-		"tick_rate":      c.TickRate,
-		"max_bots":       c.MaxBots,
-		"max_spectators": c.MaxSpectators,
-		"arena_size":     [2]float64{c.ArenaWidth, c.ArenaHeight},
-		"db_host":        c.DBHost,
-		"db_port":        c.DBPort,
-		"db_name":        c.DBName,
-		"redis_host":     c.RedisHost,
-		"redis_port":     c.RedisPort,
-		"cors_origins":   c.CORSOrigins,
-		"elo_k_factor":   c.EloKFactor,
-		"elo_starting":   c.EloStarting,
+		"server_host":            c.ServerHost,
+		"server_port":            c.ServerPort,
+		"tick_rate":              c.TickRate,
+		"max_bots":               c.MaxBots,
+		"max_spectators":         c.MaxSpectators,
+		"arena_size":             [2]float64{c.ArenaWidth, c.ArenaHeight},
+		"db_host":                c.DBHost,
+		"db_port":                c.DBPort,
+		"db_name":                c.DBName,
+		"redis_host":             c.RedisHost,
+		"redis_port":             c.RedisPort,
+		"cors_origins":           c.CORSOrigins,
+		"elo_k_factor":           c.EloKFactor,
+		"elo_starting":           c.EloStarting,
 		"admin_localhost_bypass": c.AdminLocalhostBypass,
-		"admin_token_set":       c.AdminToken != "",
+		"admin_token_set":        c.AdminToken != "",
 	})
 }
 
@@ -957,13 +851,13 @@ func (h *AdminHandler) deepHealthCheck(w http.ResponseWriter, r *http.Request) {
 	runtime.ReadMemStats(&memStats)
 
 	health := map[string]interface{}{
-		"status":       "ok",
-		"uptime":       time.Since(h.startTime).Round(time.Second).String(),
-		"goroutines":   runtime.NumGoroutine(),
+		"status":        "ok",
+		"uptime":        time.Since(h.startTime).Round(time.Second).String(),
+		"goroutines":    runtime.NumGoroutine(),
 		"heap_alloc_mb": float64(memStats.HeapAlloc) / 1024 / 1024,
-		"bots_online":  h.Engine.ConnectedBotCount(),
-		"spectators":   h.Engine.SpectatorCount(),
-		"paused":       h.Engine.IsPaused(),
+		"bots_online":   h.Engine.ConnectedBotCount(),
+		"spectators":    h.Engine.SpectatorCount(),
+		"paused":        h.Engine.IsPaused(),
 	}
 
 	// DB ping.
@@ -1009,10 +903,10 @@ func (h *AdminHandler) triggerGC(w http.ResponseWriter, r *http.Request) {
 	)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message":          "garbage collection triggered",
-		"heap_before_mb":   float64(before.HeapAlloc) / 1024 / 1024,
-		"heap_after_mb":    float64(after.HeapAlloc) / 1024 / 1024,
-		"freed_mb":         float64(before.HeapAlloc-after.HeapAlloc) / 1024 / 1024,
+		"message":        "garbage collection triggered",
+		"heap_before_mb": float64(before.HeapAlloc) / 1024 / 1024,
+		"heap_after_mb":  float64(after.HeapAlloc) / 1024 / 1024,
+		"freed_mb":       float64(before.HeapAlloc-after.HeapAlloc) / 1024 / 1024,
 	})
 }
 
@@ -1543,12 +1437,12 @@ func (h *AdminHandler) botProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"bot":             finalProfile,
-		"playstyle":       playstyle,
-		"traits":          traits,
-		"samples":         len(snapshots),
-		"interval_ms":     intervalMS,
-		"duration_ms":     len(snapshots) * intervalMS,
+		"bot":              finalProfile,
+		"playstyle":        playstyle,
+		"traits":           traits,
+		"samples":          len(snapshots),
+		"interval_ms":      intervalMS,
+		"duration_ms":      len(snapshots) * intervalMS,
 		"action_breakdown": actionCounts,
 		"action_pcts": map[string]interface{}{
 			"move":   r1(movePct),
@@ -1557,15 +1451,15 @@ func (h *AdminHandler) botProfile(w http.ResponseWriter, r *http.Request) {
 			"idle":   r1(idlePct),
 		},
 		"positioning": map[string]interface{}{
-			"avg_enemy_distance":    r1(avgEnemyDist),
-			"zone_time_in_pct":      r1(zonePct),
-			"low_hp_time_pct":       r1(lowHPPct),
-			"movement_intensity":    r1(totalMoveDist),
+			"avg_enemy_distance": r1(avgEnemyDist),
+			"zone_time_in_pct":   r1(zonePct),
+			"low_hp_time_pct":    r1(lowHPPct),
+			"movement_intensity": r1(totalMoveDist),
 		},
 		"targeting": map[string]interface{}{
-			"unique_targets":     len(attackTargets),
-			"top_target_id":     topTarget,
-			"top_target_attacks": topTargetCount,
+			"unique_targets":      len(attackTargets),
+			"top_target_id":       topTarget,
+			"top_target_attacks":  topTargetCount,
 			"target_distribution": attackTargets,
 		},
 	})
@@ -1777,12 +1671,12 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 
 	// Weapon max damage lookup: baseDmg * maxAttackMult(2.0)
 	weaponMaxDmg := map[string]float64{
-		"sword": 21 * 2.0,
-		"bow": 16 * 2.0 * (1 + float64(config.C.BowChargeMaxTicks)*config.C.BowChargeDamagePerTick),
+		"sword":   21 * 2.0,
+		"bow":     16 * 2.0 * (1 + float64(config.C.BowChargeMaxTicks)*config.C.BowChargeDamagePerTick),
 		"daggers": 11 * 2.0 * config.C.DaggerBackstabBonusMultiplier,
-		"shield": 14 * 2.0 * config.C.ShieldBashBonusMultiplier,
-		"spear": 17 * 2.0 * config.C.SpearBraceBonusMultiplier,
-		"staff": 17 * 2.0,
+		"shield":  14 * 2.0 * config.C.ShieldBashBonusMultiplier,
+		"spear":   17 * 2.0 * config.C.SpearBraceBonusMultiplier,
+		"staff":   17 * 2.0,
 		"grapple": 14 * 2.0 * config.C.GrappleSlamBonusMultiplier,
 	}
 	weaponCooldowns := map[string]float64{
@@ -1792,15 +1686,15 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 
 	allBots := h.Engine.ListAllBots()
 	type botReport struct {
-		BotID       string    `json:"bot_id"`
-		Name        string    `json:"name"`
-		AvatarColor string    `json:"avatar_color"`
-		Weapon      string    `json:"weapon"`
-		Elo         int       `json:"elo"`
-		Status      string    `json:"status"`
-		Flags       []acFlag  `json:"flags"`
-		FlagCount   int       `json:"flag_count"`
-		RiskScore   int       `json:"risk_score"`
+		BotID       string   `json:"bot_id"`
+		Name        string   `json:"name"`
+		AvatarColor string   `json:"avatar_color"`
+		Weapon      string   `json:"weapon"`
+		Elo         int      `json:"elo"`
+		Status      string   `json:"status"`
+		Flags       []acFlag `json:"flags"`
+		FlagCount   int      `json:"flag_count"`
+		RiskScore   int      `json:"risk_score"`
 	}
 
 	var flaggedBots []botReport
@@ -1843,8 +1737,8 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 			if total > c.StatBudget {
 				flags = append(flags, acFlag{
 					Severity: "critical", Category: "stats",
-					Message: "Stat budget exceeded",
-					Value: fmt.Sprintf("%d points used", total),
+					Message:  "Stat budget exceeded",
+					Value:    fmt.Sprintf("%d points used", total),
 					Expected: fmt.Sprintf("<= %d", c.StatBudget),
 				})
 			}
@@ -1853,14 +1747,14 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 					flags = append(flags, acFlag{
 						Severity: "critical", Category: "stats",
 						Message: fmt.Sprintf("Stat '%s' below minimum", k),
-						Value: fmt.Sprintf("%d", v), Expected: fmt.Sprintf(">= %d", c.StatMin),
+						Value:   fmt.Sprintf("%d", v), Expected: fmt.Sprintf(">= %d", c.StatMin),
 					})
 				}
 				if v > c.StatMax {
 					flags = append(flags, acFlag{
 						Severity: "critical", Category: "stats",
 						Message: fmt.Sprintf("Stat '%s' above maximum", k),
-						Value: fmt.Sprintf("%d", v), Expected: fmt.Sprintf("<= %d", c.StatMax),
+						Value:   fmt.Sprintf("%d", v), Expected: fmt.Sprintf("<= %d", c.StatMax),
 					})
 				}
 			}
@@ -1869,7 +1763,7 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 				flags = append(flags, acFlag{
 					Severity: "critical", Category: "stats",
 					Message: "Wrong number of stat keys",
-					Value: fmt.Sprintf("%d keys", len(stats)), Expected: "4 keys (hp,speed,attack,defense)",
+					Value:   fmt.Sprintf("%d keys", len(stats)), Expected: "4 keys (hp,speed,attack,defense)",
 				})
 			}
 		}
@@ -1883,14 +1777,14 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 				flags = append(flags, acFlag{
 					Severity: "critical", Category: "stats",
 					Message: "MaxHP exceeds stat-derived maximum",
-					Value: fmt.Sprintf("%.0f", maxHP), Expected: fmt.Sprintf("%.0f", expectedMax),
+					Value:   fmt.Sprintf("%.0f", maxHP), Expected: fmt.Sprintf("%.0f", expectedMax),
 				})
 			}
 			if hp > maxHP+0.5 {
 				flags = append(flags, acFlag{
 					Severity: "high", Category: "stats",
 					Message: "Current HP exceeds MaxHP",
-					Value: fmt.Sprintf("%.1f", hp), Expected: fmt.Sprintf("<= %.0f", maxHP),
+					Value:   fmt.Sprintf("%.1f", hp), Expected: fmt.Sprintf("<= %.0f", maxHP),
 				})
 			}
 		}
@@ -1905,7 +1799,7 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 				flags = append(flags, acFlag{
 					Severity: "high", Category: "speed",
 					Message: "Movement speed exceeds maximum (even with boost)",
-					Value: fmt.Sprintf("%.1f", speed), Expected: fmt.Sprintf("<= %.1f", maxPossibleSpeed),
+					Value:   fmt.Sprintf("%.1f", speed), Expected: fmt.Sprintf("<= %.1f", maxPossibleSpeed),
 				})
 			}
 		}
@@ -1920,7 +1814,7 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 				flags = append(flags, acFlag{
 					Severity: "high", Category: "damage",
 					Message: "Attack multiplier exceeds maximum (even with boost)",
-					Value: fmt.Sprintf("%.2f", atkMult), Expected: fmt.Sprintf("<= %.2f", maxPossibleAtk),
+					Value:   fmt.Sprintf("%.2f", atkMult), Expected: fmt.Sprintf("<= %.2f", maxPossibleAtk),
 				})
 			}
 		}
@@ -1933,7 +1827,7 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 				flags = append(flags, acFlag{
 					Severity: "high", Category: "stats",
 					Message: "Defense reduction exceeds stat-derived value",
-					Value: fmt.Sprintf("%.2f", defRed), Expected: fmt.Sprintf("<= %.2f", expectedDef),
+					Value:   fmt.Sprintf("%.2f", defRed), Expected: fmt.Sprintf("<= %.2f", expectedDef),
 				})
 			}
 		}
@@ -1947,13 +1841,13 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 				flags = append(flags, acFlag{
 					Severity: "high", Category: "accuracy",
 					Message: fmt.Sprintf("Suspiciously high accuracy (%d/%d shots)", shotsHit, shotsFired),
-					Value: fmt.Sprintf("%.1f%%", accuracy), Expected: "< 95%",
+					Value:   fmt.Sprintf("%.1f%%", accuracy), Expected: "< 95%",
 				})
 			} else if accuracy > 85.0 {
 				flags = append(flags, acFlag{
 					Severity: "medium", Category: "accuracy",
 					Message: fmt.Sprintf("Very high accuracy (%d/%d shots)", shotsHit, shotsFired),
-					Value: fmt.Sprintf("%.1f%%", accuracy), Expected: "< 85%",
+					Value:   fmt.Sprintf("%.1f%%", accuracy), Expected: "< 85%",
 				})
 			}
 		}
@@ -1971,8 +1865,8 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 			if avgDmg > maxDmgWithBoost+1 {
 				flags = append(flags, acFlag{
 					Severity: "critical", Category: "damage",
-					Message: "Average damage per hit exceeds weapon maximum",
-					Value: fmt.Sprintf("%.1f per hit", avgDmg),
+					Message:  "Average damage per hit exceeds weapon maximum",
+					Value:    fmt.Sprintf("%.1f per hit", avgDmg),
 					Expected: fmt.Sprintf("<= %.1f (%s max with boost)", maxDmgWithBoost, weapon),
 				})
 			}
@@ -1992,8 +1886,8 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 			if roundKills > int(float64(maxKillsTheoretical)*0.6) {
 				flags = append(flags, acFlag{
 					Severity: "medium", Category: "kills",
-					Message: "Kill count approaching theoretical maximum for weapon cooldown",
-					Value: fmt.Sprintf("%d kills", roundKills),
+					Message:  "Kill count approaching theoretical maximum for weapon cooldown",
+					Value:    fmt.Sprintf("%d kills", roundKills),
 					Expected: fmt.Sprintf("<< %d theoretical max (%s, %.1fs cd)", maxKillsTheoretical, weapon, cooldown),
 				})
 			}
@@ -2005,7 +1899,7 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 			flags = append(flags, acFlag{
 				Severity: "medium", Category: "kills",
 				Message: "High kills with zero deaths this round",
-				Value: fmt.Sprintf("%d kills, 0 deaths", roundKills), Expected: "Some deaths expected",
+				Value:   fmt.Sprintf("%d kills, 0 deaths", roundKills), Expected: "Some deaths expected",
 			})
 		}
 
@@ -2014,8 +1908,8 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 		if roundKills >= 3 && dmgTaken < 1.0 {
 			flags = append(flags, acFlag{
 				Severity: "high", Category: "damage",
-				Message: "Active in combat but almost no damage taken",
-				Value: fmt.Sprintf("%.1f damage taken, %d kills", dmgTaken, roundKills),
+				Message:  "Active in combat but almost no damage taken",
+				Value:    fmt.Sprintf("%.1f damage taken, %d kills", dmgTaken, roundKills),
 				Expected: "Some damage taken in active combat",
 			})
 		}
@@ -2025,8 +1919,8 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 		if shieldAbsorb > c.PickupShieldBubbleHP+1 {
 			flags = append(flags, acFlag{
 				Severity: "high", Category: "stats",
-				Message: "Shield absorb exceeds pickup shield HP",
-				Value: fmt.Sprintf("%.0f", shieldAbsorb),
+				Message:  "Shield absorb exceeds pickup shield HP",
+				Value:    fmt.Sprintf("%.0f", shieldAbsorb),
 				Expected: fmt.Sprintf("<= %.0f", c.PickupShieldBubbleHP),
 			})
 		}
@@ -2037,7 +1931,7 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 			flags = append(flags, acFlag{
 				Severity: "critical", Category: "stats",
 				Message: "Unknown/invalid weapon equipped",
-				Value: weapon, Expected: "sword, bow, daggers, shield, spear, staff, or grapple",
+				Value:   weapon, Expected: "sword, bow, daggers, shield, spear, staff, or grapple",
 			})
 		}
 
@@ -2052,8 +1946,8 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 			if dist > maxPossibleDist {
 				flags = append(flags, acFlag{
 					Severity: "high", Category: "speed",
-					Message: "Distance traveled exceeds theoretical maximum",
-					Value: fmt.Sprintf("%.0f units", dist),
+					Message:  "Distance traveled exceeds theoretical maximum",
+					Value:    fmt.Sprintf("%.0f units", dist),
 					Expected: fmt.Sprintf("<= %.0f units", maxPossibleDist),
 				})
 			}
@@ -2065,8 +1959,8 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 		if invuln > c.DodgeInvulnTicks+2 {
 			flags = append(flags, acFlag{
 				Severity: "critical", Category: "stats",
-				Message: "Invulnerability ticks exceed dodge maximum",
-				Value: fmt.Sprintf("%d ticks", invuln),
+				Message:  "Invulnerability ticks exceed dodge maximum",
+				Value:    fmt.Sprintf("%d ticks", invuln),
 				Expected: fmt.Sprintf("<= %d ticks", c.DodgeInvulnTicks),
 			})
 		}
@@ -2121,11 +2015,11 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"flagged_bots":   flaggedBots,
-		"flagged_count":  len(flaggedBots),
-		"total_scanned":  len(allBots),
-		"clean_count":    len(allBots) - len(flaggedBots),
-		"ip_flags":       ipFlags,
-		"scan_time":      time.Now(),
+		"flagged_bots":  flaggedBots,
+		"flagged_count": len(flaggedBots),
+		"total_scanned": len(allBots),
+		"clean_count":   len(allBots) - len(flaggedBots),
+		"ip_flags":      ipFlags,
+		"scan_time":     time.Now(),
 	})
 }

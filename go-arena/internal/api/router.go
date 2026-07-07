@@ -115,6 +115,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 		// Bot setup reference (public — no auth).
 		api.Get("/bot-setup", BotSetup())
+		api.Get("/content", PublicContentBlocks)
 
 		// Key generation (public, rate-limited per IP for registration).
 		api.With(
@@ -171,6 +172,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			api.Get("/health", healthHandler(engine))
 			api.Get("/version", versionHandler())
 			api.Get("/bot-setup", BotSetup())
+			api.Get("/content", PublicContentBlocks)
 			api.With(
 				security.RateLimitMiddleware(config.C.RateLimitRegisterPerHour),
 			).Post("/keys/generate", GenerateKey)

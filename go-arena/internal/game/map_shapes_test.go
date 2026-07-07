@@ -2,6 +2,7 @@ package game
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"arena-server/internal/config"
@@ -101,6 +102,65 @@ func TestShapeMasksConnectedAndSized(t *testing.T) {
 		}
 		if len(visited) != total {
 			t.Errorf("%s: playable area not connected: reached %d of %d cells", shape, len(visited), total)
+		}
+	}
+}
+
+func TestRandomShapePoolCanDisableMapTypes(t *testing.T) {
+	loadTestConfig(t)
+	prevShape := config.C.MapShape
+	prevPool := config.C.MapShapePool
+	defer func() {
+		config.C.MapShape = prevShape
+		config.C.MapShapePool = prevPool
+	}()
+
+	config.C.MapShape = "random"
+	SetRandomShapePool([]string{"square", "circle"})
+	for i := 0; i < 50; i++ {
+		shape := PickMapShape()
+		if shape != ShapeSquare && shape != ShapeCircle {
+			t.Fatalf("disabled map type selected from random pool: %s", shape)
+		}
+	}
+	if got := strings.Join(RandomShapePoolNames(), ","); got != "square,circle" {
+		t.Fatalf("random pool names = %q, want square,circle", got)
+	}
+}
+
+func TestCustomMapTemplateParticipatesInSelectionAndPreview(t *testing.T) {
+	loadTestConfig(t)
+	prevShape := config.C.MapShape
+	prevPool := config.C.MapShapePool
+	defer func() {
+		config.C.MapShape = prevShape
+		config.C.MapShapePool = prevPool
+		RemoveCustomMap("night-caves")
+	}()
+
+	tmpl := RegisterCustomMap(CustomMapTemplate{
+		Name:        "Night Caves",
+		DisplayName: "Night Caves",
+		BaseShape:   string(ShapeCaves),
+		Seed:        42,
+		Enabled:     true,
+	})
+	customName := CustomMapShapeName(tmpl.Name)
+	config.C.MapShape = customName
+
+	if got := PickMapShape(); got != MapShape(customName) {
+		t.Fatalf("PickMapShape() = %s, want %s", got, customName)
+	}
+	maskA := GenerateShapeMask(MapShape(customName), 40, 40)
+	maskB := GenerateShapeMask(MapShape(customName), 40, 40)
+	if maskA == nil || maskB == nil {
+		t.Fatal("custom cave map should generate a mask")
+	}
+	for x := range maskA {
+		for y := range maskA[x] {
+			if maskA[x][y] != maskB[x][y] {
+				t.Fatalf("custom map seed should generate stable masks; mismatch at %d,%d", x, y)
+			}
 		}
 	}
 }

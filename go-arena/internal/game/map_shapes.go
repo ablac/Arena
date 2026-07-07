@@ -3,6 +3,9 @@ package game
 import (
 	"math"
 	"math/rand"
+	"sort"
+	"strings"
+	"sync"
 
 	"arena-server/internal/config"
 )
@@ -29,15 +32,157 @@ var ActiveMapShape = ShapeSquare
 // randomShapePool are the shapes eligible when MapShape is "random".
 var randomShapePool = []MapShape{ShapeSquare, ShapeCircle, ShapeHexagon, ShapeDiamond, ShapeCross, ShapeCaves}
 
+// CustomMapTemplate describes a generated map shape saved from the Admin Panel.
+// It is intentionally seed/base-shape based rather than arbitrary geometry so
+// the engine can keep using the same collision, terrain, and pathfinding code.
+type CustomMapTemplate struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	BaseShape   string `json:"base_shape"`
+	Seed        int64  `json:"seed"`
+	Enabled     bool   `json:"enabled"`
+}
+
+var customMaps = struct {
+	mu    sync.RWMutex
+	items map[string]CustomMapTemplate
+}{items: make(map[string]CustomMapTemplate)}
+
+func BuiltInMapShapeNames() []string {
+	return []string{
+		string(ShapeSquare),
+		string(ShapeCircle),
+		string(ShapeHexagon),
+		string(ShapeDiamond),
+		string(ShapeCross),
+		string(ShapeCaves),
+	}
+}
+
+func IsBuiltInMapShape(name string) bool {
+	switch MapShape(name) {
+	case ShapeSquare, ShapeCircle, ShapeHexagon, ShapeDiamond, ShapeCross, ShapeCaves:
+		return true
+	default:
+		return false
+	}
+}
+
+func CustomMapShapeName(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	name = strings.ReplaceAll(name, " ", "-")
+	return "custom:" + name
+}
+
+func RegisterCustomMap(t CustomMapTemplate) CustomMapTemplate {
+	t.Name = strings.TrimPrefix(CustomMapShapeName(t.Name), "custom:")
+	if t.DisplayName == "" {
+		t.DisplayName = t.Name
+	}
+	if !IsBuiltInMapShape(t.BaseShape) {
+		t.BaseShape = string(ShapeCaves)
+	}
+	if t.Seed == 0 {
+		t.Seed = 1
+	}
+	customMaps.mu.Lock()
+	customMaps.items[t.Name] = t
+	customMaps.mu.Unlock()
+	return t
+}
+
+func RemoveCustomMap(name string) {
+	name = strings.TrimPrefix(CustomMapShapeName(name), "custom:")
+	customMaps.mu.Lock()
+	delete(customMaps.items, name)
+	customMaps.mu.Unlock()
+}
+
+func ListCustomMaps() []CustomMapTemplate {
+	customMaps.mu.RLock()
+	defer customMaps.mu.RUnlock()
+	out := make([]CustomMapTemplate, 0, len(customMaps.items))
+	for _, item := range customMaps.items {
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func getCustomMap(shape MapShape) (CustomMapTemplate, bool) {
+	name := strings.TrimPrefix(string(shape), "custom:")
+	customMaps.mu.RLock()
+	t, ok := customMaps.items[name]
+	customMaps.mu.RUnlock()
+	return t, ok && t.Enabled
+}
+
+func IsKnownMapShape(name string) bool {
+	if name == "random" || IsBuiltInMapShape(name) {
+		return true
+	}
+	_, ok := getCustomMap(MapShape(name))
+	return ok
+}
+
+func NormalizeMapShapePool(names []string) []MapShape {
+	seen := make(map[string]bool)
+	pool := make([]MapShape, 0, len(names))
+	for _, raw := range names {
+		name := strings.TrimSpace(strings.ToLower(raw))
+		if name == "" || name == "random" || seen[name] {
+			continue
+		}
+		if IsBuiltInMapShape(name) {
+			seen[name] = true
+			pool = append(pool, MapShape(name))
+			continue
+		}
+		if strings.HasPrefix(name, "custom:") {
+			if _, ok := getCustomMap(MapShape(name)); ok {
+				seen[name] = true
+				pool = append(pool, MapShape(name))
+			}
+		}
+	}
+	if len(pool) == 0 {
+		return []MapShape{ShapeSquare}
+	}
+	return pool
+}
+
+func RandomShapePoolNames() []string {
+	pool := NormalizeMapShapePool(strings.Split(config.C.MapShapePool, ","))
+	out := make([]string, 0, len(pool))
+	for _, shape := range pool {
+		out = append(out, string(shape))
+	}
+	return out
+}
+
+func SetRandomShapePool(names []string) []string {
+	pool := NormalizeMapShapePool(names)
+	out := make([]string, 0, len(pool))
+	for _, shape := range pool {
+		out = append(out, string(shape))
+	}
+	config.C.MapShapePool = strings.Join(out, ",")
+	return out
+}
+
 // PickMapShape resolves the configured map shape, rolling a random one per
 // call when set to "random". Unknown values fall back to square.
 func PickMapShape() MapShape {
 	switch v := config.C.MapShape; v {
 	case "random":
-		return randomShapePool[rand.Intn(len(randomShapePool))]
+		pool := NormalizeMapShapePool(strings.Split(config.C.MapShapePool, ","))
+		return pool[rand.Intn(len(pool))]
 	case string(ShapeCircle), string(ShapeHexagon), string(ShapeDiamond), string(ShapeCross), string(ShapeCaves):
 		return MapShape(v)
 	default:
+		if _, ok := getCustomMap(MapShape(v)); ok {
+			return MapShape(v)
+		}
 		return ShapeSquare
 	}
 }
@@ -45,6 +190,17 @@ func PickMapShape() MapShape {
 // GenerateShapeMask returns a cols×rows grid where true means playable.
 // Returns nil for square (nothing to carve).
 func GenerateShapeMask(shape MapShape, cols, rows int) [][]bool {
+	return generateShapeMask(shape, cols, rows, nil)
+}
+
+func GenerateShapeMaskWithSeed(shape MapShape, cols, rows int, seed int64) [][]bool {
+	return generateShapeMask(shape, cols, rows, rand.New(rand.NewSource(seed)))
+}
+
+func generateShapeMask(shape MapShape, cols, rows int, rng *rand.Rand) [][]bool {
+	if custom, ok := getCustomMap(shape); ok {
+		return GenerateShapeMaskWithSeed(MapShape(custom.BaseShape), cols, rows, custom.Seed)
+	}
 	if shape == ShapeSquare || cols <= 0 || rows <= 0 {
 		return nil
 	}
@@ -99,14 +255,14 @@ func GenerateShapeMask(shape MapShape, cols, rows int) [][]bool {
 		}
 
 	case ShapeCaves:
-		generateCaveMask(mask, cols, rows)
+		generateCaveMask(mask, cols, rows, rng)
 	}
 
 	ensureConnected(mask, cols, rows)
 
 	// Degenerate output (tiny playable area) falls back to a circle.
 	if playableFraction(mask, cols, rows) < 0.30 && shape == ShapeCaves {
-		return GenerateShapeMask(ShapeCircle, cols, rows)
+		return generateShapeMask(ShapeCircle, cols, rows, rng)
 	}
 	return mask
 }
@@ -138,7 +294,7 @@ func generateRoundTerrain(botCount int) (obstacles []Obstacle, nav *NavGrid, ter
 // generateCaveMask fills the mask with a cellular-automata cave: random
 // noise smoothed over several iterations, giving each round a unique
 // organic arena outline.
-func generateCaveMask(mask [][]bool, cols, rows int) {
+func generateCaveMask(mask [][]bool, cols, rows int, rng *rand.Rand) {
 	// Seed: ~58% open, forced walls at the border.
 	for x := 0; x < cols; x++ {
 		for y := 0; y < rows; y++ {
@@ -146,7 +302,11 @@ func generateCaveMask(mask [][]bool, cols, rows int) {
 				mask[x][y] = false
 				continue
 			}
-			mask[x][y] = rand.Float64() < 0.58
+			if rng != nil {
+				mask[x][y] = rng.Float64() < 0.58
+			} else {
+				mask[x][y] = rand.Float64() < 0.58
+			}
 		}
 	}
 
