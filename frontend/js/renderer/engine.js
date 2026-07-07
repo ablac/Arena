@@ -6,14 +6,14 @@
  */
 
 import { CameraController } from './camera.js?v=20260706c';
-import { BotRenderer } from './bots.js?v=20260706f';
-import { EnvironmentRenderer } from './environment.js?v=20260706f';
+import { BotRenderer } from './bots.js?v=20260707c';
+import { EnvironmentRenderer } from './environment.js?v=20260707c';
 import { ObstacleRenderer } from './obstacles.js?v=20260521h';
 import { PickupRenderer } from './pickups.js?v=20260521m';
-import { EffectRenderer } from './effects.js?v=20260706f';
-import { TrailRenderer } from './trails.js?v=20260706f';
+import { EffectRenderer } from './effects.js?v=20260707c';
+import { TrailRenderer } from './trails.js?v=20260707c';
 import { ProjectileRenderer } from './projectiles.js?v=20260521l';
-import { GameplayRenderer } from './gameplay.js?v=20260706f';
+import { GameplayRenderer } from './gameplay.js?v=20260707c';
 import { isEnabled } from '../settings.js';
 
 // Bot positions are smoothed via exponential lerp each frame,
