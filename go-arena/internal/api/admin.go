@@ -1216,6 +1216,54 @@ type acFlag struct {
 	Expected string `json:"expected"`
 }
 
+func anticheatRiskScore(flags []acFlag) int {
+	risk := 0
+	for _, f := range flags {
+		switch f.Severity {
+		case "critical":
+			risk += 35
+		case "high":
+			risk += 18
+		case "medium":
+			risk += 8
+		case "low":
+			risk += 3
+		}
+	}
+	if risk > 100 {
+		return 100
+	}
+	return risk
+}
+
+func anticheatConfidence(risk int, hardFlags int, totalFlags int) string {
+	if hardFlags > 0 || risk >= 70 {
+		return "high"
+	}
+	if risk >= 35 || totalFlags >= 3 {
+		return "medium"
+	}
+	return "review"
+}
+
+func defenseReductionOutOfRange(observed, expected float64) bool {
+	// Admin detail values are rounded to one decimal, so 0.06 can arrive as 0.1.
+	return observed > expected+0.051
+}
+
+func damagePerHitOutOfRange(shotsHit int, avgDamage, maxDamageWithBoost float64) (bool, string) {
+	if shotsHit < 6 {
+		return false, ""
+	}
+	if avgDamage > maxDamageWithBoost*2.25 {
+		return true, "critical"
+	}
+	if avgDamage > maxDamageWithBoost*1.65 {
+		return true, "high"
+	}
+	return false, ""
+}
+
 // ============================================================================
 // Spectator Management
 // ============================================================================
@@ -1695,6 +1743,8 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 		Flags       []acFlag `json:"flags"`
 		FlagCount   int      `json:"flag_count"`
 		RiskScore   int      `json:"risk_score"`
+		Confidence  string   `json:"confidence"`
+		Action      string   `json:"recommended_action"`
 	}
 
 	var flaggedBots []botReport
@@ -1772,7 +1822,7 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 		hp, _ := detail["hp"].(float64)
 		maxHP, _ := detail["max_hp"].(float64)
 		if stats, ok := detail["stats"].(map[string]int); ok {
-			expectedMax := 100.0 + float64(stats["hp"])*10.0
+			expectedMax := c.StatHPBase + float64(stats["hp"])*c.StatHPPerPoint
 			if maxHP > expectedMax+0.5 {
 				flags = append(flags, acFlag{
 					Severity: "critical", Category: "stats",
@@ -1792,7 +1842,7 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 		// --- 3. Speed exceeds stat-derived max ---
 		speed, _ := detail["speed"].(float64)
 		if stats, ok := detail["stats"].(map[string]int); ok {
-			expectedSpeed := 3.0 + float64(stats["speed"])*0.5
+			expectedSpeed := c.StatSpeedBase + float64(stats["speed"])*c.StatSpeedPerPoint
 			// Allow 2x for speed boost pickup
 			maxPossibleSpeed := expectedSpeed * 2.0
 			if speed > maxPossibleSpeed+0.1 {
@@ -1807,7 +1857,7 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 		// --- 4. Attack multiplier exceeds stat-derived max ---
 		atkMult, _ := detail["attack_multiplier"].(float64)
 		if stats, ok := detail["stats"].(map[string]int); ok {
-			expectedAtk := 1.0 + float64(stats["attack"])*0.1
+			expectedAtk := c.StatAttackBase + float64(stats["attack"])*c.StatAttackPerPoint
 			// Allow 1.5x for damage boost pickup
 			maxPossibleAtk := expectedAtk * 1.5
 			if atkMult > maxPossibleAtk+0.05 {
@@ -1822,8 +1872,8 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 		// --- 5. Defense reduction exceeds stat-derived max ---
 		defRed, _ := detail["defense_reduction"].(float64)
 		if stats, ok := detail["stats"].(map[string]int); ok {
-			expectedDef := float64(stats["defense"]) * 0.03
-			if defRed > expectedDef+0.01 {
+			expectedDef := float64(stats["defense"]) * c.StatDefensePerPoint
+			if defenseReductionOutOfRange(defRed, expectedDef) {
 				flags = append(flags, acFlag{
 					Severity: "high", Category: "stats",
 					Message: "Defense reduction exceeds stat-derived value",
@@ -1835,19 +1885,19 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 		// --- 6. Accuracy analysis ---
 		shotsFired, _ := detail["round_shots_fired"].(int)
 		shotsHit, _ := detail["round_shots_hit"].(int)
-		if shotsFired >= 10 {
+		if shotsFired >= 25 {
 			accuracy := float64(shotsHit) / float64(shotsFired) * 100.0
-			if accuracy > 95.0 {
+			if accuracy > 98.0 {
 				flags = append(flags, acFlag{
 					Severity: "high", Category: "accuracy",
 					Message: fmt.Sprintf("Suspiciously high accuracy (%d/%d shots)", shotsHit, shotsFired),
-					Value:   fmt.Sprintf("%.1f%%", accuracy), Expected: "< 95%",
+					Value:   fmt.Sprintf("%.1f%%", accuracy), Expected: "< 98% over 25+ shots",
 				})
-			} else if accuracy > 85.0 {
+			} else if accuracy > 92.0 {
 				flags = append(flags, acFlag{
 					Severity: "medium", Category: "accuracy",
 					Message: fmt.Sprintf("Very high accuracy (%d/%d shots)", shotsHit, shotsFired),
-					Value:   fmt.Sprintf("%.1f%%", accuracy), Expected: "< 85%",
+					Value:   fmt.Sprintf("%.1f%%", accuracy), Expected: "< 92% over 25+ shots",
 				})
 			}
 		}
@@ -1862,12 +1912,12 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 			}
 			// With damage boost (1.5x) the absolute max is higher
 			maxDmgWithBoost := maxDmg * 1.5
-			if avgDmg > maxDmgWithBoost+1 {
+			if out, severity := damagePerHitOutOfRange(shotsHit, avgDmg, maxDmgWithBoost); out {
 				flags = append(flags, acFlag{
-					Severity: "critical", Category: "damage",
+					Severity: severity, Category: "damage",
 					Message:  "Average damage per hit exceeds weapon maximum",
 					Value:    fmt.Sprintf("%.1f per hit", avgDmg),
-					Expected: fmt.Sprintf("<= %.1f (%s max with boost)", maxDmgWithBoost, weapon),
+					Expected: fmt.Sprintf("review above %.1f (%s max with boost, 6+ hits)", maxDmgWithBoost, weapon),
 				})
 			}
 		}
@@ -1905,12 +1955,12 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 
 		// --- 10. Damage taken analysis (invuln exploit) ---
 		dmgTaken, _ := detail["round_damage_taken"].(float64)
-		if roundKills >= 3 && dmgTaken < 1.0 {
+		if roundKills >= 5 && dmgTaken < 1.0 {
 			flags = append(flags, acFlag{
-				Severity: "high", Category: "damage",
+				Severity: "medium", Category: "damage",
 				Message:  "Active in combat but almost no damage taken",
 				Value:    fmt.Sprintf("%.1f damage taken, %d kills", dmgTaken, roundKills),
-				Expected: "Some damage taken in active combat",
+				Expected: "Review combat replay before action",
 			})
 		}
 
@@ -1938,7 +1988,7 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 		// --- 13. Impossible distance traveled ---
 		dist, _ := detail["round_distance"].(float64)
 		if stats, ok := detail["stats"].(map[string]int); ok && dist > 0 {
-			maxSpeed := (3.0 + float64(stats["speed"])*0.5) * 2.0 // with speed boost
+			maxSpeed := (c.StatSpeedBase + float64(stats["speed"])*c.StatSpeedPerPoint) * 2.0 // with speed boost
 			tickRate := float64(c.TickRate)
 			maxDistPerTick := maxSpeed / tickRate
 			maxTicks := c.RoundDuration * tickRate
@@ -1967,26 +2017,25 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 		_ = dodge // dodge cooldown is valid state
 
 		if len(flags) > 0 {
-			risk := 0
+			hardFlags := 0
 			for _, f := range flags {
-				switch f.Severity {
-				case "critical":
-					risk += 40
-				case "high":
-					risk += 20
-				case "medium":
-					risk += 10
-				case "low":
-					risk += 5
+				if f.Severity == "critical" && f.Category == "stats" {
+					hardFlags++
 				}
 			}
-			if risk > 100 {
-				risk = 100
+			risk := anticheatRiskScore(flags)
+			confidence := anticheatConfidence(risk, hardFlags, len(flags))
+			action := "watch"
+			if confidence == "high" && risk >= 70 {
+				action = "review before kick"
+			} else if confidence == "medium" {
+				action = "compare samples"
 			}
 			flaggedBots = append(flaggedBots, botReport{
 				BotID: botID, Name: name, AvatarColor: avatarColor,
 				Weapon: weapon, Elo: elo, Status: status,
 				Flags: flags, FlagCount: len(flags), RiskScore: risk,
+				Confidence: confidence, Action: action,
 			})
 		}
 	}
@@ -1999,8 +2048,8 @@ func (h *AdminHandler) anticheatScan(w http.ResponseWriter, r *http.Request) {
 				"ip":        ip,
 				"bot_count": len(bots),
 				"bots":      bots,
-				"severity":  "medium",
-				"message":   fmt.Sprintf("%d bots connected from same IP", len(bots)),
+				"severity":  "info",
+				"message":   fmt.Sprintf("%d bots connected from same IP; review only, common for demos/NAT", len(bots)),
 			})
 		}
 	}

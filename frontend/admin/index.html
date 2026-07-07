@@ -347,6 +347,285 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(88,166,255,0.1
 @media(max-width:1050px){.ops-hero,.ops-grid,.builder-layout,.map-workshop{grid-template-columns:1fr}.side-stack{position:static}.ops-status-strip{grid-template-columns:1fr 1fr}}
 @media(max-width:640px){#content{padding:10px}.ops-title{font-size:22px}.ops-status-strip{grid-template-columns:1fr}.ops-card{padding:12px}.template-grid{grid-template-columns:1fr}}
 
+/* Control center work surfaces */
+.surface-toolbar{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+  background:rgba(15,22,33,0.82);
+  border:1px solid rgba(88,166,255,0.18);
+  border-radius:8px;
+  padding:10px;
+}
+.surface-toolbar .spacer{flex:1}
+.metric-chip{
+  display:inline-flex;
+  flex-direction:column;
+  gap:2px;
+  min-width:98px;
+  padding:8px 10px;
+  border:1px solid rgba(88,166,255,0.18);
+  border-radius:8px;
+  background:rgba(9,14,22,0.72);
+}
+.metric-chip .label{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.05em}
+.metric-chip .value{font-size:14px;font-weight:800;color:#f0f6fc}
+.metric-chip.good .value{color:var(--green)}
+.metric-chip.warn .value{color:var(--orange)}
+.metric-chip.danger .value{color:var(--red)}
+.metric-row{display:flex;gap:8px;flex-wrap:wrap}
+.arena-map-shell{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(280px,340px);
+  gap:14px;
+  align-items:start;
+}
+.arena-map-card{
+  min-width:0;
+  position:relative;
+  overflow:hidden;
+  border:1px solid rgba(82,214,255,0.24);
+  border-radius:8px;
+  background:
+    linear-gradient(180deg,rgba(8,12,18,0.96),rgba(10,16,24,0.98)),
+    repeating-linear-gradient(0deg,rgba(88,166,255,0.04) 0 1px,transparent 1px 24px);
+  box-shadow:0 24px 64px rgba(0,0,0,0.28), inset 0 0 70px rgba(88,166,255,0.06);
+  padding:12px;
+}
+.arena-map-card::before{
+  content:'';
+  position:absolute;
+  inset:12px;
+  pointer-events:none;
+  border-radius:6px;
+  border:1px solid rgba(82,214,255,0.08);
+  box-shadow:inset 0 0 34px rgba(82,214,255,0.05);
+}
+#minimapCanvas{
+  width:100%;
+  height:auto;
+  aspect-ratio:1;
+  max-height:calc(100vh - 260px);
+  background:#05090f;
+  border:0;
+  border-radius:6px;
+  cursor:crosshair;
+  display:block;
+}
+.map-caption{
+  position:absolute;
+  left:22px;
+  bottom:20px;
+  z-index:1;
+  padding:7px 9px;
+  border:1px solid rgba(82,214,255,0.18);
+  border-radius:7px;
+  background:rgba(5,9,15,0.82);
+  color:#dce7f5;
+  font-size:11px;
+}
+.map-side-panel{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.signal-panel{
+  border:1px solid rgba(88,166,255,0.18);
+  border-radius:8px;
+  padding:12px;
+  background:linear-gradient(180deg,rgba(22,29,40,0.92),rgba(10,15,23,0.94));
+  box-shadow:0 16px 38px rgba(0,0,0,0.18);
+}
+.signal-panel h3{
+  color:#f0f6fc;
+  font-size:13px;
+  margin-bottom:8px;
+}
+.signal-line{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  padding:5px 0;
+  border-bottom:1px solid rgba(88,166,255,0.09);
+  color:var(--text2);
+  font-size:11px;
+}
+.signal-line:last-child{border-bottom:0}
+.signal-line b{color:#f0f6fc}
+.legend-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.legend-item{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text2)}
+.legend-dot{width:11px;height:11px;border-radius:50%;flex-shrink:0}
+.bot-card-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(230px,1fr));
+  gap:10px;
+}
+.bot-card{
+  position:relative;
+  overflow:hidden;
+  border:1px solid rgba(88,166,255,0.18);
+  border-radius:8px;
+  padding:12px;
+  background:linear-gradient(180deg,rgba(25,32,44,0.95),rgba(12,17,26,0.96));
+  box-shadow:0 18px 44px rgba(0,0,0,0.22);
+  animation:panelIn .24s ease both;
+}
+.bot-card::before{
+  content:'';
+  position:absolute;
+  inset:0 auto 0 0;
+  width:4px;
+  background:var(--bot-color,var(--accent));
+  opacity:.9;
+}
+.bot-card.dead{opacity:.58}
+.bot-card.lowhp{border-color:rgba(248,81,73,0.35)}
+.bot-card.pinned{border-color:rgba(245,184,63,0.48);box-shadow:0 18px 44px rgba(245,184,63,0.09)}
+.bot-card-head{display:flex;align-items:center;gap:9px;margin-bottom:10px}
+.bot-avatar{
+  width:34px;
+  height:34px;
+  border-radius:8px;
+  background:var(--bot-color,var(--accent));
+  box-shadow:0 0 24px color-mix(in srgb,var(--bot-color,var(--accent)) 35%,transparent);
+  flex-shrink:0;
+}
+.bot-card-name{font-size:14px;font-weight:850;color:#f0f6fc;line-height:1.15;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bot-card-sub{font-size:10px;color:var(--text2);margin-top:2px}
+.bot-status-pill{
+  margin-left:auto;
+  border:1px solid rgba(88,166,255,0.2);
+  border-radius:999px;
+  padding:3px 7px;
+  font-size:10px;
+  color:#dbe8f6;
+  background:rgba(88,166,255,0.08);
+}
+.bot-card.dead .bot-status-pill{color:var(--red);border-color:rgba(248,81,73,0.25);background:rgba(248,81,73,0.08)}
+.bot-health-track{height:9px;border-radius:999px;background:rgba(139,148,158,0.22);overflow:hidden;margin-bottom:10px}
+.bot-health-fill{height:100%;border-radius:999px;transition:width .35s ease}
+.bot-stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-bottom:10px}
+.bot-stat{
+  border:1px solid rgba(88,166,255,0.12);
+  border-radius:7px;
+  padding:7px;
+  background:rgba(7,12,18,0.46);
+}
+.bot-stat span{display:block;font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px}
+.bot-stat b{font-size:12px;color:#f0f6fc}
+.bot-card-actions{display:flex;gap:6px;flex-wrap:wrap}
+.bot-card-actions button{font-size:10px;padding:4px 7px}
+.dense-table{
+  border:1px solid rgba(88,166,255,0.18);
+  border-radius:8px;
+  background:rgba(9,14,22,0.76);
+  overflow:hidden;
+}
+.dense-table summary{
+  cursor:pointer;
+  padding:10px 12px;
+  color:#f0f6fc;
+  font-weight:800;
+  border-bottom:1px solid rgba(88,166,255,0.12);
+}
+.dense-table[open] summary{margin-bottom:0}
+.tick-layout{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 380px;
+  gap:14px;
+}
+.tick-narrative{
+  border:1px solid rgba(88,166,255,0.20);
+  border-radius:8px;
+  padding:14px;
+  background:linear-gradient(135deg,rgba(12,21,31,0.94),rgba(14,17,28,0.96));
+}
+.tick-narrative .headline{font-size:20px;font-weight:850;color:#f0f6fc;margin-bottom:6px}
+.tick-narrative .copy{font-size:12px;color:var(--text2);line-height:1.55}
+.tick-health-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:12px}
+.tick-health-card{
+  border:1px solid rgba(88,166,255,0.15);
+  border-radius:8px;
+  padding:10px;
+  background:rgba(7,12,18,0.52);
+}
+.tick-health-card .label{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.04em}
+.tick-health-card .value{font-size:18px;font-weight:850;color:#f0f6fc;margin-top:4px}
+.tick-health-card.good .value{color:var(--green)}
+.tick-health-card.warn .value{color:var(--orange)}
+.tick-health-card.danger .value{color:var(--red)}
+.tick-explain{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.explain-card{
+  border:1px solid rgba(88,166,255,0.16);
+  border-radius:8px;
+  padding:11px;
+  background:rgba(10,16,24,0.72);
+}
+.explain-card h3{font-size:12px;color:#f0f6fc;margin-bottom:5px}
+.explain-card p{font-size:11px;color:var(--text2);line-height:1.45}
+.ac-review-layout{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 340px;
+  gap:14px;
+  align-items:start;
+}
+.ac-review-card{
+  border:1px solid rgba(88,166,255,0.18);
+  border-radius:8px;
+  padding:12px;
+  background:linear-gradient(180deg,rgba(22,29,40,0.93),rgba(10,15,23,0.95));
+  box-shadow:0 18px 44px rgba(0,0,0,0.20);
+}
+.ac-review-card h3{font-size:13px;color:#f0f6fc;margin-bottom:8px}
+.ac-trust-list{display:flex;flex-direction:column;gap:8px;font-size:11px;color:var(--text2)}
+.ac-bot .ac-header{align-items:flex-start}
+.ac-bot.review-watch{border-color:rgba(88,166,255,0.22)}
+.ac-bot.review-compare{border-color:rgba(210,153,34,0.28)}
+.ac-bot.review-action{border-color:rgba(248,81,73,0.38)}
+.ac-confidence{
+  padding:2px 8px;
+  border-radius:999px;
+  border:1px solid rgba(88,166,255,0.2);
+  font-size:10px;
+  color:#dbe8f6;
+  background:rgba(88,166,255,0.08);
+}
+.ac-confidence.high{border-color:rgba(248,81,73,0.30);background:rgba(248,81,73,0.10);color:#ffb3ae}
+.ac-confidence.medium{border-color:rgba(210,153,34,0.32);background:rgba(210,153,34,0.10);color:#f5d48a}
+.config-tabs{
+  display:flex;
+  gap:6px;
+  flex-wrap:wrap;
+  margin:12px 0;
+}
+.config-tabs button{
+  border-radius:999px;
+  padding:6px 10px;
+  color:#dbe8f6;
+  background:rgba(9,14,22,0.66);
+}
+.config-tabs button.active{
+  color:#051016;
+  background:#52d6ff;
+  border-color:#52d6ff;
+}
+.config-group.is-hidden{display:none}
+@media(max-width:1120px){
+  .arena-map-shell,.tick-layout,.ac-review-layout{grid-template-columns:1fr}
+  #minimapCanvas{max-height:none}
+}
+@media(max-width:680px){
+  .metric-chip{min-width:calc(50% - 4px)}
+  .bot-card-grid{grid-template-columns:1fr}
+  .bot-stat-grid{grid-template-columns:repeat(2,1fr)}
+}
+
 /* Full dashboard shell */
 #app.admin-shell{
   display:none;
@@ -767,33 +1046,58 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 
     <!-- Live Mini-Map Panel -->
     <div class="panel" id="panel-minimap">
-      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+      <div class="surface-toolbar">
         <button id="minimapToggle" onclick="toggleMinimap()">Pause</button>
-        <span style="color:var(--text2);font-size:11px">Refresh: <select id="minimapRate" onchange="setMinimapRate()" style="width:70px"><option value="200">200ms</option><option value="500" selected>500ms</option><option value="1000">1s</option><option value="2000">2s</option></select></span>
-        <span id="minimapTick" style="color:var(--text2);font-size:11px;margin-left:auto">Tick: --</span>
+        <label style="color:var(--text2);font-size:11px">Refresh
+          <select id="minimapRate" onchange="setMinimapRate()" style="width:86px"><option value="200">200ms</option><option value="500" selected>500ms</option><option value="1000">1s</option><option value="2000">2s</option></select>
+        </label>
+        <div class="spacer"></div>
+        <span id="minimapTick" style="color:var(--text2);font-size:11px">Tick: --</span>
       </div>
-      <div id="minimapWrap">
-        <canvas id="minimapCanvas" width="500" height="500"></canvas>
-        <div id="minimapLegend">
-          <div class="leg-item"><div class="leg-dot" style="background:var(--green)"></div> Alive Bot</div>
-          <div class="leg-item"><div class="leg-dot" style="background:var(--red)"></div> Dead Bot</div>
-          <div class="leg-item"><div class="leg-dot" style="background:var(--purple)"></div> Pickup</div>
-          <div class="leg-item"><div class="leg-dot" style="background:transparent;border:2px solid rgba(88,166,255,0.5)"></div> Safe Zone</div>
-          <div class="leg-item"><div class="leg-dot" style="background:transparent;border:2px dashed rgba(248,81,73,0.5)"></div> Target Zone</div>
-          <h4 style="color:var(--text2);margin:12px 0 6px">Hover Info</h4>
-          <div id="minimapInfo">Hover over a bot to see details</div>
-          <h4 style="color:var(--text2);margin:12px 0 6px">Weapon Stats (This Round)</h4>
-          <div id="minimapWeaponStats" style="font-size:11px"></div>
+      <div class="metric-row" id="minimapStats"></div>
+      <div class="arena-map-shell">
+        <div class="arena-map-card">
+          <canvas id="minimapCanvas" width="760" height="760"></canvas>
+          <div class="map-caption" id="minimapOverlayCaption">Hover a bot for detail. Click a bot for actions.</div>
+        </div>
+        <div class="map-side-panel">
+          <div class="signal-panel">
+            <h3>Map Legend</h3>
+            <div class="legend-grid" id="minimapLegend">
+              <div class="legend-item"><span class="legend-dot" style="background:var(--green)"></span>Alive</div>
+              <div class="legend-item"><span class="legend-dot" style="background:var(--red)"></span>Down</div>
+              <div class="legend-item"><span class="legend-dot" style="background:var(--purple)"></span>Pickup</div>
+              <div class="legend-item"><span class="legend-dot" style="background:transparent;border:2px solid rgba(82,214,255,.65)"></span>Safe Zone</div>
+            </div>
+          </div>
+          <div class="signal-panel">
+            <h3>Focus</h3>
+            <div id="minimapInfo">Hover over a bot to see details.</div>
+          </div>
+          <div class="signal-panel">
+            <h3>Zone Pressure</h3>
+            <div id="minimapZoneStats"><div class="signal-line"><span>Status</span><b>Waiting for data</b></div></div>
+          </div>
+          <div class="signal-panel">
+            <h3>Weapons</h3>
+            <div id="minimapWeaponStats" style="font-size:11px"></div>
+          </div>
+          <div class="signal-panel">
+            <h3>Pickups</h3>
+            <div id="minimapPickupStats" style="font-size:11px"></div>
+          </div>
         </div>
       </div>
     </div>
 
     <!-- Bot Inspector Panel (auto-refresh) -->
     <div class="panel" id="panel-bots">
-      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+      <div class="surface-toolbar">
         <button onclick="refreshBots()">Refresh</button>
         <label style="color:var(--text2);font-size:11px"><input type="checkbox" id="botAutoRefresh" checked onchange="toggleBotAutoRefresh()"> Auto-refresh (2s)</label>
         <span id="botListCount" style="color:var(--text2);margin-left:8px">0 bots</span>
+        <div class="spacer"></div>
+        <span style="color:var(--text2);font-size:11px">Click a card for full telemetry, or use the dense table for sorting by eye.</span>
       </div>
       <div id="bulkActions">
         <span class="bulk-count" id="bulkCount">0</span><span style="color:var(--text2);font-size:12px">selected</span>
@@ -806,10 +1110,15 @@ tr:hover td{background:rgba(88,166,255,0.07)}
         <button onclick="bulkBotAction('teleportCenter')">Teleport All to Center</button>
         <button onclick="clearBotSelection()" style="margin-left:auto">Clear Selection</button>
       </div>
-      <table id="botTable">
-        <thead><tr><th style="width:30px"><input type="checkbox" class="bot-select" id="selectAllBots" onchange="toggleSelectAllBots(this.checked)"></th><th style="width:20px"></th><th>Name</th><th>ID</th><th>HP</th><th>Weapon</th><th>Elo</th><th>K/D</th><th>Dmg</th><th>Uptime</th><th>Status</th></tr></thead>
-        <tbody id="botTableBody"></tbody>
-      </table>
+      <div class="metric-row" id="botRosterStats"></div>
+      <div class="bot-card-grid" id="botCardGrid"></div>
+      <details class="dense-table" open>
+        <summary>Dense Table</summary>
+        <table id="botTable">
+          <thead><tr><th style="width:30px"><input type="checkbox" class="bot-select" id="selectAllBots" onchange="toggleSelectAllBots(this.checked)"></th><th style="width:20px"></th><th>Name</th><th>ID</th><th>HP</th><th>Weapon</th><th>Elo</th><th>K/D</th><th>Dmg</th><th>Uptime</th><th>Status</th></tr></thead>
+          <tbody id="botTableBody"></tbody>
+        </table>
+      </details>
     </div>
 
     <!-- Kill Feed Panel -->
@@ -853,18 +1162,32 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 
     <!-- Tick Inspector Panel -->
     <div class="panel" id="panel-ticks">
-      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+      <div class="surface-toolbar">
         <span style="color:var(--text2);font-size:12px">Live Tick Performance</span>
         <label style="color:var(--text2);font-size:11px"><input type="checkbox" id="tickAutoRefresh" checked> Auto-refresh (1s)</label>
       </div>
-      <div class="cards" id="tickCards" style="margin-bottom:12px"></div>
-      <div class="ctrl-section">
-        <h3>Resource Gauges</h3>
-        <div id="tickBars"></div>
-      </div>
-      <div class="ctrl-section">
-        <h3>Performance History (last 60 samples)</h3>
-        <canvas id="tickChart" width="800" height="200" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px"></canvas>
+      <div class="tick-layout">
+        <div>
+          <div class="tick-narrative" id="tickNarrative">
+            <div class="headline">Waiting for live server metrics</div>
+            <div class="copy">The inspector will translate raw runtime counters into match-readiness signals once the first sample arrives.</div>
+          </div>
+          <div class="tick-health-grid" id="tickHealthCards"></div>
+          <div class="cards" id="tickCards" style="margin-top:12px"></div>
+          <div class="ctrl-section">
+            <h3>Resource Gauges</h3>
+            <div id="tickBars"></div>
+          </div>
+          <div class="ctrl-section">
+            <h3>Performance History (last 60 samples)</h3>
+            <canvas id="tickChart" width="900" height="240" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px"></canvas>
+          </div>
+        </div>
+        <aside class="tick-explain" id="tickOpsHints">
+          <div class="explain-card"><h3>Tick Rate</h3><p>How steadily the simulation is advancing. Low or jittery values usually show server pressure.</p></div>
+          <div class="explain-card"><h3>Heap and GC</h3><p>Memory churn and garbage collection pressure. A rising heap with frequent pauses means the process needs attention.</p></div>
+          <div class="explain-card"><h3>Projectiles</h3><p>Live combat object pressure. Spikes here can explain tick dips during heavy ranged fights.</p></div>
+        </aside>
       </div>
     </div>
 
@@ -1100,14 +1423,27 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 
     <!-- Anti-Cheat Panel -->
     <div class="panel" id="panel-anticheat">
-      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button onclick="runAnticheatScan()" class="btn-danger">Run Scan</button>
+      <div class="surface-toolbar">
+        <button onclick="runAnticheatScan()" class="btn-warn">Run Review</button>
         <label style="color:var(--text2);font-size:11px"><input type="checkbox" id="acAutoScan"> Auto-scan (5s)</label>
-        <span id="acScanTime" style="color:var(--text2);font-size:11px;margin-left:auto">Not scanned yet</span>
+        <div class="spacer"></div>
+        <span id="acScanTime" style="color:var(--text2);font-size:11px">Not scanned yet</span>
       </div>
       <div class="ac-summary" id="acSummary"></div>
-      <div id="acIPFlags"></div>
-      <div id="acBotFlags"></div>
+      <div class="ac-review-layout">
+        <main>
+          <div id="acBotFlags"></div>
+        </main>
+        <aside class="ac-review-card">
+          <h3>Review Model</h3>
+          <div class="ac-trust-list" id="acTrustSummary">
+            <div>Signals are ranked by confidence, not treated as instant proof.</div>
+            <div>Shared IPs are review-only because demo bots, NAT, and test clients can overlap.</div>
+            <div>Kick or ban should be reserved for high-confidence stat or damage violations.</div>
+          </div>
+          <div style="margin-top:12px" id="acIPFlags"></div>
+        </aside>
+      </div>
     </div>
 
     <!-- API Keys Panel -->
@@ -1237,8 +1573,9 @@ tr:hover td{background:rgba(88,166,255,0.07)}
             </div>
 
             <section class="ops-card">
-              <h3>Game Configuration</h3>
-              <div class="muted">Changes apply immediately when the server supports live mutation; game mode, map shape, and terrain choices apply on the next round generation.</div>
+              <h3>Match Flow &amp; Rule Tuning</h3>
+              <div class="muted">Round pacing, capacity, team rules, zone pressure, movement, and stat curves live here. Map pools, terrain, demo bots, and public content are managed in their own workspaces below.</div>
+              <div class="config-tabs" id="configGroupTabs"></div>
               <div id="gameConfigGrid" style="margin-top:12px"></div>
               <div class="ops-command-row" style="margin-top:12px">
                 <button onclick="loadGameConfig()">Reload Config</button>
@@ -1947,6 +2284,7 @@ async function refreshBots() {
       return (a.bot_id||'').localeCompare(b.bot_id||'');
     });
     document.getElementById('botListCount').textContent = bots.length + ' bots';
+    renderBotCards(bots);
     const tbody = document.getElementById('botTableBody');
 
     // Build a map of existing rows by bot_id for in-place updates
@@ -2260,21 +2598,51 @@ async function fetchAndDrawMap() {
     lastGameState = gs;
     if (Array.isArray(gs.arena_size) && gs.arena_size.length === 2 && gs.arena_size[0] > 0) arenaSize = gs.arena_size;
     drawMinimap(gs);
-    document.getElementById('minimapTick').textContent = 'Tick: ' + (gs.tick||0) + ' | Phase: ' + (gs.round_phase||'--')
-      + (gs.game_mode ? ' | ' + gs.game_mode : '') + (gs.map_shape ? ' | ' + gs.map_shape : '');
+    document.getElementById('minimapTick').textContent = 'Tick: ' + (gs.tick||0) + ' / Phase: ' + (gs.round_phase||'--')
+      + (gs.game_mode ? ' / ' + gs.game_mode : '') + (gs.map_shape ? ' / ' + gs.map_shape : '');
 
-    // Weapon stats from bots
+    const bots = gs.bots || [];
+    const alive = bots.filter(b => b.is_alive).length;
+    const pickups = gs.pickups_list || [];
+    const zone = gs.zone || {};
+    document.getElementById('minimapStats').innerHTML = [
+      metricChip('Alive Bots', `${alive} / ${bots.length}`, alive ? 'good' : 'danger'),
+      metricChip('Map', prettyLabel(gs.map_shape || 'unknown')),
+      metricChip('Mode', prettyLabel(gs.game_mode || 'unknown')),
+      metricChip('Pickups', String(pickups.length || gs.pickups || 0), pickups.length ? 'warn' : ''),
+      metricChip('Safe Radius', zone.radius ? formatNumber(zone.radius) : '--'),
+      metricChip('Projectiles', String(gs.projectiles || 0), gs.projectiles ? 'warn' : '')
+    ].join('');
+
     const wStats = {};
-    (gs.bots||[]).forEach(b => {
+    bots.forEach(b => {
       const w = b.weapon || 'unknown';
       if (!wStats[w]) wStats[w] = {count:0,alive:0,totalKills:0};
       wStats[w].count++;
       if (b.is_alive) wStats[w].alive++;
       wStats[w].totalKills += (b.kills||0);
     });
-    document.getElementById('minimapWeaponStats').innerHTML = Object.entries(wStats).sort((a,b) => a[0].localeCompare(b[0])).map(([w,s]) =>
-      `<div style="margin-bottom:2px"><span style="color:var(--orange)">${esc(w)}</span>: ${s.alive}/${s.count} alive, ${s.totalKills} kills</div>`
+    document.getElementById('minimapWeaponStats').innerHTML = Object.entries(wStats).sort((a,b) => b[1].count - a[1].count).map(([w,s]) =>
+      `<div class="signal-line"><span>${esc(prettyLabel(w))}</span><b>${s.alive}/${s.count} alive / ${s.totalKills} kills</b></div>`
     ).join('') || '<span style="color:var(--text2)">No bots</span>';
+
+    const pickupStats = {};
+    pickups.forEach(p => {
+      const key = p.type || p.kind || p.name || 'pickup';
+      pickupStats[key] = (pickupStats[key] || 0) + 1;
+    });
+    document.getElementById('minimapPickupStats').innerHTML = Object.entries(pickupStats).sort((a,b) => b[1] - a[1]).map(([k,v]) =>
+      `<div class="signal-line"><span>${esc(prettyLabel(k))}</span><b>${v}</b></div>`
+    ).join('') || '<span style="color:var(--text2)">No active pickups</span>';
+
+    const center = zone.center || [arenaSize[0]/2, arenaSize[1]/2];
+    const target = zone.target_center || null;
+    document.getElementById('minimapZoneStats').innerHTML = [
+      `<div class="signal-line"><span>Current Center</span><b>${formatNumber(center[0])}, ${formatNumber(center[1])}</b></div>`,
+      `<div class="signal-line"><span>Current Radius</span><b>${zone.radius ? formatNumber(zone.radius) : '--'}</b></div>`,
+      `<div class="signal-line"><span>Target Radius</span><b>${zone.target_radius ? formatNumber(zone.target_radius) : '--'}</b></div>`,
+      `<div class="signal-line"><span>Target Center</span><b>${target ? formatNumber(target[0]) + ', ' + formatNumber(target[1]) : '--'}</b></div>`
+    ].join('');
   } catch(e) {}
 }
 
@@ -2283,90 +2651,139 @@ function drawMinimap(gs) {
   const ctx = canvas.getContext('2d');
   const W = canvas.width;
   const H = canvas.height;
-  // Dynamic arena sizing: dimensions can change between rounds — rescale.
   const ARENA_W = arenaSize[0] || 2000;
   const ARENA_H = arenaSize[1] || 2000;
   const sx = W / ARENA_W;
   const sy = H / ARENA_H;
+  const sr = Math.min(sx, sy);
 
-  ctx.clearRect(0, 0, W, H);
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, '#07101a');
+  bg.addColorStop(0.55, '#0b1320');
+  bg.addColorStop(1, '#0c1017');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
 
-  // Background grid (10x10)
-  ctx.strokeStyle = 'rgba(48,54,61,0.3)';
-  ctx.lineWidth = 0.5;
-  for (let i = 0; i <= 10; i++) {
-    ctx.beginPath(); ctx.moveTo((i*ARENA_W/10)*sx, 0); ctx.lineTo((i*ARENA_W/10)*sx, H); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, (i*ARENA_H/10)*sy); ctx.lineTo(W, (i*ARENA_H/10)*sy); ctx.stroke();
+  ctx.save();
+  ctx.globalAlpha = 0.24;
+  ctx.strokeStyle = 'rgba(82,214,255,0.28)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 12; i++) {
+    const x = (i*ARENA_W/12)*sx;
+    const y = (i*ARENA_H/12)*sy;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
   }
+  ctx.restore();
 
-  // Zone
+  ctx.save();
+  ctx.strokeStyle = 'rgba(82,214,255,0.28)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, W-2, H-2);
+  ctx.restore();
+
   const zone = gs.zone || {};
   if (zone.radius) {
-    // Target zone (dashed)
-    if (zone.target_center && zone.target_radius) {
-      ctx.beginPath();
-      ctx.setLineDash([4,4]);
-      ctx.arc(zone.target_center[0]*sx, zone.target_center[1]*sy, zone.target_radius*sx, 0, Math.PI*2);
-      ctx.strokeStyle = 'rgba(248,81,73,0.4)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-    // Current zone
-    ctx.beginPath();
-    ctx.arc((zone.center?zone.center[0]:ARENA_W/2)*sx, (zone.center?zone.center[1]:ARENA_H/2)*sy, zone.radius*sx, 0, Math.PI*2);
-    ctx.strokeStyle = 'rgba(88,166,255,0.5)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    // Danger zone overlay
+    const cx = (zone.center?zone.center[0]:ARENA_W/2)*sx;
+    const cy = (zone.center?zone.center[1]:ARENA_H/2)*sy;
+    const rr = zone.radius*sr;
+
     ctx.save();
     ctx.beginPath();
     ctx.rect(0,0,W,H);
-    ctx.arc((zone.center?zone.center[0]:ARENA_W/2)*sx, (zone.center?zone.center[1]:ARENA_H/2)*sy, zone.radius*sx, 0, Math.PI*2, true);
-    ctx.fillStyle = 'rgba(248,81,73,0.08)';
+    ctx.arc(cx, cy, rr, 0, Math.PI*2, true);
+    ctx.fillStyle = 'rgba(248,81,73,0.10)';
     ctx.fill();
     ctx.restore();
+
+    if (zone.target_center && zone.target_radius) {
+      ctx.beginPath();
+      ctx.setLineDash([8,6]);
+      ctx.arc(zone.target_center[0]*sx, zone.target_center[1]*sy, zone.target_radius*sr, 0, Math.PI*2);
+      ctx.strokeStyle = 'rgba(245,184,63,0.65)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, rr, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(82,214,255,0.78)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(2, rr - 5), 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(82,214,255,0.18)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
   }
 
-  // Pickups
   (gs.pickups_list||[]).forEach(p => {
     if (!p.position) return;
-    ctx.beginPath();
-    ctx.arc(p.position[0]*sx, p.position[1]*sy, 4, 0, Math.PI*2);
-    ctx.fillStyle = '#bc8cff';
-    ctx.fill();
+    const x = p.position[0]*sx;
+    const y = p.position[1]*sy;
+    const type = p.type || p.kind || '';
+    const color = type.includes('health') ? '#3fb950' : type.includes('speed') ? '#52d6ff' : type.includes('damage') ? '#f5b83f' : '#bc8cff';
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10;
+    ctx.fillRect(-4, -4, 8, 8);
+    ctx.restore();
   });
 
-  // Bots
-  (gs.bots||[]).forEach(b => {
+  const bots = gs.bots || [];
+  bots.forEach(b => {
     if (!b.position) return;
     const x = b.position[0] * sx;
     const y = b.position[1] * sy;
-    const r = b.is_alive ? 5 : 3;
+    const pct = hpPercent(b);
+    const color = b.avatar_color || '#3fb950';
+    const r = b.is_alive ? 7 : 4;
 
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI*2);
     if (b.is_alive) {
-      ctx.fillStyle = b.avatar_color || '#3fb950';
-      ctx.fill();
-      // HP ring
-      const hpPct = b.max_hp ? b.hp / b.max_hp : 1;
       ctx.beginPath();
-      ctx.arc(x, y, r+2, -Math.PI/2, -Math.PI/2 + Math.PI*2*hpPct);
-      ctx.strokeStyle = hpPct > 0.5 ? '#3fb950' : hpPct > 0.25 ? '#d29922' : '#f85149';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    } else {
-      ctx.fillStyle = 'rgba(248,81,73,0.4)';
+      ctx.arc(x, y, r + 9, 0, Math.PI*2);
+      ctx.fillStyle = pct < 30 ? 'rgba(248,81,73,0.15)' : 'rgba(82,214,255,0.08)';
       ctx.fill();
     }
 
-    // Name label
-    ctx.fillStyle = 'rgba(201,209,217,0.7)';
-    ctx.font = '9px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(b.name || '', x, y - r - 4);
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI*2);
+    ctx.fillStyle = b.is_alive ? color : 'rgba(248,81,73,0.42)';
+    ctx.shadowColor = b.is_alive ? color : 'rgba(248,81,73,0.8)';
+    ctx.shadowBlur = b.is_alive ? 12 : 2;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    if (b.is_alive) {
+      ctx.beginPath();
+      ctx.arc(x, y, r+4, -Math.PI/2, -Math.PI/2 + Math.PI*2*(pct/100));
+      ctx.strokeStyle = pct > 60 ? '#3fb950' : pct > 30 ? '#d29922' : '#f85149';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    } else {
+      ctx.strokeStyle = 'rgba(248,81,73,0.8)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x-6,y-6); ctx.lineTo(x+6,y+6);
+      ctx.moveTo(x+6,y-6); ctx.lineTo(x-6,y+6);
+      ctx.stroke();
+    }
+
+    if (b.is_alive || bots.length <= 36) {
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(240,246,252,0.84)';
+      ctx.fillText((b.name || '').slice(0, 15), x, y - r - 9);
+    }
   });
+
+  const caption = document.getElementById('minimapOverlayCaption');
+  if (caption) caption.textContent = `${gs.round_phase || 'round'} / ${bots.filter(b => b.is_alive).length} alive / ${gs.projectiles || 0} projectiles`;
 }
 
 // Minimap hover
@@ -2545,47 +2962,75 @@ async function fetchTickData() {
     const mem = metrics.memory || {};
     const gc = metrics.gc || {};
     const game = metrics.game || {};
+    const tickRate = Number(game.tick_rate || 0);
+    const goroutines = Number(metrics.goroutines || 0);
+    const heapMB = Number(mem.heap_alloc_mb || 0);
+    const projectiles = Number(gs.projectiles || 0);
+    const botsConnected = Number(game.bots_connected || 0);
+    const spectators = Number(game.spectators || 0);
+    const gcPause = Number(gc.pause_total_ms || 0);
 
-    // Cards
-    document.getElementById('tickCards').innerHTML = `
-      <div class="card"><div class="label">Current Tick</div><div class="value">${gs.tick||0}</div></div>
-      <div class="card"><div class="label">Tick Rate</div><div class="value green">${game.tick_rate||0}/s</div></div>
-      <div class="card"><div class="label">Goroutines</div><div class="value">${metrics.goroutines||0}</div></div>
-      <div class="card"><div class="label">Heap Used</div><div class="value" style="font-size:14px">${mem.heap_alloc_mb||0} MB</div></div>
-      <div class="card"><div class="label">Heap Objects</div><div class="value" style="font-size:14px">${(mem.heap_objects||0).toLocaleString()}</div></div>
-      <div class="card"><div class="label">GC Pause Total</div><div class="value" style="font-size:14px">${(gc.pause_total_ms||0).toFixed(1)}ms</div></div>
-      <div class="card"><div class="label">Bots Connected</div><div class="value green">${game.bots_connected||0}</div></div>
-      <div class="card"><div class="label">Projectiles</div><div class="value orange">${gs.projectiles||0}</div></div>
-      <div class="card"><div class="label">Pickups</div><div class="value purple">${gs.pickups||0}</div></div>
-      <div class="card"><div class="label">CPUs</div><div class="value">${metrics.num_cpu||0}</div></div>
-      <div class="card"><div class="label">Stack Memory</div><div class="value" style="font-size:14px">${mem.stack_inuse_mb||0} MB</div></div>
-      <div class="card"><div class="label">Go Version</div><div class="value" style="font-size:12px">${esc(metrics.go_version||'--')}</div></div>
-    `;
+    const tickTone = tickRate >= 9 ? 'good' : tickRate >= 6 ? 'warn' : 'danger';
+    const goroutineTone = goroutines < 250 ? 'good' : goroutines < 500 ? 'warn' : 'danger';
+    const heapTone = heapMB < 256 ? 'good' : heapMB < 512 ? 'warn' : 'danger';
+    const projectileTone = projectiles < 80 ? 'good' : projectiles < 160 ? 'warn' : 'danger';
 
-    // Resource bars
-    const maxBots = 50; // reasonable scale
-    const maxGoroutines = 500;
-    const maxHeap = 512;
+    const headline = tickTone === 'good' && heapTone === 'good' && goroutineTone === 'good'
+      ? 'Arena runtime is steady'
+      : tickTone === 'danger' || heapTone === 'danger' || goroutineTone === 'danger'
+        ? 'Runtime pressure needs attention'
+        : 'Runtime is playable with watch items';
+    const explanation = [
+      `${botsConnected} bots and ${spectators} spectators are active.`,
+      `The simulation is reporting ${tickRate || 0} ticks/sec with ${projectiles} live projectiles.`,
+      heapTone === 'danger' ? 'Heap usage is high enough to investigate memory growth.' : 'Heap usage is within the normal operating band.',
+      projectileTone !== 'good' ? 'Combat object pressure is elevated; ranged-heavy rounds can explain short dips.' : 'Projectile pressure is currently calm.'
+    ].join(' ');
+
+    document.getElementById('tickNarrative').innerHTML = `<div class="headline">${esc(headline)}</div><div class="copy">${esc(explanation)}</div>`;
+    document.getElementById('tickHealthCards').innerHTML = [
+      `<div class="tick-health-card ${tickTone}"><div class="label">Simulation Rate</div><div class="value">${tickRate || 0}/s</div></div>`,
+      `<div class="tick-health-card ${goroutineTone}"><div class="label">Goroutines</div><div class="value">${goroutines}</div></div>`,
+      `<div class="tick-health-card ${heapTone}"><div class="label">Heap Used</div><div class="value">${formatNumber(heapMB, 1)} MB</div></div>`,
+      `<div class="tick-health-card ${projectileTone}"><div class="label">Projectiles</div><div class="value">${projectiles}</div></div>`
+    ].join('');
+
+    document.getElementById('tickCards').innerHTML = [
+      metricChip('Current Tick', String(gs.tick||0)),
+      metricChip('Round Phase', prettyLabel(gs.round_phase || '--'), gs.round_phase === 'active' ? 'good' : ''),
+      metricChip('Bots Connected', String(botsConnected), botsConnected ? 'good' : ''),
+      metricChip('Pickups', String(gs.pickups||0)),
+      metricChip('Heap Objects', formatNumber(mem.heap_objects||0)),
+      metricChip('GC Pause Total', gcPause.toFixed(1) + 'ms'),
+      metricChip('CPUs', String(metrics.num_cpu||0)),
+      metricChip('Go Version', metrics.go_version||'--')
+    ].join('');
+
     const bars = [
-      {label:'Bots', val:game.bots_connected||0, max:maxBots, color:'var(--green)'},
-      {label:'Goroutines', val:metrics.goroutines||0, max:maxGoroutines, color:'var(--accent)'},
-      {label:'Heap (MB)', val:mem.heap_alloc_mb||0, max:maxHeap, color:'var(--orange)'},
-      {label:'Projectiles', val:gs.projectiles||0, max:200, color:'var(--purple)'},
-      {label:'Spectators', val:game.spectators||0, max:100, color:'var(--cyan)'},
+      {label:'Bots', val:botsConnected, max:50, color:'var(--green)'},
+      {label:'Goroutines', val:goroutines, max:500, color:'var(--accent)'},
+      {label:'Heap MB', val:heapMB, max:512, color:'var(--orange)'},
+      {label:'Projectiles', val:projectiles, max:200, color:'var(--purple)'},
+      {label:'Spectators', val:spectators, max:100, color:'var(--cyan)'},
     ];
     document.getElementById('tickBars').innerHTML = bars.map(b => {
       const pct = Math.min(100, (b.val/b.max)*100);
       const warn = pct > 80;
-      return `<div class="tick-bar"><span class="bar-label">${b.label}</span><div class="bar-wrap"><div class="bar-fill" style="width:${pct}%;background:${warn?'var(--red)':b.color}"></div></div><span class="bar-value" style="color:${warn?'var(--red)':b.color}">${b.val}</span></div>`;
+      return `<div class="tick-bar"><span class="bar-label">${esc(b.label)}</span><div class="bar-wrap"><div class="bar-fill" style="width:${pct}%;background:${warn?'var(--red)':b.color}"></div></div><span class="bar-value" style="color:${warn?'var(--red)':b.color}">${formatNumber(b.val)}</span></div>`;
     }).join('');
 
-    // History
+    document.getElementById('tickOpsHints').innerHTML = [
+      `<div class="explain-card"><h3>Tick Rate</h3><p>${tickTone === 'good' ? 'The loop is keeping pace with the configured game speed.' : 'If this stays low, compare bot count, projectile load, and recent GC activity.'}</p></div>`,
+      `<div class="explain-card"><h3>Heap and GC</h3><p>${heapTone === 'good' ? 'Memory pressure is modest.' : 'Watch for a heap line that keeps climbing between rounds.'}</p></div>`,
+      `<div class="explain-card"><h3>Combat Pressure</h3><p>${projectileTone === 'good' ? 'Projectile load is unlikely to be the bottleneck right now.' : 'High projectile counts can make ranged-heavy demos feel worse than the server baseline.'}</p></div>`
+    ].join('');
+
     tickHistory.push({
       tick: gs.tick||0,
-      bots: game.bots_connected||0,
-      projectiles: gs.projectiles||0,
-      goroutines: metrics.goroutines||0,
-      heapMB: mem.heap_alloc_mb||0,
+      bots: botsConnected,
+      projectiles,
+      goroutines,
+      heapMB,
     });
     if (tickHistory.length > TICK_HISTORY_MAX) tickHistory.shift();
     drawTickChart();
@@ -2707,6 +3152,108 @@ function esc(s) {
   const d = document.createElement('div');
   d.textContent = String(s);
   return d.innerHTML;
+}
+
+function formatNumber(n, digits=0) {
+  if (typeof n !== 'number' || Number.isNaN(n)) return '--';
+  return n.toLocaleString(undefined, {maximumFractionDigits: digits});
+}
+
+function metricChip(label, value, tone='') {
+  return `<div class="metric-chip ${tone}"><span class="label">${esc(label)}</span><span class="value">${esc(value)}</span></div>`;
+}
+
+function hpPercent(bot) {
+  if (!bot || !bot.max_hp) return 0;
+  return Math.max(0, Math.min(100, (Number(bot.hp || 0) / Number(bot.max_hp)) * 100));
+}
+
+function healthTone(pct) {
+  if (pct <= 0) return 'danger';
+  if (pct < 30) return 'danger';
+  if (pct < 60) return 'warn';
+  return 'good';
+}
+
+function inspectBotFromCard(id) {
+  const row = document.querySelector(`tr.bot-row[data-bot-id="${CSS.escape(id)}"]`);
+  if (row) {
+    inspectBot(id, row);
+    row.scrollIntoView({behavior:'smooth', block:'center'});
+  }
+}
+
+function renderBotRosterStats(bots) {
+  const root = document.getElementById('botRosterStats');
+  if (!root) return;
+  const alive = bots.filter(b => b.is_alive).length;
+  const demo = bots.filter(b => b.is_demo_bot || b.demo || String(b.bot_id || '').startsWith('demo')).length;
+  const avgHp = bots.length ? bots.reduce((sum, b) => sum + hpPercent(b), 0) / bots.length : 0;
+  const totalDamage = bots.reduce((sum, b) => sum + Number(b.round_damage_dealt || 0), 0);
+  const topWeapon = Object.entries(bots.reduce((acc, b) => {
+    const weapon = b.weapon || 'unknown';
+    acc[weapon] = (acc[weapon] || 0) + 1;
+    return acc;
+  }, {})).sort((a,b) => b[1] - a[1])[0];
+  root.innerHTML = [
+    metricChip('Alive', `${alive} / ${bots.length}`, alive ? 'good' : 'danger'),
+    metricChip('Avg HP', `${avgHp.toFixed(0)}%`, healthTone(avgHp)),
+    metricChip('Round Damage', formatNumber(totalDamage), totalDamage ? 'warn' : ''),
+    metricChip('Top Weapon', topWeapon ? `${topWeapon[0]} (${topWeapon[1]})` : '--'),
+    metricChip('Demo Bots', String(demo), demo ? 'good' : '')
+  ].join('');
+}
+
+function renderBotCards(bots) {
+  const root = document.getElementById('botCardGrid');
+  if (!root) return;
+  renderBotRosterStats(bots);
+  if (!bots.length) {
+    root.innerHTML = '<div class="signal-panel"><h3>No live bots</h3><div class="muted">Spawn demo bots or wait for competitors to connect.</div></div>';
+    return;
+  }
+  root.innerHTML = bots.map(b => {
+    const pct = hpPercent(b);
+    const tone = healthTone(pct);
+    const pinned = isPinned(b.bot_id);
+    const note = getBotNote(b.bot_id);
+    const cardClasses = [
+      'bot-card',
+      b.is_alive ? 'alive' : 'dead',
+      pct > 0 && pct < 30 ? 'lowhp' : '',
+      pinned ? 'pinned' : ''
+    ].filter(Boolean).join(' ');
+    const color = esc(b.avatar_color || '#58a6ff');
+    const id = escAttr(b.bot_id || '');
+    const name = escAttr(b.name || b.bot_id || '');
+    return `<article class="${cardClasses}" style="--bot-color:${color}" onclick="inspectBotFromCard('${id}')">
+      <div class="bot-card-head">
+        <div class="bot-avatar"></div>
+        <div style="min-width:0">
+          <div class="bot-card-name">${esc(b.name || b.bot_id || '--')}</div>
+          <div class="bot-card-sub">${esc((b.bot_id || '').slice(0,8))} / ${esc(b.weapon || '--')}</div>
+        </div>
+        <span class="bot-status-pill">${b.is_alive ? 'alive' : 'down'}</span>
+      </div>
+      <div class="bot-health-track"><div class="bot-health-fill" style="width:${pct}%;background:var(--${tone === 'good' ? 'green' : tone === 'warn' ? 'orange' : 'red'})"></div></div>
+      <div class="bot-stat-grid">
+        <div class="bot-stat"><span>HP</span><b>${b.is_alive ? Math.round(b.hp || 0) + '/' + (b.max_hp || '--') : 'dead'}</b></div>
+        <div class="bot-stat"><span>K/D</span><b>${b.kills || 0}/${b.deaths || 0}</b></div>
+        <div class="bot-stat"><span>Elo</span><b>${b.elo || '--'}</b></div>
+        <div class="bot-stat"><span>Damage</span><b>${b.round_damage_dealt ? Math.round(b.round_damage_dealt) : '--'}</b></div>
+        <div class="bot-stat"><span>Streak</span><b>${b.kill_streak || 0}</b></div>
+        <div class="bot-stat"><span>Uptime</span><b>${b.connected_at ? fmtUptime(b.connected_at) : '--'}</b></div>
+      </div>
+      ${note ? `<div class="bot-note">${esc(note)}</div>` : ''}
+      <div class="bot-card-actions" onclick="event.stopPropagation()">
+        <button onclick="togglePin('${id}')">${pinned ? 'Unpin' : 'Pin'}</button>
+        <button onclick="profileBot('${id}','${name}')">Profile</button>
+        <button class="btn-success" onclick="botHeal('${id}','${name}')">Heal</button>
+        <button class="btn-warn" onclick="freezeBot('${id}','${name}')">Freeze</button>
+        <button class="btn-danger" onclick="botAction('${id}','kill','${name}')">Kill</button>
+      </div>
+    </article>`;
+  }).join('');
 }
 
 // ========== Toast Notifications ==========
@@ -2892,126 +3439,30 @@ async function gameAction(action) {
   }
 }
 
-// ========== Game Config ==========
-const CONFIG_FIELDS = [
-  {key:'tick_rate', label:'Tick Rate', min:1, max:60},
-  {key:'max_bots', label:'Max Bots', min:1},
-  {key:'max_spectators', label:'Max Spectators', min:0},
-  {key:'round_duration', label:'Round Duration (s)', min:10},
-  {key:'intermission_time', label:'Intermission (s)', min:1},
-  {key:'lobby_countdown', label:'Lobby Countdown (s)', min:1},
-  {key:'min_bots_to_start', label:'Min Bots to Start', min:1},
-  {key:'zone_damage', label:'Zone Damage', min:0, step:0.1},
-  {key:'zone_shrink_pct', label:'Zone Shrink %', min:0, max:1, step:0.01},
-  {key:'afk_timeout_ticks', label:'AFK Timeout (ticks)', min:0},
-  {key:'game_mode', label:'Game Mode (next round)', type:'select', options:['ffa','team_battle','ctf']},
-  {key:'team_count', label:'Team Count', min:2, max:8},
-  {key:'friendly_fire', label:'Friendly Fire', type:'checkbox'},
-  {key:'map_shape', label:'Map Shape (next round)', type:'select', options:['random','square','circle','hexagon','diamond','cross','caves']},
-];
 let currentConfig = {};
-
-async function loadGameConfig() {
-  const el = document.getElementById('configResult');
-  try {
-    const data = await api('/game/config');
-    currentConfig = data;
-    if (data.arena_width > 0 && data.arena_height > 0) arenaSize = [data.arena_width, data.arena_height];
-    renderConfigGrid(data);
-    el.textContent = 'Config loaded';
-    el.style.color = 'var(--green)';
-  } catch(e) {
-    el.textContent = 'Failed to load config';
-    el.style.color = 'var(--red)';
-  }
-}
-
-function renderConfigGrid(data) {
-  document.getElementById('gameConfigGrid').innerHTML = CONFIG_FIELDS.map(f => {
-    const val = data[f.key] != null ? data[f.key] : '';
-    if (f.type === 'select') {
-      const opts = f.options.map(o => `<option value="${o}" ${o===val?'selected':''}>${o}</option>`).join('');
-      return `<div class="config-item"><label>${f.label}</label><select id="cfg_${f.key}" style="width:110px">${opts}</select></div>`;
-    }
-    if (f.type === 'checkbox') {
-      return `<div class="config-item"><label>${f.label}</label><input type="checkbox" id="cfg_${f.key}" ${val===true?'checked':''}></div>`;
-    }
-    return `<div class="config-item"><label>${f.label}</label><input type="number" id="cfg_${f.key}" value="${val}" min="${f.min||''}" max="${f.max||''}" step="${f.step||1}"></div>`;
-  }).join('');
-}
-
-async function saveGameConfig() {
-  const el = document.getElementById('configResult');
-  const body = {};
-  CONFIG_FIELDS.forEach(f => {
-    const input = document.getElementById('cfg_' + f.key);
-    if (!input) return;
-    if (f.type === 'select') { if (input.value) body[f.key] = input.value; }
-    else if (f.type === 'checkbox') { body[f.key] = input.checked; }
-    else if (input.value !== '') body[f.key] = parseFloat(input.value);
-  });
-  try {
-    const res = await api('/game/config', {method:'PUT', body:JSON.stringify(body)});
-    const appliedKeys = Object.entries(res.applied||{}).map(([k,v])=>k+'='+v).join(', ');
-    el.textContent = 'Config saved' + (appliedKeys ? ' — applied: ' + appliedKeys : ' — no changes accepted');
-    el.style.color = 'var(--green)';
-    toast('Game config updated', 'success');
-    logConfigChange('Game Config', appliedKeys || '(no changes)');
-  } catch(e) {
-    el.textContent = 'Failed to save config';
-    el.style.color = 'var(--red)';
-    toast('Failed to save config', 'error');
-  }
-}
-
-// ========== Demo Bots ==========
-async function startDemoBots() {
-  const count = parseInt(document.getElementById('demoBotCount').value) || 5;
-  const el = document.getElementById('demoResult');
-  try {
-    await api('/demobots/start', {method:'POST', body:JSON.stringify({count})});
-    el.textContent = 'Started ' + count + ' demo bots';
-    el.style.color = 'var(--green)';
-    toast('Started ' + count + ' demo bots', 'success');
-  } catch(e) {
-    el.textContent = 'Failed to start demo bots';
-    el.style.color = 'var(--red)';
-  }
-}
-
-async function stopDemoBots() {
-  const el = document.getElementById('demoResult');
-  try {
-    await api('/demobots/stop', {method:'POST'});
-    el.textContent = 'Stopped all demo bots';
-    el.style.color = 'var(--green)';
-    toast('Stopped all demo bots', 'success');
-  } catch(e) {
-    el.textContent = 'Failed to stop demo bots';
-    el.style.color = 'var(--red)';
-  }
-}
 
 // ========== Arena Ops Console ==========
 const OPS_WEAPON_OPTIONS = ['sword','bow','daggers','shield','spear','staff','grapple'];
 const OPS_STRATEGY_OPTIONS = ['aggressive','defensive','kite','territorial','assassin','berserker'];
 const OPS_CONFIG_GROUPS = [
-  {name:'Round Pacing', fields:[
+  {name:'Match Flow', fields:[
     {key:'tick_rate', label:'Tick Rate', min:1, max:60, hint:'Simulation ticks per second.'},
     {key:'round_duration', label:'Round Duration', min:10, step:5, hint:'Seconds before timeout.'},
     {key:'intermission_time', label:'Intermission', min:1, step:1, hint:'Seconds between rounds.'},
     {key:'lobby_countdown', label:'Lobby Countdown', min:1, step:1, hint:'Countdown before a round starts.'},
-    {key:'min_bots_to_start', label:'Min Bots', min:1, hint:'Minimum live bots required.'},
+    {key:'min_bots_to_start', label:'Min Bots to Start', min:1, hint:'Minimum live bots required.'}
+  ]},
+  {name:'Capacity', fields:[
     {key:'max_bots', label:'Max Bots', min:1, hint:'Admission cap.'},
     {key:'max_spectators', label:'Max Spectators', min:0, hint:'Viewer cap.'}
   ]},
-  {name:'Modes and Teams', fields:[
+  {name:'Match Rules', fields:[
     {key:'game_mode', label:'Game Mode', type:'select', options:['ffa','team_battle','ctf'], hint:'Applies next round.'},
     {key:'team_count', label:'Team Count', min:2, max:8, hint:'Used by team modes.'},
     {key:'friendly_fire', label:'Friendly Fire', type:'checkbox', hint:'Allow same-team damage.'},
     {key:'round_modifier_chance', label:'Modifier Chance', min:0, max:1, step:0.01, hint:'Chance of a special ruleset.'}
   ]},
-  {name:'Zone Pressure', fields:[
+  {name:'Zone Rules', fields:[
     {key:'zone_damage', label:'Zone Damage', min:0, step:0.1, hint:'Damage per tick outside the zone.'},
     {key:'zone_shrink_pct', label:'Shrink Percent', min:0, max:1, step:0.01, hint:'Zone shrink amount per step.'},
     {key:'zone_shrink_interval', label:'Shrink Interval', min:1, step:1, hint:'Seconds between shrinks.'},
@@ -3040,6 +3491,7 @@ const OPS_CONFIG_FIELDS = OPS_CONFIG_GROUPS.flatMap(g => g.fields);
 let opsDemoTemplates = [];
 let opsSelectedDemoTemplate = '';
 let opsMapSettings = null;
+let activeConfigGroup = 'all';
 
 async function loadOpsConsole() {
   await Promise.allSettled([
@@ -3069,12 +3521,25 @@ async function loadGameConfig() {
 function renderConfigGrid(data) {
   const root = document.getElementById('gameConfigGrid');
   if (!root) return;
+  renderConfigGroupTabs();
   root.innerHTML = OPS_CONFIG_GROUPS.map(group => `
-    <div class="config-group">
+    <div class="config-group ${activeConfigGroup !== 'all' && activeConfigGroup !== group.name ? 'is-hidden' : ''}">
       <h4>${esc(group.name)}</h4>
       <div class="config-grid">${group.fields.map(f => renderOpsConfigField(f, data[f.key])).join('')}</div>
     </div>
   `).join('');
+}
+
+function renderConfigGroupTabs() {
+  const root = document.getElementById('configGroupTabs');
+  if (!root) return;
+  const buttons = [{name:'all', label:'All'}].concat(OPS_CONFIG_GROUPS.map(g => ({name:g.name, label:g.name})));
+  root.innerHTML = buttons.map(b => `<button class="${activeConfigGroup===b.name?'active':''}" onclick="setConfigGroupFilter('${escAttr(b.name)}')">${esc(b.label)}</button>`).join('');
+}
+
+function setConfigGroupFilter(name) {
+  activeConfigGroup = name;
+  renderConfigGrid(currentConfig || {});
 }
 
 function renderOpsConfigField(f, val) {
@@ -4268,64 +4733,76 @@ function stopACAutoScan() {
 async function runAnticheatScan() {
   try {
     const data = await api('/anticheat');
-    document.getElementById('acScanTime').textContent = 'Scanned: ' + new Date(data.scan_time).toLocaleTimeString();
+    document.getElementById('acScanTime').textContent = 'Reviewed: ' + new Date(data.scan_time).toLocaleTimeString();
 
-    // Summary cards
-    const flagged = data.flagged_count || 0;
+    const bots = data.flagged_bots || [];
     const total = data.total_scanned || 0;
     const clean = data.clean_count || 0;
-    const ipIssues = (data.ip_flags || []).length;
-    const maxRisk = (data.flagged_bots || []).length ? data.flagged_bots[0].risk_score : 0;
-    if (flagged > 0 && maxRisk >= 40) playAlert();
-
-    document.getElementById('acSummary').innerHTML = `
-      <div class="card"><div class="label">Bots Scanned</div><div class="value">${total}</div></div>
-      <div class="card"><div class="label">Clean</div><div class="value green">${clean}</div></div>
-      <div class="card"><div class="label">Flagged</div><div class="value ${flagged?'red':''}">${flagged}</div></div>
-      <div class="card"><div class="label">IP Issues</div><div class="value ${ipIssues?'orange':''}">${ipIssues}</div></div>
-      <div class="card"><div class="label">Highest Risk</div><div class="value ${maxRisk>50?'red':maxRisk>20?'orange':''}">${maxRisk}/100</div></div>
-    `;
-
-    // IP flags
     const ipFlags = data.ip_flags || [];
-    document.getElementById('acIPFlags').innerHTML = ipFlags.length ? ipFlags.map(f =>
-      `<div class="ac-ip-flag"><span style="color:var(--orange);font-weight:bold">${esc(f.ip)}</span> — ${esc(f.message)}: ${f.bots.map(b => '<span style="color:var(--text)">'+esc(b)+'</span>').join(', ')}</div>`
-    ).join('') : '';
+    const highConfidence = bots.filter(b => (b.confidence || '').toLowerCase() === 'high').length;
+    const reviewCount = bots.length;
+    const maxRisk = bots.length ? Math.max(...bots.map(b => Number(b.risk_score || 0))) : 0;
+    if (highConfidence > 0 && maxRisk >= 70) playAlert();
 
-    // Flagged bots
-    const bots = data.flagged_bots || [];
+    document.getElementById('acSummary').innerHTML = [
+      `<div class="card"><div class="label">Bots Reviewed</div><div class="value">${total}</div></div>`,
+      `<div class="card"><div class="label">No Signals</div><div class="value green">${clean}</div></div>`,
+      `<div class="card"><div class="label">Needs Review</div><div class="value ${reviewCount?'orange':''}">${reviewCount}</div></div>`,
+      `<div class="card"><div class="label">High Confidence</div><div class="value ${highConfidence?'red':''}">${highConfidence}</div></div>`,
+      `<div class="card"><div class="label">Shared IP Notes</div><div class="value ${ipFlags.length?'orange':''}">${ipFlags.length}</div></div>`,
+      `<div class="card"><div class="label">Highest Risk</div><div class="value ${maxRisk>=70?'red':maxRisk>=35?'orange':''}">${maxRisk}/100</div></div>`
+    ].join('');
+
+    document.getElementById('acTrustSummary').innerHTML = [
+      `<div><b style="color:var(--green)">${clean}</b> bots had no review signals.</div>`,
+      `<div><b style="color:var(--orange)">${reviewCount}</b> bots need human review before action.</div>`,
+      `<div><b style="color:var(--red)">${highConfidence}</b> bots have high-confidence findings.</div>`,
+      `<div>Small samples and shared IPs are deliberately weighted down to reduce false positives.</div>`
+    ].join('');
+
+    document.getElementById('acIPFlags').innerHTML = ipFlags.length ? ipFlags.map(f => {
+      const names = (f.bots || []).map(b => typeof b === 'string' ? b : (b.name || b.bot_id || 'unknown'));
+      return `<div class="ac-ip-flag"><span style="color:var(--orange);font-weight:bold">${esc(f.ip)}</span><br><span style="color:var(--text2)">${esc(f.message || 'Shared IP observed')}</span><br>${names.map(b => '<span style="color:var(--text)">'+esc(b)+'</span>').join(', ')}</div>`;
+    }).join('') : '<div style="color:var(--text2);font-size:11px">No shared-IP review notes.</div>';
+
     if (!bots.length) {
-      document.getElementById('acBotFlags').innerHTML = '<div style="text-align:center;padding:40px;color:var(--green);font-size:14px">All bots clean — no flags detected</div>';
+      document.getElementById('acBotFlags').innerHTML = '<div class="ac-review-card" style="text-align:center;padding:34px;color:var(--green);font-size:14px">No suspicious bot signals in the latest review.</div>';
       return;
     }
 
     document.getElementById('acBotFlags').innerHTML = bots.map(b => {
-      const riskClass = b.risk_score >= 60 ? 'risk-high' : b.risk_score >= 30 ? 'risk-med' : 'risk-low';
-      const riskLabel = b.risk_score >= 60 ? 'critical' : b.risk_score >= 30 ? 'high' : b.risk_score >= 15 ? 'medium' : 'low';
-      return `<div class="ac-bot ${riskClass}">
+      const risk = Number(b.risk_score || 0);
+      const confidence = (b.confidence || (risk >= 70 ? 'high' : risk >= 35 ? 'medium' : 'review')).toLowerCase();
+      const action = b.recommended_action || (confidence === 'high' ? 'Review before kick or ban' : 'Watch and compare samples');
+      const reviewClass = confidence === 'high' ? 'review-action' : confidence === 'medium' ? 'review-compare' : 'review-watch';
+      const riskLabel = risk >= 70 ? 'critical' : risk >= 45 ? 'high' : risk >= 20 ? 'medium' : 'low';
+      return `<div class="ac-bot ${reviewClass}">
         <div class="ac-header">
           <span style="color:${esc(b.avatar_color||'#888')}">\u25CF</span>
-          <span class="ac-name">${esc(b.name)}</span>
-          <span class="ac-meta">${(b.bot_id||'').slice(0,8)} | ${esc(b.weapon)} | Elo: ${b.elo} | ${b.status}</span>
-          <span class="ac-risk ${riskLabel}" style="margin-left:auto">Risk: ${b.risk_score}/100</span>
-          <span style="color:var(--text2);font-size:11px">${b.flag_count} flag${b.flag_count!==1?'s':''}</span>
-          <button class="btn-danger" style="font-size:10px;padding:2px 6px" onclick="botAction('${esc(b.bot_id)}','kick','${esc(b.name)}')">Kick</button>
-          <button class="btn-danger" style="font-size:10px;padding:2px 6px" onclick="botAction('${esc(b.bot_id)}','ban','${esc(b.name)}')">Ban</button>
+          <div>
+            <div class="ac-name">${esc(b.name)}</div>
+            <div class="ac-meta">${(b.bot_id||'').slice(0,8)} / ${esc(b.weapon)} / Elo ${b.elo || '--'} / ${esc(b.status || '--')}</div>
+          </div>
+          <span class="ac-risk ${riskLabel}" style="margin-left:auto">Risk ${risk}/100</span>
+          <span class="ac-confidence ${confidence}">${esc(confidence)}</span>
+          <button style="font-size:10px;padding:2px 6px" onclick="profileBot('${escAttr(b.bot_id)}','${escAttr(b.name)}')">Profile</button>
+          ${confidence === 'high' ? `<button class="btn-danger" style="font-size:10px;padding:2px 6px" onclick="botAction('${escAttr(b.bot_id)}','kick','${escAttr(b.name)}')">Kick</button><button class="btn-danger" style="font-size:10px;padding:2px 6px" onclick="botAction('${escAttr(b.bot_id)}','ban','${escAttr(b.name)}')">Ban</button>` : ''}
         </div>
-        <div>${b.flags.map(f => `
+        <div style="margin:6px 0 8px;color:var(--text2);font-size:11px">Recommended action: <b style="color:#f0f6fc">${esc(action)}</b></div>
+        <div>${(b.flags || []).map(f => `
           <div class="ac-flag">
-            <span class="ac-sev ${f.severity}">${f.severity}</span>
-            <span class="ac-cat">${esc(f.category)}</span>
+            <span class="ac-sev ${esc(f.severity || 'low')}">${esc(f.severity || 'low')}</span>
+            <span class="ac-cat">${esc(f.category || 'signal')}</span>
             <div class="ac-detail">
-              <div class="ac-msg">${esc(f.message)}</div>
-              <div class="ac-vals">Got: <b style="color:var(--text)">${esc(f.value)}</b> | Expected: <b style="color:var(--green)">${esc(f.expected)}</b></div>
+              <div class="ac-msg">${esc(f.message || '')}</div>
+              <div class="ac-vals">Observed: <b style="color:var(--text)">${esc(f.value)}</b> / Expected: <b style="color:var(--green)">${esc(f.expected)}</b></div>
             </div>
           </div>
         `).join('')}</div>
       </div>`;
     }).join('');
   } catch(e) {
-    document.getElementById('acBotFlags').innerHTML = '<div style="color:var(--red)">Scan failed</div>';
+    document.getElementById('acBotFlags').innerHTML = '<div class="ac-review-card" style="color:var(--red)">Review failed: ' + esc(e.message || 'unknown error') + '</div>';
   }
 }
 

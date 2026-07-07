@@ -100,3 +100,23 @@ Backend tests should cover:
 - Content block validation and fallback defaults.
 
 Frontend checks should cover JavaScript syntax. Browser verification should load the Admin page and inspect the new control surfaces at desktop and mobile widths.
+
+## 2026-07-07 Control Center V2 Follow-Up
+
+The production failure on the Demo Bot Builder and Public Website Content panels was caused by missing admin registry tables. The admin endpoints should not hard-fail those operator surfaces when a registry table is missing or temporarily unavailable; read paths now fall back to built-in demo templates/content blocks, while writes still require the database.
+
+The second pass expands the approved visual direction beyond the Operations Console tab:
+
+- Live Arena becomes a tactical overhead map desk with live metric chips, zone pressure, pickup/weapon summaries, improved canvas rendering, and click-to-act behavior preserved.
+- Live Bots becomes a card roster plus dense table. Cards show health, weapon, K/D, Elo, damage, uptime, pinning, profiling, healing, freezing, and kill actions while bulk actions remain table-checkbox based.
+- Tick Inspector becomes a readiness dashboard instead of raw counters, translating tick rate, heap, goroutines, projectiles, and spectators into operator-readable health signals.
+- Anti-Cheat becomes a review queue. Signals are scored by risk and confidence, shared IPs are review-only, and kick/ban buttons are reserved for high-confidence findings.
+- Match configuration is split into Match Flow, Capacity, Match Rules, Zone Rules, Movement and Combat, and Stat Curves. Map pools, terrain generation, demo templates, and public website content stay in their own workspaces.
+
+Browser verification should confirm the rebuilt tabs render without console errors or horizontal overflow:
+
+- `?tab=controls`
+- `?tab=minimap`
+- `?tab=bots`
+- `?tab=ticks`
+- `?tab=anticheat`
