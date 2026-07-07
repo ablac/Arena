@@ -18,6 +18,7 @@ import (
 	"arena-server/internal/game"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
@@ -91,6 +92,14 @@ func defaultContentBlocks() map[string]contentBlockRecord {
 		"bot-guide.notice":        {Key: "bot-guide.notice", Label: "Bot guide notice", Value: "Keep bot names clean, stats balanced, and strategies observable.", Published: true, Updated: now},
 		"rules.banner":            {Key: "rules.banner", Label: "Rules banner", Value: "Fair play keeps the arena useful for every builder.", Published: true, Updated: now},
 	}
+}
+
+func isMissingAdminRegistryTable(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "42P01" || pgErr.Code == "42501"
+	}
+	return false
 }
 
 func validateDemoTemplate(p demoTemplatePayload) (demobots.BotConfig, error) {
@@ -254,6 +263,16 @@ func (h *AdminHandler) listContentBlocks(w http.ResponseWriter, r *http.Request)
 	if db.Pool != nil {
 		rows, err := db.Pool.Query(r.Context(), `SELECT key, label, value, published, updated_at FROM admin_content_blocks ORDER BY key`)
 		if err != nil {
+			if isMissingAdminRegistryTable(err) {
+				slog.Warn("admin content registry unavailable; using built-in defaults", "error", err)
+				list := make([]contentBlockRecord, 0, len(records))
+				for _, rec := range records {
+					list = append(list, rec)
+				}
+				sort.Slice(list, func(i, j int) bool { return list[i].Key < list[j].Key })
+				writeJSON(w, http.StatusOK, map[string]interface{}{"blocks": list, "count": len(list), "source": "built_in"})
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "failed to query content blocks")
 			return
 		}
@@ -339,6 +358,15 @@ func (h *AdminHandler) listDemoTemplates(w http.ResponseWriter, r *http.Request)
 	if db.Pool != nil {
 		rows, err := db.Pool.Query(r.Context(), `SELECT name, weapon, strategy, color, stats, enabled, updated_at FROM demo_bot_templates ORDER BY name`)
 		if err != nil {
+			if isMissingAdminRegistryTable(err) {
+				slog.Warn("demo template registry unavailable; using built-in defaults", "error", err)
+				records := make([]demoTemplateRecord, 0, len(recordByName))
+				for _, name := range order {
+					records = append(records, recordByName[name])
+				}
+				writeJSON(w, http.StatusOK, map[string]interface{}{"templates": records, "count": len(records), "source": "built_in"})
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "failed to query demo templates")
 			return
 		}
@@ -487,7 +515,7 @@ func (h *AdminHandler) getMapSettings(w http.ResponseWriter, r *http.Request) {
 		rows, err := db.Pool.Query(r.Context(), `SELECT name, display_name, base_shape, seed, enabled FROM custom_map_templates ORDER BY name`)
 		if err == nil {
 			defer rows.Close()
-			customMaps = nil
+			customMaps = []game.CustomMapTemplate{}
 			for rows.Next() {
 				var t game.CustomMapTemplate
 				if err := rows.Scan(&t.Name, &t.DisplayName, &t.BaseShape, &t.Seed, &t.Enabled); err == nil {
@@ -495,6 +523,9 @@ func (h *AdminHandler) getMapSettings(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+	if customMaps == nil {
+		customMaps = []game.CustomMapTemplate{}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"built_in_shapes":       game.BuiltInMapShapeNames(),
