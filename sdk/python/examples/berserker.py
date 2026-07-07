@@ -55,6 +55,6 @@ class BerserkerBot(ArenaBot):
 
 if __name__ == "__main__":
     key: str = sys.argv[1]
-    url: str = sys.argv[2] if len(sys.argv) > 2 else "wss://angel-serv.com/ws/bot"
+    url: str = sys.argv[2] if len(sys.argv) > 2 else "wss://arena.angel-serv.com/ws/bot"
     bot = BerserkerBot(key, url)
     asyncio.run(bot.run())

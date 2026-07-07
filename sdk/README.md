@@ -7,7 +7,7 @@ Build your own battle bot in Python or Node.js!
 ### 1. Get an API Key
 
 ```bash
-curl -X POST https://angel-serv.com/arena/api/v1/keys/generate \
+curl -X POST https://arena.angel-serv.com/api/v1/keys/generate \
   -H "Content-Type: application/json" \
   -d '{"name": "MyBot"}'
 ```
@@ -76,7 +76,7 @@ node my_bot.js YOUR_API_KEY
 
 | Method | Description |
 |--------|-------------|
-| `ArenaBot(api_key, server_url='wss://angel-serv.com/ws/bot')` | Constructor. |
+| `ArenaBot(api_key, server_url='wss://arena.angel-serv.com/ws/bot')` | Constructor. |
 | `set_loadout(weapon, stats, fallback='aggressive')` | Configure weapon, stat allocation (must total 20), and fallback AI. |
 | `run()` | Connect and run the game loop with auto-reconnect. |
 
