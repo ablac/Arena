@@ -24,6 +24,7 @@
 // module top level. The ?v= MUST match every other import of that module.
 import { makeSwordTrail } from './swordsman-body.js?v=20260707c';
 import { isEnabled } from '../settings.js';
+import { DEATH_TOTAL, DEATH_STAGGER_END, DEATH_FALL_END } from './animations.js?v=20260707c';
 
 const DEG = Math.PI / 180;
 const ATTACK_DURATION = 0.50; // Match server sword cooldown (0.5s)
@@ -497,27 +498,29 @@ export function updateSwordsmanAnim(entry, dt) {
       // Clear any dodge squash frozen by the interrupt before the fall.
       joints.body.scaling.set(1, 1, 1);
     }
+    // Per-rig base height (the swordsman body sits at 0.75*S, lower than the
+    // generic rig's BODY_BASE_Y=10); intentionally not the shared constant.
     const S_DEATH = 13;
     const BODY_BASE = 0.75 * S_DEATH;
     if (isEnabled('deathEffects', 'directionalDeath')) {
-      anim.deathTimer = Math.min(anim.deathTimer + dt, 0.9);
-      const tn = anim.deathTimer / 0.9;
+      anim.deathTimer = Math.min(anim.deathTimer + dt, DEATH_TOTAL);
+      const tn = anim.deathTimer / DEATH_TOTAL;
       // Fall AWAY from the killer. Euler writes only; never set
       // rotationQuaternion on these nodes.
       const rel = anim.deathYaw - root.rotation.y;
       let topple;
-      if (tn < 0.20) {
-        const q = tn / 0.20;
+      if (tn < DEATH_STAGGER_END) {
+        const q = tn / DEATH_STAGGER_END;
         topple = 0.12 * q;
         joints.body.position.y = BODY_BASE - 0.12 * S_DEATH * q;
         joints.body.scaling.y = 1 - 0.06 * q;
-      } else if (tn < 0.62) {
-        const q = (tn - 0.20) / 0.42;
+      } else if (tn < DEATH_FALL_END) {
+        const q = (tn - DEATH_STAGGER_END) / (DEATH_FALL_END - DEATH_STAGGER_END);
         topple = 0.12 + q * q * 0.98;
         joints.body.position.y = BODY_BASE - 0.12 * S_DEATH - 0.35 * S_DEATH * q * q;
         joints.body.scaling.y = 0.94 - 0.09 * q;
       } else {
-        const q = Math.min(1, (tn - 0.62) / 0.1);
+        const q = Math.min(1, (tn - DEATH_FALL_END) / 0.1);
         topple = 1.10 - 0.10 * q;
         joints.body.position.y = BODY_BASE - 0.47 * S_DEATH;
         joints.body.scaling.y = 0.85;
@@ -527,7 +530,7 @@ export function updateSwordsmanAnim(entry, dt) {
       joints.body.rotation.z = Math.sin(rel) * amount;
       // Body hits the ground before dissolving; fade rides the settle window.
       if (bodyMat) {
-        const fade = tn <= 0.62 ? 1 : 1 - (tn - 0.62) / 0.38;
+        const fade = tn <= DEATH_FALL_END ? 1 : 1 - (tn - DEATH_FALL_END) / (1 - DEATH_FALL_END);
         const a = isEnabled('deathEffects', 'corpseFade') ? Math.max(0, fade) : 1;
         bodyMat.alpha = a;
         // The head has its own material; fade it with the body so the

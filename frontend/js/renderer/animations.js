@@ -43,9 +43,13 @@ const DODGE_DURATION = 0.3;
 
 // Directional death choreography: total time, phase boundaries, and the
 // standing base height the fall sinks from (idle/attack target 10 + bob).
-const DEATH_TOTAL = 0.9;
-const DEATH_STAGGER_END = 0.20;
-const DEATH_FALL_END = 0.62;
+// Shared death-choreography timeline; the swordsman rig imports these so the
+// two death blocks cannot drift (they were duplicated with a "keep in sync"
+// comment before). The base HEIGHT stays per-rig on purpose (generic 10,
+// swordsman 0.75*13 = 9.75), so it is deliberately not shared.
+export const DEATH_TOTAL = 0.9;
+export const DEATH_STAGGER_END = 0.20;
+export const DEATH_FALL_END = 0.62;
 const BODY_BASE_Y = 10;
 
 /**
