@@ -2,7 +2,7 @@
 
 ## Goal
 
-Rebuild the Arena Admin Panel into a polished operations console that matches the energy of `arena.angel-serv.com`, fixes the PR #65 self-update follow-ups, and gives operators practical controls for demo bots, gameplay tuning, maps, and editable public website content.
+Rebuild the Arena Admin Panel into a polished operations console that matches the energy of `arena.angel-serv.com`, fixes the PR #65 self-update follow-ups, and gives operators practical controls for demo bots, gameplay tuning, and maps.
 
 ## Product Direction
 
@@ -16,9 +16,8 @@ Keep the existing Go backend, admin auth, and static frontend model. Add focused
 
 - Demo bot templates
 - Map controls, map preview, and generated custom map templates
-- Editable public content blocks
 
-Do not allow arbitrary filesystem edits from the Admin Panel. Public-site editing should work through validated content blocks that the frontend can fetch and apply by key. This gives operators no-PR copy updates without exposing a general file writer.
+Public-site editing is intentionally out of this admin pass. The first attempted block editor did not meet the desired CMS-level workflow, so the Admin UI should not expose it until the public website has a purpose-built content model.
 
 The frontend can remain static HTML/CSS/JS for this PR, but the Admin page should be reorganized into clear visual sections with reusable JavaScript helpers. A later PR can split the single file further if desired.
 
@@ -34,15 +33,13 @@ Use the approved mockup direction:
 
 ## Gameplay Controls
 
-Game configuration should become typed and grouped:
+Game configuration should become typed, grouped, and intentionally narrow:
 
-- Core pacing: tick rate, max bots, max spectators, round duration, intermission, lobby countdown.
-- Modes: game mode, team count, friendly fire.
-- Zone: damage, shrink percent, shrink interval, min radius, shrink delay.
-- Movement/stats: stat budget, stat multipliers, dodge tuning, projectile speed, AFK timeout.
-- Arena scale: base width/height and dynamic map sizing values when supported.
+- Match Flow: round duration, intermission, lobby countdown.
+- Capacity: max bots and minimum bots to start.
+- Match Rules: game mode, team count, friendly fire.
 
-Each control should declare validation, allowed ranges, and whether changes are live or next-round. Save responses should show accepted and rejected fields instead of simply saying “saved”.
+Map pools, terrain generation, weapons, stat curves, movement constants, zone internals, and server-level limits should stay in their own focused workspaces instead of crowding the primary Game Config panel. Each visible control should declare validation, allowed ranges, and whether changes are live or next-round. Save responses should show accepted and rejected fields instead of simply saying "saved".
 
 ## Demo Bot Builder
 
@@ -70,16 +67,9 @@ Add a map workshop for actual gameplay:
 
 This PR should support generated custom map templates through validated map metadata, not freehand geometry editing. The game engine should treat saved custom templates as first-class map shape options.
 
-## Website And Docs Editing
+## Public Website Editing
 
-Add a content manager for public text blocks:
-
-- Homepage hero title/subtitle/CTA labels.
-- Site announcement/banner text.
-- Bot guide notice text.
-- Rules or onboarding snippet.
-
-Admin edits should write content records, not source files. The public frontend should fetch published content blocks and apply them to elements with `data-content-key`. If the fetch fails, the static source text remains the fallback.
+Remove the Public Website Content panel from this PR. Updating the base website should be redesigned as a real website content manager in a future pass, with page-level preview, draft/publish state, validation, and clear ownership of public copy. The admin operations console should not present a partial block editor as the answer.
 
 ## PR #65 Review Fixes
 
@@ -97,13 +87,12 @@ Backend tests should cover:
 - Map random pool validation and fallback.
 - Map preview and custom map registration.
 - Demo bot template validation.
-- Content block validation and fallback defaults.
 
 Frontend checks should cover JavaScript syntax. Browser verification should load the Admin page and inspect the new control surfaces at desktop and mobile widths.
 
 ## 2026-07-07 Control Center V2 Follow-Up
 
-The production failure on the Demo Bot Builder and Public Website Content panels was caused by missing admin registry tables. The admin endpoints should not hard-fail those operator surfaces when a registry table is missing or temporarily unavailable; read paths now fall back to built-in demo templates/content blocks, while writes still require the database.
+The production failure on the Demo Bot Builder was caused by missing admin registry tables. The admin endpoints should not hard-fail that operator surface when a registry table is missing or temporarily unavailable; read paths now fall back to built-in demo templates, while writes still require the database.
 
 The second pass expands the approved visual direction beyond the Operations Console tab:
 
@@ -111,7 +100,9 @@ The second pass expands the approved visual direction beyond the Operations Cons
 - Live Bots becomes a card roster plus dense table. Cards show health, weapon, K/D, Elo, damage, uptime, pinning, profiling, healing, freezing, and kill actions while bulk actions remain table-checkbox based.
 - Tick Inspector becomes a readiness dashboard instead of raw counters, translating tick rate, heap, goroutines, projectiles, and spectators into operator-readable health signals.
 - Anti-Cheat becomes a review queue. Signals are scored by risk and confidence, shared IPs are review-only, and kick/ban buttons are reserved for high-confidence findings.
-- Match configuration is split into Match Flow, Capacity, Match Rules, Zone Rules, Movement and Combat, and Stat Curves. Map pools, terrain generation, demo templates, and public website content stay in their own workspaces.
+- Match configuration is narrowed to Match Flow, Capacity, and Match Rules. Map pools, terrain generation, demo templates, weapons, zone internals, movement tuning, and stat curves stay in their own focused workspaces.
+- The top navigation Pause Round action is stateful. It reads the live paused state and toggles between Pause Round and Resume Round.
+- Public website editing is removed from the Admin UI for this pass because it needs a purpose-built CMS workflow rather than a cramped content-block panel.
 
 Browser verification should confirm the rebuilt tabs render without console errors or horizontal overflow:
 

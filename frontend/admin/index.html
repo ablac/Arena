@@ -340,9 +340,6 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(88,166,255,0.1
 .terrain-cell{width:6px;height:6px;border-radius:1px;background:#1f6f4a}
 .terrain-cell.wall{background:#1d2633}
 .terrain-cell.edge{background:#2f81f7}
-.content-block-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
-.content-block{border:1px solid rgba(139,148,158,0.18);border-radius:8px;padding:10px;background:rgba(13,17,23,0.48)}
-.content-block .key{font-size:10px;color:var(--accent);margin-bottom:6px}
 .side-stack{display:flex;flex-direction:column;gap:12px;position:sticky;top:10px}
 @media(max-width:1050px){.ops-hero,.ops-grid,.builder-layout,.map-workshop{grid-template-columns:1fr}.side-stack{position:static}.ops-status-strip{grid-template-columns:1fr 1fr}}
 @media(max-width:640px){#content{padding:10px}.ops-title{font-size:22px}.ops-status-strip{grid-template-columns:1fr}.ops-card{padding:12px}.template-grid{grid-template-columns:1fr}}
@@ -1028,7 +1025,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
         </div>
       </div>
       <div class="admin-actions">
-        <button onclick="gameAction('pause')">Pause Round</button>
+        <button id="topPauseBtn" class="warn-action" onclick="toggleTopPause()">Pause Round</button>
         <button class="warn-action" onclick="gameAction('restart-round')">Restart Round</button>
         <button class="primary-action" onclick="switchTab('controls');setTimeout(saveGameConfig,80)">Save Config</button>
       </div>
@@ -1532,7 +1529,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
           <div>
             <div class="ops-kicker">Arena command deck</div>
             <div class="ops-title">Shape the match while the bots keep fighting.</div>
-            <div class="ops-copy">Tune round pacing, map rotation, arena scale, demo-bot personalities, and public website copy from one operational console.</div>
+            <div class="ops-copy">Tune round pacing, map rotation, arena scale, and demo-bot personalities from one operational console.</div>
             <div class="ops-hero-actions">
               <button class="btn-warn" onclick="gameAction('pause')">Pause</button>
               <button class="btn-success" onclick="gameAction('resume')">Resume</button>
@@ -1574,7 +1571,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 
             <section class="ops-card">
               <h3>Match Flow &amp; Rule Tuning</h3>
-              <div class="muted">Round pacing, capacity, team rules, zone pressure, movement, and stat curves live here. Map pools, terrain, demo bots, and public content are managed in their own workspaces below.</div>
+              <div class="muted">Only high-touch match controls live here. Map pools, terrain generation, demo bots, weapons, and advanced stat tuning stay in their own focused workspaces.</div>
               <div class="config-tabs" id="configGroupTabs"></div>
               <div id="gameConfigGrid" style="margin-top:12px"></div>
               <div class="ops-command-row" style="margin-top:12px">
@@ -1663,12 +1660,6 @@ tr:hover td{background:rgba(88,166,255,0.07)}
               </div>
             </section>
 
-            <section class="ops-card">
-              <h3>Public Website Content</h3>
-              <div class="muted">These content blocks update approved public copy slots without requiring a PR for small website text changes.</div>
-              <div class="content-block-list" id="contentBlockList" style="margin-top:12px"></div>
-              <div class="ctrl-result" id="contentResult"></div>
-            </section>
           </main>
 
           <aside class="side-stack">
@@ -1815,7 +1806,7 @@ const PANEL_META = {
   admintokens: ['Secure', 'Admin Tokens', 'Issue and revoke dashboard admin credentials.'],
   leaderboard: ['Operate', 'Leaderboard', 'Rank bot performance across selectable periods.'],
   connlog: ['Observe', 'Connection Log', 'Historical connection stream for dashboard review.'],
-  controls: ['Tune + Publish', 'Operations Console', 'Configure gameplay, demo bots, maps, release updates, and public content.']
+  controls: ['Tune', 'Operations Console', 'Configure gameplay, demo bots, maps, and release updates.']
 };
 
 function decorateAdminPanels() {
@@ -2100,6 +2091,7 @@ async function refreshOverview() {
 
     document.getElementById('uptimeDisplay').textContent = data.uptime || '--';
     document.getElementById('botsCount').textContent = (data.bots_online||0) + ' bots';
+    updateTopPauseButton(data.paused === true);
 
     const mem = data.memory || {};
     const ec = data.event_counts || {};
@@ -3424,17 +3416,38 @@ function closeProfiler() {
 }
 
 // ========== Game Controls ==========
+let isGamePaused = false;
+
+function updateTopPauseButton(pausedState) {
+  isGamePaused = pausedState === true;
+  const btn = document.getElementById('topPauseBtn');
+  if (!btn) return;
+  btn.textContent = isGamePaused ? 'Resume Round' : 'Pause Round';
+  btn.classList.toggle('primary-action', isGamePaused);
+  btn.classList.toggle('warn-action', !isGamePaused);
+}
+
+async function toggleTopPause() {
+  await gameAction(isGamePaused ? 'resume' : 'pause');
+}
+
 async function gameAction(action) {
   const el = document.getElementById('gameCtrlResult');
   try {
     await api('/game/' + action, {method:'POST'});
-    el.textContent = action + ': OK';
-    el.style.color = 'var(--green)';
+    if (action === 'pause') updateTopPauseButton(true);
+    if (action === 'resume') updateTopPauseButton(false);
+    if (el) {
+      el.textContent = action + ': OK';
+      el.style.color = 'var(--green)';
+    }
     toast('Game ' + action + ' successful', 'success');
     logAudit('GAME_' + action.toUpperCase(), '');
   } catch(e) {
-    el.textContent = action + ' failed';
-    el.style.color = 'var(--red)';
+    if (el) {
+      el.textContent = action + ' failed';
+      el.style.color = 'var(--red)';
+    }
     toast('Game ' + action + ' failed', 'error');
   }
 }
@@ -3446,45 +3459,18 @@ const OPS_WEAPON_OPTIONS = ['sword','bow','daggers','shield','spear','staff','gr
 const OPS_STRATEGY_OPTIONS = ['aggressive','defensive','kite','territorial','assassin','berserker'];
 const OPS_CONFIG_GROUPS = [
   {name:'Match Flow', fields:[
-    {key:'tick_rate', label:'Tick Rate', min:1, max:60, hint:'Simulation ticks per second.'},
     {key:'round_duration', label:'Round Duration', min:10, step:5, hint:'Seconds before timeout.'},
     {key:'intermission_time', label:'Intermission', min:1, step:1, hint:'Seconds between rounds.'},
-    {key:'lobby_countdown', label:'Lobby Countdown', min:1, step:1, hint:'Countdown before a round starts.'},
-    {key:'min_bots_to_start', label:'Min Bots to Start', min:1, hint:'Minimum live bots required.'}
+    {key:'lobby_countdown', label:'Lobby Countdown', min:1, step:1, hint:'Countdown before a round starts.'}
   ]},
   {name:'Capacity', fields:[
     {key:'max_bots', label:'Max Bots', min:1, hint:'Admission cap.'},
-    {key:'max_spectators', label:'Max Spectators', min:0, hint:'Viewer cap.'}
+    {key:'min_bots_to_start', label:'Min Bots to Start', min:1, hint:'Minimum live bots required.'}
   ]},
   {name:'Match Rules', fields:[
     {key:'game_mode', label:'Game Mode', type:'select', options:['ffa','team_battle','ctf'], hint:'Applies next round.'},
     {key:'team_count', label:'Team Count', min:2, max:8, hint:'Used by team modes.'},
-    {key:'friendly_fire', label:'Friendly Fire', type:'checkbox', hint:'Allow same-team damage.'},
-    {key:'round_modifier_chance', label:'Modifier Chance', min:0, max:1, step:0.01, hint:'Chance of a special ruleset.'}
-  ]},
-  {name:'Zone Rules', fields:[
-    {key:'zone_damage', label:'Zone Damage', min:0, step:0.1, hint:'Damage per tick outside the zone.'},
-    {key:'zone_shrink_pct', label:'Shrink Percent', min:0, max:1, step:0.01, hint:'Zone shrink amount per step.'},
-    {key:'zone_shrink_interval', label:'Shrink Interval', min:1, step:1, hint:'Seconds between shrinks.'},
-    {key:'zone_shrink_delay', label:'Shrink Delay', min:0, step:1, hint:'Seconds before zone starts moving.'},
-    {key:'zone_min_radius', label:'Minimum Radius', min:20, step:5, hint:'Final safe-zone radius.'},
-    {key:'zone_initial_radius', label:'Initial Radius', min:20, step:10, hint:'Opening safe-zone radius.'},
-    {key:'zone_cover_map', label:'Cover Map', type:'checkbox', hint:'Start with the zone covering the map.'}
-  ]},
-  {name:'Movement and Combat', fields:[
-    {key:'dodge_speed_mult', label:'Dodge Speed Mult', min:0, step:0.05, hint:'Burst speed multiplier.'},
-    {key:'dodge_invuln_ticks', label:'Dodge I-Frames', min:0, hint:'Invulnerable ticks while dodging.'},
-    {key:'dodge_cooldown_ticks', label:'Dodge Cooldown', min:0, hint:'Ticks between dodges.'},
-    {key:'afk_timeout_ticks', label:'AFK Timeout', min:0, hint:'Ticks before AFK handling.'}
-  ]},
-  {name:'Stat Curves', fields:[
-    {key:'stat_hp_base', label:'HP Base', min:0, step:1},
-    {key:'stat_hp_per_point', label:'HP Per Point', min:0, step:1},
-    {key:'stat_speed_base', label:'Speed Base', min:0, step:1},
-    {key:'stat_speed_per_point', label:'Speed Per Point', min:0, step:0.1},
-    {key:'stat_attack_base', label:'Attack Base', min:0, step:0.01},
-    {key:'stat_attack_per_point', label:'Attack Per Point', min:0, step:0.01},
-    {key:'stat_defense_per_point', label:'Defense Per Point', min:0, step:0.01}
+    {key:'friendly_fire', label:'Friendly Fire', type:'checkbox', hint:'Allow same-team damage.'}
   ]}
 ];
 const OPS_CONFIG_FIELDS = OPS_CONFIG_GROUPS.flatMap(g => g.fields);
@@ -3499,7 +3485,6 @@ async function loadOpsConsole() {
     loadGameConfig(),
     loadDemoBotStudio(),
     loadMapWorkshop(),
-    loadContentBlocks(),
     refreshIPBans()
   ]);
   renderConfigHistory();
@@ -3855,48 +3840,6 @@ async function saveCustomMap() {
   }
 }
 
-async function loadContentBlocks() {
-  const root = document.getElementById('contentBlockList');
-  if (!root) return;
-  try {
-    const data = await api('/content-blocks');
-    const blocks = data.blocks || [];
-    root.innerHTML = blocks.map(b => renderContentBlock(b)).join('');
-  } catch(e) {
-    root.innerHTML = `<div class="muted">Failed to load content blocks: ${esc(e.message)}</div>`;
-  }
-}
-
-function renderContentBlock(block) {
-  const id = safeID(block.key);
-  return `<div class="content-block">
-    <div class="key">${esc(block.key)}</div>
-    <label class="muted">Label<input id="content_label_${id}" value="${escAttr(block.label || '')}"></label>
-    <label class="muted">Value<textarea id="content_value_${id}" rows="4">${esc(block.value || '')}</textarea></label>
-    <label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:6px"><input id="content_pub_${id}" type="checkbox" ${block.published!==false?'checked':''} style="width:auto"> Published</label>
-    <button class="btn-success" style="margin-top:8px" onclick="saveContentBlock('${escAttr(block.key)}')">Save Block</button>
-  </div>`;
-}
-
-async function saveContentBlock(key) {
-  const id = safeID(key);
-  const el = document.getElementById('contentResult');
-  const body = {
-    label: document.getElementById('content_label_' + id).value,
-    value: document.getElementById('content_value_' + id).value,
-    published: document.getElementById('content_pub_' + id).checked
-  };
-  try {
-    await api('/content-blocks/' + encodeURIComponent(key), {method:'PUT', body:JSON.stringify(body)});
-    el.textContent = 'Saved content block ' + key;
-    el.style.color = 'var(--green)';
-    toast('Content block saved', 'success');
-  } catch(e) {
-    el.textContent = 'Failed to save content block: ' + e.message;
-    el.style.color = 'var(--red)';
-  }
-}
-
 function setInputValue(id, value) {
   const el = document.getElementById(id);
   if (el) el.value = value ?? '';
@@ -3904,10 +3847,6 @@ function setInputValue(id, value) {
 
 function prettyLabel(value) {
   return String(value || '').replace(/^custom:/,'').replace(/[_-]/g,' ').replace(/\b\w/g, c => c.toUpperCase());
-}
-
-function safeID(value) {
-  return String(value).replace(/[^A-Za-z0-9_-]/g, '_');
 }
 
 function escAttr(s) {
