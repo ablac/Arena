@@ -19,7 +19,7 @@ logger = logging.getLogger("arena_sdk")
 class ArenaBot:
     """Base class for arena bots. Subclass and override on_tick()."""
 
-    def __init__(self, api_key: str, server_url: str = "wss://angel-serv.com/ws/bot",
+    def __init__(self, api_key: str, server_url: str = "wss://arena.angel-serv.com/ws/bot",
                  stat_budget: int = 20):
         """Initialize bot with API key."""
         self.api_key = api_key

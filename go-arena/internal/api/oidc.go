@@ -98,9 +98,7 @@ func generateToken(bytes int) string {
 
 // adminDashboardPath returns the path to redirect back to after an OIDC
 // login/logout, honoring whichever prefix the request arrived on. The
-// router mirrors /admin/* under /arena/admin/* (Caddy maps the shared
-// angel-serv.com/arena/* domain there, alongside the dedicated
-// arena.angel-serv.com host at the unprefixed path), so a hardcoded
+// router mirrors /admin/* under /arena/admin/* for prefixed deployments, so a hardcoded
 // "/admin/" redirect sends /arena/-mounted visitors to the wrong app.
 func adminDashboardPath(r *http.Request) string {
 	if strings.HasPrefix(r.URL.Path, "/arena/") {

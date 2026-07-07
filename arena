@@ -3,7 +3,7 @@
 # Usage: arena <command>
 set -euo pipefail
 
-ARENA_DIR="/opt/ai-battle-arena"
+ARENA_DIR="${ARENA_DIR:-/opt/ai-battle-arena}"
 COMPOSE="docker compose -f $ARENA_DIR/docker-compose.yml"
 COMPOSE_BETA="docker compose -f $ARENA_DIR/docker-compose.yml -f $ARENA_DIR/docker-compose.beta.yml"
 

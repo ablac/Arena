@@ -1,8 +1,5 @@
-# Backlog moved to ablac/backlog
+# Backlog
 
-The Backlog.md board for this project now lives in the central repo:
-https://github.com/ablac/backlog/tree/main/Arena
+Public roadmap, bugs, and feature ideas should live in GitHub Issues for this repository.
 
-Task tracking was consolidated there so board churn no longer generates
-commits in this repository. See
-https://github.com/ablac/backlog/blob/main/MIGRATION.md
+This directory is kept only as a pointer for older links that expected a `backlog/` path.
