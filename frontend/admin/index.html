@@ -272,6 +272,15 @@ button:hover{transform:translateY(-1px);box-shadow:0 10px 28px rgba(0,0,0,0.22)}
 input,select,textarea{transition:border-color .18s ease,box-shadow .18s ease;background:rgba(13,17,23,0.82)}
 textarea{font-family:inherit;font-size:12px;color:var(--text);border:1px solid var(--border);border-radius:4px;outline:none;resize:vertical;padding:8px}
 input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(88,166,255,0.14)}
+*{scrollbar-width:thin;scrollbar-color:rgba(82,214,255,0.42) rgba(7,12,18,0.76)}
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-track{background:rgba(7,12,18,0.78)}
+*::-webkit-scrollbar-thumb{
+  background:linear-gradient(180deg,rgba(82,214,255,0.62),rgba(53,215,130,0.44));
+  border:2px solid rgba(7,12,18,0.88);
+  border-radius:999px;
+}
+*::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(82,214,255,0.82),rgba(53,215,130,0.62))}
 .card,.ctrl-section,.bot-detail,.log-container,.ac-bot{
   background:linear-gradient(180deg,rgba(22,27,34,0.95),rgba(13,17,23,0.96));
   box-shadow:0 18px 44px rgba(0,0,0,0.20);
@@ -337,6 +346,304 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(88,166,255,0.1
 .side-stack{display:flex;flex-direction:column;gap:12px;position:sticky;top:10px}
 @media(max-width:1050px){.ops-hero,.ops-grid,.builder-layout,.map-workshop{grid-template-columns:1fr}.side-stack{position:static}.ops-status-strip{grid-template-columns:1fr 1fr}}
 @media(max-width:640px){#content{padding:10px}.ops-title{font-size:22px}.ops-status-strip{grid-template-columns:1fr}.ops-card{padding:12px}.template-grid{grid-template-columns:1fr}}
+
+/* Full dashboard shell */
+#app.admin-shell{
+  display:none;
+  grid-template-columns:236px minmax(0,1fr);
+  grid-template-rows:100vh;
+  height:100vh;
+  overflow:hidden;
+  background:#070c12;
+}
+.admin-sidebar{
+  position:relative;
+  z-index:1200;
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+  padding:20px 14px;
+  background:linear-gradient(180deg,rgba(15,22,33,0.98),rgba(11,17,27,0.98));
+  border-right:1px solid rgba(88,166,255,0.18);
+  box-shadow:18px 0 48px rgba(0,0,0,0.24);
+  overflow-y:auto;
+}
+.admin-brand{
+  display:grid;
+  grid-template-columns:36px 1fr;
+  gap:10px;
+  align-items:center;
+  padding:0 2px 8px;
+}
+.admin-brand-mark{
+  width:34px;height:34px;border-radius:8px;
+  background:conic-gradient(from 180deg,#3bf28f,#4cc9ff,#8b5cf6,#ffbd4a,#3bf28f);
+  box-shadow:0 0 24px rgba(76,201,255,0.28);
+}
+.admin-brand-title{font-size:14px;font-weight:800;color:#f0f6fc;line-height:1.1}
+.admin-brand-sub{font-size:11px;color:var(--text2);margin-top:3px}
+#tabs{
+  position:relative;
+  z-index:1300;
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+  background:transparent;
+  border:0;
+  overflow:visible;
+}
+.tab-group{position:relative}
+.tab-group-label{
+  padding:0 8px 4px;
+  border:0;
+  color:#9aa7b8;
+  font-size:10px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  cursor:default;
+}
+.tab-group-label .arrow{display:none}
+.tab-dropdown{
+  display:flex;
+  position:static;
+  flex-direction:column;
+  gap:4px;
+  min-width:0;
+  padding:0;
+  background:transparent;
+  border:0;
+  border-radius:0;
+  box-shadow:none;
+}
+.tab-group:hover .tab-dropdown,.tab-group.open .tab-dropdown{display:flex}
+.tab-direct,.tab-item{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-height:34px;
+  padding:8px 10px;
+  border:1px solid transparent;
+  border-radius:7px;
+  color:#d7deea;
+  background:transparent;
+  font-size:12px;
+  transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease;
+}
+.tab-direct:hover,.tab-item:hover{
+  color:#fff;
+  background:rgba(88,166,255,0.08);
+  border-color:rgba(88,166,255,0.22);
+  transform:translateX(2px);
+}
+.tab-direct.active,.tab-item.active{
+  color:#54d6ff;
+  background:rgba(57,211,255,0.13);
+  border-color:rgba(57,211,255,0.38);
+  box-shadow:inset 3px 0 0 #39d3ff;
+}
+.tab-item .tab-dot{width:8px;height:8px;margin:0;box-shadow:0 0 12px currentColor}
+.admin-main{
+  min-width:0;
+  display:grid;
+  grid-template-rows:auto minmax(0,1fr);
+  overflow:hidden;
+}
+#header.admin-command-bar{
+  position:relative;
+  z-index:1100;
+  display:grid;
+  grid-template-columns:minmax(260px,520px) auto;
+  grid-template-rows:auto auto;
+  gap:8px 16px;
+  align-items:center;
+  padding:18px 18px 14px;
+  background:rgba(7,12,18,0.94);
+  border-bottom:1px solid rgba(88,166,255,0.16);
+  backdrop-filter:blur(16px);
+}
+.admin-search input{
+  width:100%;
+  height:38px;
+  padding:0 14px;
+  border-radius:7px;
+  background:rgba(12,18,29,0.92);
+  border:1px solid rgba(88,166,255,0.24);
+  color:#f0f6fc;
+}
+.admin-telemetry{
+  grid-column:1 / -1;
+  grid-row:2;
+  display:flex;
+  align-items:center;
+  gap:16px;
+  color:var(--text2);
+  font-size:11px;
+  min-width:0;
+  flex-wrap:wrap;
+}
+.admin-telemetry .dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block}
+.admin-telemetry .dot.off{background:var(--red)}
+.admin-utility-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-left:auto}
+.admin-telemetry button,.admin-utility-actions button{
+  height:26px;
+  padding:0 8px;
+  border-radius:6px;
+  font-size:10px;
+  font-weight:750;
+}
+.admin-actions{grid-column:2;grid-row:1;display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.admin-actions button{height:36px;padding:0 13px;border-radius:7px;font-weight:800}
+.admin-actions .primary-action{background:#35d782;border-color:#35d782;color:#04110a}
+.admin-actions .warn-action{background:#f5b83f;border-color:#f5b83f;color:#180f02}
+#content{
+  position:relative;
+  z-index:1;
+  overflow:auto;
+  padding:16px 18px 26px;
+}
+.panel.active{display:block;animation:panelIn .28s ease both}
+.panel-frame{
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+  min-height:calc(100vh - 120px);
+}
+.panel-titlebar{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:14px;
+  align-items:end;
+}
+.panel-kicker{
+  color:#52d6ff;
+  font-size:10px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  margin-bottom:5px;
+}
+.panel-title{
+  color:#f0f6fc;
+  font-size:24px;
+  line-height:1.05;
+  font-weight:850;
+}
+.panel-subtitle{
+  color:var(--text2);
+  font-size:12px;
+  line-height:1.5;
+  margin-top:6px;
+  max-width:760px;
+}
+.panel-body{
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+}
+.panel-body > div[style*="margin-bottom:10px"],
+.panel-body > div[style*="margin-bottom:12px"],
+.log-toolbar,.filters{
+  background:rgba(15,22,33,0.82);
+  border:1px solid rgba(88,166,255,0.18);
+  border-radius:8px;
+  padding:10px;
+}
+.cards{
+  grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+  gap:12px;
+}
+.card,.ctrl-section,.ac-bot,.bot-detail,.log-container,.panel-body > table,.panel-body > div > table{
+  border-radius:8px;
+  border-color:rgba(88,166,255,0.18);
+  background:linear-gradient(180deg,rgba(24,31,43,0.95),rgba(13,18,28,0.96));
+  box-shadow:0 18px 44px rgba(0,0,0,0.20);
+}
+.card{
+  min-height:82px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+.card .label{font-size:11px;color:#a9b6c7}
+.card .value{font-size:24px;color:#f0f6fc}
+table{
+  overflow:hidden;
+  border:1px solid rgba(88,166,255,0.16);
+  border-radius:8px;
+  background:rgba(13,18,28,0.86);
+}
+th{
+  background:rgba(20,28,40,0.96);
+  color:#aeb9c9;
+  font-size:10px;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+  z-index:2;
+}
+td{border-bottom-color:rgba(88,166,255,0.10)}
+tr:hover td{background:rgba(88,166,255,0.07)}
+.log-container{
+  min-height:360px;
+  background:rgba(7,11,17,0.88);
+}
+.log-entry{border-bottom-color:rgba(88,166,255,0.10)}
+.ctrl-section h3,.ops-card h3{font-size:15px;color:#f0f6fc}
+#panel-controls .ops-shell{
+  max-width:none;
+  margin:0;
+  gap:14px;
+}
+#panel-controls .ops-hero{
+  min-height:126px;
+  grid-template-columns:minmax(0,1fr) minmax(290px,420px);
+  gap:14px;
+  align-items:center;
+  padding:16px;
+  box-shadow:0 20px 52px rgba(0,0,0,0.25);
+}
+#panel-controls .ops-hero::before{opacity:.24}
+#panel-controls .ops-kicker{font-size:10px;margin-bottom:6px}
+#panel-controls .ops-title{
+  max-width:620px;
+  font-size:22px;
+  line-height:1.12;
+  margin-bottom:6px;
+}
+#panel-controls .ops-copy{
+  max-width:720px;
+  font-size:12px;
+  line-height:1.45;
+}
+#panel-controls .ops-hero-actions{margin-top:12px}
+#panel-controls .ops-status-strip{gap:8px}
+#panel-controls .ops-stat{
+  min-height:70px;
+  padding:10px;
+}
+#panel-controls .ops-stat .value{
+  font-size:15px;
+  line-height:1.25;
+}
+#panel-controls #versionInfo{font-size:12px}
+#panel-controls .ops-grid{
+  grid-template-columns:minmax(0,1fr) 340px;
+  gap:14px;
+}
+#panel-controls .ops-card{padding:14px}
+#panel-controls .builder-layout{grid-template-columns:minmax(0,1fr) 300px}
+#panel-controls .map-workshop{grid-template-columns:minmax(0,1fr) 340px}
+@media(max-width:980px){
+  #app.admin-shell{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
+  .admin-sidebar{position:relative;max-height:260px}
+  #header.admin-command-bar{grid-template-columns:1fr}
+  .admin-actions{justify-content:flex-start}
+  .admin-utility-actions{margin-left:0}
+  #panel-controls .ops-hero,
+  #panel-controls .ops-grid,
+  #panel-controls .builder-layout,
+  #panel-controls .map-workshop{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
@@ -354,31 +661,23 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(88,166,255,0.1
 </div>
 
 <!-- Main App -->
-<div id="app">
-  <div id="header">
-    <h1>// ARENA ADMIN</h1>
-    <div class="status">
-      <span id="statusDot"><span class="dot"></span> Connected</span>
-      <span id="uptimeDisplay">--</span>
-      <span id="botsCount">0 bots</span>
-      <span id="sessionTimer" style="font-size:10px">0:00</span>
-      <span id="ssoUser" style="display:none;color:var(--green);font-size:11px"></span>
-      <button id="ssoLogoutBtn" onclick="window.location.href=ssoLogoutUrl()" style="display:none;font-size:10px;padding:2px 8px">Logout</button>
-      <button onclick="shareTab()" style="font-size:11px;padding:2px 8px" title="Copy link to current tab">Share</button>
-      <button onclick="toggleFullscreen()" style="font-size:11px;padding:2px 8px" id="fsBtn" title="Toggle fullscreen (F11)">Full</button>
-      <button onclick="toggleTheme()" style="font-size:11px;padding:2px 8px" id="themeBtn">Light</button>
-      <label style="font-size:10px;cursor:pointer"><input type="checkbox" id="soundToggle" style="margin-right:3px" onchange="localStorage.setItem('arena_sound',this.checked)">Sound</label>
-      <button onclick="logout()" style="font-size:11px;padding:2px 8px">Logout</button>
+<div id="app" class="admin-shell">
+  <aside class="admin-sidebar">
+    <div class="admin-brand">
+      <div class="admin-brand-mark"></div>
+      <div>
+        <div class="admin-brand-title">Arena Admin</div>
+        <div class="admin-brand-sub">Production control</div>
+      </div>
     </div>
-  </div>
 
-  <div id="tabs">
+    <div id="tabs">
     <div class="tab-direct active" data-tab="overview">Overview</div>
 
     <div class="tab-group">
-      <div class="tab-group-label" data-group="monitor">Monitor <span class="arrow">&#9660;</span></div>
+      <div class="tab-group-label" data-group="monitor">Operate <span class="arrow">&#9660;</span></div>
       <div class="tab-dropdown">
-        <div class="tab-item" data-tab="minimap"><span class="tab-dot" style="background:var(--cyan)"></span>Live Map</div>
+        <div class="tab-item" data-tab="minimap"><span class="tab-dot" style="background:var(--cyan)"></span>Live Arena</div>
         <div class="tab-item" data-tab="ticks">Tick Inspector</div>
         <div class="tab-item" data-tab="debug">Debug Tools</div>
         <div class="tab-item" data-tab="balance"><span class="tab-dot" style="background:var(--purple)"></span>Balance</div>
@@ -388,7 +687,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(88,166,255,0.1
     <div class="tab-group">
       <div class="tab-group-label" data-group="bots">Bots <span class="arrow">&#9660;</span></div>
       <div class="tab-dropdown">
-        <div class="tab-item" data-tab="bots">Bot Inspector</div>
+        <div class="tab-item" data-tab="bots">Live Bots</div>
         <div class="tab-item" data-tab="killfeed"><span class="tab-dot" style="background:var(--red)"></span>Kill Feed</div>
         <div class="tab-item" data-tab="damagelog">Damage Log</div>
         <div class="tab-item" data-tab="forensics">Forensics</div>
@@ -396,7 +695,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(88,166,255,0.1
     </div>
 
     <div class="tab-group">
-      <div class="tab-group-label" data-group="logs">Logs <span class="arrow">&#9660;</span></div>
+      <div class="tab-group-label" data-group="logs">Observe <span class="arrow">&#9660;</span></div>
       <div class="tab-dropdown">
         <div class="tab-item" data-tab="connections">Connections</div>
         <div class="tab-item" data-tab="httplog">API Log</div>
@@ -408,7 +707,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(88,166,255,0.1
     </div>
 
     <div class="tab-group">
-      <div class="tab-group-label" data-group="security" style="color:var(--red)">Security <span class="arrow">&#9660;</span></div>
+      <div class="tab-group-label" data-group="security" style="color:var(--red)">Secure <span class="arrow">&#9660;</span></div>
       <div class="tab-dropdown">
         <div class="tab-item" data-tab="anticheat"><span class="tab-dot" style="background:var(--red)"></span>Anti-Cheat</div>
         <div class="tab-item" data-tab="apikeys">API Keys</div>
@@ -418,15 +717,43 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(88,166,255,0.1
     </div>
 
     <div class="tab-group">
-      <div class="tab-group-label" data-group="admin" style="color:var(--orange)">Admin <span class="arrow">&#9660;</span></div>
+      <div class="tab-group-label" data-group="admin" style="color:var(--orange)">Tune + Publish <span class="arrow">&#9660;</span></div>
       <div class="tab-dropdown">
-        <div class="tab-item" data-tab="controls"><span class="tab-dot" style="background:var(--orange)"></span>Controls</div>
+        <div class="tab-item" data-tab="controls"><span class="tab-dot" style="background:var(--orange)"></span>Game Config</div>
         <div class="tab-item" data-tab="rounds">Round History</div>
         <div class="tab-item" data-tab="leaderboard">Leaderboard</div>
         <div class="tab-item" data-tab="connlog">Connection Log</div>
       </div>
     </div>
-  </div>
+    </div>
+  </aside>
+
+  <main class="admin-main">
+    <div id="header" class="admin-command-bar">
+      <div class="admin-search">
+        <input id="adminSearch" placeholder="Search bots, settings, API keys, docs..." oninput="filterAdminNav(this.value)">
+      </div>
+      <div class="admin-telemetry">
+        <span id="statusDot"><span class="dot"></span> Connected</span>
+        <span id="uptimeDisplay">--</span>
+        <span id="botsCount">0 bots</span>
+        <span id="sessionTimer">0:00</span>
+        <span id="ssoUser" style="display:none;color:var(--green);font-size:11px"></span>
+        <button id="ssoLogoutBtn" onclick="window.location.href=ssoLogoutUrl()" style="display:none;font-size:10px;padding:2px 8px">Logout</button>
+        <label style="font-size:10px;cursor:pointer"><input type="checkbox" id="soundToggle" style="margin-right:3px" onchange="localStorage.setItem('arena_sound',this.checked)">Sound</label>
+        <div class="admin-utility-actions">
+          <button onclick="shareTab()" title="Copy link to current tab">Share</button>
+          <button onclick="toggleFullscreen()" id="fsBtn" title="Toggle fullscreen (F11)">Full</button>
+          <button onclick="toggleTheme()" id="themeBtn">Light</button>
+          <button onclick="logout()">Logout</button>
+        </div>
+      </div>
+      <div class="admin-actions">
+        <button onclick="gameAction('pause')">Pause Round</button>
+        <button class="warn-action" onclick="gameAction('restart-round')">Restart Round</button>
+        <button class="primary-action" onclick="switchTab('controls');setTimeout(saveGameConfig,80)">Save Config</button>
+      </div>
+    </div>
 
   <div id="content">
     <!-- Overview Panel -->
@@ -1057,6 +1384,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(88,166,255,0.1
       </div>
     </div>
   </div>
+  </main>
 </div>
 
 <button id="fsExitFloat" onclick="toggleFullscreen()">Exit Fullscreen (F)</button>
@@ -1125,6 +1453,63 @@ let arenaSize = [2000, 2000]; // updated from /debug/game-state and /game/config
 
 function arenaCenter() {
   return [Math.round((arenaSize[0]||2000)/2), Math.round((arenaSize[1]||2000)/2)];
+}
+
+const PANEL_META = {
+  overview: ['Operate', 'Overview', 'Live server, match, and population health at a glance.'],
+  minimap: ['Operate', 'Live Arena', 'Watch bot positions, zones, pickups, and round pressure in real time.'],
+  bots: ['Bots', 'Live Bots', 'Inspect connected bots, apply bulk actions, and profile behavior.'],
+  killfeed: ['Bots', 'Kill Feed', 'Track eliminations, weapon pressure, and round combat flow.'],
+  rounds: ['Tune', 'Round History', 'Review recent rounds, MVPs, participation, and completion state.'],
+  ticks: ['Observe', 'Tick Inspector', 'Monitor server timing, memory, and live simulation pressure.'],
+  connections: ['Observe', 'Connections', 'Live connection events for bots and spectators.'],
+  httplog: ['Observe', 'API Log', 'Request stream, status filters, and client activity.'],
+  wsmessages: ['Observe', 'WebSocket Messages', 'Live bot and spectator socket traffic.'],
+  errors: ['Observe', 'Error Console', 'Aggregated server errors and recurrence counts.'],
+  ratelimits: ['Secure', 'Rate Limits', 'Redis rate-limit state and recent throttling events.'],
+  gameevents: ['Observe', 'Game Events', 'Timeline of kills, rounds, pickups, and arena events.'],
+  damagelog: ['Bots', 'Damage Log', 'Live damage events and combat attribution.'],
+  balance: ['Tune', 'Weapons and Balance', 'Tune weapon stats and inspect performance signals.'],
+  debug: ['Observe', 'Debug Tools', 'Low-level server, game, and resource instrumentation.'],
+  forensics: ['Bots', 'Forensics', 'Compare bots and inspect recent death context.'],
+  audit: ['Secure', 'Audit Log', 'Admin actions captured during this browser session.'],
+  anticheat: ['Secure', 'Anti-Cheat', 'Scan behavior, IP reuse, and suspicious activity.'],
+  apikeys: ['Secure', 'API Keys', 'Review bot keys, online state, and revocation actions.'],
+  admintokens: ['Secure', 'Admin Tokens', 'Issue and revoke dashboard admin credentials.'],
+  leaderboard: ['Operate', 'Leaderboard', 'Rank bot performance across selectable periods.'],
+  connlog: ['Observe', 'Connection Log', 'Historical connection stream for dashboard review.'],
+  controls: ['Tune + Publish', 'Operations Console', 'Configure gameplay, demo bots, maps, release updates, and public content.']
+};
+
+function decorateAdminPanels() {
+  document.querySelectorAll('.panel').forEach(panel => {
+    if (panel.querySelector(':scope > .panel-frame')) return;
+    const id = panel.id.replace(/^panel-/, '');
+    const meta = PANEL_META[id] || ['Arena Admin', id, ''];
+    const frame = document.createElement('div');
+    frame.className = 'panel-frame';
+    const titlebar = document.createElement('div');
+    titlebar.className = 'panel-titlebar';
+    titlebar.innerHTML = `<div><div class="panel-kicker">${esc(meta[0])}</div><div class="panel-title">${esc(meta[1])}</div><div class="panel-subtitle">${esc(meta[2])}</div></div><div class="panel-actions-slot"></div>`;
+    const body = document.createElement('div');
+    body.className = 'panel-body';
+    while (panel.firstChild) body.appendChild(panel.firstChild);
+    frame.appendChild(titlebar);
+    frame.appendChild(body);
+    panel.appendChild(frame);
+  });
+}
+
+function filterAdminNav(query) {
+  const q = (query || '').trim().toLowerCase();
+  document.querySelectorAll('#tabs .tab-item,#tabs .tab-direct').forEach(item => {
+    const text = (item.textContent || '').toLowerCase();
+    item.style.display = !q || text.includes(q) ? '' : 'none';
+  });
+  document.querySelectorAll('#tabs .tab-group').forEach(group => {
+    const visible = Array.from(group.querySelectorAll('.tab-item')).some(item => item.style.display !== 'none');
+    group.style.display = !q || visible ? '' : 'none';
+  });
 }
 
 // Kill feed stats
@@ -1221,7 +1606,7 @@ function logout() {
 
 function showApp() {
   document.getElementById('login').style.display = 'none';
-  document.getElementById('app').style.display = 'flex';
+  document.getElementById('app').style.display = 'grid';
   // Show SSO user info if logged in via OIDC
   if (ssoSession && ssoSession.authenticated) {
     document.getElementById('ssoUser').textContent = '🔑 ' + (ssoSession.name || ssoSession.email);
@@ -1313,14 +1698,15 @@ function addLogEntry(logType, evt) {
 }
 
 // ========== Tabs ==========
-function switchTab(tabName) {
+function switchTab(tabName, sourceItem=null) {
   // Clear all active states
   document.querySelectorAll('.tab-direct,.tab-item').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-group-label').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
 
   // Activate the clicked item
-  const item = document.querySelector(`.tab-item[data-tab="${tabName}"]`) ||
+  const item = sourceItem ||
+               document.querySelector(`.tab-item[data-tab="${tabName}"]`) ||
                document.querySelector(`.tab-direct[data-tab="${tabName}"]`);
   if (item) item.classList.add('active');
 
@@ -1354,13 +1740,13 @@ function switchTab(tabName) {
 
 // Direct tab clicks
 document.querySelectorAll('.tab-direct').forEach(tab => {
-  tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+  tab.addEventListener('click', () => switchTab(tab.dataset.tab, tab));
 });
 
 // Dropdown item clicks
 document.querySelectorAll('.tab-item').forEach(item => {
   item.addEventListener('click', (e) => {
-    switchTab(item.dataset.tab);
+    switchTab(item.dataset.tab, item);
     // Close dropdown after click
     e.stopPropagation();
   });
@@ -4321,6 +4707,7 @@ function trackConnection(evt) {
 }
 
 // ========== Collapsible Sections ==========
+decorateAdminPanels();
 document.addEventListener('click', (e) => {
   const h3 = e.target.closest('.ctrl-section.collapsible > h3');
   if (h3) h3.parentElement.classList.toggle('collapsed');
