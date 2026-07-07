@@ -1992,9 +1992,9 @@ pre.code-block {
   max-width: 1240px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 16px;
+  gap: 24px;
   padding: 18px 22px;
   border-radius: 24px;
   border: 1px solid rgba(126, 166, 207, 0.1);
@@ -2030,6 +2030,21 @@ pre.code-block {
 }
 
 .footer a:hover { text-decoration: underline; }
+
+.footer-contact {
+  text-align: right;
+}
+
+.footer-links {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.footer-sep {
+  color: var(--text-muted);
+  margin: 0 6px;
+}
 
 .footer-stats {
   font-family: var(--font-mono);
@@ -2167,6 +2182,10 @@ tr.rank-new { animation: killfeed-in 0.45s cubic-bezier(0.22, 1, 0.36, 1); }
   .footer-shell {
     grid-template-columns: 1fr;
     justify-items: start;
+  }
+
+  .footer-contact {
+    text-align: left;
   }
 
   .footer-stats {
