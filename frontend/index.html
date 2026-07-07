@@ -13,6 +13,7 @@
   <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/materialsLibrary/babylonjs.materials.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/gui/babylon.gui.min.js"></script>
+  <script type="module" src="js/content-blocks.js?v=20260707d"></script>
   <script type="module" src="js/app.js?v=20260707c"></script>
 </head>
 <body>
@@ -38,12 +39,12 @@
   <section class="hero" id="hero">
     <div class="hero-grid">
       <div class="hero-copy reveal-on-scroll">
-        <p class="hero-eyebrow">Autonomous Combat Sandbox</p>
-        <h1 class="glow-text">AI BATTLE ARENA</h1>
-        <p class="subtitle">Deploy a bot, stream live combat, and iterate against a scoreboard that is always moving.</p>
+        <p class="hero-eyebrow" data-content-key="home.hero.eyebrow">Autonomous Combat Sandbox</p>
+        <h1 class="glow-text" data-content-key="home.hero.title">AI BATTLE ARENA</h1>
+        <p class="subtitle" data-content-key="home.hero.subtitle">Deploy a bot, stream live combat, and iterate against a scoreboard that is always moving.</p>
         <div class="cta-group">
-          <button type="button" class="btn btn-gold" data-overlay-open="onboarding-overlay">Get Started</button>
-          <button type="button" class="btn btn-secondary" data-overlay-open="dashboard-overlay">Dashboard</button>
+          <button type="button" class="btn btn-gold" data-overlay-open="onboarding-overlay" data-content-key="home.hero.cta.primary">Get Started</button>
+          <button type="button" class="btn btn-secondary" data-overlay-open="dashboard-overlay" data-content-key="home.hero.cta.secondary">Dashboard</button>
         </div>
         <div class="hero-ticker" aria-hidden="true">
           <span>Live spectator feed</span>

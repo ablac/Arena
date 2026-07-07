@@ -136,6 +136,8 @@ func (m *Manager) Stop() {
 
 	m.mu.Lock()
 	m.bots = make(map[string]*botEntry)
+	m.parentCtx = nil
+	m.cancel = nil
 	m.started = false
 	m.mu.Unlock()
 
@@ -183,6 +185,48 @@ func (m *Manager) StartN(n int) []string {
 	}
 
 	slog.Info("dynamically started demo bots", "count", n, "names", names)
+	return names
+}
+
+// StartTemplate spawns N demo bots using the provided template. The first bot
+// uses the template name; subsequent bots receive stable numeric suffixes.
+func (m *Manager) StartTemplate(cfg BotConfig, n int) []string {
+	if n <= 0 {
+		return nil
+	}
+
+	m.mu.Lock()
+	ctx := m.parentCtx
+	if ctx == nil || ctx.Err() != nil {
+		ctx = context.Background()
+		ctx, m.cancel = context.WithCancel(ctx)
+		m.parentCtx = ctx
+		m.started = true
+	}
+
+	names := make([]string, 0, n)
+	entries := make([]*botEntry, 0, n)
+	for i := 0; i < n; i++ {
+		next := cfg
+		if i > 0 {
+			next.Name = fmt.Sprintf("%s-%d", cfg.Name, i+1)
+		}
+		if _, exists := m.bots[next.Name]; exists {
+			next.Name = next.Name + fmt.Sprintf("-r%d", rand.Intn(1000))
+		}
+		bot := newDemoBot(next, m.serverURL)
+		entry := &botEntry{bot: bot}
+		m.bots[next.Name] = entry
+		entries = append(entries, entry)
+		names = append(names, next.Name)
+	}
+	m.mu.Unlock()
+
+	for _, entry := range entries {
+		m.launchBot(ctx, entry)
+	}
+
+	slog.Info("started demo bots from template", "template", cfg.Name, "count", n, "names", names)
 	return names
 }
 

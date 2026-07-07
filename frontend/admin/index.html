@@ -256,6 +256,87 @@ button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--g
 #mapCtxMenu .ctx-item.success{color:var(--green)}
 #mapCtxMenu .ctx-item.success:hover{background:rgba(63,185,80,0.15)}
 #mapCtxMenu .ctx-sep{border-top:1px solid var(--border);margin:4px 0}
+
+/* Arena Ops redesign */
+body{background:
+  radial-gradient(circle at 18% 0%, rgba(88,166,255,0.10), transparent 30%),
+  radial-gradient(circle at 88% 14%, rgba(63,185,80,0.09), transparent 26%),
+  linear-gradient(135deg,#091016 0%,#10151d 50%,#120e17 100%);
+}
+#header,#tabs{backdrop-filter:blur(14px);background:rgba(13,17,23,0.86)}
+#content{padding:16px}
+.panel.active{animation:panelIn .32s ease both}
+@keyframes panelIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+button{transition:transform .18s ease,background .18s ease,border-color .18s ease,box-shadow .18s ease}
+button:hover{transform:translateY(-1px);box-shadow:0 10px 28px rgba(0,0,0,0.22)}
+input,select,textarea{transition:border-color .18s ease,box-shadow .18s ease;background:rgba(13,17,23,0.82)}
+textarea{font-family:inherit;font-size:12px;color:var(--text);border:1px solid var(--border);border-radius:4px;outline:none;resize:vertical;padding:8px}
+input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(88,166,255,0.14)}
+.card,.ctrl-section,.bot-detail,.log-container,.ac-bot{
+  background:linear-gradient(180deg,rgba(22,27,34,0.95),rgba(13,17,23,0.96));
+  box-shadow:0 18px 44px rgba(0,0,0,0.20);
+}
+.ops-shell{display:flex;flex-direction:column;gap:16px;max-width:1480px;margin:0 auto}
+.ops-hero{
+  position:relative;overflow:hidden;border:1px solid rgba(88,166,255,0.25);border-radius:8px;
+  background:
+    linear-gradient(125deg,rgba(9,16,22,0.96),rgba(15,24,30,0.92)),
+    repeating-linear-gradient(45deg,rgba(88,166,255,0.08) 0 1px,transparent 1px 18px);
+  padding:22px;min-height:170px;display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:end;
+  box-shadow:0 26px 70px rgba(0,0,0,0.30);
+}
+.ops-hero::before{content:'';position:absolute;inset:-30%;background:conic-gradient(from 180deg,transparent,rgba(63,185,80,0.13),transparent,rgba(88,166,255,0.14),transparent);animation:arenaSweep 9s linear infinite;opacity:.65}
+.ops-hero>*{position:relative;z-index:1}
+@keyframes arenaSweep{to{transform:rotate(1turn)}}
+.ops-kicker{font-size:11px;color:var(--green);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px}
+.ops-title{font-size:28px;line-height:1.05;color:#f0f6fc;margin-bottom:8px;font-weight:800}
+.ops-copy{font-size:13px;line-height:1.6;color:var(--text2);max-width:720px}
+.ops-hero-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.ops-status-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.ops-stat{background:rgba(13,17,23,0.72);border:1px solid rgba(139,148,158,0.2);border-radius:6px;padding:12px;min-height:76px}
+.ops-stat .label{font-size:10px;text-transform:uppercase;color:var(--text2);margin-bottom:6px}
+.ops-stat .value{font-size:18px;color:#fff;font-weight:700;word-break:break-word}
+.ops-grid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;align-items:start}
+.ops-card{background:linear-gradient(180deg,rgba(22,27,34,0.96),rgba(13,17,23,0.94));border:1px solid rgba(139,148,158,0.20);border-radius:8px;padding:16px;box-shadow:0 20px 54px rgba(0,0,0,0.22)}
+.ops-card h3{color:#f0f6fc;font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.ops-card .muted{color:var(--text2);font-size:11px;line-height:1.5}
+.ops-section-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.ops-command-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.config-group{border:1px solid rgba(139,148,158,0.18);border-radius:8px;padding:12px;background:rgba(13,17,23,0.42)}
+.config-group h4{font-size:12px;color:var(--accent);margin-bottom:8px}
+.config-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}
+.config-item{align-items:flex-start;flex-direction:column;background:rgba(13,17,23,0.55);border:1px solid rgba(139,148,158,0.16);border-radius:6px;padding:9px;min-height:72px}
+.config-item label{white-space:normal;line-height:1.35}
+.config-item input,.config-item select{width:100%;text-align:left}
+.config-item .hint{font-size:10px;color:var(--text2);line-height:1.35}
+.builder-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:12px}
+.template-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
+.template-card{border:1px solid rgba(139,148,158,0.18);border-radius:8px;padding:12px;background:rgba(13,17,23,0.52);cursor:pointer;position:relative;overflow:hidden;transition:transform .18s ease,border-color .18s ease,background .18s ease}
+.template-card:hover,.template-card.active{transform:translateY(-2px);border-color:var(--accent);background:rgba(88,166,255,0.08)}
+.template-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--bot-color,var(--accent))}
+.template-card .name{font-weight:700;color:#fff;margin-bottom:4px}
+.template-card .meta{font-size:10px;color:var(--text2);text-transform:uppercase}
+.stat-pips{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:8px}
+.stat-pip{height:5px;border-radius:99px;background:rgba(139,148,158,0.22);overflow:hidden}
+.stat-pip span{display:block;height:100%;background:var(--accent)}
+.form-stack{display:flex;flex-direction:column;gap:8px}
+.form-stack label{font-size:10px;color:var(--text2);text-transform:uppercase}
+.form-stack input,.form-stack select,.form-stack textarea{width:100%}
+.map-workshop{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:12px}
+.shape-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.shape-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid rgba(139,148,158,0.18);border-radius:7px;padding:9px;background:rgba(13,17,23,0.48)}
+.shape-toggle input{width:auto}
+.map-preview{background:#05080d;border:1px solid rgba(88,166,255,0.28);border-radius:8px;padding:10px;overflow:auto;max-height:420px;box-shadow:inset 0 0 34px rgba(88,166,255,0.08)}
+.terrain-grid{display:grid;gap:1px;width:max-content;margin:auto}
+.terrain-cell{width:6px;height:6px;border-radius:1px;background:#1f6f4a}
+.terrain-cell.wall{background:#1d2633}
+.terrain-cell.edge{background:#2f81f7}
+.content-block-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.content-block{border:1px solid rgba(139,148,158,0.18);border-radius:8px;padding:10px;background:rgba(13,17,23,0.48)}
+.content-block .key{font-size:10px;color:var(--accent);margin-bottom:6px}
+.side-stack{display:flex;flex-direction:column;gap:12px;position:sticky;top:10px}
+@media(max-width:1050px){.ops-hero,.ops-grid,.builder-layout,.map-workshop{grid-template-columns:1fr}.side-stack{position:static}.ops-status-strip{grid-template-columns:1fr 1fr}}
+@media(max-width:640px){#content{padding:10px}.ops-title{font-size:22px}.ops-status-strip{grid-template-columns:1fr}.ops-card{padding:12px}.template-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -783,95 +864,196 @@ button.btn-success:hover{background:var(--green);color:#fff;border-color:var(--g
 
     <!-- Controls Panel -->
     <div class="panel" id="panel-controls">
-      <div class="ctrl-section">
-        <h3><span class="icon">&#8681;</span> Version &amp; Update</h3>
-        <div id="versionInfo" style="font-size:12px;color:var(--text2)">Loading version&hellip;</div>
-        <div class="ctrl-row" style="margin-top:10px">
-          <button onclick="loadVersionInfo()">Refresh</button>
-          <button class="btn-success" id="updateBtn" onclick="startUpdate()" style="display:none">Update to latest</button>
-        </div>
-        <div class="ctrl-result" id="updateResult"></div>
-        <div style="font-size:10px;color:var(--text2);margin-top:6px">Fetches, rebuilds, and recreates the arena-server container at the latest release commit. The database and Redis are untouched.</div>
-      </div>
+      <div class="ops-shell">
+        <section class="ops-hero">
+          <div>
+            <div class="ops-kicker">Arena command deck</div>
+            <div class="ops-title">Shape the match while the bots keep fighting.</div>
+            <div class="ops-copy">Tune round pacing, map rotation, arena scale, demo-bot personalities, and public website copy from one operational console.</div>
+            <div class="ops-hero-actions">
+              <button class="btn-warn" onclick="gameAction('pause')">Pause</button>
+              <button class="btn-success" onclick="gameAction('resume')">Resume</button>
+              <button onclick="gameAction('restart-round')">Restart Round</button>
+              <button onclick="loadOpsConsole()">Refresh Console</button>
+            </div>
+            <div class="ctrl-result" id="gameCtrlResult"></div>
+          </div>
+          <div class="ops-status-strip">
+            <div class="ops-stat"><div class="label">Version</div><div class="value" id="versionInfo">Loading</div></div>
+            <div class="ops-stat"><div class="label">Map Pool</div><div class="value" id="opsMapPool">--</div></div>
+            <div class="ops-stat"><div class="label">Demo Templates</div><div class="value" id="opsDemoCount">--</div></div>
+          </div>
+        </section>
 
-      <div class="ctrl-section">
-        <h3><span class="icon">&#9654;</span> Game Controls</h3>
-        <div class="ctrl-row">
-          <button class="btn-warn" onclick="gameAction('pause')">Pause Game</button>
-          <button class="btn-success" onclick="gameAction('resume')">Resume Game</button>
-          <button class="btn-danger" onclick="gameAction('restart-round')">Restart Round</button>
-          <button class="btn-danger" onclick="serverRestart()">Kick All + Restart Round</button>
-          <button class="btn-danger" onclick="dockerRestart()" style="border-color:var(--red);background:rgba(248,81,73,0.1)">Restart Docker Container</button>
-        </div>
-        <div class="ctrl-result" id="gameCtrlResult"></div>
-      </div>
+        <div class="ops-grid">
+          <main class="side-stack" style="position:static">
+            <div class="ops-section-grid">
+              <section class="ops-card">
+                <h3>Release Control</h3>
+                <p class="muted">Fetches, rebuilds, and recreates the arena-server container at the latest release commit. Database and Redis are untouched.</p>
+                <div class="ops-command-row" style="margin-top:10px">
+                  <button onclick="loadVersionInfo()">Check Version</button>
+                  <button class="btn-success" id="updateBtn" onclick="startUpdate()" style="display:none">Update to Latest</button>
+                </div>
+                <div class="ctrl-result" id="updateResult"></div>
+              </section>
+              <section class="ops-card">
+                <h3>Round Control</h3>
+                <div class="ops-command-row">
+                  <button class="btn-warn" onclick="gameAction('pause')">Pause Game</button>
+                  <button class="btn-success" onclick="gameAction('resume')">Resume Game</button>
+                  <button class="btn-danger" onclick="gameAction('restart-round')">Restart Round</button>
+                  <button class="btn-danger" onclick="serverRestart()">Kick All + Restart Round</button>
+                  <button class="btn-danger" onclick="dockerRestart()">Restart Docker Container</button>
+                </div>
+              </section>
+            </div>
 
-      <div class="ctrl-section">
-        <h3><span class="icon">&#128203;</span> Config Change History</h3>
-        <div id="configHistory" style="font-size:11px;max-height:200px;overflow-y:auto;color:var(--text2)">No changes recorded this session</div>
-      </div>
-      <div class="ctrl-section">
-        <h3><span class="icon">&#9881;</span> Game Configuration</h3>
-        <div class="config-grid" id="gameConfigGrid"></div>
-        <div style="font-size:10px;color:var(--text2);margin-top:6px">Game mode and map shape changes take effect at the next round start.</div>
-        <div class="ctrl-row" style="margin-top:10px">
-          <button onclick="loadGameConfig()">Reload Config</button>
-          <button class="btn-success" onclick="saveGameConfig()">Save Config</button>
-        </div>
-        <div class="ctrl-result" id="configResult"></div>
-      </div>
-      <div class="ctrl-section">
-        <h3><span class="icon">&#9733;</span> Demo Bots</h3>
-        <div class="ctrl-row">
-          <label style="color:var(--text2);font-size:11px">Count:</label>
-          <input type="number" id="demoBotCount" value="5" min="1" max="50" style="width:60px">
-          <button class="btn-success" onclick="startDemoBots()">Start Demo Bots</button>
-          <button class="btn-danger" onclick="stopDemoBots()">Stop All Demo Bots</button>
-        </div>
-        <div class="ctrl-result" id="demoResult"></div>
-      </div>
-      <div class="ctrl-section">
-        <h3><span class="icon">&#9881;</span> Server</h3>
-        <div class="ctrl-row">
-          <button onclick="forceGC()">Force GC</button>
-          <button onclick="deepHealth()">Deep Health Check</button>
-          <button onclick="dbStats()">DB Stats</button>
-          <button onclick="viewServerConfig()">Server Config</button>
-          <button onclick="viewLogs()">Server Logs</button>
-        </div>
-        <div class="ctrl-result" id="serverResult"></div>
-        <pre id="serverOutput" style="display:none;margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:10px;font-size:11px;max-height:300px;overflow:auto;white-space:pre-wrap"></pre>
-      </div>
-      <div class="ctrl-section">
-        <h3><span class="icon">&#9940;</span> IP Bans</h3>
-        <div class="ctrl-row">
-          <input id="ipBanInput" placeholder="IP address" style="width:160px">
-          <button class="btn-danger" onclick="addIPBan()">Ban IP</button>
-          <button onclick="refreshIPBans()">Refresh List</button>
-        </div>
-        <div id="ipBanList" style="margin-top:8px;font-size:12px"></div>
-        <div class="ctrl-result" id="ipBanResult"></div>
-      </div>
+            <section class="ops-card">
+              <h3>Game Configuration</h3>
+              <div class="muted">Changes apply immediately when the server supports live mutation; game mode, map shape, and terrain choices apply on the next round generation.</div>
+              <div id="gameConfigGrid" style="margin-top:12px"></div>
+              <div class="ops-command-row" style="margin-top:12px">
+                <button onclick="loadGameConfig()">Reload Config</button>
+                <button class="btn-success" onclick="saveGameConfig()">Save Config</button>
+              </div>
+              <div class="ctrl-result" id="configResult"></div>
+            </section>
 
-      <div class="ctrl-section">
-        <h3><span class="icon">&#128229;</span> Export / Import Config</h3>
-        <div class="ctrl-row">
-          <button onclick="exportConfig()">Export Config JSON</button>
-          <button onclick="document.getElementById('configImportFile').click()">Import Config JSON</button>
-          <input type="file" id="configImportFile" accept=".json" style="display:none" onchange="importConfig(this)">
-        </div>
-        <div class="ctrl-result" id="exportResult"></div>
-      </div>
+            <section class="ops-card">
+              <h3>Demo Bot Builder</h3>
+              <div class="builder-layout">
+                <div>
+                  <div class="ops-command-row" style="margin-bottom:10px">
+                    <input type="number" id="demoBotCount" value="3" min="1" max="50" style="width:76px" title="Spawn count">
+                    <button class="btn-success" onclick="spawnSelectedDemoTemplate()">Spawn Selected</button>
+                    <button onclick="startDemoBots()">Start Default Set</button>
+                    <button class="btn-danger" onclick="stopDemoBots()">Stop All Demo Bots</button>
+                  </div>
+                  <div class="template-grid" id="demoTemplateList"></div>
+                </div>
+                <div class="ops-card" style="padding:12px">
+                  <h3 style="margin-bottom:8px">Template</h3>
+                  <div class="form-stack">
+                    <input type="hidden" id="demoTemplateSelected">
+                    <label>Name<input id="demoTemplateName" placeholder="Night Archer"></label>
+                    <label>Weapon<select id="demoTemplateWeapon"></select></label>
+                    <label>Strategy<select id="demoTemplateStrategy"></select></label>
+                    <label>Color<input id="demoTemplateColor" type="color" value="#00ff88"></label>
+                    <div class="config-grid">
+                      <label>HP<input type="number" id="demoStatHp" min="1" max="10" value="4"></label>
+                      <label>Speed<input type="number" id="demoStatSpeed" min="1" max="10" value="6"></label>
+                      <label>Attack<input type="number" id="demoStatAttack" min="1" max="10" value="8"></label>
+                      <label>Defense<input type="number" id="demoStatDefense" min="1" max="10" value="2"></label>
+                    </div>
+                    <label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type="checkbox" id="demoTemplateEnabled" checked style="width:auto"> Enabled</label>
+                    <div class="ops-command-row">
+                      <button class="btn-success" onclick="saveDemoTemplate()">Save Template</button>
+                      <button onclick="newDemoTemplate()">New</button>
+                      <button class="btn-danger" onclick="deleteDemoTemplate()">Delete</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="ctrl-result" id="demoResult"></div>
+            </section>
 
-      <div class="ctrl-section">
-        <h3><span class="icon" style="color:var(--red)">&#9888;</span> Data Management (Destructive)</h3>
-        <div class="ctrl-row">
-          <button class="btn-danger" onclick="resetLeaderboard()">Reset Leaderboard</button>
-          <label style="color:var(--text2);font-size:11px;margin-left:16px">Stale days:</label>
-          <input type="number" id="staleDays" value="30" min="1" style="width:60px">
-          <button class="btn-warn" onclick="cleanupStale()">Cleanup Stale Keys</button>
+            <section class="ops-card">
+              <h3>Map Workshop</h3>
+              <div class="map-workshop">
+                <div>
+                  <div class="shape-grid" id="mapShapeCards"></div>
+                  <div class="ops-command-row" style="margin-top:12px">
+                    <select id="mapShapeSelect"></select>
+                    <input type="number" id="mapSeed" placeholder="Seed" style="width:120px">
+                    <button onclick="previewSelectedMap()">Preview</button>
+                    <button class="btn-success" onclick="saveMapSettings()">Save Map Settings</button>
+                  </div>
+                  <div class="ops-section-grid" style="margin-top:12px">
+                    <div class="ops-card" style="padding:12px">
+                      <h3>Create Custom Map</h3>
+                      <div class="form-stack">
+                        <label>Slug<input id="customMapName" placeholder="night-cross"></label>
+                        <label>Display Name<input id="customMapDisplay" placeholder="Night Cross"></label>
+                        <label>Base Shape<select id="customMapBase"></select></label>
+                        <label>Seed<input type="number" id="customMapSeed" value="7"></label>
+                        <label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type="checkbox" id="customMapEnabled" checked style="width:auto"> Enabled</label>
+                        <button class="btn-success" onclick="saveCustomMap()">Save Custom Map</button>
+                      </div>
+                    </div>
+                    <div class="ops-card" style="padding:12px">
+                      <h3>Terrain Controls</h3>
+                      <div class="form-stack">
+                        <label>Obstacles Min<input type="number" id="cfg_obstacle_count_min" min="0"></label>
+                        <label>Obstacles Max<input type="number" id="cfg_obstacle_count_max" min="0"></label>
+                        <label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type="checkbox" id="cfg_arena_size_dynamic" style="width:auto"> Dynamic Arena Size</label>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="ctrl-result" id="mapResult"></div>
+                </div>
+                <div>
+                  <div class="muted" id="mapPreviewMeta" style="margin-bottom:8px">Select a map shape to preview terrain.</div>
+                  <div class="map-preview"><div id="mapPreviewTerrain"></div></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="ops-card">
+              <h3>Public Website Content</h3>
+              <div class="muted">These content blocks update approved public copy slots without requiring a PR for small website text changes.</div>
+              <div class="content-block-list" id="contentBlockList" style="margin-top:12px"></div>
+              <div class="ctrl-result" id="contentResult"></div>
+            </section>
+          </main>
+
+          <aside class="side-stack">
+            <section class="ops-card">
+              <h3>Config Change History</h3>
+              <div id="configHistory" style="font-size:11px;max-height:220px;overflow-y:auto;color:var(--text2)">No changes recorded this session</div>
+            </section>
+            <section class="ops-card">
+              <h3>Server Tools</h3>
+              <div class="ops-command-row">
+                <button onclick="forceGC()">Force GC</button>
+                <button onclick="deepHealth()">Deep Health Check</button>
+                <button onclick="dbStats()">DB Stats</button>
+                <button onclick="viewServerConfig()">Server Config</button>
+                <button onclick="viewLogs()">Server Logs</button>
+              </div>
+              <div class="ctrl-result" id="serverResult"></div>
+              <pre id="serverOutput" style="display:none;margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:10px;font-size:11px;max-height:300px;overflow:auto;white-space:pre-wrap"></pre>
+            </section>
+            <section class="ops-card">
+              <h3>IP Bans</h3>
+              <div class="ops-command-row">
+                <input id="ipBanInput" placeholder="IP address" style="width:160px">
+                <button class="btn-danger" onclick="addIPBan()">Ban IP</button>
+                <button onclick="refreshIPBans()">Refresh</button>
+              </div>
+              <div id="ipBanList" style="margin-top:8px;font-size:12px"></div>
+              <div class="ctrl-result" id="ipBanResult"></div>
+            </section>
+            <section class="ops-card">
+              <h3>Export / Import Config</h3>
+              <div class="ops-command-row">
+                <button onclick="exportConfig()">Export JSON</button>
+                <button onclick="document.getElementById('configImportFile').click()">Import JSON</button>
+                <input type="file" id="configImportFile" accept=".json" style="display:none" onchange="importConfig(this)">
+              </div>
+              <div class="ctrl-result" id="exportResult"></div>
+            </section>
+            <section class="ops-card">
+              <h3 style="color:var(--red)">Destructive Data</h3>
+              <div class="ops-command-row">
+                <button class="btn-danger" onclick="resetLeaderboard()">Reset Leaderboard</button>
+                <input type="number" id="staleDays" value="30" min="1" style="width:68px">
+                <button class="btn-warn" onclick="cleanupStale()">Cleanup Stale Keys</button>
+              </div>
+              <div class="ctrl-result" id="dataResult"></div>
+            </section>
+          </aside>
         </div>
-        <div class="ctrl-result" id="dataResult"></div>
       </div>
     </div>
   </div>
@@ -1159,7 +1341,7 @@ function switchTab(tabName) {
   if (currentTab === 'anticheat') { runAnticheatScan(); startACAutoScan(); } else stopACAutoScan();
   if (currentTab === 'errors') refreshErrors();
   if (currentTab === 'ratelimits') refreshRateLimits();
-  if (currentTab === 'controls') { loadGameConfig(); refreshIPBans(); loadVersionInfo(); }
+  if (currentTab === 'controls') { loadOpsConsole(); }
   if (currentTab === 'rounds') refreshRounds();
   if (currentTab === 'killfeed') renderKillFeedStats();
   if (currentTab === 'balance') refreshBalance();
@@ -2422,6 +2604,463 @@ async function stopDemoBots() {
     el.textContent = 'Failed to stop demo bots';
     el.style.color = 'var(--red)';
   }
+}
+
+// ========== Arena Ops Console ==========
+const OPS_WEAPON_OPTIONS = ['sword','bow','daggers','shield','spear','staff','grapple'];
+const OPS_STRATEGY_OPTIONS = ['aggressive','defensive','kite','territorial','assassin','berserker'];
+const OPS_CONFIG_GROUPS = [
+  {name:'Round Pacing', fields:[
+    {key:'tick_rate', label:'Tick Rate', min:1, max:60, hint:'Simulation ticks per second.'},
+    {key:'round_duration', label:'Round Duration', min:10, step:5, hint:'Seconds before timeout.'},
+    {key:'intermission_time', label:'Intermission', min:1, step:1, hint:'Seconds between rounds.'},
+    {key:'lobby_countdown', label:'Lobby Countdown', min:1, step:1, hint:'Countdown before a round starts.'},
+    {key:'min_bots_to_start', label:'Min Bots', min:1, hint:'Minimum live bots required.'},
+    {key:'max_bots', label:'Max Bots', min:1, hint:'Admission cap.'},
+    {key:'max_spectators', label:'Max Spectators', min:0, hint:'Viewer cap.'}
+  ]},
+  {name:'Modes and Teams', fields:[
+    {key:'game_mode', label:'Game Mode', type:'select', options:['ffa','team_battle','ctf'], hint:'Applies next round.'},
+    {key:'team_count', label:'Team Count', min:2, max:8, hint:'Used by team modes.'},
+    {key:'friendly_fire', label:'Friendly Fire', type:'checkbox', hint:'Allow same-team damage.'},
+    {key:'round_modifier_chance', label:'Modifier Chance', min:0, max:1, step:0.01, hint:'Chance of a special ruleset.'}
+  ]},
+  {name:'Zone Pressure', fields:[
+    {key:'zone_damage', label:'Zone Damage', min:0, step:0.1, hint:'Damage per tick outside the zone.'},
+    {key:'zone_shrink_pct', label:'Shrink Percent', min:0, max:1, step:0.01, hint:'Zone shrink amount per step.'},
+    {key:'zone_shrink_interval', label:'Shrink Interval', min:1, step:1, hint:'Seconds between shrinks.'},
+    {key:'zone_shrink_delay', label:'Shrink Delay', min:0, step:1, hint:'Seconds before zone starts moving.'},
+    {key:'zone_min_radius', label:'Minimum Radius', min:20, step:5, hint:'Final safe-zone radius.'},
+    {key:'zone_initial_radius', label:'Initial Radius', min:20, step:10, hint:'Opening safe-zone radius.'},
+    {key:'zone_cover_map', label:'Cover Map', type:'checkbox', hint:'Start with the zone covering the map.'}
+  ]},
+  {name:'Movement and Combat', fields:[
+    {key:'dodge_speed_mult', label:'Dodge Speed Mult', min:0, step:0.05, hint:'Burst speed multiplier.'},
+    {key:'dodge_invuln_ticks', label:'Dodge I-Frames', min:0, hint:'Invulnerable ticks while dodging.'},
+    {key:'dodge_cooldown_ticks', label:'Dodge Cooldown', min:0, hint:'Ticks between dodges.'},
+    {key:'afk_timeout_ticks', label:'AFK Timeout', min:0, hint:'Ticks before AFK handling.'}
+  ]},
+  {name:'Stat Curves', fields:[
+    {key:'stat_hp_base', label:'HP Base', min:0, step:1},
+    {key:'stat_hp_per_point', label:'HP Per Point', min:0, step:1},
+    {key:'stat_speed_base', label:'Speed Base', min:0, step:1},
+    {key:'stat_speed_per_point', label:'Speed Per Point', min:0, step:0.1},
+    {key:'stat_attack_base', label:'Attack Base', min:0, step:0.01},
+    {key:'stat_attack_per_point', label:'Attack Per Point', min:0, step:0.01},
+    {key:'stat_defense_per_point', label:'Defense Per Point', min:0, step:0.01}
+  ]}
+];
+const OPS_CONFIG_FIELDS = OPS_CONFIG_GROUPS.flatMap(g => g.fields);
+let opsDemoTemplates = [];
+let opsSelectedDemoTemplate = '';
+let opsMapSettings = null;
+
+async function loadOpsConsole() {
+  await Promise.allSettled([
+    loadVersionInfo(),
+    loadGameConfig(),
+    loadDemoBotStudio(),
+    loadMapWorkshop(),
+    loadContentBlocks(),
+    refreshIPBans()
+  ]);
+  renderConfigHistory();
+}
+
+async function loadGameConfig() {
+  const el = document.getElementById('configResult');
+  try {
+    const data = await api('/game/config');
+    currentConfig = data;
+    if (data.arena_width > 0 && data.arena_height > 0) arenaSize = [data.arena_width, data.arena_height];
+    renderConfigGrid(data);
+    if (el) { el.textContent = 'Config loaded'; el.style.color = 'var(--green)'; }
+  } catch(e) {
+    if (el) { el.textContent = 'Failed to load config: ' + e.message; el.style.color = 'var(--red)'; }
+  }
+}
+
+function renderConfigGrid(data) {
+  const root = document.getElementById('gameConfigGrid');
+  if (!root) return;
+  root.innerHTML = OPS_CONFIG_GROUPS.map(group => `
+    <div class="config-group">
+      <h4>${esc(group.name)}</h4>
+      <div class="config-grid">${group.fields.map(f => renderOpsConfigField(f, data[f.key])).join('')}</div>
+    </div>
+  `).join('');
+}
+
+function renderOpsConfigField(f, val) {
+  const value = val != null ? val : '';
+  const hint = f.hint ? `<div class="hint">${esc(f.hint)}</div>` : '';
+  if (f.type === 'select') {
+    const opts = f.options.map(o => `<option value="${esc(o)}" ${o===value?'selected':''}>${esc(o)}</option>`).join('');
+    return `<div class="config-item"><label>${esc(f.label)}</label><select id="cfg_${f.key}">${opts}</select>${hint}</div>`;
+  }
+  if (f.type === 'checkbox') {
+    return `<div class="config-item"><label>${esc(f.label)}</label><input type="checkbox" id="cfg_${f.key}" ${value===true?'checked':''}>${hint}</div>`;
+  }
+  return `<div class="config-item"><label>${esc(f.label)}</label><input type="number" id="cfg_${f.key}" value="${esc(String(value))}" min="${f.min ?? ''}" max="${f.max ?? ''}" step="${f.step || 1}">${hint}</div>`;
+}
+
+async function saveGameConfig() {
+  const el = document.getElementById('configResult');
+  const body = {};
+  OPS_CONFIG_FIELDS.forEach(f => {
+    const input = document.getElementById('cfg_' + f.key);
+    if (!input) return;
+    if (f.type === 'select') { if (input.value) body[f.key] = input.value; }
+    else if (f.type === 'checkbox') body[f.key] = input.checked;
+    else if (input.value !== '') body[f.key] = parseFloat(input.value);
+  });
+  try {
+    const res = await api('/game/config', {method:'PUT', body:JSON.stringify(body)});
+    const appliedKeys = Object.entries(res.applied||{}).map(([k,v]) => k + '=' + v).join(', ');
+    el.textContent = 'Config saved' + (appliedKeys ? ' - applied: ' + appliedKeys : ' - no changes accepted');
+    el.style.color = 'var(--green)';
+    toast('Game config updated', 'success');
+    logConfigChange('Game Config', appliedKeys || '(no changes)');
+    await loadGameConfig();
+  } catch(e) {
+    el.textContent = 'Failed to save config: ' + e.message;
+    el.style.color = 'var(--red)';
+    toast('Failed to save config', 'error');
+  }
+}
+
+function ensureDemoBuilderOptions() {
+  const weapon = document.getElementById('demoTemplateWeapon');
+  const strategy = document.getElementById('demoTemplateStrategy');
+  if (weapon && !weapon.options.length) weapon.innerHTML = OPS_WEAPON_OPTIONS.map(w => `<option value="${w}">${w}</option>`).join('');
+  if (strategy && !strategy.options.length) strategy.innerHTML = OPS_STRATEGY_OPTIONS.map(s => `<option value="${s}">${s}</option>`).join('');
+}
+
+async function loadDemoBotStudio() {
+  ensureDemoBuilderOptions();
+  const el = document.getElementById('demoResult');
+  try {
+    const data = await api('/demobots/templates');
+    opsDemoTemplates = data.templates || [];
+    const count = document.getElementById('opsDemoCount');
+    if (count) count.textContent = String(opsDemoTemplates.length);
+    renderDemoTemplates();
+    if (!opsSelectedDemoTemplate && opsDemoTemplates.length) selectDemoTemplate(opsDemoTemplates[0].name);
+    if (el) { el.textContent = 'Demo templates loaded'; el.style.color = 'var(--green)'; }
+  } catch(e) {
+    if (el) { el.textContent = 'Failed to load demo templates: ' + e.message; el.style.color = 'var(--red)'; }
+  }
+}
+
+function renderDemoTemplates() {
+  const root = document.getElementById('demoTemplateList');
+  if (!root) return;
+  root.innerHTML = opsDemoTemplates.map(t => {
+    const stats = t.stats || {};
+    const active = t.name === opsSelectedDemoTemplate ? ' active' : '';
+    return `<div class="template-card${active}" style="--bot-color:${esc(t.color||'#58a6ff')}" onclick="selectDemoTemplate('${escAttr(t.name)}')">
+      <div class="name">${esc(t.name)}</div>
+      <div class="meta">${esc(t.weapon)} / ${esc(t.strategy)} / ${esc(t.source||'custom')}</div>
+      <div class="stat-pips">
+        ${['hp','speed','attack','defense'].map(k => `<div class="stat-pip" title="${k}: ${stats[k]||0}"><span style="width:${Math.max(0, Math.min(100, (stats[k]||0)*10))}%"></span></div>`).join('')}
+      </div>
+    </div>`;
+  }).join('') || '<div class="muted">No demo templates found.</div>';
+}
+
+function selectDemoTemplate(name) {
+  opsSelectedDemoTemplate = name;
+  const t = opsDemoTemplates.find(x => x.name === name);
+  if (!t) return;
+  const stats = t.stats || {};
+  document.getElementById('demoTemplateSelected').value = t.name;
+  document.getElementById('demoTemplateName').value = t.name;
+  document.getElementById('demoTemplateWeapon').value = t.weapon || 'sword';
+  document.getElementById('demoTemplateStrategy').value = t.strategy || 'aggressive';
+  document.getElementById('demoTemplateColor').value = t.color || '#58a6ff';
+  document.getElementById('demoStatHp').value = stats.hp || 5;
+  document.getElementById('demoStatSpeed').value = stats.speed || 5;
+  document.getElementById('demoStatAttack').value = stats.attack || 5;
+  document.getElementById('demoStatDefense').value = stats.defense || 5;
+  document.getElementById('demoTemplateEnabled').checked = t.enabled !== false;
+  renderDemoTemplates();
+}
+
+function newDemoTemplate() {
+  opsSelectedDemoTemplate = '';
+  document.getElementById('demoTemplateSelected').value = '';
+  document.getElementById('demoTemplateName').value = 'New Challenger';
+  document.getElementById('demoTemplateWeapon').value = 'sword';
+  document.getElementById('demoTemplateStrategy').value = 'aggressive';
+  document.getElementById('demoTemplateColor').value = '#58a6ff';
+  document.getElementById('demoStatHp').value = 5;
+  document.getElementById('demoStatSpeed').value = 5;
+  document.getElementById('demoStatAttack').value = 7;
+  document.getElementById('demoStatDefense').value = 3;
+  document.getElementById('demoTemplateEnabled').checked = true;
+  renderDemoTemplates();
+}
+
+function readDemoTemplateForm() {
+  return {
+    name: document.getElementById('demoTemplateName').value.trim(),
+    weapon: document.getElementById('demoTemplateWeapon').value,
+    strategy: document.getElementById('demoTemplateStrategy').value,
+    color: document.getElementById('demoTemplateColor').value,
+    enabled: document.getElementById('demoTemplateEnabled').checked,
+    stats: {
+      hp: parseInt(document.getElementById('demoStatHp').value) || 0,
+      speed: parseInt(document.getElementById('demoStatSpeed').value) || 0,
+      attack: parseInt(document.getElementById('demoStatAttack').value) || 0,
+      defense: parseInt(document.getElementById('demoStatDefense').value) || 0
+    }
+  };
+}
+
+async function saveDemoTemplate() {
+  const el = document.getElementById('demoResult');
+  const body = readDemoTemplateForm();
+  try {
+    await api('/demobots/templates/' + encodeURIComponent(body.name), {method:'PUT', body:JSON.stringify(body)});
+    el.textContent = 'Saved demo template ' + body.name;
+    el.style.color = 'var(--green)';
+    opsSelectedDemoTemplate = body.name;
+    toast('Demo template saved', 'success');
+    await loadDemoBotStudio();
+  } catch(e) {
+    el.textContent = 'Failed to save template: ' + e.message;
+    el.style.color = 'var(--red)';
+    toast('Failed to save demo template', 'error');
+  }
+}
+
+async function deleteDemoTemplate() {
+  const name = document.getElementById('demoTemplateName').value.trim();
+  const el = document.getElementById('demoResult');
+  if (!name || !confirm('Delete custom demo template "' + name + '"? Built-in templates revert to defaults.')) return;
+  try {
+    await api('/demobots/templates/' + encodeURIComponent(name), {method:'DELETE'});
+    el.textContent = 'Deleted custom template ' + name;
+    el.style.color = 'var(--green)';
+    opsSelectedDemoTemplate = '';
+    await loadDemoBotStudio();
+  } catch(e) {
+    el.textContent = 'Delete failed: ' + e.message;
+    el.style.color = 'var(--red)';
+  }
+}
+
+async function spawnSelectedDemoTemplate() {
+  const name = document.getElementById('demoTemplateName').value.trim() || opsSelectedDemoTemplate;
+  const count = parseInt(document.getElementById('demoBotCount').value) || 1;
+  const el = document.getElementById('demoResult');
+  try {
+    const res = await api('/demobots/spawn-template', {method:'POST', body:JSON.stringify({name, count})});
+    el.textContent = 'Spawned ' + (res.count || count) + ' from ' + name;
+    el.style.color = 'var(--green)';
+    toast('Spawned demo bots', 'success');
+  } catch(e) {
+    el.textContent = 'Spawn failed: ' + e.message;
+    el.style.color = 'var(--red)';
+  }
+}
+
+async function startDemoBots() {
+  const count = parseInt(document.getElementById('demoBotCount').value) || 5;
+  const el = document.getElementById('demoResult');
+  try {
+    await api('/demobots/start', {method:'POST', body:JSON.stringify({count})});
+    el.textContent = 'Started ' + count + ' default demo bots';
+    el.style.color = 'var(--green)';
+    toast('Started default demo bots', 'success');
+  } catch(e) {
+    el.textContent = 'Failed to start demo bots: ' + e.message;
+    el.style.color = 'var(--red)';
+  }
+}
+
+async function stopDemoBots() {
+  const el = document.getElementById('demoResult');
+  try {
+    await api('/demobots/stop', {method:'POST'});
+    el.textContent = 'Stopped all demo bots';
+    el.style.color = 'var(--green)';
+    toast('Stopped all demo bots', 'success');
+  } catch(e) {
+    el.textContent = 'Failed to stop demo bots: ' + e.message;
+    el.style.color = 'var(--red)';
+  }
+}
+
+async function loadMapWorkshop() {
+  const el = document.getElementById('mapResult');
+  try {
+    opsMapSettings = await api('/game/maps');
+    const mapPool = document.getElementById('opsMapPool');
+    if (mapPool) mapPool.textContent = (opsMapSettings.enabled_shapes || []).length + ' active';
+    renderMapWorkshop();
+    await previewSelectedMap();
+    if (el) { el.textContent = 'Map workshop loaded'; el.style.color = 'var(--green)'; }
+  } catch(e) {
+    if (el) { el.textContent = 'Failed to load map workshop: ' + e.message; el.style.color = 'var(--red)'; }
+  }
+}
+
+function allMapShapeOptions() {
+  if (!opsMapSettings) return [];
+  const builtIns = (opsMapSettings.built_in_shapes || []).map(name => ({value:name, label:prettyLabel(name), builtIn:true}));
+  const custom = (opsMapSettings.custom_maps || []).map(m => ({value:'custom:' + m.name, label:m.display_name || m.name, builtIn:false}));
+  return builtIns.concat(custom);
+}
+
+function renderMapWorkshop() {
+  const shapes = allMapShapeOptions();
+  const enabled = new Set(opsMapSettings.enabled_shapes || []);
+  const shapeCards = document.getElementById('mapShapeCards');
+  shapeCards.innerHTML = shapes.map(s => `
+    <label class="shape-toggle">
+      <span>${esc(s.label)}<div class="muted">${s.builtIn ? 'built-in' : 'custom'}</div></span>
+      <input type="checkbox" data-map-shape="${escAttr(s.value)}" ${enabled.has(s.value)?'checked':''}>
+    </label>
+  `).join('');
+  const options = [{value:'random', label:'Random Pool'}].concat(shapes);
+  document.getElementById('mapShapeSelect').innerHTML = options.map(o => `<option value="${esc(o.value)}" ${o.value===opsMapSettings.map_shape?'selected':''}>${esc(o.label)}</option>`).join('');
+  document.getElementById('customMapBase').innerHTML = (opsMapSettings.built_in_shapes || []).map(s => `<option value="${esc(s)}">${esc(prettyLabel(s))}</option>`).join('');
+  setInputValue('cfg_obstacle_count_min', opsMapSettings.obstacle_count_min);
+  setInputValue('cfg_obstacle_count_max', opsMapSettings.obstacle_count_max);
+  const dyn = document.getElementById('cfg_arena_size_dynamic');
+  if (dyn) dyn.checked = opsMapSettings.arena_size_dynamic === true;
+}
+
+async function previewSelectedMap() {
+  const shape = document.getElementById('mapShapeSelect')?.value || 'square';
+  const seed = parseInt(document.getElementById('mapSeed')?.value || '0') || 0;
+  const previewShape = shape === 'random' ? ((opsMapSettings?.enabled_shapes || [])[0] || 'square') : shape;
+  try {
+    const data = await api('/game/maps/preview', {method:'POST', body:JSON.stringify({shape:previewShape, seed, cols:56, rows:42})});
+    renderMapPreview(data);
+  } catch(e) {
+    document.getElementById('mapPreviewMeta').textContent = 'Preview failed: ' + e.message;
+  }
+}
+
+function renderMapPreview(data) {
+  document.getElementById('mapPreviewMeta').textContent = prettyLabel(data.shape) + ' / ' + data.cols + 'x' + data.rows + ' / ' + data.playable_pct.toFixed(1) + '% playable';
+  const root = document.getElementById('mapPreviewTerrain');
+  root.className = 'terrain-grid';
+  root.style.gridTemplateColumns = `repeat(${data.cols}, 6px)`;
+  const rows = data.terrain || [];
+  let html = '';
+  for (let y = 0; y < rows.length; y++) {
+    const row = rows[y];
+    for (let x = 0; x < row.length; x++) {
+      html += `<span class="terrain-cell${row[x] === '#' ? ' wall' : ''}"></span>`;
+    }
+  }
+  root.innerHTML = html;
+}
+
+async function saveMapSettings() {
+  const enabledShapes = Array.from(document.querySelectorAll('[data-map-shape]')).filter(i => i.checked).map(i => i.dataset.mapShape);
+  const body = {
+    enabled_shapes: enabledShapes,
+    map_shape: document.getElementById('mapShapeSelect').value,
+    obstacle_count_min: parseInt(document.getElementById('cfg_obstacle_count_min').value) || 0,
+    obstacle_count_max: parseInt(document.getElementById('cfg_obstacle_count_max').value) || 0,
+    arena_size_dynamic: document.getElementById('cfg_arena_size_dynamic').checked
+  };
+  const el = document.getElementById('mapResult');
+  try {
+    const res = await api('/game/maps', {method:'PUT', body:JSON.stringify(body)});
+    const applied = Object.entries(res.applied || {}).map(([k,v]) => k + '=' + (Array.isArray(v) ? v.join('|') : v)).join(', ');
+    el.textContent = 'Map settings saved' + (applied ? ': ' + applied : '');
+    el.style.color = 'var(--green)';
+    logConfigChange('Map Workshop', applied || '(no changes)');
+    await loadMapWorkshop();
+  } catch(e) {
+    el.textContent = 'Failed to save map settings: ' + e.message;
+    el.style.color = 'var(--red)';
+  }
+}
+
+async function saveCustomMap() {
+  const body = {
+    name: document.getElementById('customMapName').value.trim(),
+    display_name: document.getElementById('customMapDisplay').value.trim(),
+    base_shape: document.getElementById('customMapBase').value,
+    seed: parseInt(document.getElementById('customMapSeed').value) || 1,
+    enabled: document.getElementById('customMapEnabled').checked
+  };
+  const el = document.getElementById('mapResult');
+  try {
+    await api('/game/maps/custom/' + encodeURIComponent(body.name), {method:'PUT', body:JSON.stringify(body)});
+    el.textContent = 'Custom map saved: ' + body.display_name;
+    el.style.color = 'var(--green)';
+    toast('Custom map saved', 'success');
+    await loadMapWorkshop();
+  } catch(e) {
+    el.textContent = 'Failed to save custom map: ' + e.message;
+    el.style.color = 'var(--red)';
+  }
+}
+
+async function loadContentBlocks() {
+  const root = document.getElementById('contentBlockList');
+  if (!root) return;
+  try {
+    const data = await api('/content-blocks');
+    const blocks = data.blocks || [];
+    root.innerHTML = blocks.map(b => renderContentBlock(b)).join('');
+  } catch(e) {
+    root.innerHTML = `<div class="muted">Failed to load content blocks: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderContentBlock(block) {
+  const id = safeID(block.key);
+  return `<div class="content-block">
+    <div class="key">${esc(block.key)}</div>
+    <label class="muted">Label<input id="content_label_${id}" value="${escAttr(block.label || '')}"></label>
+    <label class="muted">Value<textarea id="content_value_${id}" rows="4">${esc(block.value || '')}</textarea></label>
+    <label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:6px"><input id="content_pub_${id}" type="checkbox" ${block.published!==false?'checked':''} style="width:auto"> Published</label>
+    <button class="btn-success" style="margin-top:8px" onclick="saveContentBlock('${escAttr(block.key)}')">Save Block</button>
+  </div>`;
+}
+
+async function saveContentBlock(key) {
+  const id = safeID(key);
+  const el = document.getElementById('contentResult');
+  const body = {
+    label: document.getElementById('content_label_' + id).value,
+    value: document.getElementById('content_value_' + id).value,
+    published: document.getElementById('content_pub_' + id).checked
+  };
+  try {
+    await api('/content-blocks/' + encodeURIComponent(key), {method:'PUT', body:JSON.stringify(body)});
+    el.textContent = 'Saved content block ' + key;
+    el.style.color = 'var(--green)';
+    toast('Content block saved', 'success');
+  } catch(e) {
+    el.textContent = 'Failed to save content block: ' + e.message;
+    el.style.color = 'var(--red)';
+  }
+}
+
+function setInputValue(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.value = value ?? '';
+}
+
+function prettyLabel(value) {
+  return String(value || '').replace(/^custom:/,'').replace(/[_-]/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function safeID(value) {
+  return String(value).replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+function escAttr(s) {
+  return esc(String(s)).replace(/'/g, '&#39;');
 }
 
 // ========== Server Controls ==========
