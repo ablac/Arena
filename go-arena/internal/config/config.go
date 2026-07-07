@@ -192,6 +192,19 @@ type Config struct {
 	CloudflareAPIToken string `envconfig:"ARENA_CF_API_TOKEN" default:""`
 	CloudflareZoneID   string `envconfig:"ARENA_CF_ZONE_ID" default:""`
 
+	// Self-update (optional). The Admin Panel "Update" action is only enabled
+	// when both UpdaterURL and UpdaterSharedSecret are set and point at a running
+	// arena-updater sidecar (see docs/build-and-deploy.md).
+	UpdaterURL          string `envconfig:"ARENA_UPDATER_URL" default:""`
+	UpdaterSharedSecret string `envconfig:"ARENA_UPDATER_SHARED_SECRET" default:""`
+	// Optional GitHub token to raise the tarball-fetch / compare rate limit.
+	// Arena is a public repo, so this is not required.
+	UpdateGitHubToken string `envconfig:"ARENA_UPDATE_GITHUB_TOKEN" default:""`
+	// owner/repo and branch the "update to latest" check compares the running
+	// build against (production release branch by default).
+	UpdateRepo   string `envconfig:"ARENA_UPDATE_REPO" default:"ablac/Arena"`
+	UpdateBranch string `envconfig:"ARENA_UPDATE_BRANCH" default:"main"`
+
 	// CORS
 	CORSOrigins string `envconfig:"ARENA_CORS_ORIGINS" default:"*"`
 
