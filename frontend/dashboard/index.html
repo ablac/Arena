@@ -437,6 +437,97 @@ tr:hover td{background:rgba(71,215,255,.035)}
   .tabs-toolbar{justify-content:flex-start}
   .tabs-toolbar select{min-width:0;width:100%}
 }
+.login-shell{width:min(820px,100%);display:grid;grid-template-columns:minmax(0,1.1fr) minmax(280px,.9fr);gap:16px;align-items:stretch}
+.login-choice{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  padding:24px;
+  border:1px solid rgba(126,166,207,.18);
+  border-radius:28px;
+  background:linear-gradient(180deg,rgba(14,25,38,.94),rgba(9,16,25,.86));
+  box-shadow:0 24px 60px rgba(0,0,0,.32);
+}
+.login-choice.primary{background:radial-gradient(circle at top right,rgba(71,215,255,.14),transparent 34%),linear-gradient(180deg,rgba(14,25,38,.96),rgba(9,16,25,.88))}
+.login-choice h2{font-size:17px;letter-spacing:-.03em}
+.login-choice p{max-width:none!important;text-align:left!important}
+.login-choice .choice-kicker,.cosmetic-kicker{
+  color:#47d7ff;
+  font:600 10px/1.2 'IBM Plex Mono',monospace;
+  letter-spacing:.13em;
+  text-transform:uppercase;
+}
+.login-choice .account-sign-in{width:100%;margin-top:auto}
+.login-choice.secondary input{width:100%!important;margin:0!important}
+.login-choice.secondary button{align-self:flex-start}
+.login-privacy{font:400 10px/1.55 'IBM Plex Mono',monospace;color:#91a6bd}
+.account-toolbar-identity{display:none;align-items:center;gap:8px;color:#91a6bd;font:500 10px/1 'IBM Plex Mono',monospace}
+.account-toolbar-identity.visible{display:inline-flex}
+.account-toolbar-identity strong{color:#ecf4ff}
+.cosmetic-account-summary{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:18px;
+  margin-bottom:18px;
+  padding:20px;
+  border:1px solid rgba(71,215,255,.2);
+  border-radius:24px;
+  background:radial-gradient(circle at top right,rgba(71,215,255,.13),transparent 38%),rgba(6,12,20,.68);
+}
+.cosmetic-account-summary h2,.cosmetic-inventory-head h2{margin:5px 0 3px;color:#ecf4ff;font-size:18px;letter-spacing:-.03em}
+.cosmetic-account-summary p,.cosmetic-sidebar p,.cosmetic-rule,.cosmetic-license p{color:#91a6bd;font-size:11px}
+.verified-email-badge,.ownership-badge,.linked-bot-state{
+  display:inline-flex;
+  align-items:center;
+  min-height:27px;
+  padding:0 10px;
+  border:1px solid rgba(88,229,143,.26);
+  border-radius:999px;
+  background:rgba(88,229,143,.08);
+  color:#58e58f;
+  font:600 9px/1 'IBM Plex Mono',monospace;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  white-space:nowrap;
+}
+.cosmetic-layout{display:grid;grid-template-columns:minmax(240px,300px) minmax(0,1fr);gap:16px;align-items:start}
+.cosmetic-sidebar,.cosmetic-inventory{padding:18px;border:1px solid rgba(126,166,207,.14);border-radius:22px;background:rgba(6,12,20,.55)}
+.cosmetic-sidebar>h3,.cosmetic-group>h3{margin:0 0 6px;color:#ecf4ff;font-size:13px}
+.linked-bot-list{display:flex;flex-direction:column;gap:7px;margin:14px 0 16px;padding:0;list-style:none}
+.linked-bot-list li{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px;border:1px solid rgba(126,166,207,.12);border-radius:14px;background:rgba(255,255,255,.025)}
+.linked-bot-list li span:first-child{min-width:0;display:flex;flex-direction:column}
+.linked-bot-actions{display:flex;align-items:center;gap:5px;flex-shrink:0}
+.linked-bot-list strong{overflow:hidden;text-overflow:ellipsis;color:#ecf4ff;font-size:12px}
+.linked-bot-list small,.cosmetic-license-id{color:#73859a;font:400 9px/1.4 'IBM Plex Mono',monospace}
+.linked-bot-state{min-height:22px;padding:0 8px;font-size:8px}
+.linked-bot-state.inactive,.ownership-badge.inactive{border-color:rgba(255,123,114,.28);background:rgba(255,123,114,.08);color:#ff9a92}
+.link-bot-form{display:flex;flex-direction:column;gap:8px;padding-top:14px;border-top:1px solid rgba(126,166,207,.1)}
+.link-bot-form label{color:#ecf4ff;font-size:12px;font-weight:700}
+.link-bot-form button{align-self:flex-start}
+.link-bot-form small{color:#91a6bd;font:400 9px/1.5 'IBM Plex Mono',monospace}
+.cosmetic-inventory-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.cosmetic-inventory-head>span{color:#91a6bd;font:500 10px/1 'IBM Plex Mono',monospace}
+.cosmetic-rule{margin:5px 0 17px;padding:10px 12px;border-left:2px solid #47d7ff;background:rgba(71,215,255,.05)}
+.cosmetic-group+.cosmetic-group{margin-top:20px}
+.cosmetic-license-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.cosmetic-license{padding:14px;border:1px solid rgba(126,166,207,.13);border-radius:18px;background:linear-gradient(180deg,rgba(14,25,38,.76),rgba(9,16,25,.66))}
+.cosmetic-license-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.cosmetic-license h3{margin:4px 0 0;color:#ecf4ff;font-size:14px;letter-spacing:-.02em}
+.cosmetic-license p{min-height:34px;margin:8px 0}
+.ownership-badge{min-height:23px;padding:0 8px;border-color:rgba(71,215,255,.22);background:rgba(71,215,255,.07);color:#47d7ff;font-size:8px}
+.cosmetic-assignment{margin:10px 0 6px;padding:8px 10px;border:1px solid rgba(126,166,207,.12);border-radius:12px;color:#91a6bd;font-size:10px}
+.cosmetic-assignment.assigned{border-color:rgba(88,229,143,.2);background:rgba(88,229,143,.05);color:#a8eec3}
+.cosmetic-equip-state{margin:0 0 10px;padding:6px 10px;border-radius:10px;background:rgba(255,255,255,.025);color:#91a6bd;font-size:10px}
+.cosmetic-equip-state.equipped{background:rgba(71,215,255,.07);color:#7ee4ff}
+.cosmetic-equip{border-color:rgba(71,215,255,.32);color:#7ee4ff}
+.cosmetic-license-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:7px}
+.cosmetic-license-actions select{min-width:150px;flex:1}
+button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.5;transform:none!important;box-shadow:none!important}
+.cosmetic-empty{color:#91a6bd!important;font-size:10px!important;line-height:1.55}
+.cosmetic-empty-inventory{padding:24px;text-align:center;border:1px dashed rgba(126,166,207,.18);border-radius:16px}
+.cosmetic-loading{padding:40px;text-align:center;color:#91a6bd;font:500 11px/1.5 'IBM Plex Mono',monospace}
+@media (max-width:760px){.login-shell,.cosmetic-layout{grid-template-columns:1fr}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.cosmetic-license-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -448,12 +539,26 @@ if (window.self !== window.top) {
 
 <div id="login">
   <h1>// BOT DASHBOARD</h1>
-  <p>Enter your API key to view bot-specific performance, compare your saved bots, and monitor the data tied to your own arena keys.</p>
-  <input type="password" id="apiKeyInput" placeholder="arena_..." autofocus>
-  <input id="keyLabel" placeholder="Label (optional, e.g. My Sniper Bot)" style="width:340px;margin-top:-4px">
-  <button onclick="doLogin()">Connect</button>
+  <p>Your verified email owns purchases. API keys only prove which bots you control and can be replaced without losing cosmetics.</p>
   <div class="error" id="loginError"></div>
-  <div class="saved-keys" id="savedKeysList"></div>
+  <div class="login-shell">
+    <section class="login-choice primary">
+      <div class="choice-kicker">Recommended</div>
+      <h2>Cosmetics &amp; linked bots</h2>
+      <p>Sign in to manage the cosmetic licenses purchased by your email. Assign, remove, or move each license between your bots at any time.</p>
+      <button class="account-sign-in" id="accountSignInButton" type="button" disabled>Checking email sign-in...</button>
+      <div class="login-privacy">One cosmetic license can be used by one bot at a time. Linking a key never makes that key the owner.</div>
+    </section>
+    <section class="login-choice secondary">
+      <div class="choice-kicker">Bot performance</div>
+      <h2>Open with an API key</h2>
+      <p>Keep using a bot key for stats, comparisons, and live performance tools. This does not control purchase ownership. The key is kept only for this browser tab.</p>
+      <input type="password" id="apiKeyInput" placeholder="arena_..." autofocus>
+      <input id="keyLabel" placeholder="Local label (optional)">
+      <button onclick="doLogin()">Connect bot</button>
+      <div class="saved-keys" id="savedKeysList"></div>
+    </section>
+  </div>
   <div style="margin-top:16px;font-size:11px;color:var(--text2)">
     <a href="../">Back to Arena</a> &nbsp;|&nbsp; Don't have a key? <a href="../#keygen">Generate one</a>
   </div>
@@ -467,9 +572,10 @@ if (window.self !== window.top) {
   </div>
   <div class="tabs-shell">
     <div class="tabs">
-      <div class="tbtn active" data-tab="overview" data-view="private">Overview</div>
-      <div class="tbtn" data-tab="compare" data-view="private">Compare Bots</div>
-      <div class="tbtn" data-tab="allbots" data-view="private">All My Bots</div>
+      <div class="tbtn" data-tab="cosmetics" data-view="private" data-auth="account">Cosmetics</div>
+      <div class="tbtn active" data-tab="overview" data-view="private" data-auth="bot">Overview</div>
+      <div class="tbtn" data-tab="compare" data-view="private" data-auth="bot">Compare Bots</div>
+      <div class="tbtn" data-tab="allbots" data-view="private" data-auth="bot">All My Bots</div>
       <div class="tbtn" data-tab="simulator" data-view="public">Stat Simulator</div>
       <div class="tbtn" data-tab="weapons" data-view="public">Weapons</div>
       <div class="tbtn" data-tab="skills" data-view="public">Skills</div>
@@ -479,14 +585,22 @@ if (window.self !== window.top) {
       <div class="tbtn" data-tab="strategy" data-view="public">Strategy</div>
     </div>
     <div class="tabs-toolbar" data-view="private">
+      <span class="account-toolbar-identity" id="accountToolbarIdentity"></span>
       <select id="botSwitcher" onchange="switchBot(this.value)" style="font-size:11px"></select>
       <button class="sm" id="refreshBtn" onclick="refreshAll()">Refresh</button>
+      <button class="sm" id="accountLogoutBtn" type="button" style="display:none">Sign out account</button>
       <button class="sm" id="logoutBtn" onclick="logout()">Logout</button>
     </div>
   </div>
   <div class="cards" id="statCards"></div>
 
-  <div class="tpanel active" id="tab-overview" data-view="private">
+  <div class="tpanel" id="tab-cosmetics" data-view="private" data-auth="account">
+    <div class="section">
+      <div id="accountCosmeticsPanel" class="cosmetic-loading">Loading your account-owned cosmetics...</div>
+    </div>
+  </div>
+
+  <div class="tpanel active" id="tab-overview" data-view="private" data-auth="bot">
     <div style="display:flex;gap:12px;flex-wrap:wrap">
       <div class="section" style="flex:1;min-width:280px">
         <h2>Live Radar <button class="sm" id="radarToggle" onclick="toggleRadar()" style="margin-left:8px">Start</button></h2>
@@ -539,7 +653,7 @@ if (window.self !== window.top) {
     <div class="section"><h2>Utility Skills</h2><div id="skillGuide"></div></div>
   </div>
 
-  <div class="tpanel" id="tab-compare" data-view="private">
+  <div class="tpanel" id="tab-compare" data-view="private" data-auth="bot">
     <div class="section">
       <h2>Compare Your Bots</h2>
       <div style="display:flex;gap:8px;margin-bottom:12px">
@@ -552,7 +666,7 @@ if (window.self !== window.top) {
     </div>
   </div>
 
-  <div class="tpanel" id="tab-allbots" data-view="private">
+  <div class="tpanel" id="tab-allbots" data-view="private" data-auth="bot">
     <div class="section">
       <h2>All My Bots</h2>
       <table><thead><tr><th>Name</th><th>Elo</th><th>K/D</th><th>Kills</th><th>Deaths</th><th>Wins</th><th>Rounds</th><th>Streak</th><th></th></tr></thead><tbody id="allBotsBody"></tbody></table>
@@ -566,6 +680,7 @@ if (window.self !== window.top) {
   </div>
 </div>
 
+<script src="./account-cosmetics.js?v=20260710a"></script>
 <script>
 const WEAPON_META = {
   sword:{name:'Sword',badge:'SWD',role:'Balanced frontline weapon.',desc:'Reliable melee with cleave pressure when fights stack up.',build:'hp:5 speed:5 attack:5 defense:5',strongVs:'Daggers, shield',counter:'Bow, staff'},
@@ -667,19 +782,19 @@ async function ensureToolkitData(force=false) {
 }
 
 // ========== Key Management ==========
-function getSavedKeys() { try { return JSON.parse(localStorage.getItem('arena_keys')||'[]'); } catch(e) { return []; } }
+function getSavedKeys() { try { return JSON.parse(sessionStorage.getItem('arena_keys')||'[]'); } catch(e) { return []; } }
 function saveKey(key, label, name) {
   const keys = getSavedKeys().filter(k => k.key !== key);
   keys.unshift({key, label: label || name || key.slice(0,12), name});
-  localStorage.setItem('arena_keys', JSON.stringify(keys.slice(0,20)));
+  try { sessionStorage.setItem('arena_keys', JSON.stringify(keys.slice(0,20))); } catch(e) { /* tab storage unavailable */ }
 }
 function removeKey(key) {
-  localStorage.setItem('arena_keys', JSON.stringify(getSavedKeys().filter(k => k.key !== key)));
+  try { sessionStorage.setItem('arena_keys', JSON.stringify(getSavedKeys().filter(k => k.key !== key))); } catch(e) { /* tab storage unavailable */ }
   renderSavedKeys();
 }
 function renderSavedKeys() {
   const keys = getSavedKeys();
-  document.getElementById('savedKeysList').innerHTML = keys.length ? '<div style="font-size:11px;color:var(--text2);margin-bottom:6px">Saved Keys:</div>' +
+  document.getElementById('savedKeysList').innerHTML = keys.length ? '<div style="font-size:11px;color:var(--text2);margin-bottom:6px">Keys in this tab:</div>' +
     keys.map(k => `<div class="saved-key" onclick="loginWithKey('${esc(k.key)}')"><span class="name">${esc(k.label||k.name||'Bot')}</span><span class="prefix">${esc(k.key.slice(0,12))}...</span><button class="sm danger" onclick="event.stopPropagation();removeKey('${esc(k.key)}')" style="font-size:9px;padding:1px 5px">x</button></div>`).join('') : '';
 }
 renderSavedKeys();
@@ -687,6 +802,19 @@ renderSavedKeys();
 // ========== API ==========
 let apiKey = '';
 let stats = null;
+let accountSession = {
+  authenticated:false,
+  login_enabled:false,
+  login_url:'',
+  logout_url:'',
+  account:{id:'',email:'',email_verified:false,name:''},
+  csrf_token:'',
+};
+let accountSnapshot = null;
+let accountBusyLicenseID = '';
+let accountViewError = '';
+let accountViewNotice = '';
+let accountRefreshSequence = 0;
 const DASHBOARD_VIEW = new URLSearchParams(window.location.search).get('view') === 'public' ? 'public' : 'private';
 function dashboardAPIBase(pathname, paths) {
   if (paths && typeof paths.apiBase === 'function') {
@@ -703,6 +831,359 @@ async function api(path, opts={}) {
 }
 async function pub(path) { return (await fetch(getBase()+path)).json(); }
 
+function hasVerifiedAccount() {
+  return accountSession.authenticated === true && accountSession.account?.email_verified === true && Boolean(accountSession.account?.email);
+}
+
+async function accountRequest(path, opts={}) {
+  const method = String(opts.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD' && !accountSession.csrf_token) {
+    throw new Error('Your secure dashboard session is missing CSRF protection. Sign in again before making changes.');
+  }
+  const headers = {
+    ...window.ArenaAccountCosmetics.requestHeaders(method, accountSession.csrf_token, opts.body !== undefined),
+    ...(opts.headers||{}),
+  };
+  const endpoint = path.startsWith('/api/v1/') || path.startsWith('/arena/api/v1/')
+    ? path
+    : getBase()+path;
+  const response = await fetch(endpoint, {...opts,method,headers,credentials:'same-origin',cache:opts.cache||'no-store'});
+  let payload = null;
+  if (response.status !== 204) {
+    const text = await response.text();
+    if (text) {
+      try { payload = JSON.parse(text); }
+      catch (e) { payload = {message:text}; }
+    }
+  }
+  if (opts.allowUnauthorized && (response.status === 401 || response.status === 403)) return null;
+  if (!response.ok) {
+    const message = payload?.error || payload?.message || `Request failed (${response.status})`;
+    throw new Error(message);
+  }
+  return payload;
+}
+
+function accountReturnPath() {
+  return location.pathname + location.search;
+}
+
+function navigateAccount(url) {
+  if (window.top !== window.self) window.top.location.assign(url);
+  else location.assign(url);
+}
+
+function startAccountLogin() {
+  const button = document.getElementById('accountSignInButton');
+  if (button?.dataset.retrySession === 'true') {
+    button.disabled = true;
+    button.textContent = 'Checking email sign-in...';
+    delete button.dataset.retrySession;
+    document.getElementById('loginError').textContent = '';
+    initializeAccountMode();
+    return;
+  }
+  if (!accountSession.login_enabled) {
+    document.getElementById('loginError').textContent = 'Email account sign-in is not configured on this Arena yet.';
+    return;
+  }
+  const loginURL = accountSession.login_url || getBase()+'/dashboard/login';
+  const separator = loginURL.includes('?') ? '&' : '?';
+  navigateAccount(loginURL+separator+'return_to='+encodeURIComponent(accountReturnPath()));
+}
+
+async function signOutAccount() {
+  try {
+    const logoutURL = accountSession.logout_url || '/dashboard/logout';
+    const separator = logoutURL.includes('?') ? '&' : '?';
+    const payload = await accountRequest(logoutURL+separator+'return_to='+encodeURIComponent(accountReturnPath()), {method:'POST'});
+    navigateAccount(payload?.redirect_to || accountReturnPath());
+  } catch (error) {
+    accountViewError = error.message || 'Could not sign out of the account session.';
+    renderAccountCosmetics();
+  }
+}
+
+function updateAccountLoginUI() {
+  const button = document.getElementById('accountSignInButton');
+  if (!button) return;
+  delete button.dataset.retrySession;
+  button.disabled = !accountSession.login_enabled;
+  button.textContent = accountSession.login_enabled ? 'Sign in with email' : 'Email sign-in setup pending';
+}
+
+function updatePrivateAuthUI() {
+  if (DASHBOARD_VIEW !== 'private') return;
+  const accountReady = hasVerifiedAccount();
+  const botReady = Boolean(apiKey);
+  document.querySelectorAll('[data-auth="account"]').forEach(node => { node.style.display = accountReady ? '' : 'none'; });
+  document.querySelectorAll('[data-auth="bot"]').forEach(node => { node.style.display = botReady ? '' : 'none'; });
+  document.getElementById('statCards').style.display = botReady ? '' : 'none';
+  document.getElementById('refreshBtn').style.display = botReady ? '' : 'none';
+  document.getElementById('logoutBtn').style.display = botReady ? '' : 'none';
+  document.getElementById('logoutBtn').textContent = accountReady ? 'Close bot stats' : 'Logout';
+  document.getElementById('accountLogoutBtn').style.display = accountReady ? '' : 'none';
+  const identity = document.getElementById('accountToolbarIdentity');
+  identity.classList.toggle('visible', accountReady);
+  identity.innerHTML = accountReady ? `Owned by <strong>${esc(accountSession.account.email)}</strong>` : '';
+  const hasSwitcherChoice = accountReady || getSavedKeys().length > 0;
+  document.getElementById('botSwitcher').style.display = hasSwitcherChoice ? '' : 'none';
+}
+
+function renderAccountCosmetics() {
+  const root = document.getElementById('accountCosmeticsPanel');
+  if (!root || !window.ArenaAccountCosmetics) return;
+  if (!accountSnapshot) {
+    if (accountViewError) {
+      root.className = '';
+      root.innerHTML = `<div class="tip warn" role="alert"><b>Could not load cosmetics:</b> ${esc(accountViewError)} <button type="button" class="sm" data-account-retry>Retry</button></div>`;
+    } else {
+      root.className = 'cosmetic-loading';
+      root.textContent = 'Loading your account-owned cosmetics...';
+    }
+    return;
+  }
+  root.className = '';
+  root.innerHTML = window.ArenaAccountCosmetics.renderPanel(accountSnapshot, {
+    busyLicenseID: accountBusyLicenseID,
+    error: accountViewError,
+    notice: accountViewNotice,
+  });
+}
+
+async function refreshAccountCosmetics(notice='') {
+  const requestID = ++accountRefreshSequence;
+  try {
+    const payload = await accountRequest(window.ArenaAccountCosmetics.accountRoute('cosmetics'));
+    if (requestID !== accountRefreshSequence) return;
+    if (!payload || typeof payload !== 'object') throw new Error('The cosmetics service returned an invalid response.');
+    if (!payload.account) payload.account = accountSession.account;
+    accountSnapshot = window.ArenaAccountCosmetics.normalizeSnapshot(payload);
+    accountViewError = '';
+    accountViewNotice = notice;
+  } catch (e) {
+    if (requestID !== accountRefreshSequence) return;
+    accountViewError = e.message || 'Could not load this account.';
+    accountViewNotice = '';
+  }
+  renderAccountCosmetics();
+}
+
+async function handleAccountPanelSubmit(event) {
+  if (event.target?.id !== 'linkBotForm') return;
+  event.preventDefault();
+  const input = event.target.querySelector('#linkBotKey');
+  const submit = event.target.querySelector('button[type="submit"]');
+  const rawKey = input?.value.trim() || '';
+  if (!rawKey || submit?.disabled) return;
+  submit.disabled = true;
+  submit.textContent = 'Linking...';
+  accountViewError = '';
+  accountViewNotice = '';
+  input.value = '';
+  try {
+    await accountRequest(window.ArenaAccountCosmetics.accountRoute('bots'), {method:'POST',body:JSON.stringify({api_key:rawKey})});
+    await refreshAccountCosmetics('Bot linked. Cosmetic ownership remains with your email account.');
+  } catch (e) {
+    accountViewError = e.message || 'Could not link that bot.';
+    renderAccountCosmetics();
+  } finally {
+    const currentSubmit = document.querySelector('#linkBotForm button[type="submit"]');
+    if (currentSubmit) {
+      currentSubmit.disabled = false;
+      currentSubmit.textContent = 'Verify & link bot';
+    }
+  }
+}
+
+async function assignAccountLicense(licenseID, botID) {
+  const intent = window.ArenaAccountCosmetics.assignmentIntent(accountSnapshot, licenseID, botID);
+  if (!intent.ok) {
+    if (intent.reason !== 'already-assigned') {
+      accountViewError = intent.reason === 'license-inactive'
+        ? 'That license is no longer active and cannot be assigned.'
+        : intent.reason === 'bot-key-inactive'
+          ? 'That bot key is inactive. Link an active replacement bot before assigning this cosmetic.'
+          : 'Choose a linked bot before assigning this cosmetic.';
+      renderAccountCosmetics();
+    }
+    return;
+  }
+  accountBusyLicenseID = licenseID;
+  accountViewError = '';
+  accountViewNotice = '';
+  renderAccountCosmetics();
+  try {
+    await accountRequest(window.ArenaAccountCosmetics.accountRoute('assignment', licenseID), {
+      method:'PUT',
+      body:JSON.stringify({bot_id:botID}),
+    });
+    accountBusyLicenseID = '';
+    await refreshAccountCosmetics(intent.kind === 'move'
+      ? 'Cosmetic moved. The previous bot can no longer use this license; equip it on the new bot when ready.'
+      : 'Cosmetic assigned to the selected bot. Equip it when ready.');
+  } catch (e) {
+    accountBusyLicenseID = '';
+    accountViewError = e.message || 'Could not assign that cosmetic.';
+    renderAccountCosmetics();
+  }
+}
+
+async function equipAccountLicense(licenseID) {
+  const license = accountSnapshot?.licenses.find(entry => entry.id === licenseID);
+  if (license?.status !== 'active') {
+    accountViewError = 'That license is no longer active and cannot be equipped.';
+    renderAccountCosmetics();
+    return;
+  }
+  if (!license?.assigned_bot_id) {
+    accountViewError = 'Assign this cosmetic to a linked bot before equipping it.';
+    renderAccountCosmetics();
+    return;
+  }
+  const assignedBot = accountSnapshot?.bots.find(entry => entry.id === license.assigned_bot_id);
+  if (!assignedBot?.key_is_active) {
+    accountViewError = 'That bot key is inactive. Link an active replacement bot before equipping this cosmetic.';
+    renderAccountCosmetics();
+    return;
+  }
+  accountBusyLicenseID = licenseID;
+  accountViewError = '';
+  accountViewNotice = '';
+  renderAccountCosmetics();
+  try {
+    await accountRequest(window.ArenaAccountCosmetics.accountRoute('equip', license.assigned_bot_id), {
+      method:'PUT',
+      body:JSON.stringify({license_id:licenseID}),
+    });
+    accountBusyLicenseID = '';
+    await refreshAccountCosmetics('Cosmetic equipped. Any previous cosmetic in that bot slot was replaced explicitly.');
+  } catch (e) {
+    accountBusyLicenseID = '';
+    accountViewError = e.message || 'Could not equip that cosmetic.';
+    renderAccountCosmetics();
+  }
+}
+
+async function unassignAccountLicense(licenseID) {
+  accountBusyLicenseID = licenseID;
+  accountViewError = '';
+  accountViewNotice = '';
+  renderAccountCosmetics();
+  try {
+    await accountRequest(window.ArenaAccountCosmetics.accountRoute('assignment', licenseID), {method:'DELETE'});
+    accountBusyLicenseID = '';
+    await refreshAccountCosmetics('Cosmetic removed from the bot. It remains owned by your email account.');
+  } catch (e) {
+    accountBusyLicenseID = '';
+    accountViewError = e.message || 'Could not remove that cosmetic.';
+    renderAccountCosmetics();
+  }
+}
+
+async function unlinkAccountBot(botID) {
+  const bot = accountSnapshot?.bots.find(entry => entry.id === botID);
+  if (!bot || !confirm(`Unlink ${bot.name}? Assigned cosmetics will return to your account, but the API key itself will not be revoked.`)) return;
+  accountViewError = '';
+  accountViewNotice = '';
+  try {
+    await accountRequest(window.ArenaAccountCosmetics.accountRoute('bot', botID), {method:'DELETE'});
+    await refreshAccountCosmetics('Bot unlinked. Its API key was not revoked, and your cosmetics remain on this account.');
+  } catch (e) {
+    accountViewError = e.message || 'Could not unlink that bot.';
+    renderAccountCosmetics();
+  }
+}
+
+function handleAccountPanelClick(event) {
+  const retryButton = event.target.closest('[data-account-retry]');
+  if (retryButton) {
+    accountViewError = '';
+    renderAccountCosmetics();
+    refreshAccountCosmetics();
+    return;
+  }
+  const assignButton = event.target.closest('[data-license-assign]');
+  if (assignButton) {
+    const licenseID = assignButton.dataset.licenseAssign;
+    const select = [...document.querySelectorAll('[data-license-target]')]
+      .find(node => node.dataset.licenseTarget === licenseID);
+    assignAccountLicense(licenseID, select?.value || '');
+    return;
+  }
+  const unassignButton = event.target.closest('[data-license-unassign]');
+  if (unassignButton) {
+    unassignAccountLicense(unassignButton.dataset.licenseUnassign);
+    return;
+  }
+  const equipButton = event.target.closest('[data-license-equip]');
+  if (equipButton) {
+    equipAccountLicense(equipButton.dataset.licenseEquip);
+    return;
+  }
+  const unlinkButton = event.target.closest('[data-bot-unlink]');
+  if (unlinkButton) unlinkAccountBot(unlinkButton.dataset.botUnlink);
+}
+
+function handleAccountPanelChange(event) {
+  const select = event.target.closest('[data-license-target]');
+  if (!select) return;
+  const card = select.closest('[data-license-id]');
+  const button = card?.querySelector('[data-license-assign]');
+  if (button) button.disabled = !select.value || accountBusyLicenseID === card.dataset.licenseId;
+}
+
+function bindAccountCosmeticsUI() {
+  document.getElementById('accountSignInButton').addEventListener('click', startAccountLogin);
+  document.getElementById('accountLogoutBtn').addEventListener('click', signOutAccount);
+  const panel = document.getElementById('accountCosmeticsPanel');
+  panel.addEventListener('submit', handleAccountPanelSubmit);
+  panel.addEventListener('click', handleAccountPanelClick);
+  panel.addEventListener('change', handleAccountPanelChange);
+}
+
+async function initializeAccountMode() {
+  if (DASHBOARD_VIEW !== 'private') return false;
+  try {
+    const payload = await accountRequest(window.ArenaAccountCosmetics.accountRoute('session'), {allowUnauthorized:true});
+    if (!payload) return false;
+    const normalized = window.ArenaAccountCosmetics.normalizeSession(payload);
+    accountSession = {
+      ...normalized,
+      csrf_token: payload.csrf_token || payload.account?.csrf_token || '',
+    };
+    updateAccountLoginUI();
+    if (!hasVerifiedAccount()) {
+      if (normalized.authenticated) document.getElementById('loginError').textContent = 'Your identity provider did not supply a verified email address.';
+      return false;
+    }
+    // A user may start the legacy bot-key login while this session request is
+    // in flight. Keep the verified account context, but never replace their
+    // explicit bot-stats choice when that happens.
+    if (apiKey) {
+      buildBotSwitcher();
+      updatePrivateAuthUI();
+      refreshAccountCosmetics();
+      return true;
+    }
+    document.getElementById('login').style.display='none';
+    document.getElementById('app').style.display='block';
+    apiKey = '';
+    buildBotSwitcher();
+    updatePrivateAuthUI();
+    activateTab('cosmetics');
+    return true;
+  } catch (e) {
+    accountSession.login_enabled = false;
+    const button = document.getElementById('accountSignInButton');
+    button.disabled = false;
+    button.dataset.retrySession = 'true';
+    button.textContent = 'Retry email sign-in check';
+    document.getElementById('loginError').textContent = 'Could not check email account sign-in. Bot performance by API key is still available.';
+    return false;
+  }
+}
+
 // ========== Auth ==========
 function doLogin() {
   const k = document.getElementById('apiKeyInput').value.trim();
@@ -718,18 +1199,56 @@ async function testAuth(label) {
     document.getElementById('login').style.display='none';
     document.getElementById('app').style.display='block';
     buildBotSwitcher();
+    updatePrivateAuthUI();
+    activateTab('overview');
     refreshAll();
   } catch(e) {
-    document.getElementById('loginError').textContent='Invalid API key';
     apiKey='';
+    if (hasVerifiedAccount()) {
+      document.getElementById('login').style.display='none';
+      document.getElementById('app').style.display='block';
+      buildBotSwitcher();
+      updatePrivateAuthUI();
+      activateTab('cosmetics');
+      await refreshAccountCosmetics();
+      accountViewError = 'That API key could not open bot performance. Your account-owned cosmetics are still available.';
+      renderAccountCosmetics();
+    } else {
+      document.getElementById('loginError').textContent='Invalid API key';
+    }
   }
 }
-function logout() { apiKey=''; document.getElementById('app').style.display='none'; document.getElementById('login').style.display='flex'; renderSavedKeys(); }
-function switchBot(key) { apiKey=key; refreshAll(); }
+function logout() {
+  apiKey='';
+  stats=null;
+  if (hasVerifiedAccount()) {
+    buildBotSwitcher();
+    updatePrivateAuthUI();
+    activateTab('cosmetics');
+    return;
+  }
+  document.getElementById('app').style.display='none';
+  document.getElementById('login').style.display='flex';
+  updatePrivateAuthUI();
+  renderSavedKeys();
+}
+function switchBot(key) {
+  if (!key && hasVerifiedAccount()) {
+    logout();
+    return;
+  }
+  if (!key) return;
+  apiKey=key;
+  buildBotSwitcher();
+  updatePrivateAuthUI();
+  activateTab('overview');
+  refreshAll();
+}
 
 function buildBotSwitcher() {
   const keys = getSavedKeys();
-  document.getElementById('botSwitcher').innerHTML = keys.map(k => `<option value="${esc(k.key)}" ${k.key===apiKey?'selected':''}>${esc(k.label||k.name||'Bot')}</option>`).join('');
+  const accountOption = hasVerifiedAccount() ? `<option value="" ${apiKey?'':'selected'}>Cosmetics - ${esc(accountSession.account.email)}</option>` : '';
+  document.getElementById('botSwitcher').innerHTML = accountOption + keys.map(k => `<option value="${esc(k.key)}" ${k.key===apiKey?'selected':''}>Stats - ${esc(k.label||k.name||'Bot')}</option>`).join('');
   // Compare selects
   const opts = keys.map(k=>`<option value="${esc(k.key)}">${esc(k.label||k.name)}</option>`).join('');
   document.getElementById('cmpA').innerHTML = '<option value="">Select Bot A</option>'+opts;
@@ -749,6 +1268,7 @@ function activateTab(tabName) {
   if (tabName==='simulator') initSim();
   if (tabName==='skills') renderSkills();
   if (tabName==='allbots') loadAllBots();
+  if (tabName==='cosmetics' && hasVerifiedAccount()) refreshAccountCosmetics();
   if (tabName==='strategy') renderStrategy();
   if (tabName==='builds') renderBuilds();
   if (tabName==='mapviewer') loadMapViewer();
@@ -800,6 +1320,8 @@ async function startDashboard() {
     console.warn('Dashboard path helper unavailable; using local fallback', error);
   }
   initDashboardMode();
+  bindAccountCosmeticsUI();
+  await initializeAccountMode();
 }
 
 startDashboard();

@@ -10,8 +10,8 @@ import { HudRenderer } from './renderer/hud.js?v=20260523a';
 import { Minimap } from './renderer/minimap.js';
 import { SpectatorSocket } from './spectator-ws.js';
 import { initLeaderboardWidget } from './leaderboard.js?v=20260706e';
-import { initKeyGenerator } from './key-generator.js?v=20260710a';
-import { initCosmeticsPanel } from './cosmetics-panel.js?v=20260710a';
+import { initKeyGenerator } from './key-generator.js?v=20260710b';
+import { initCosmeticsPanel } from './cosmetics-panel.js?v=20260710b';
 import { isEnabled, onSettingsChange } from './settings.js';
 import { initSettingsPanel } from './settings-panel.js';
 import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';
@@ -129,12 +129,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Leaderboard
   initLeaderboardWidgets();
 
-  // Cosmetic catalog/equip UI and key generator. A freshly-created key is
-  // handed directly to the in-memory panel; it is never stored in the browser.
-  const cosmeticsPanel = initCosmeticsPanel(document.getElementById('cosmetics-panel'));
+  // Public catalog preview and key generation are independent. Cosmetic
+  // ownership and bot linking happen only in the verified-email dashboard.
+  initCosmeticsPanel(document.getElementById('cosmetics-panel'));
   const keygenEl = document.getElementById('keygen-card');
   if (keygenEl) {
-    initKeyGenerator(keygenEl, data => cosmeticsPanel?.setKey(data.api_key, true));
+    initKeyGenerator(keygenEl);
   }
 
   hud.onSelectBot = (botID) => {

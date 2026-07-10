@@ -1700,16 +1700,19 @@ tr:hover td{background:rgba(88,166,255,0.07)}
               <div class="ctrl-result" id="exportResult"></div>
             </section>
             <section class="ops-card">
-              <h3>Cosmetic Entitlements</h3>
-              <p class="muted">Manual/provider fulfillment only. Cosmetics never alter combat stats.</p>
+              <h3>Cosmetic Licenses</h3>
+              <p class="muted">Grant ownership to the purchaser's email account. Bot assignment happens separately in the Bot Dashboard and never alters combat stats.</p>
               <div class="form-stack" style="margin-top:10px">
-                <label>Bot ID<input id="cosmeticGrantBot" placeholder="Bot UUID"></label>
+                <label>Customer email<input id="cosmeticGrantEmail" type="email" autocomplete="off" placeholder="purchaser@example.com"></label>
                 <label>Cosmetic<select id="cosmeticGrantItem"><option value="">Loading catalog...</option></select></label>
                 <label>Source<input id="cosmeticGrantSource" value="manual" maxlength="32"></label>
-                <label>External reference<input id="cosmeticGrantReference" placeholder="Optional event/order ID" maxlength="160"></label>
+                <label>External reference<input id="cosmeticGrantReference" placeholder="Order, line item, or support ticket ID" maxlength="160" required></label>
                 <div class="ops-command-row">
-                  <button class="btn-success" onclick="changeCosmeticEntitlement('grant')">Grant</button>
-                  <button class="btn-danger" onclick="changeCosmeticEntitlement('revoke')">Revoke</button>
+                  <button class="btn-success" id="cosmeticGrantButton" onclick="grantCosmeticLicense()">Grant account license</button>
+                </div>
+                <label>License ID<input id="cosmeticRevokeLicense" placeholder="Exact license UUID"></label>
+                <div class="ops-command-row">
+                  <button class="btn-danger" id="cosmeticRevokeButton" onclick="revokeCosmeticLicense()">Revoke exact license</button>
                 </div>
               </div>
               <div class="ctrl-result" id="cosmeticGrantResult"></div>
@@ -4140,43 +4143,79 @@ async function loadCosmeticCatalog() {
   }
 }
 
-async function changeCosmeticEntitlement(action) {
+async function grantCosmeticLicense() {
   const el = document.getElementById('cosmeticGrantResult');
+  const button = document.getElementById('cosmeticGrantButton');
+  if (button.disabled) return;
   const payload = {
-    bot_id: document.getElementById('cosmeticGrantBot').value.trim(),
+    email: document.getElementById('cosmeticGrantEmail').value.trim(),
     cosmetic_id: document.getElementById('cosmeticGrantItem').value,
     source: document.getElementById('cosmeticGrantSource').value.trim() || 'manual',
     external_reference: document.getElementById('cosmeticGrantReference').value.trim(),
   };
-  if (!payload.bot_id || !payload.cosmetic_id) {
-    el.textContent = 'Bot ID and cosmetic are required';
+  if (!payload.email || !payload.cosmetic_id || !payload.external_reference) {
+    el.textContent = 'Customer email, cosmetic, and a unique external reference are required';
     el.style.color = 'var(--red)';
     return;
   }
+  button.disabled = true;
+  button.textContent = 'Granting...';
   try {
-    const method = action === 'revoke' ? 'DELETE' : 'POST';
-    const data = await api('/cosmetics/grants', {method, body:JSON.stringify(payload)});
-    const changed = action === 'revoke' ? data.revoked : data.granted;
-    el.textContent = action === 'revoke'
-      ? (changed ? 'Entitlement revoked and equipped item removed' : 'No matching entitlement or loadout')
-      : (changed ? 'Entitlement granted' : 'Grant already applied (idempotent)');
-    el.style.color = changed ? 'var(--green)' : 'var(--text2)';
-    toast('Cosmetic entitlement ' + (changed ? action + 'ed' : 'unchanged'), changed ? 'success' : 'info');
-    logAudit('COSMETIC_' + action.toUpperCase(), payload.bot_id + ' · ' + payload.cosmetic_id);
+    const data = await api('/cosmetics/grants', {method:'POST', body:JSON.stringify(payload)});
+    const licenseID = data.license_id || (data.license && data.license.id) || '';
+    document.getElementById('cosmeticRevokeLicense').value = licenseID;
+    el.textContent = data.granted === false
+      ? 'Grant already applied (idempotent)' + (licenseID ? ' - license ' + licenseID : '')
+      : 'Account license granted' + (licenseID ? ' - license ' + licenseID : '');
+    el.style.color = data.granted === false ? 'var(--text2)' : 'var(--green)';
+    toast(data.granted === false ? 'Cosmetic grant unchanged' : 'Account license granted', data.granted === false ? 'info' : 'success');
+    logAudit('COSMETIC_LICENSE_GRANT', payload.cosmetic_id + ' to account email');
   } catch(e) {
-    el.textContent = 'Cosmetic ' + action + ' failed: ' + (e.message || 'unknown error');
+    el.textContent = 'Cosmetic grant failed: ' + (e.message || 'unknown error');
     el.style.color = 'var(--red)';
-    toast('Cosmetic ' + action + ' failed', 'error');
+    toast('Cosmetic grant failed', 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Grant account license';
+  }
+}
+
+async function revokeCosmeticLicense() {
+  const el = document.getElementById('cosmeticGrantResult');
+  const button = document.getElementById('cosmeticRevokeButton');
+  if (button.disabled) return;
+  const licenseID = document.getElementById('cosmeticRevokeLicense').value.trim();
+  if (!licenseID) {
+    el.textContent = 'Exact license ID is required';
+    el.style.color = 'var(--red)';
+    return;
+  }
+  if (!confirm('Revoke cosmetic license ' + licenseID + '? This removes its bot assignment and equipped use.')) return;
+  button.disabled = true;
+  button.textContent = 'Revoking...';
+  try {
+    const data = await api('/cosmetics/grants', {method:'DELETE', body:JSON.stringify({license_id:licenseID})});
+    el.textContent = data.revoked ? 'License revoked; any assignment and equipped use were removed' : 'License was already inactive or not found';
+    el.style.color = data.revoked ? 'var(--green)' : 'var(--text2)';
+    toast(data.revoked ? 'Cosmetic license revoked' : 'Cosmetic license unchanged', data.revoked ? 'success' : 'info');
+    logAudit('COSMETIC_LICENSE_REVOKE', licenseID);
+  } catch(e) {
+    el.textContent = 'Cosmetic revoke failed: ' + (e.message || 'unknown error');
+    el.style.color = 'var(--red)';
+    toast('Cosmetic revoke failed', 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Revoke exact license';
   }
 }
 
 async function cleanupStale() {
   const days = parseInt(document.getElementById('staleDays').value) || 30;
-  if (!confirm('Delete API keys older than ' + days + ' days with no activity?')) return;
+  if (!confirm('Deactivate API keys older than ' + days + ' days with no activity? Bot, stats, and cosmetic purchase records will be preserved.')) return;
   const el = document.getElementById('dataResult');
   try {
-    await api('/db/cleanup-stale', {method:'POST', body:JSON.stringify({days})});
-    el.textContent = 'Cleanup done';
+    const data = await api('/db/cleanup-stale', {method:'POST', body:JSON.stringify({days})});
+    el.textContent = data.message || 'Cleanup done';
     el.style.color = 'var(--green)';
     toast('Stale keys cleaned up', 'success');
   } catch(e) {

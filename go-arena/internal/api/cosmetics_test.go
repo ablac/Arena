@@ -7,11 +7,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"arena-server/internal/db"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type fakeCosmeticsStore struct {
@@ -24,7 +27,13 @@ type fakeCosmeticsStore struct {
 	grantErr     error
 	revoked      bool
 	revokeErr    error
+	inventory    *db.CustomerCosmeticsInventory
+	linkBot      *db.AccountBot
+	assignment   *db.CosmeticAssignmentChange
+	license      *db.CosmeticLicense
 	lastBotID    string
+	lastAccount  string
+	lastLicense  string
 	lastSlot     string
 	lastCosmetic string
 }
@@ -42,13 +51,38 @@ func (f *fakeCosmeticsStore) Equip(_ context.Context, botID, slot, cosmeticID st
 	f.lastBotID, f.lastSlot, f.lastCosmetic = botID, slot, cosmeticID
 	return f.equipItem, f.equipErr
 }
-func (f *fakeCosmeticsStore) Grant(_ context.Context, botID, cosmeticID, _, _ string) (bool, error) {
-	f.lastBotID, f.lastCosmetic = botID, cosmeticID
-	return f.grantCreated, f.grantErr
+func (f *fakeCosmeticsStore) AccountInventory(context.Context, string) (*db.CustomerCosmeticsInventory, error) {
+	if f.inventory == nil {
+		f.inventory = &db.CustomerCosmeticsInventory{}
+	}
+	return f.inventory, nil
 }
-func (f *fakeCosmeticsStore) Revoke(_ context.Context, botID, cosmeticID string) (bool, error) {
-	f.lastBotID, f.lastCosmetic = botID, cosmeticID
+func (f *fakeCosmeticsStore) LinkBot(_ context.Context, accountID, botID string) (*db.AccountBot, error) {
+	f.lastAccount, f.lastBotID = accountID, botID
+	return f.linkBot, f.grantErr
+}
+func (f *fakeCosmeticsStore) UnlinkBot(_ context.Context, accountID, botID string) (bool, error) {
+	f.lastAccount, f.lastBotID = accountID, botID
 	return f.revoked, f.revokeErr
+}
+func (f *fakeCosmeticsStore) AssignLicense(_ context.Context, accountID, licenseID string, botID *string) (*db.CosmeticAssignmentChange, error) {
+	f.lastAccount, f.lastLicense = accountID, licenseID
+	if botID != nil {
+		f.lastBotID = *botID
+	}
+	return f.assignment, f.grantErr
+}
+func (f *fakeCosmeticsStore) EquipLicense(_ context.Context, accountID, botID, licenseID string) (*db.CosmeticLicense, error) {
+	f.lastAccount, f.lastBotID, f.lastLicense = accountID, botID, licenseID
+	return f.license, f.equipErr
+}
+func (f *fakeCosmeticsStore) GrantLicense(_ context.Context, email, cosmeticID, _, _ string) (*db.CosmeticLicense, bool, error) {
+	f.lastAccount, f.lastCosmetic = email, cosmeticID
+	return f.license, f.grantCreated, f.grantErr
+}
+func (f *fakeCosmeticsStore) RevokeLicense(_ context.Context, licenseID string) (*db.CosmeticAssignmentChange, bool, error) {
+	f.lastLicense = licenseID
+	return f.assignment, f.revoked, f.revokeErr
 }
 
 func requestWithBot(method, target string, body []byte, bot *db.Bot) *http.Request {
@@ -57,6 +91,15 @@ func requestWithBot(method, target string, body []byte, bot *db.Bot) *http.Reque
 		req = req.WithContext(security.WithBotContext(req.Context(), bot))
 	}
 	return req
+}
+
+func requestWithCustomerParam(method, target string, body []byte, param, value string) *http.Request {
+	req := httptest.NewRequest(method, target, bytes.NewReader(body))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add(param, value)
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
+	ctx = withCustomerSession(ctx, &CustomerSession{AccountID: "account-1"})
+	return req.WithContext(ctx)
 }
 
 func TestCosmeticsCatalogDisclosesCheckoutState(t *testing.T) {
@@ -138,14 +181,14 @@ func TestGrantCosmeticIsIdempotentAndValidated(t *testing.T) {
 
 	bad := httptest.NewRecorder()
 	handler.Grant(bad, httptest.NewRequest(http.MethodPost, "/api/v1/admin/cosmetics/grants",
-		bytes.NewBufferString(`{"bot_id":"bot-1","cosmetic_id":"skin-neon-grid","source":"INVALID SOURCE"}`)))
+		bytes.NewBufferString(`{"email":"owner@example.com","cosmetic_id":"skin-neon-grid","source":"INVALID SOURCE"}`)))
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("invalid source status = %d, want 400", bad.Code)
 	}
 
 	good := httptest.NewRecorder()
 	handler.Grant(good, httptest.NewRequest(http.MethodPost, "/api/v1/admin/cosmetics/grants",
-		bytes.NewBufferString(`{"bot_id":"bot-1","cosmetic_id":"skin-neon-grid","source":"stripe","external_reference":"evt_123"}`)))
+		bytes.NewBufferString(`{"email":"owner@example.com","cosmetic_id":"skin-neon-grid","source":"stripe","external_reference":"evt_123"}`)))
 	if good.Code != http.StatusOK {
 		t.Fatalf("idempotent grant status = %d, body=%s", good.Code, good.Body.String())
 	}
@@ -159,5 +202,78 @@ func TestEquipCosmeticMapsStorageFailure(t *testing.T) {
 		[]byte(`{"slot":"bot_skin","cosmetic_id":"skin-standard"}`), &db.Bot{ID: "bot-1"}))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}
+
+func TestCustomerCosmeticMutationsRejectInactiveBotKey(t *testing.T) {
+	t.Run("assignment", func(t *testing.T) {
+		store := &fakeCosmeticsStore{grantErr: db.ErrCustomerBotKeyInactive}
+		handler := newCosmeticsHandlerWithStore(store, nil)
+		rec := httptest.NewRecorder()
+		handler.AssignAccountLicense(rec, requestWithCustomerParam(
+			http.MethodPut,
+			"/api/v1/account/cosmetic-licenses/license-1/assignment",
+			[]byte(`{"bot_id":"bot-inactive"}`),
+			"license_id", "license-1",
+		))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("equip", func(t *testing.T) {
+		store := &fakeCosmeticsStore{equipErr: db.ErrCustomerBotKeyInactive}
+		handler := newCosmeticsHandlerWithStore(store, nil)
+		rec := httptest.NewRecorder()
+		handler.EquipAccountLicense(rec, requestWithCustomerParam(
+			http.MethodPut,
+			"/api/v1/account/bots/bot-inactive/cosmetics",
+			[]byte(`{"license_id":"license-1"}`),
+			"bot_id", "bot-inactive",
+		))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestCustomerCosmeticMutationsHideForeignLicense(t *testing.T) {
+	tests := []struct {
+		name   string
+		invoke func(*CosmeticsHandler, *httptest.ResponseRecorder)
+	}{
+		{
+			name: "assignment",
+			invoke: func(handler *CosmeticsHandler, rec *httptest.ResponseRecorder) {
+				handler.AssignAccountLicense(rec, requestWithCustomerParam(
+					http.MethodPut,
+					"/api/v1/account/cosmetic-licenses/foreign-license/assignment",
+					[]byte(`{"bot_id":"bot-1"}`),
+					"license_id", "foreign-license",
+				))
+			},
+		},
+		{
+			name: "equip",
+			invoke: func(handler *CosmeticsHandler, rec *httptest.ResponseRecorder) {
+				handler.EquipAccountLicense(rec, requestWithCustomerParam(
+					http.MethodPut,
+					"/api/v1/account/bots/bot-1/cosmetics",
+					[]byte(`{"license_id":"foreign-license"}`),
+					"bot_id", "bot-1",
+				))
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeCosmeticsStore{grantErr: db.ErrCosmeticLicenseNotOwned, equipErr: db.ErrCosmeticLicenseNotOwned}
+			handler := newCosmeticsHandlerWithStore(store, nil)
+			rec := httptest.NewRecorder()
+			tc.invoke(handler, rec)
+			if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "not owned") {
+				t.Fatalf("foreign license response status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }

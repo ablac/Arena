@@ -11,6 +11,8 @@ import (
 	"arena-server/internal/db"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type cosmeticsStore interface {
@@ -18,8 +20,13 @@ type cosmeticsStore interface {
 	ListForBot(context.Context, string) ([]db.BotCosmeticItem, error)
 	Equipped(context.Context, string) (map[string]string, error)
 	Equip(context.Context, string, string, string) (*db.CosmeticItem, error)
-	Grant(context.Context, string, string, string, string) (bool, error)
-	Revoke(context.Context, string, string) (bool, error)
+	AccountInventory(context.Context, string) (*db.CustomerCosmeticsInventory, error)
+	LinkBot(context.Context, string, string) (*db.AccountBot, error)
+	UnlinkBot(context.Context, string, string) (bool, error)
+	AssignLicense(context.Context, string, string, *string) (*db.CosmeticAssignmentChange, error)
+	EquipLicense(context.Context, string, string, string) (*db.CosmeticLicense, error)
+	GrantLicense(context.Context, string, string, string, string) (*db.CosmeticLicense, bool, error)
+	RevokeLicense(context.Context, string) (*db.CosmeticAssignmentChange, bool, error)
 }
 
 type databaseCosmeticsStore struct{}
@@ -39,11 +46,26 @@ func (databaseCosmeticsStore) Equipped(ctx context.Context, botID string) (map[s
 func (databaseCosmeticsStore) Equip(ctx context.Context, botID, slot, cosmeticID string) (*db.CosmeticItem, error) {
 	return db.EquipCosmetic(ctx, botID, slot, cosmeticID)
 }
-func (databaseCosmeticsStore) Grant(ctx context.Context, botID, cosmeticID, source, externalReference string) (bool, error) {
-	return db.GrantCosmeticEntitlement(ctx, botID, cosmeticID, source, externalReference)
+func (databaseCosmeticsStore) AccountInventory(ctx context.Context, accountID string) (*db.CustomerCosmeticsInventory, error) {
+	return db.GetCustomerCosmeticsInventory(ctx, accountID)
 }
-func (databaseCosmeticsStore) Revoke(ctx context.Context, botID, cosmeticID string) (bool, error) {
-	return db.RevokeCosmeticEntitlement(ctx, botID, cosmeticID)
+func (databaseCosmeticsStore) LinkBot(ctx context.Context, accountID, botID string) (*db.AccountBot, error) {
+	return db.LinkBotToCustomerAccount(ctx, accountID, botID)
+}
+func (databaseCosmeticsStore) UnlinkBot(ctx context.Context, accountID, botID string) (bool, error) {
+	return db.UnlinkBotFromCustomerAccount(ctx, accountID, botID)
+}
+func (databaseCosmeticsStore) AssignLicense(ctx context.Context, accountID, licenseID string, botID *string) (*db.CosmeticAssignmentChange, error) {
+	return db.AssignCosmeticLicense(ctx, accountID, licenseID, botID)
+}
+func (databaseCosmeticsStore) EquipLicense(ctx context.Context, accountID, botID, licenseID string) (*db.CosmeticLicense, error) {
+	return db.EquipCustomerCosmeticLicense(ctx, accountID, botID, licenseID)
+}
+func (databaseCosmeticsStore) GrantLicense(ctx context.Context, email, cosmeticID, source, externalReference string) (*db.CosmeticLicense, bool, error) {
+	return db.GrantCosmeticLicense(ctx, email, cosmeticID, source, externalReference)
+}
+func (databaseCosmeticsStore) RevokeLicense(ctx context.Context, licenseID string) (*db.CosmeticAssignmentChange, bool, error) {
+	return db.RevokeCosmeticLicense(ctx, licenseID)
 }
 
 // CosmeticsHandler owns catalog, entitlement, and equip HTTP behavior. The
@@ -52,14 +74,15 @@ type CosmeticsHandler struct {
 	store           cosmeticsStore
 	engine          *game.GameEngine
 	checkoutEnabled bool
+	verifyAPIKey    func(context.Context, string) (*db.Bot, error)
 }
 
 func NewCosmeticsHandler(engine *game.GameEngine) *CosmeticsHandler {
-	return &CosmeticsHandler{store: databaseCosmeticsStore{}, engine: engine}
+	return &CosmeticsHandler{store: databaseCosmeticsStore{}, engine: engine, verifyAPIKey: security.VerifyAPIKey}
 }
 
 func newCosmeticsHandlerWithStore(store cosmeticsStore, engine *game.GameEngine) *CosmeticsHandler {
-	return &CosmeticsHandler{store: store, engine: engine}
+	return &CosmeticsHandler{store: store, engine: engine, verifyAPIKey: security.VerifyAPIKey}
 }
 
 func (h *CosmeticsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
@@ -171,7 +194,7 @@ func (h *CosmeticsHandler) Equip(w http.ResponseWriter, r *http.Request) {
 var entitlementSourcePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
 type cosmeticGrantRequest struct {
-	BotID             string `json:"bot_id"`
+	Email             string `json:"email"`
 	CosmeticID        string `json:"cosmetic_id"`
 	Source            string `json:"source"`
 	ExternalReference string `json:"external_reference"`
@@ -184,14 +207,17 @@ func decodeCosmeticGrant(r *http.Request) (cosmeticGrantRequest, error) {
 	if err := decoder.Decode(&req); err != nil {
 		return req, err
 	}
-	req.BotID = strings.TrimSpace(req.BotID)
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	req.CosmeticID = strings.TrimSpace(req.CosmeticID)
 	req.Source = strings.TrimSpace(strings.ToLower(req.Source))
 	req.ExternalReference = strings.TrimSpace(req.ExternalReference)
 	if req.Source == "" {
 		req.Source = "manual"
 	}
-	if req.BotID == "" || len(req.BotID) > 80 || req.CosmeticID == "" || len(req.CosmeticID) > 80 ||
+	if _, err := db.NormalizeCustomerEmail(req.Email); err != nil {
+		return req, errors.New("invalid cosmetic grant")
+	}
+	if req.CosmeticID == "" || len(req.CosmeticID) > 80 ||
 		!entitlementSourcePattern.MatchString(req.Source) || len(req.ExternalReference) > 160 {
 		return req, errors.New("invalid cosmetic grant")
 	}
@@ -204,13 +230,17 @@ func (h *CosmeticsHandler) Grant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid cosmetic grant")
 		return
 	}
-	created, err := h.store.Grant(r.Context(), req.BotID, req.CosmeticID, req.Source, req.ExternalReference)
+	license, created, err := h.store.GrantLicense(r.Context(), req.Email, req.CosmeticID, req.Source, req.ExternalReference)
 	if err != nil {
 		switch {
-		case errors.Is(err, db.ErrCosmeticBotNotFound), errors.Is(err, db.ErrCosmeticNotFound):
+		case errors.Is(err, db.ErrCosmeticNotFound):
 			writeError(w, http.StatusNotFound, err.Error())
-		case errors.Is(err, db.ErrCosmeticGrantConflict):
+		case errors.Is(err, db.ErrCosmeticLicenseGrantConflict):
 			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, db.ErrCustomerEmailInvalid):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, db.ErrCosmeticLicenseReferenceRequired):
+			writeError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, db.ErrNoDatabase):
 			writeError(w, http.StatusServiceUnavailable, "database not available")
 		default:
@@ -223,20 +253,31 @@ func (h *CosmeticsHandler) Grant(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, map[string]interface{}{
-		"granted":     created,
-		"idempotent":  !created,
-		"bot_id":      req.BotID,
-		"cosmetic_id": req.CosmeticID,
+		"granted":    created,
+		"idempotent": !created,
+		"license":    license,
 	})
 }
 
+type cosmeticRevokeRequest struct {
+	LicenseID string `json:"license_id"`
+}
+
 func (h *CosmeticsHandler) Revoke(w http.ResponseWriter, r *http.Request) {
-	req, err := decodeCosmeticGrant(r)
-	if err != nil {
+	licenseID := strings.TrimSpace(chi.URLParam(r, "license_id"))
+	if licenseID == "" {
+		var req cosmeticRevokeRequest
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err == nil {
+			licenseID = strings.TrimSpace(req.LicenseID)
+		}
+	}
+	if licenseID == "" || len(licenseID) > 100 {
 		writeError(w, http.StatusBadRequest, "invalid cosmetic revocation")
 		return
 	}
-	revoked, err := h.store.Revoke(r.Context(), req.BotID, req.CosmeticID)
+	change, revoked, err := h.store.RevokeLicense(r.Context(), licenseID)
 	if err != nil {
 		if errors.Is(err, db.ErrNoDatabase) {
 			writeError(w, http.StatusServiceUnavailable, "database not available")
@@ -245,14 +286,249 @@ func (h *CosmeticsHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to revoke cosmetic")
 		return
 	}
-	if h.engine != nil {
-		if equipped, loadErr := h.store.Equipped(r.Context(), req.BotID); loadErr == nil {
-			h.engine.UpdateBotCosmetics(req.BotID, equipped)
-		}
+	if change != nil {
+		h.refreshBotVisuals(r.Context(), change.PreviousBotID)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"revoked":     revoked,
-		"bot_id":      req.BotID,
-		"cosmetic_id": req.CosmeticID,
+		"revoked":    revoked,
+		"license_id": licenseID,
+		"license":    change,
+	})
+}
+
+func (h *CosmeticsHandler) refreshBotVisuals(ctx context.Context, botID *string) bool {
+	if h.engine == nil || botID == nil || strings.TrimSpace(*botID) == "" {
+		return false
+	}
+	equipped, err := h.store.Equipped(ctx, *botID)
+	if err != nil {
+		return false
+	}
+	return h.engine.UpdateBotCosmetics(*botID, equipped)
+}
+
+func customerSession(r *http.Request) (*CustomerSession, bool) {
+	session := CustomerSessionFromContext(r.Context())
+	return session, session != nil && session.AccountID != ""
+}
+
+func (h *CosmeticsHandler) AccountInventory(w http.ResponseWriter, r *http.Request) {
+	session, ok := customerSession(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "customer authentication required")
+		return
+	}
+	inventory, err := h.store.AccountInventory(r.Context(), session.AccountID)
+	if err != nil {
+		if errors.Is(err, db.ErrNoDatabase) {
+			writeError(w, http.StatusServiceUnavailable, "database not available")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load customer cosmetics")
+		return
+	}
+	writeJSON(w, http.StatusOK, inventory)
+}
+
+type linkAccountBotRequest struct {
+	APIKey string `json:"api_key"`
+}
+
+func (h *CosmeticsHandler) LinkAccountBot(w http.ResponseWriter, r *http.Request) {
+	session, ok := customerSession(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "customer authentication required")
+		return
+	}
+	var req linkAccountBotRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil || strings.TrimSpace(req.APIKey) == "" || len(req.APIKey) > 256 {
+		writeError(w, http.StatusBadRequest, "api_key is required")
+		return
+	}
+	bot, err := h.verifyAPIKey(r.Context(), strings.TrimSpace(req.APIKey))
+	if err != nil || bot == nil {
+		writeError(w, http.StatusUnauthorized, "invalid API key")
+		return
+	}
+	linkedBot, err := h.store.LinkBot(r.Context(), session.AccountID, bot.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, db.ErrCustomerBotAlreadyLinked):
+			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, db.ErrCustomerBotKeyInactive):
+			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, db.ErrCustomerAccountUnverified):
+			writeError(w, http.StatusForbidden, err.Error())
+		case errors.Is(err, db.ErrNoDatabase):
+			writeError(w, http.StatusServiceUnavailable, "database not available")
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to link bot")
+		}
+		return
+	}
+	inventory, err := h.store.AccountInventory(r.Context(), session.AccountID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "bot linked but inventory refresh failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"linked_bot": linkedBot,
+		"inventory":  inventory,
+	})
+}
+
+func (h *CosmeticsHandler) UnlinkAccountBot(w http.ResponseWriter, r *http.Request) {
+	session, ok := customerSession(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "customer authentication required")
+		return
+	}
+	botID := strings.TrimSpace(chi.URLParam(r, "bot_id"))
+	if botID == "" || len(botID) > 80 {
+		writeError(w, http.StatusBadRequest, "invalid bot_id")
+		return
+	}
+	unlinked, err := h.store.UnlinkBot(r.Context(), session.AccountID, botID)
+	if err != nil {
+		switch {
+		case errors.Is(err, db.ErrCustomerBotNotLinked):
+			writeError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, db.ErrNoDatabase):
+			writeError(w, http.StatusServiceUnavailable, "database not available")
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to unlink bot")
+		}
+		return
+	}
+	h.refreshBotVisuals(r.Context(), &botID)
+	inventory, err := h.store.AccountInventory(r.Context(), session.AccountID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "bot unlinked but inventory refresh failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"unlinked":  unlinked,
+		"bot_id":    botID,
+		"inventory": inventory,
+	})
+}
+
+type assignLicenseRequest struct {
+	BotID *string `json:"bot_id"`
+}
+
+func (h *CosmeticsHandler) AssignAccountLicense(w http.ResponseWriter, r *http.Request) {
+	session, ok := customerSession(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "customer authentication required")
+		return
+	}
+	licenseID := strings.TrimSpace(chi.URLParam(r, "license_id"))
+	if licenseID == "" || len(licenseID) > 100 {
+		writeError(w, http.StatusBadRequest, "invalid license_id")
+		return
+	}
+	var botID *string
+	if r.Method != http.MethodDelete {
+		var req assignLicenseRequest
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil || req.BotID == nil || strings.TrimSpace(*req.BotID) == "" {
+			writeError(w, http.StatusBadRequest, "bot_id is required")
+			return
+		}
+		value := strings.TrimSpace(*req.BotID)
+		if len(value) > 80 {
+			writeError(w, http.StatusBadRequest, "invalid bot_id")
+			return
+		}
+		botID = &value
+	}
+	change, err := h.store.AssignLicense(r.Context(), session.AccountID, licenseID, botID)
+	if err != nil {
+		switch {
+		case errors.Is(err, db.ErrCosmeticLicenseNotFound), errors.Is(err, db.ErrCosmeticLicenseNotOwned):
+			writeError(w, http.StatusNotFound, db.ErrCosmeticLicenseNotFound.Error())
+		case errors.Is(err, db.ErrCustomerBotNotLinked):
+			writeError(w, http.StatusForbidden, err.Error())
+		case errors.Is(err, db.ErrCosmeticInactive):
+			writeError(w, http.StatusConflict, "cosmetic license is not active")
+		case errors.Is(err, db.ErrCustomerBotKeyInactive):
+			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, db.ErrNoDatabase):
+			writeError(w, http.StatusServiceUnavailable, "database not available")
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to update cosmetic assignment")
+		}
+		return
+	}
+	h.refreshBotVisuals(r.Context(), change.PreviousBotID)
+	inventory, err := h.store.AccountInventory(r.Context(), session.AccountID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "assignment updated but inventory refresh failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"assignment": change,
+		"inventory":  inventory,
+	})
+}
+
+type equipLicenseRequest struct {
+	LicenseID string `json:"license_id"`
+}
+
+func (h *CosmeticsHandler) EquipAccountLicense(w http.ResponseWriter, r *http.Request) {
+	session, ok := customerSession(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "customer authentication required")
+		return
+	}
+	botID := strings.TrimSpace(chi.URLParam(r, "bot_id"))
+	var req equipLicenseRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil || botID == "" || len(botID) > 80 ||
+		strings.TrimSpace(req.LicenseID) == "" || len(req.LicenseID) > 100 {
+		writeError(w, http.StatusBadRequest, "bot_id and license_id are required")
+		return
+	}
+	req.LicenseID = strings.TrimSpace(req.LicenseID)
+	license, err := h.store.EquipLicense(r.Context(), session.AccountID, botID, req.LicenseID)
+	if err != nil {
+		switch {
+		case errors.Is(err, db.ErrCosmeticLicenseNotFound), errors.Is(err, db.ErrCosmeticLicenseNotOwned):
+			writeError(w, http.StatusNotFound, db.ErrCosmeticLicenseNotFound.Error())
+		case errors.Is(err, db.ErrCustomerBotNotLinked):
+			writeError(w, http.StatusForbidden, err.Error())
+		case errors.Is(err, db.ErrCosmeticInactive):
+			writeError(w, http.StatusConflict, "cosmetic license is not active")
+		case errors.Is(err, db.ErrCustomerBotKeyInactive):
+			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, db.ErrNoDatabase):
+			writeError(w, http.StatusServiceUnavailable, "database not available")
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to equip cosmetic license")
+		}
+		return
+	}
+	equipped, _ := h.store.Equipped(r.Context(), botID)
+	liveRefreshed := false
+	if h.engine != nil {
+		liveRefreshed = h.engine.UpdateBotCosmetics(botID, equipped)
+	}
+	inventory, err := h.store.AccountInventory(r.Context(), session.AccountID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "cosmetic equipped but inventory refresh failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"license":         license,
+		"equipped_assets": equipped,
+		"live_refreshed":  liveRefreshed,
+		"inventory":       inventory,
+		"gameplay":        "unchanged",
 	})
 }
