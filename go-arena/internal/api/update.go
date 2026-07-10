@@ -231,8 +231,8 @@ func (h *AdminHandler) triggerUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Treat checking the active notice, publishing this request's notice, and
-	// submitting to the sidecar as one transaction. Otherwise two concurrent
+	// Serialize checking the active notice, best-effort notice publication, and
+	// submission to the sidecar. Otherwise two concurrent
 	// requests can each publish and the losing 409 can clear the winner's UI.
 	h.updateMu.Lock()
 	defer h.updateMu.Unlock()
@@ -256,10 +256,10 @@ func (h *AdminHandler) triggerUpdate(w http.ResponseWriter, r *http.Request) {
 			"Arena update is being prepared. A brief restart of up to 1 minute is expected.",
 			"admin-update",
 		); err != nil {
-			writeError(w, http.StatusServiceUnavailable, "could not publish the required update notice")
-			return
+			slog.Warn("failed to publish update notice; continuing with update", "error", err, "commit", reqBody.CommitSha)
+		} else {
+			maintenancePublished = true
 		}
-		maintenancePublished = true
 	}
 	clearMaintenance := func(source string) {
 		if !maintenancePublished || h == nil || h.ServiceStatus == nil {
@@ -397,8 +397,8 @@ func classifyUpdaterTarget(status map[string]interface{}, targetCommit string) u
 }
 
 // triggerUpdate retains the package-level entrypoint used by focused legacy
-// unit tests. Production routes call AdminHandler.triggerUpdate so the required
-// durable maintenance notice participates in the operation.
+// unit tests. Production routes call AdminHandler.triggerUpdate so a durable
+// maintenance notice participates in the operation when persistence is healthy.
 func triggerUpdate(w http.ResponseWriter, r *http.Request) {
 	(&AdminHandler{}).triggerUpdate(w, r)
 }

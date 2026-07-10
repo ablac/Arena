@@ -24,6 +24,15 @@ type fakeServiceNoticeStore struct {
 	events []db.ServiceNoticeEvent
 }
 
+type failingAppendServiceNoticeStore struct {
+	*fakeServiceNoticeStore
+	err error
+}
+
+func (s *failingAppendServiceNoticeStore) Append(_ context.Context, _ db.ServiceNoticeEvent) (db.ServiceNoticeEvent, error) {
+	return db.ServiceNoticeEvent{}, s.err
+}
+
 func (s *fakeServiceNoticeStore) Append(_ context.Context, evt db.ServiceNoticeEvent) (db.ServiceNoticeEvent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -302,6 +311,46 @@ func TestAdminUpdatePublishesMaintenanceBeforeCallingSidecar(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("sidecar did not receive update request")
+	}
+}
+
+func TestAdminUpdateContinuesWhenMaintenanceNoticeCannotBePublished(t *testing.T) {
+	engine := game.NewGameEngine()
+	store := &failingAppendServiceNoticeStore{
+		fakeServiceNoticeStore: &fakeServiceNoticeStore{},
+		err:                    errors.New("service notice store unavailable"),
+	}
+	service := newServiceStatusServiceWithStore(engine, NewEventBus(), store)
+	if err := service.Load(context.Background()); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	sidecarCalled := false
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("sidecar method = %s, want POST", r.Method)
+		}
+		sidecarCalled = true
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer sidecar.Close()
+	withUpdaterConfig(t, sidecar.URL, "secret")
+
+	target := strings.Repeat("9", 40)
+	h := &AdminHandler{Engine: engine, ServiceStatus: service}
+	req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(`{"commitSha":"`+target+`"}`))
+	rec := httptest.NewRecorder()
+	h.triggerUpdate(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s, want update accepted despite notice failure", rec.Code, rec.Body.String())
+	}
+	if !sidecarCalled {
+		t.Fatal("sidecar did not receive update request after notice failure")
+	}
+	if maintenance := engine.GetServiceStatus().Maintenance; maintenance != nil {
+		t.Fatalf("failed notice unexpectedly became visible: %#v", maintenance)
 	}
 }
 
