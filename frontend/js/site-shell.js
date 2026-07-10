@@ -79,6 +79,55 @@ function setupTelemetrySheet() {
   });
 }
 
+// Desktop/tablet minimize for the Live Feed panel — the HUD's Hide pattern
+// applied to the telemetry sidebar. Inert at phone widths, where the panel is
+// the bottom sheet driven by setupTelemetrySheet instead.
+function setupTelemetryCollapse() {
+  const shell = document.getElementById('arena-shell');
+  const button = document.querySelector('[data-telemetry-collapse]');
+  if (!shell || !button) return;
+
+  const KEY = 'arenaTelemetryCollapsed';
+  const setCollapsed = (collapsed) => {
+    shell.classList.toggle('telemetry-collapsed', collapsed);
+    button.setAttribute('aria-expanded', String(!collapsed));
+    button.textContent = collapsed ? 'Show feed' : 'Hide';
+    try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch { /* private mode */ }
+    requestArenaResize();
+  };
+
+  button.addEventListener('click', () => {
+    setCollapsed(!shell.classList.contains('telemetry-collapsed'));
+  });
+
+  let saved = null;
+  try { saved = localStorage.getItem(KEY); } catch { /* private mode */ }
+  if (saved === '1') setCollapsed(true);
+}
+
+// Mirrors the header's spectator pill into the mobile menu sheet so the nav
+// carries a live arena signal.
+function setupDockLiveChip() {
+  const chip = document.getElementById('dock-live-chip');
+  const label = chip?.querySelector('[data-dock-chip-label]');
+  const pill = document.getElementById('site-live-pill');
+  if (!chip || !label || !pill) return;
+
+  const sync = () => {
+    chip.classList.toggle('connected', pill.classList.contains('connected'));
+    const text = pill.textContent.replace(/^\s*Spectator\s*/i, '').trim();
+    label.textContent = text ? text.charAt(0).toUpperCase() + text.slice(1) : 'Arena';
+  };
+  sync();
+  new MutationObserver(sync).observe(pill, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ['class'],
+  });
+}
+
 function setupCommandDock() {
   const dock = document.getElementById('site-command-dock');
   const toggle = document.querySelector('[data-site-menu-toggle]');
@@ -235,8 +284,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.body.classList.add('site-shell-ready');
   setupCinemaMode();
   setupTelemetrySheet();
+  setupTelemetryCollapse();
   setupCommandDock();
   setupAccessibleOverlays();
+  setupDockLiveChip();
   initServiceBanner();
   requestArenaResize();
 });

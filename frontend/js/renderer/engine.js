@@ -5,15 +5,15 @@
  * @module renderer/engine
  */
 
-import { CameraController } from './camera.js?v=20260706c';
+import { CameraController } from './camera.js?v=20260710d';
 import { BotRenderer } from './bots.js?v=20260710a';
-import { EnvironmentRenderer } from './environment.js?v=20260707c';
+import { EnvironmentRenderer } from './environment.js?v=20260710d';
 import { ObstacleRenderer } from './obstacles.js?v=20260521h';
 import { PickupRenderer } from './pickups.js?v=20260521m';
-import { EffectRenderer } from './effects.js?v=20260707c';
+import { EffectRenderer } from './effects.js?v=20260710d';
 import { TrailRenderer } from './trails.js?v=20260707c';
 import { ProjectileRenderer } from './projectiles.js?v=20260521l';
-import { GameplayRenderer } from './gameplay.js?v=20260707c';
+import { GameplayRenderer } from './gameplay.js?v=20260710d';
 import { isEnabled } from '../settings.js';
 
 // Bot positions are smoothed via exponential lerp each frame,
@@ -88,6 +88,9 @@ export class ArenaEngine {
     this.projectileRenderer = new ProjectileRenderer(scene);
     this.gameplayRenderer = new GameplayRenderer(scene);
     this.gameplayRenderer.onStaffImpactCreated = (impact) => {
+      // Same hidden-tab guard as the other effect spawns: projectile cleanup
+      // is Animatable-driven, which freezes without rAF frames.
+      if (document.hidden) return;
       const owner = (this.state?.bots || []).find((bot) => (bot.bot_id || bot.id) === impact.ownerId);
       if (!owner || !impact?.position) return;
       this.projectileRenderer.spawn(
@@ -132,7 +135,9 @@ export class ArenaEngine {
       // unless the exact scene that owned this swing is still the live one.
       const swingScene = this.scene;
       setTimeout(() => {
-        if (!this.effectRenderer || this.scene !== swingScene || swingScene.isDisposed) return;
+        // document.hidden: no rAF frames run, so strike meshes would pile up
+        // with no render-loop cleanup — and nobody can see them anyway.
+        if (!this.effectRenderer || document.hidden || this.scene !== swingScene || swingScene.isDisposed) return;
         this.effectRenderer.spawnWeaponStrike(ax, az, tx, tz, color, weapon);
         this.effectRenderer.spawnHitSparks(tx, tz, color, weapon);
         if (targetId && this.botRenderer) {
@@ -146,11 +151,13 @@ export class ArenaEngine {
 
     // Wire up dodge → afterimage shimmer
     this.botRenderer.onDodge = (x, z, color) => {
+      if (document.hidden) return;
       this.effectRenderer.spawnDodgeEffect(x, z, color);
     };
 
     // Wire up shove → shockwave blast effect
     this.botRenderer.onShove = (ax, az, tx, tz, color) => {
+      if (document.hidden) return;
       this.effectRenderer.spawnShoveEffect(ax, az, tx, tz, color);
     };
 
@@ -252,7 +259,14 @@ export class ArenaEngine {
     }
 
     this.state = state;
-    this._playArenaEvents(state.events || [], state);
+    // Transient combat effects only spawn while the tab actually renders.
+    // Chrome parks rAF for hidden AND fully-occluded windows while WS states
+    // keep arriving at 10Hz; every effect's cleanup runs in the render loop,
+    // so spawning here would grow the scene without bound until the GPU
+    // process dies. _seenArenaEvents dedup means skipped events never replay.
+    if (!document.hidden) {
+      this._playArenaEvents(state.events || [], state);
+    }
     this.obstacleRenderer.update(state.obstacles);
     this.envRenderer.update(state.safe_zone);
     this.botRenderer.update(state.bots);
@@ -273,6 +287,10 @@ export class ArenaEngine {
     console.log(`[Arena] arena size changed to ${w}x${h} — rebuilding scene`);
     const prevFollow = this.camera ? this.camera.followId : null;
     const prevZoom = this.camera ? this.camera.zoom : null;
+    // app.js assigns onZoomChange to the controller instance, and init()
+    // replaces that instance — carry the callback over or the zoom slider
+    // silently stops syncing after the first between-round arena resize.
+    const prevOnZoomChange = this.camera ? this.camera.onZoomChange : null;
     this.ready = false;
     try {
       this.dispose();
@@ -280,6 +298,7 @@ export class ArenaEngine {
       this.arenaHeight = h;
       this.state = null;
       await this.init();
+      if (prevOnZoomChange && this.camera) this.camera.onZoomChange = prevOnZoomChange;
       if (prevZoom) this.setZoom(prevZoom);
       if (prevFollow) this.followBot(prevFollow);
     } catch (err) {
@@ -420,6 +439,7 @@ export class ArenaEngine {
     if (this._resizeHandler) {
       window.removeEventListener('resize', this._resizeHandler);
     }
+    if (this.camera && this.camera.dispose) this.camera.dispose();
     if (this.projectileRenderer) this.projectileRenderer.dispose();
     if (this.trailRenderer) this.trailRenderer.dispose();
     if (this.envRenderer && this.envRenderer.dispose) this.envRenderer.dispose();

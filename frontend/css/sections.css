@@ -2153,13 +2153,9 @@ tr.rank-new { animation: killfeed-in 0.45s cubic-bezier(0.22, 1, 0.36, 1); }
     border-radius: 22px;
   }
 
-  .hud-round {
-    width: calc(100% - 28px);
-    top: 14px;
-    left: 14px;
-    padding: 14px;
-  }
-
+  /* (phone-width .hud-round sizing lives in site-shell.css, which loads
+     last and owns the mobile HUD; a duplicate full-width rule here was a
+     stylesheet-order trap and was removed) */
   .hud-killfeed { font-size: 0.7rem; }
   .arena-controls {
     padding: 14px;

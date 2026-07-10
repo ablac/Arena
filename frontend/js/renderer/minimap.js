@@ -26,6 +26,7 @@ export class Minimap {
       position:absolute; bottom:12px; right:12px; width:${MINIMAP_SIZE}px;
       height:${MINIMAP_SIZE}px; border:1px solid #1e293b;
       border-radius:8px; background:rgba(10,14,23,0.9); z-index:10;
+      pointer-events:none;
     `;
     container.appendChild(this.canvas);
     this.canvas.style.display = 'none';
