@@ -36,8 +36,8 @@ var DemoConfigs = []BotConfig{
 	{
 		Name:     "Archmage",
 		Weapon:   "staff",
-		Stats:    map[string]int{"hp": 4, "speed": 5, "attack": 9, "defense": 2},
-		Strategy: "kite",
+		Stats:    map[string]int{"hp": 6, "speed": 4, "attack": 8, "defense": 2},
+		Strategy: "defensive",
 		Color:    "#e55039",
 	},
 
@@ -52,8 +52,8 @@ var DemoConfigs = []BotConfig{
 	{
 		Name:     "Fortress",
 		Weapon:   "shield",
-		Stats:    map[string]int{"hp": 8, "speed": 4, "attack": 5, "defense": 3},
-		Strategy: "territorial",
+		Stats:    map[string]int{"hp": 9, "speed": 3, "attack": 4, "defense": 4},
+		Strategy: "defensive",
 		Color:    "#3dc1d3",
 	},
 
@@ -68,8 +68,8 @@ var DemoConfigs = []BotConfig{
 	{
 		Name:     "Valkyrie",
 		Weapon:   "spear",
-		Stats:    map[string]int{"hp": 5, "speed": 6, "attack": 7, "defense": 2},
-		Strategy: "aggressive",
+		Stats:    map[string]int{"hp": 6, "speed": 7, "attack": 5, "defense": 2},
+		Strategy: "territorial",
 		Color:    "#78e08f",
 	},
 
@@ -84,8 +84,8 @@ var DemoConfigs = []BotConfig{
 	{
 		Name:     "Scorpion",
 		Weapon:   "grapple",
-		Stats:    map[string]int{"hp": 4, "speed": 6, "attack": 7, "defense": 3},
-		Strategy: "assassin",
+		Stats:    map[string]int{"hp": 6, "speed": 5, "attack": 6, "defense": 3},
+		Strategy: "territorial",
 		Color:    "#574b90",
 	},
 
@@ -94,13 +94,13 @@ var DemoConfigs = []BotConfig{
 		Name:     "Shredder",
 		Weapon:   "daggers",
 		Stats:    map[string]int{"hp": 4, "speed": 7, "attack": 7, "defense": 2},
-		Strategy: "assassin",
+		Strategy: "berserker",
 		Color:    "#e94560",
 	},
 	{
 		Name:     "Viper",
 		Weapon:   "daggers",
-		Stats:    map[string]int{"hp": 4, "speed": 7, "attack": 7, "defense": 2},
+		Stats:    map[string]int{"hp": 5, "speed": 8, "attack": 5, "defense": 2},
 		Strategy: "assassin",
 		Color:    "#cf6a87",
 	},
@@ -116,8 +116,8 @@ var DemoConfigs = []BotConfig{
 	{
 		Name:     "Deadeye",
 		Weapon:   "bow",
-		Stats:    map[string]int{"hp": 5, "speed": 5, "attack": 8, "defense": 2},
-		Strategy: "kite",
+		Stats:    map[string]int{"hp": 5, "speed": 4, "attack": 9, "defense": 2},
+		Strategy: "defensive",
 		Color:    "#16a085",
 	},
 
@@ -126,7 +126,7 @@ var DemoConfigs = []BotConfig{
 		Name:     "Warden",
 		Weapon:   "sword",
 		Stats:    map[string]int{"hp": 6, "speed": 5, "attack": 6, "defense": 3},
-		Strategy: "aggressive",
+		Strategy: "defensive",
 		Color:    "#3498db",
 	},
 	{

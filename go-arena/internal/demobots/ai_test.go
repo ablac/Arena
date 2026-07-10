@@ -234,16 +234,19 @@ func TestBFSStepDangerAware(t *testing.T) {
 	}
 }
 
-func TestBFSStepDangerousGoalStillReachable(t *testing.T) {
+func TestBFSStepStagesOutsideDangerousGoal(t *testing.T) {
 	setTerrain(t, 12, 12, nil)
 
 	danger := &dangerSet{}
 	danger.reset()
-	danger.add(3, 5) // the goal itself (e.g. pickup inside a burn field)
+	danger.add(3, 5) // target/flag is inside a burn field
 
 	step := bfsStep(2, 5, 3, 5, danger)
-	if step != [2]int{1, 0} {
-		t.Errorf("step toward dangerous goal = %v, want [1 0]", step)
+	if step == [2]int{0, 0} {
+		t.Fatal("pathfinder froze instead of staging beside dangerous goal")
+	}
+	if danger.has(2+step[0], 5+step[1]) {
+		t.Fatalf("pathfinder stepped directly into dangerous goal: %v", step)
 	}
 }
 
@@ -493,6 +496,89 @@ func TestPickActionDodgesTowardSafetyFromDeepHazard(t *testing.T) {
 	if endDistance >= startDistance {
 		t.Fatalf("deep-hazard dodge %v changed escape distance %d -> %d, want a measurable reduction",
 			*got.Direction, startDistance, endDistance)
+	}
+}
+
+func TestPickActionEscapesActiveHazardWhenInactiveHazardIsCloser(t *testing.T) {
+	setTerrain(t, 20, 20, nil)
+	msg := map[string]interface{}{
+		"type": "tick",
+		"tick": float64(15),
+		"your_state": map[string]interface{}{
+			"position":       []interface{}{float64(5), float64(5)},
+			"hp":             float64(100),
+			"max_hp":         float64(100),
+			"dodge_cooldown": float64(20),
+		},
+		"nearby_entities": []interface{}{
+			map[string]interface{}{
+				"type": "hazard_zone", "position": []interface{}{float64(7), float64(5)},
+				"width": float64(5), "height": float64(5), "active": true,
+			},
+			map[string]interface{}{
+				"type": "hazard_zone", "position": []interface{}{float64(5), float64(5)},
+				"width": float64(3), "height": float64(3), "active": false,
+			},
+		},
+	}
+
+	got := PickAction("aggressive", msg, "sword", 1, "me")
+	if got.Action != "move" || got.Direction == nil || *got.Direction == [2]float64{} {
+		t.Fatalf("hazard escape action = %+v, want a non-zero move", got)
+	}
+	if got.Direction[0] != -1 {
+		t.Fatalf("hazard escape direction = %v, want left toward nearest active-zone exit", *got.Direction)
+	}
+}
+
+func TestCapturePadOwnerHoldsForControlPulse(t *testing.T) {
+	danger := &dangerSet{}
+	danger.reset()
+	ts := tickState{
+		Position: [2]float64{5, 5}, HP: 100, MaxHP: 100, InZone: true, Danger: danger,
+		CapturePads: []entity{{
+			ID: "pad", Position: [2]float64{5, 5}, Ready: false, OwnerID: "me",
+		}},
+	}
+
+	got := tryCapturePadObjective(ts, "territorial", nil, 0, "me")
+	if got == nil || got.Action != "idle" {
+		t.Fatalf("captured-pad action = %+v, want idle to hold the control pulse", got)
+	}
+}
+
+func TestCapturePadChoosesReadyPadOverNearEnemyCooldown(t *testing.T) {
+	setTerrain(t, 20, 20, nil)
+	danger := &dangerSet{}
+	danger.reset()
+	ts := tickState{
+		Position: [2]float64{5, 5}, HP: 100, MaxHP: 100, InZone: true, Danger: danger,
+		CapturePads: []entity{
+			{ID: "cooldown", Position: [2]float64{6, 5}, Ready: false, OwnerID: "enemy"},
+			{ID: "ready", Position: [2]float64{10, 5}, Ready: true},
+		},
+	}
+
+	got := tryCapturePadObjective(ts, "territorial", nil, 0, "me")
+	if got == nil || got.Action != "move" || got.Direction == nil || got.Direction[0] != 1 {
+		t.Fatalf("capture-pad action = %+v, want movement toward ready pad", got)
+	}
+}
+
+func TestCapturePadContenderStaysUntilCaptureCompletes(t *testing.T) {
+	danger := &dangerSet{}
+	danger.reset()
+	ts := tickState{
+		Position: [2]float64{5, 5}, HP: 100, MaxHP: 100, InZone: true, Danger: danger,
+		CapturePads: []entity{{
+			ID: "ready", Position: [2]float64{5, 5}, Ready: true,
+			CapturingBotID: "me", ProgressTicks: 10, CaptureTicks: 30,
+		}},
+	}
+
+	got := tryCapturePadObjective(ts, "territorial", nil, 0, "me")
+	if got == nil || got.Action != "idle" {
+		t.Fatalf("in-progress capture action = %+v, want idle until capture completes", got)
 	}
 }
 

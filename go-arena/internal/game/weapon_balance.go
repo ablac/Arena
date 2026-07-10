@@ -22,14 +22,15 @@ type WeaponBalanceState struct {
 }
 
 type weaponRoundPerformance struct {
-	bots            int
-	score           float64
-	totalKills      float64
-	totalDamage     float64
-	totalLifeSecs   float64
-	totalShotsFired float64
-	totalShotsHit   float64
-	botIDs          []string
+	bots               int
+	score              float64
+	totalKills         float64
+	totalDamage        float64
+	totalLifeSecs      float64
+	totalShotsFired    float64
+	totalShotsHit      float64
+	botIDs             []string
+	engagedOpponentIDs []string
 }
 
 func (p *weaponRoundPerformance) avgDamage() float64 {
@@ -139,26 +140,35 @@ func (s runningBalanceStat) conservativeMagnitude(confidenceZ float64) float64 {
 }
 
 type weaponBalanceEvidence struct {
-	rounds              int
-	botSamples          int
-	opponentSamples     int
-	distinctBots        map[string]struct{}
-	hitRateParityRounds int
-	scoreDiff           runningBalanceStat
-	damagePressure      runningBalanceStat
-	cooldownPressure    runningBalanceStat
+	rounds               int
+	botSamples           int
+	opponentSamples      int
+	distinctWeaponBots   map[string]struct{}
+	distinctOpponentBots map[string]struct{}
+	hitRateParityRounds  int
+	scoreDiff            runningBalanceStat
+	damagePressure       runningBalanceStat
+	cooldownPressure     runningBalanceStat
 }
 
 func (e *weaponBalanceEvidence) add(entry, opponents *weaponRoundPerformance, scoreDiff, damagePressure, cooldownPressure float64) {
-	if e.distinctBots == nil {
-		e.distinctBots = make(map[string]struct{})
+	if e.distinctWeaponBots == nil {
+		e.distinctWeaponBots = make(map[string]struct{})
+	}
+	if e.distinctOpponentBots == nil {
+		e.distinctOpponentBots = make(map[string]struct{})
 	}
 	e.rounds++
 	e.botSamples += entry.bots
 	e.opponentSamples += opponents.bots
 	for _, id := range entry.botIDs {
 		if id != "" {
-			e.distinctBots[id] = struct{}{}
+			e.distinctWeaponBots[id] = struct{}{}
+		}
+	}
+	for _, id := range entry.engagedOpponentIDs {
+		if id != "" {
+			e.distinctOpponentBots[id] = struct{}{}
 		}
 	}
 	if opponents.hitRate() <= 0 || entry.hitRate() >= opponents.hitRate()*0.75 {
@@ -363,7 +373,7 @@ func balanceEvidenceThresholds() (minRounds, minBotSamples, minDistinctBots, min
 	}
 	minDistinctBots = config.C.WeaponAutoBalanceMinDistinctBots
 	if minDistinctBots < 2 {
-		minDistinctBots = 3
+		minDistinctBots = 2
 	}
 	minActions = config.C.WeaponAutoBalanceMinActions
 	if minActions < 1 {
@@ -393,7 +403,8 @@ func evidenceReady(e *weaponBalanceEvidence, minRounds, minBotSamples, minDistin
 		e.rounds >= minRounds &&
 		e.botSamples >= minBotSamples &&
 		e.opponentSamples >= minBotSamples &&
-		len(e.distinctBots) >= minDistinctBots
+		len(e.distinctWeaponBots) >= minDistinctBots &&
+		len(e.distinctOpponentBots) >= minDistinctBots
 }
 
 // eloSkillFactor estimates how much performance the round should expect from
@@ -409,19 +420,14 @@ func eloSkillFactor(elo int, roundMeanElo float64) float64 {
 	return clampFloat(expected/0.5, 0.75, 1.25)
 }
 
-func botRoundBalanceScore(bot *BotState, won bool) float64 {
+func botRoundBalanceScore(bot *BotState) float64 {
 	if bot == nil {
 		return 0
 	}
-	lifeSecs := float64(bot.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))
-	score := float64(bot.RoundKills)*28 +
-		bot.RoundDamageDealt*0.18 +
-		float64(bot.BestKillStreak)*14 +
-		lifeSecs*0.3
-	if won {
-		score += 60
-	}
-	return score
+	// Only direct weapon output belongs in the headline balance signal. Wins,
+	// survival, streaks, mines, objectives, and pickups describe the bot or the
+	// round and would systematically bias tuning toward particular strategies.
+	return float64(bot.RoundWeaponKills)*32 + bot.RoundWeaponDamageDealt*0.22
 }
 
 func validWeaponBalanceSample(bot *BotState, minActions int) bool {
@@ -429,21 +435,21 @@ func validWeaponBalanceSample(bot *BotState, minActions int) bool {
 		bot.Weapon != "" &&
 		bot.RoundShotsFired >= minActions &&
 		bot.RoundShotsHit >= 0 &&
-		bot.RoundKills >= 0 &&
+		bot.RoundWeaponKills >= 0 &&
 		bot.RoundLongestLife >= 0 &&
-		!math.IsNaN(bot.RoundDamageDealt) &&
-		!math.IsInf(bot.RoundDamageDealt, 0) &&
-		bot.RoundDamageDealt >= 0
+		!math.IsNaN(bot.RoundWeaponDamageDealt) &&
+		!math.IsInf(bot.RoundWeaponDamageDealt, 0) &&
+		bot.RoundWeaponDamageDealt >= 0
 }
 
-func addBotPerformance(entry, total *weaponRoundPerformance, bot *BotState, identity string, won bool, skillFactor float64) {
+func addBotPerformance(entry, total *weaponRoundPerformance, bot *BotState, identity string, skillFactor float64) {
 	if skillFactor <= 0 {
 		skillFactor = 1
 	}
 	lifeSecs := float64(bot.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))
-	adjustedScore := botRoundBalanceScore(bot, won) / skillFactor
-	adjustedKills := float64(bot.RoundKills) / skillFactor
-	adjustedDamage := bot.RoundDamageDealt / skillFactor
+	adjustedScore := botRoundBalanceScore(bot) / skillFactor
+	adjustedKills := float64(bot.RoundWeaponKills) / skillFactor
+	adjustedDamage := bot.RoundWeaponDamageDealt / skillFactor
 	adjustedLife := lifeSecs / skillFactor
 	adjustedShotsFired := float64(bot.RoundShotsFired) / skillFactor
 	adjustedHits := float64(bot.RoundShotsHit) / skillFactor
@@ -457,7 +463,14 @@ func addBotPerformance(entry, total *weaponRoundPerformance, bot *BotState, iden
 		target.totalShotsFired += adjustedShotsFired
 		target.totalShotsHit += adjustedHits
 	}
-	entry.botIDs = append(entry.botIDs, identity)
+	if identity != "" {
+		entry.botIDs = append(entry.botIDs, identity)
+	}
+	for opponentID := range bot.RoundWeaponOpponentIDs {
+		if opponentID != "" && opponentID != identity {
+			entry.engagedOpponentIDs = append(entry.engagedOpponentIDs, opponentID)
+		}
+	}
 }
 
 func sampleReliability(a, b int) float64 {
@@ -545,6 +558,9 @@ func UpdateBaseWeaponConfig(name string, wc WeaponConfig) bool {
 	}
 	wc.Range = float64(wc.GridRange) * config.C.PathfindingCellSize
 	baseWeaponConfigs[name] = wc
+	// A manual base-value change creates a new experiment. Do not mix samples
+	// collected under the previous damage/range/cooldown values into it.
+	delete(weaponEvidence, name)
 	WeaponConfigs[name] = effectiveWeaponConfigLocked(name)
 	return true
 }
@@ -610,7 +626,7 @@ func LoadWeaponBalance(ctx context.Context) error {
 	return nil
 }
 
-func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, winnerID string) {
+func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, _ string) {
 	if !config.C.WeaponAutoBalanceEnabled || ActiveModeRules.HasTeams() {
 		return
 	}
@@ -660,8 +676,7 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, winnerID
 			entry = &weaponRoundPerformance{}
 			performance[bot.Weapon] = entry
 		}
-		won := bot.BotID == winnerID
-		addBotPerformance(entry, total, bot, sample.identity, won, eloSkillFactor(bot.Elo, meanElo))
+		addBotPerformance(entry, total, bot, sample.identity, eloSkillFactor(bot.Elo, meanElo))
 	}
 	if len(performance) < 2 {
 		return
@@ -790,7 +805,8 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, winnerID
 					"weapon", weapon,
 					"evidence_rounds", evidence.rounds,
 					"bot_samples", evidence.botSamples,
-					"distinct_bots", len(evidence.distinctBots),
+					"distinct_weapon_bots", len(evidence.distinctWeaponBots),
+					"distinct_opponent_bots", len(evidence.distinctOpponentBots),
 					"score_effect", round1(evidence.scoreDiff.mean),
 					"score_margin", round1(confidenceZ*evidence.scoreDiff.standardError()),
 					"damage_scale", round1(state.DamageScale),

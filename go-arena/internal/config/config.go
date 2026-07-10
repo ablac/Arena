@@ -236,6 +236,7 @@ type Config struct {
 	EloKFactor  float64 `envconfig:"ARENA_ELO_K_FACTOR" default:"32"`
 	EloStarting int     `envconfig:"ARENA_ELO_STARTING" default:"1000"`
 	EloMin      int     `envconfig:"ARENA_ELO_MIN" default:"100"`
+	EloMax      int     `envconfig:"ARENA_ELO_MAX" default:"3000"`
 
 	// Bot separation
 
@@ -322,7 +323,7 @@ type Config struct {
 	WeaponAutoBalanceCooldownWeight   float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_COOLDOWN_WEIGHT" default:"0.45"`
 	WeaponAutoBalanceMinRounds        int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_ROUNDS" default:"6"`
 	WeaponAutoBalanceMinBotSamples    int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_BOT_SAMPLES" default:"18"`
-	WeaponAutoBalanceMinDistinctBots  int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_DISTINCT_BOTS" default:"3"`
+	WeaponAutoBalanceMinDistinctBots  int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_DISTINCT_BOTS" default:"2"`
 	WeaponAutoBalanceMinActions       int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_ACTIONS" default:"5"`
 	WeaponAutoBalanceConfidenceZ      float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_CONFIDENCE_Z" default:"1.96"`
 	WeaponAutoBalanceMinEffect        float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_EFFECT" default:"0.05"`
@@ -349,10 +350,71 @@ type Config struct {
 
 var C Config
 
+const (
+	DefaultEloStarting = 1000
+	DefaultEloMin      = 100
+	DefaultEloMax      = 3000
+)
+
+func resolveEloSettings(minElo, maxElo, startingElo int) (int, int, int) {
+	if minElo <= 0 || maxElo <= minElo {
+		minElo = DefaultEloMin
+		maxElo = DefaultEloMax
+	}
+	if startingElo <= 0 {
+		startingElo = DefaultEloStarting
+	}
+	if startingElo < minElo {
+		startingElo = minElo
+	} else if startingElo > maxElo {
+		startingElo = maxElo
+	}
+	return minElo, maxElo, startingElo
+}
+
+// EloBounds returns the one validated rating interval used by the runtime
+// and persistence repair. It remains defensive for tests or future live
+// configuration code that mutates C after startup.
+func EloBounds() (int, int) {
+	minElo, maxElo, _ := resolveEloSettings(C.EloMin, C.EloMax, C.EloStarting)
+	return minElo, maxElo
+}
+
+// ClampElo keeps every rating write inside the validated interval.
+func ClampElo(elo int) int {
+	minElo, maxElo := EloBounds()
+	if elo < minElo {
+		return minElo
+	}
+	if elo > maxElo {
+		return maxElo
+	}
+	return elo
+}
+
+// StartingElo returns the configured initial rating after fallback and bound
+// normalization, including when configuration is mutated after startup.
+func StartingElo() int {
+	_, _, startingElo := resolveEloSettings(C.EloMin, C.EloMax, C.EloStarting)
+	return startingElo
+}
+
 func Load() {
 	if err := envconfig.Process("", &C); err != nil {
 		slog.Error("failed to load config", "error", err)
 		panic(err)
+	}
+	rawMin, rawMax, rawStarting := C.EloMin, C.EloMax, C.EloStarting
+	C.EloMin, C.EloMax, C.EloStarting = resolveEloSettings(rawMin, rawMax, rawStarting)
+	if C.EloMin != rawMin || C.EloMax != rawMax || C.EloStarting != rawStarting {
+		slog.Warn("normalized invalid Elo configuration",
+			"configured_min", rawMin,
+			"configured_max", rawMax,
+			"configured_starting", rawStarting,
+			"effective_min", C.EloMin,
+			"effective_max", C.EloMax,
+			"effective_starting", C.EloStarting,
+		)
 	}
 	slog.Info("config loaded",
 		"host", C.ServerHost,

@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -212,7 +213,7 @@ func updaterStatusURL(raw string) (string, error) {
 // sidecar. It returns as soon as the sidecar accepts the job (202); progress is
 // polled via updateStatus, since arena-server itself gets recreated as the last
 // step and cannot deliver a response to a request it is holding.
-func triggerUpdate(w http.ResponseWriter, r *http.Request) {
+func (h *AdminHandler) triggerUpdate(w http.ResponseWriter, r *http.Request) {
 	if config.C.UpdaterURL == "" || config.C.UpdaterSharedSecret == "" {
 		writeError(w, http.StatusServiceUnavailable, "updater not configured (ARENA_UPDATER_URL / ARENA_UPDATER_SHARED_SECRET unset)")
 		return
@@ -230,6 +231,47 @@ func triggerUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Treat checking the active notice, publishing this request's notice, and
+	// submitting to the sidecar as one transaction. Otherwise two concurrent
+	// requests can each publish and the losing 409 can clear the winner's UI.
+	h.updateMu.Lock()
+	defer h.updateMu.Unlock()
+	statusEngine := h.Engine
+	if statusEngine == nil && h.ServiceStatus != nil {
+		statusEngine = h.ServiceStatus.engine
+	}
+	if h.ServiceStatus != nil && statusEngine != nil {
+		if active := statusEngine.GetServiceStatus().Maintenance; active != nil {
+			writeError(w, http.StatusConflict, "an update or restart is already in progress")
+			return
+		}
+	}
+
+	maintenancePublished := false
+	if h != nil && h.ServiceStatus != nil {
+		if _, err := h.ServiceStatus.SetMaintenance(
+			r.Context(),
+			reqBody.CommitSha,
+			"preparing",
+			"Arena update is being prepared. A brief restart of up to 1 minute is expected.",
+			"admin-update",
+		); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "could not publish the required update notice")
+			return
+		}
+		maintenancePublished = true
+	}
+	clearMaintenance := func(source string) {
+		if !maintenancePublished || h == nil || h.ServiceStatus == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if _, err := h.ServiceStatus.ClearMaintenance(ctx, reqBody.CommitSha, source); err != nil && !errors.Is(err, errStaleMaintenance) {
+			slog.Warn("failed to clear maintenance notice after update rejection", "error", err, "commit", reqBody.CommitSha)
+		}
+	}
+
 	payload, _ := json.Marshal(map[string]string{
 		"commitSha":   reqBody.CommitSha,
 		"githubToken": config.C.UpdateGitHubToken, // optional; empty is fine for a public repo
@@ -239,6 +281,7 @@ func triggerUpdate(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.C.UpdaterURL, bytes.NewReader(payload))
 	if err != nil {
+		clearMaintenance("update-request-error")
 		writeError(w, http.StatusInternalServerError, "failed to build updater request")
 		return
 	}
@@ -247,18 +290,202 @@ func triggerUpdate(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := updaterHTTPClient.Do(req)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to reach updater: "+err.Error())
-		return
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		// A transport error is ambiguous: the sidecar may have accepted the POST
+		// and lost the response. Reconcile against its authenticated status
+		// endpoint; if that is also unavailable, preserving the notice is safer
+		// than falsely telling every client the update was cancelled.
+		status, statusErr := fetchUpdaterStatus(context.Background())
+		state := updaterTargetAmbiguous
+		if statusErr == nil {
+			state = classifyUpdaterTarget(status, reqBody.CommitSha)
+		}
+		switch state {
+		case updaterTargetRejected:
+			clearMaintenance("updater-not-accepted")
+			writeError(w, http.StatusBadGateway, "updater did not accept the update: "+err.Error())
+			return
+		case updaterTargetComplete:
+			clearMaintenance("updater-reconciled-done")
+			writeJSON(w, http.StatusAccepted, map[string]interface{}{
+				"ok": true, "commitSha": reqBody.CommitSha, "acceptance": "reconciled", "complete": true,
+			})
+			return
+		case updaterTargetActive:
+			if maintenancePublished {
+				go h.watchUpdateFailure(reqBody.CommitSha)
+			}
+			writeJSON(w, http.StatusAccepted, map[string]interface{}{
+				"ok": true, "commitSha": reqBody.CommitSha, "acceptance": "reconciled",
+			})
+			return
+		default:
+			if maintenancePublished {
+				go h.watchUpdateFailure(reqBody.CommitSha)
+			}
+			writeJSON(w, http.StatusAccepted, map[string]interface{}{
+				"ok": true, "commitSha": reqBody.CommitSha, "acceptance": "unknown",
+				"message": "the updater may have accepted the request; maintenance status is being preserved while it is reconciled",
+			})
+			return
+		}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
+		clearMaintenance("updater-rejected")
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("updater responded %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet))))
 		return
 	}
 
 	slog.Warn("admin triggered self-update", "commit", reqBody.CommitSha)
+	if maintenancePublished {
+		go h.watchUpdateFailure(reqBody.CommitSha)
+	}
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{"ok": true, "commitSha": reqBody.CommitSha})
+}
+
+type updaterTargetState int
+
+const (
+	updaterTargetAmbiguous updaterTargetState = iota
+	updaterTargetActive
+	updaterTargetComplete
+	updaterTargetRejected
+)
+
+func updaterStatusString(status map[string]interface{}, key string) string {
+	value, _ := status[key].(string)
+	return strings.TrimSpace(value)
+}
+
+// classifyUpdaterTarget only rejects when a reachable sidecar definitively
+// reports that another/no target is active. Unknown or incomplete status data
+// stays ambiguous so a potentially accepted update keeps its warning visible.
+func classifyUpdaterTarget(status map[string]interface{}, targetCommit string) updaterTargetState {
+	target := updaterStatusString(status, "targetCommit")
+	completed := updaterStatusString(status, "lastCompletedCommit")
+	phase := strings.ToLower(updaterStatusString(status, "phase"))
+	inProgress, hasInProgress := status["inProgress"].(bool)
+
+	if completed == targetCommit || (target == targetCommit && phase == "done") {
+		return updaterTargetComplete
+	}
+	if target == targetCommit {
+		if phase == "failed" || status["lastError"] != nil {
+			return updaterTargetRejected
+		}
+		if inProgress || phase != "" {
+			return updaterTargetActive
+		}
+		return updaterTargetAmbiguous
+	}
+	if inProgress {
+		if target != "" {
+			return updaterTargetRejected
+		}
+		return updaterTargetAmbiguous
+	}
+	if hasInProgress && !inProgress {
+		// The real sidecar retains targetCommit for the life of the job. A
+		// reachable, idle status with no matching target is definitive rejection.
+		return updaterTargetRejected
+	}
+	return updaterTargetAmbiguous
+}
+
+// triggerUpdate retains the package-level entrypoint used by focused legacy
+// unit tests. Production routes call AdminHandler.triggerUpdate so the required
+// durable maintenance notice participates in the operation.
+func triggerUpdate(w http.ResponseWriter, r *http.Request) {
+	(&AdminHandler{}).triggerUpdate(w, r)
+}
+
+// watchUpdateFailure observes the sidecar while the old app process is still
+// alive. It clears a notice when fetch/build fails asynchronously. Successful
+// recreates are reconciled by the target build on startup, and newer sidecars
+// also send the internal done callback.
+func (h *AdminHandler) watchUpdateFailure(targetCommit string) {
+	if h == nil || h.ServiceStatus == nil {
+		return
+	}
+	statusEngine := h.Engine
+	if statusEngine == nil {
+		statusEngine = h.ServiceStatus.engine
+	}
+	if statusEngine == nil {
+		return
+	}
+	deadline := time.NewTimer(maintenanceFallbackTTL)
+	defer deadline.Stop()
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	lastPublicPhase := ""
+	for {
+		select {
+		case <-deadline.C:
+			return
+		case <-ticker.C:
+			maintenance := statusEngine.GetServiceStatus().Maintenance
+			if maintenance == nil || maintenance.TargetCommit != targetCommit {
+				return
+			}
+			status, err := fetchUpdaterStatus(context.Background())
+			if err != nil {
+				continue
+			}
+			phase, _ := status["phase"].(string)
+			switch classifyUpdaterTarget(status, targetCommit) {
+			case updaterTargetComplete:
+				return
+			case updaterTargetRejected:
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				_, clearErr := h.ServiceStatus.ClearMaintenance(ctx, targetCommit, "updater-failed")
+				cancel()
+				if clearErr != nil && !errors.Is(clearErr, errStaleMaintenance) {
+					slog.Warn("failed to clear failed-update notice", "error", clearErr)
+				}
+				return
+			}
+			if phase == "recreating" && phase != lastPublicPhase {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				_, phaseErr := h.ServiceStatus.UpdateMaintenancePhase(ctx, targetCommit, "restarting", "Arena is restarting. Connections will return automatically.")
+				cancel()
+				if phaseErr == nil {
+					lastPublicPhase = phase
+				}
+			}
+		}
+	}
+}
+
+func fetchUpdaterStatus(ctx context.Context) (map[string]interface{}, error) {
+	statusURL, err := updaterStatusURL(config.C.UpdaterURL)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statusURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+config.C.UpdaterSharedSecret)
+	resp, err := updaterHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("updater status returned %d", resp.StatusCode)
+	}
+	var status map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, err
+	}
+	return status, nil
 }
 
 // updateStatus proxies the sidecar's in-memory progress. It always returns 200:

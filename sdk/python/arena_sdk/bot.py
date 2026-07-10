@@ -35,6 +35,10 @@ class ArenaBot:
         self._last_pos: list[int] = [0, 0]
         self._last_action_result: dict | None = None
         self._team = 0  # team number in team modes (0 = FFA / unassigned)
+        self._service_status: dict | None = None
+        self._service_status_revision = -1
+        self._service_status_fingerprint: str | None = None
+        self._maintenance_retry_until = 0.0
 
         # Terrain cache (populated by map_init)
         self._terrain: list[list[str]] | None = None
@@ -71,11 +75,22 @@ class ArenaBot:
             "stats": self._stats,
             "fallback_behavior": self._fallback,
         }))
-        # Wait for confirmation
-        raw = await self._ws.recv()
-        msg = json.loads(raw)
-        if msg.get("type") != "loadout_confirmed":
-            logger.warning("Expected 'loadout_confirmed', got '%s'", msg.get("type"))
+        if isinstance(msg.get("service_status"), dict):
+            await self._handle_service_status(msg["service_status"])
+        # A broadcast can change during the handshake. Keep consuming control
+        # messages until the loadout confirmation arrives instead of treating
+        # the first additive service_status frame as the confirmation.
+        while True:
+            raw = await self._ws.recv()
+            msg = json.loads(raw)
+            if msg.get("type") == "loadout_confirmed":
+                break
+            if msg.get("type") == "service_status":
+                await self._handle_service_status(msg)
+                continue
+            if msg.get("type") == "error":
+                raise ConnectionError(msg.get("message", "loadout rejected"))
+            logger.debug("Waiting for loadout confirmation; received %s", msg.get("type"))
 
         # Fetch terrain via REST API (pre-generated during intermission)
         self.fetch_map()
@@ -147,6 +162,9 @@ class ArenaBot:
 
     async def on_round_end(self, round_info: dict) -> None:
         """Called at end of round. Override to customize."""
+
+    async def on_service_status(self, status: dict) -> None:
+        """Called when a site broadcast or maintenance status changes."""
 
     # -- Action helpers --
 
@@ -397,6 +415,8 @@ class ArenaBot:
                     except Exception:
                         logger.exception("on_map_init error after REST fetch")
             elif msg_type == "tick":
+                if isinstance(msg.get("service_status"), dict):
+                    await self._handle_service_status(msg["service_status"])
                 self._tick_number = msg.get("tick_number", msg.get("tick", 0))
                 state = msg.get("your_state", {})
                 self._last_pos = state.get("position", [0, 0])
@@ -426,6 +446,8 @@ class ArenaBot:
                 await self.on_respawn(msg)
             elif msg_type == "round_end":
                 await self.on_round_end(msg)
+            elif msg_type == "service_status":
+                await self._handle_service_status(msg)
             elif msg_type == "error":
                 logger.error("Server error: %s", msg.get("message"))
             elif msg_type == "kick":
@@ -446,6 +468,34 @@ class ArenaBot:
                 logger.exception("Disconnected")
             if self._kicked:
                 break
-            logger.info("Reconnecting in %.0fs...", backoff)
-            await asyncio.sleep(backoff)
+            retry_wait = max(0.0, self._maintenance_retry_until - asyncio.get_running_loop().time())
+            wait_for = max(backoff, retry_wait)
+            logger.info("Reconnecting in %.0fs...", wait_for)
+            await asyncio.sleep(wait_for)
             backoff = min(backoff * 2, 30.0)
+
+    async def _handle_service_status(self, status: dict) -> None:
+        revision = int(status.get("revision", 0) or 0)
+        if revision < self._service_status_revision:
+            return
+        semantic_status = {
+            key: value for key, value in status.items()
+            if key not in {"revision", "server_time"}
+        }
+        fingerprint = json.dumps(semantic_status, sort_keys=True, separators=(",", ":"), default=str)
+        if revision == self._service_status_revision and fingerprint == self._service_status_fingerprint:
+            return
+        self._service_status_revision = revision
+        self._service_status_fingerprint = fingerprint
+        self._service_status = status
+        maintenance = status.get("maintenance") or {}
+        retry_after = int(maintenance.get("retry_after_seconds", 0) or 0)
+        if retry_after > 0:
+            self._maintenance_retry_until = asyncio.get_running_loop().time() + retry_after
+            logger.warning("Arena maintenance: %s", maintenance.get("message", "server restarting"))
+        else:
+            self._maintenance_retry_until = 0.0
+        try:
+            await self.on_service_status(status)
+        except Exception:
+            logger.exception("on_service_status error")

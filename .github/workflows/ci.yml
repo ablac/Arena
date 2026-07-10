@@ -38,6 +38,9 @@ jobs:
       - name: Test backend
         working-directory: go-arena
         run: go test ./...
+      - name: Race detector
+        working-directory: go-arena
+        run: go test -race ./...
 
   frontend-and-sdks:
     name: Syntax and SDK checks
@@ -50,6 +53,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install SDK test dependencies
+        run: |
+          npm ci --prefix sdk/nodejs --ignore-scripts
+          python -m pip install --disable-pip-version-check -e sdk/python
       - name: Validate JSON manifests
         shell: bash
         run: |
@@ -69,7 +76,13 @@ jobs:
           node scripts/test-admin-cosmetics-ui.mjs
           node scripts/test-public-paths.mjs
           node scripts/test-spectator-client.mjs
+          node scripts/test-swordsman-material-lifecycle.mjs
+          node scripts/test-responsive-site-shell.mjs
+          node scripts/test-service-status-ui.mjs
+          node scripts/test-sdk-service-status.mjs
       - name: Check Python syntax
-        run: python -m compileall sdk/python/arena_sdk sdk/python/examples bots
+        run: |
+          python -m compileall sdk/python/arena_sdk sdk/python/examples bots
+          python scripts/test_sdk_service_status.py
       - name: Check whitespace
         run: git diff --check

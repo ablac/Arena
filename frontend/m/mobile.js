@@ -13,6 +13,7 @@ import { ArenaEngine } from '../js/renderer/engine.js?v=20260710a';
 import { Minimap } from '../js/renderer/minimap.js';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, wsURL } from '../js/paths.js?v=20260710a';
+import { handleServiceStatus, initServiceStatus } from '../js/service-status.js';
 
 const ARENA_WIDTH = 2000;
 const ARENA_HEIGHT = 2000;
@@ -49,6 +50,7 @@ function titleCase(value) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  initServiceStatus();
   const el = (id) => document.getElementById(id);
   const ui = {
     conn: el('tb-conn'),
@@ -448,6 +450,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       ui.conn.classList.toggle('connected', connected);
       ui.conn.title = status;
     },
+    handleServiceStatus,
   );
   spectator.connect();
 

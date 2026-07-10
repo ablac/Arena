@@ -60,6 +60,7 @@ func recordAttributedDamage(target, attacker *BotState, actual float64, source s
 	if target == nil || attacker == nil || actual <= 0 {
 		return
 	}
+	recordWeaponEngagement(attacker, target, source)
 	target.LastDamagedBy = attacker.BotID
 	target.LastDamageTick = tickCount
 	target.LastDamageSource = source
@@ -69,6 +70,41 @@ func recordAttributedDamage(target, attacker *BotState, actual float64, source s
 		Damage:     actual,
 		Weapon:     source,
 	})
+}
+
+// damageSourceMatchesEquippedWeapon separates the weapon's own output from
+// universal abilities, mines, pickups, bounty points, and environmental
+// shoves. Derived effects remain weapon output because their tuning is part of
+// the same weapon config and should move with it.
+func damageSourceMatchesEquippedWeapon(attacker *BotState, source string) bool {
+	if attacker == nil || source == "" {
+		return false
+	}
+	if source == attacker.Weapon {
+		return true
+	}
+	switch attacker.Weapon {
+	case "staff":
+		return source == "staff_burn"
+	case "grapple":
+		return source == "grapple_slam"
+	default:
+		return false
+	}
+}
+
+// recordWeaponEngagement captures only opponents actually affected by the
+// equipped weapon. The auto-balancer uses this per-round set for cohort
+// diversity; unrelated bots present in the arena must not count as evidence.
+func recordWeaponEngagement(attacker, target *BotState, source string) {
+	if attacker == nil || target == nil || target.BotID == "" || target.BotID == attacker.BotID ||
+		!damageSourceMatchesEquippedWeapon(attacker, source) {
+		return
+	}
+	if attacker.RoundWeaponOpponentIDs == nil {
+		attacker.RoundWeaponOpponentIDs = make(map[string]struct{})
+	}
+	attacker.RoundWeaponOpponentIDs[target.BotID] = struct{}{}
 }
 
 // ApplyDamage applies damage from attacker to target, respecting invulnerability,
@@ -108,6 +144,9 @@ func ApplyDamage(target, attacker *BotState, baseDamage float64, weapon string, 
 	// Track round stats.
 	target.RoundDamageTaken += actual
 	attacker.RoundDamageDealt += actual
+	if damageSourceMatchesEquippedWeapon(attacker, weapon) {
+		attacker.RoundWeaponDamageDealt += actual
+	}
 
 	recordAttributedDamage(target, attacker, actual, weapon, tickCount)
 
@@ -187,6 +226,9 @@ func applyWallSlamDamage(target, attacker *BotState, source string, tickCount in
 	target.RoundDamageTaken += damage
 	if attacker != nil && attacker != target {
 		attacker.RoundDamageDealt += damage
+		if damageSourceMatchesEquippedWeapon(attacker, source) {
+			attacker.RoundWeaponDamageDealt += damage
+		}
 		recordAttributedDamage(target, attacker, damage, source, tickCount)
 	}
 }

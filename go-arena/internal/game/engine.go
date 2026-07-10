@@ -84,6 +84,11 @@ type GameEngine struct {
 	// Server start time for uptime tracking.
 	StartTime time.Time
 
+	// Public operator announcements and scheduled-maintenance state. Kept on a
+	// separate lock so REST/status delivery never contends with simulation ticks.
+	serviceStatus   ServiceStatus
+	serviceStatusMu sync.RWMutex
+
 	// Ban list: API key IDs that are banned from reconnecting.
 	bannedKeys   map[string]bool
 	bannedKeysMu sync.RWMutex
@@ -1271,7 +1276,9 @@ func (e *GameEngine) processGrappleAbility(bot *BotState) {
 		damage = 15
 	}
 	rawDmg := CalculateDamage(damage, bot.AttackMultiplier, target.DefenseReduction)
-	dealt := ApplyDamage(target, bot, rawDmg, "grapple", e.TickCount)
+	// Keep the universal ability distinct from the grapple weapon so adaptive
+	// balance never treats this shared utility damage as weapon output.
+	dealt := ApplyDamage(target, bot, rawDmg, "grapple_ability", e.TickCount)
 
 	from := target.Position
 	landing, ok := findAdjacentPullPosition(bot.Position, target.Position)
@@ -1419,6 +1426,9 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 			if weapon == "" {
 				weapon = killer.Weapon
 			}
+			if damageSourceMatchesEquippedWeapon(killer, weapon) {
+				killer.RoundWeaponKills++
+			}
 			death.KillerName = killerName
 			death.Weapon = weapon
 
@@ -1434,7 +1444,7 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 				// Bounty bonus for killing the bounty target.
 				e.Bounty.OnKill(killer, victim)
 				if killer.BountyTokenBonus > 0 {
-					killer.Elo += killer.BountyTokenBonus
+					killer.Elo = ClampElo(killer.Elo + killer.BountyTokenBonus)
 					killer.RoundDamageDealt += float64(killer.BountyTokenBonus)
 					killer.BountyTokenBonus = 0
 					killer.ActiveEffects = removeEffectByName(killer.ActiveEffects, "bounty_token")
@@ -1695,6 +1705,12 @@ func (e *GameEngine) sendBotTickUpdates() {
 			"nearby_mines":   nearbyMineCount,
 			"round_tick":     e.TickCount - e.Round.StartTick,
 			"round_modifier": string(e.Round.Modifier),
+		}
+		// Maintenance data is repeated only while active. This is a bounded
+		// reliability fallback for a direct control message dropped from a slow
+		// bot's normal send queue.
+		if serviceStatus := e.GetServiceStatus(); serviceStatus.Maintenance != nil {
+			tickExtra["service_status"] = serviceStatus
 		}
 		// Void tiles within the bot's fog radius (omitted entirely while
 		// sudden death is inactive to keep payloads small).
@@ -2004,11 +2020,7 @@ func (e *GameEngine) ResetLeaderboard(ctx context.Context, reset func(context.Co
 }
 
 func resetBotLeaderboardState(bot *BotState) {
-	startingElo := config.C.EloStarting
-	if startingElo <= 0 {
-		startingElo = 1000
-	}
-	bot.Elo = startingElo
+	bot.Elo = ClampElo(config.StartingElo())
 	// Preserve active-match score and mechanics. Reserving the current
 	// cumulative counters makes the next snapshot start at the reset boundary
 	// instead of repopulating the newly-truncated leaderboard with old data.
@@ -2617,7 +2629,7 @@ func takeBotStatsSnapshot(bot *BotState) BotStatsSnapshot {
 	}
 	snapshot := BotStatsSnapshot{
 		BotID:            bot.BotID,
-		Elo:              bot.Elo,
+		Elo:              ClampElo(bot.Elo),
 		KillStreak:       currentStreak,
 		BestStreak:       bestStreak,
 		KillsDelta:       max(0, bot.RoundKills-bot.PersistedKills),

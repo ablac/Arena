@@ -61,7 +61,7 @@ func botStatsDeltaFromSnapshot(snap BotStatsSnapshot, winnerID string, finalizeR
 		DamageTaken:      snap.DamageTakenDelta,
 		CurrentStreak:    snap.KillStreak,
 		BestStreak:       snap.BestStreak,
-		Elo:              snap.Elo,
+		Elo:              ClampElo(snap.Elo),
 		LongestLifeSecs:  lifeSecs,
 		RoundsPlayed:     roundsPlayed,
 		RoundWins:        roundWins,
@@ -147,7 +147,7 @@ func PersistRoundBotStats(ctx context.Context, epoch uint64, roundNumber int, bo
 			bot.RoundKills, bot.RoundDeaths,
 			int64(bot.RoundDamageDealt), int64(bot.RoundDamageTaken),
 			lifeSecs, bot.RoundShotsFired, bot.RoundShotsHit, bot.RoundPickups,
-			bot.RoundDistance, bot.Elo, won); err != nil {
+			bot.RoundDistance, ClampElo(bot.Elo), won); err != nil {
 			slog.Error("persist: failed to insert round bot stats", "bot_id", bot.BotID, "round", roundNumber, "error", err)
 		}
 	}

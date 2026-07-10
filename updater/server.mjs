@@ -45,6 +45,7 @@ const COMPOSE_FILES_FALLBACK = (process.env.COMPOSE_FILES ?? "docker-compose.yml
 const COMPOSE_PROJECT_FALLBACK = process.env.COMPOSE_PROJECT_NAME ?? null;
 const GITHUB_OWNER = process.env.GITHUB_OWNER ?? "ablac";
 const GITHUB_REPO = process.env.GITHUB_REPO ?? "Arena";
+const ARENA_INTERNAL_STATUS_URL = process.env.ARENA_INTERNAL_STATUS_URL ?? "http://arena-server:8000/internal/updater/status";
 const MAX_BODY_BYTES = 16 * 1024;
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/;
 const TMP_PREFIX = "arena-update-";
@@ -182,8 +183,11 @@ async function handleRequest(request, response) {
       };
       log(`Update to ${commitSha} complete`);
     })
-    .catch((error) => {
+    .catch(async (error) => {
       log(`Update to ${commitSha} failed`, error);
+	  await notifyArenaStatus("failed", commitSha).catch((notifyError) => {
+	    log("Could not clear Arena maintenance status after update failure", notifyError);
+	  });
       updateState = {
         ...updateState,
         inProgress: false,
@@ -303,6 +307,14 @@ async function runUpdate(commitSha, githubToken, onPhase) {
       timeout: DOCKER_BUILD_TIMEOUT_MS
     });
 
+    onPhase("draining");
+    await notifyArenaStatus("restarting", commitSha).catch((error) => {
+      // The app already persisted the preparing notice before accepting the
+      // update. This callback sharpens the phase but must not prevent an
+      // otherwise valid security/release update.
+      log("Could not notify Arena before recreation", error);
+    });
+    await delay(600);
     onPhase("recreating");
     // --no-deps: recreate ONLY the app service, never its compose dependencies.
     // arena-server depends_on arena-db + arena-redis, and a plain `up -d
@@ -315,10 +327,59 @@ async function runUpdate(commitSha, githubToken, onPhase) {
       cwd: DEPLOY_DIR,
       timeout: DOCKER_UP_TIMEOUT_MS
     });
+
+    onPhase("verifying");
+    await waitForArenaCommit(commitSha);
+    await notifyArenaStatus("done", commitSha).catch((error) => {
+      // Startup reconciliation in arena-server also clears a matching target,
+      // so callback failure here is observable but not correctness-critical.
+      log("Could not notify Arena that the update completed", error);
+    });
   } finally {
     await rm(tarballPath, { force: true }).catch(() => undefined);
     await rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function notifyArenaStatus(phase, targetCommit) {
+  if (SHARED_SECRET === "") {
+    throw new Error("UPDATER_SHARED_SECRET is not configured");
+  }
+  const response = await fetch(ARENA_INTERNAL_STATUS_URL, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${SHARED_SECRET}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ phase, target_commit: targetCommit }),
+    signal: AbortSignal.timeout(3000)
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Arena status callback returned ${response.status}: ${text.slice(0, 160)}`);
+  }
+}
+
+async function waitForArenaCommit(targetCommit) {
+  const deadline = Date.now() + 60_000;
+  const versionURL = new URL("/api/v1/version", ARENA_INTERNAL_STATUS_URL).toString();
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(versionURL, { signal: AbortSignal.timeout(2500) });
+      if (response.ok) {
+        const body = await response.json();
+        if (body.commit === targetCommit) return;
+      }
+    } catch {
+      // Expected while compose is replacing the app container.
+    }
+    await delay(1000);
+  }
+  throw new Error(`Arena did not report target commit ${targetCommit} within 60 seconds`);
 }
 
 /**
