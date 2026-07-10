@@ -27,7 +27,9 @@ export class HudRenderer {
     this._lastLobbyState = null;
     this._roundMode = '';
     this._roundRefs = {};
-    this.roundCollapsed = false;
+    // Phones boot into the compact pill: at 375px the expanded card plus the
+    // fixed header and controls cover ~40% of the screen. One tap expands.
+    this.roundCollapsed = window.matchMedia('(max-width: 768px) and (pointer: coarse)').matches;
     this.selectedBotId = null;
     this.onSelectBot = null;
 
@@ -207,6 +209,14 @@ export class HudRenderer {
       const el = this._createKillEntry(kill);
       this.killfeedEl.prepend(el);
       this._activeEntries.unshift({ key: `${kill.killer}-${kill.victim}-${kill.tick}`, el });
+    }
+
+    // Bound the feed: long rounds otherwise grow the DOM one node per kill
+    // until the between-round lobby reset. Keys stay in _seenKeys so entries
+    // still inside the server's rolling kill_feed window can't re-add
+    // (the set is cleared on every lobby reset).
+    while (this._activeEntries.length > 30) {
+      this._activeEntries.pop().el.remove();
     }
   }
 

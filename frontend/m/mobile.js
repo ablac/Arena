@@ -9,8 +9,8 @@
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260710a';
-import { Minimap } from '../js/renderer/minimap.js';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260710d';
+import { Minimap } from '../js/renderer/minimap.js?v=20260710d';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, wsURL } from '../js/paths.js?v=20260710a';
 import { handleServiceStatus, initServiceStatus } from '../js/service-status.js';

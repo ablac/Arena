@@ -6,7 +6,10 @@
   --shell-safe-bottom: env(safe-area-inset-bottom, 0px);
   --shell-safe-left: env(safe-area-inset-left, 0px);
   --shell-header-height: 72px;
-  --shell-dock-width: 184px;
+  /* Width reserved for the right-edge rail menu (classic sideways rails are
+     ~44px wide + 18px inset). Minimap, header padding, and drawer widths key
+     off this. */
+  --shell-dock-width: 64px;
 }
 
 html,
@@ -310,6 +313,76 @@ summary {
   margin-bottom: 3px;
 }
 
+/* Telemetry minimize — mirrors the Spectator HUD's Hide/compact pattern.
+   Desktop + tablet only: at <=768px the panel is the bottom sheet driven by
+   [data-telemetry-toggle], which owns its own show/hide. */
+.sidebar-collapse-btn {
+  display: none;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  padding: 5px 11px;
+  border: 1px solid rgba(126, 166, 207, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: 600 0.62rem var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.sidebar-collapse-btn:hover {
+  border-color: rgba(71, 215, 255, 0.4);
+  background: rgba(71, 215, 255, 0.08);
+  color: var(--text-primary);
+}
+
+/* Same guard as the phone bottom-sheet query, inverted: the collapse mode
+   exists only where the sheet does not (also excludes short windows). */
+@media (min-width: 769px) and (min-height: 621px) {
+  .sidebar-collapse-btn {
+    display: inline-block;
+  }
+}
+
+@media (min-width: 769px) and (min-height: 621px) {
+  .arena-shell.telemetry-collapsed .arena-sidebar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    padding: 10px 14px;
+    border-radius: 999px;
+  }
+
+  .arena-shell.telemetry-collapsed .arena-tabs,
+  .arena-shell.telemetry-collapsed .arena-tab-content,
+  .arena-shell.telemetry-collapsed .arena-sidebar-intro h3,
+  .arena-shell.telemetry-collapsed .arena-sidebar-intro p:not(.arena-sidebar-kicker) {
+    display: none;
+  }
+
+  /* Keep the kicker as the collapsed pill's label, even in the 769-1100px
+     band where the intro is otherwise hidden. */
+  .arena-shell.telemetry-collapsed .arena-sidebar-intro {
+    display: block;
+  }
+
+  .arena-shell.telemetry-collapsed .arena-sidebar-kicker {
+    margin: 0;
+  }
+
+  .arena-shell.telemetry-collapsed .sidebar-collapse-btn {
+    position: static;
+    flex: none;
+  }
+}
+
 .arena-tab-panel {
   max-height: none;
 }
@@ -321,74 +394,23 @@ summary {
   z-index: 20 !important;
 }
 
-.site-command-dock.onboarding-rail-stack {
-  position: fixed;
-  top: 50%;
-  right: calc(var(--shell-safe-right) + 18px);
-  z-index: 70;
-  display: flex;
-  width: var(--shell-dock-width);
-  max-height: calc(100dvh - var(--shell-safe-top) - var(--shell-safe-bottom) - 36px);
-  gap: 7px;
-  padding: 9px;
-  overflow: auto;
-  border: 1px solid rgba(126, 166, 207, 0.18);
-  border-radius: 24px;
-  background: rgba(4, 10, 17, 0.72);
-  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(18px);
-  transform: translateY(-50%);
-}
-
-.command-dock-heading {
+/* Desktop menu: the classic right-edge onboarding rail from arena.css
+   (sideways mono labels + round gear on top). The .site-command-dock wrapper
+   adds no desktop styling of its own — it only becomes a bottom sheet at
+   phone widths (see the media query further down). */
+.dock-grab,
+.dock-live-chip,
+.command-dock-heading,
+.command-dock-close,
+.site-command-dock .rail-icon,
+.site-command-dock .gear-label {
   display: none;
 }
 
-.site-command-dock .onboarding-rail,
+/* The gear sits on top of the rail stack on desktop (the pre-rebuild look);
+   in the DOM it stays last so the mobile sheet reads top-to-bottom. */
 .site-command-dock .settings-gear-btn {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  width: 100%;
-  min-height: 48px;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid rgba(126, 166, 207, 0.14);
-  border-radius: 15px;
-  background: rgba(255, 255, 255, 0.035);
-  color: var(--text-primary);
-  font-family: var(--font-sans);
-  font-size: 0.76rem;
-  font-weight: 600;
-  letter-spacing: 0;
-  line-height: 1.15;
-  text-align: left;
-  text-transform: none;
-  writing-mode: horizontal-tb;
-  box-shadow: none;
-  transform: none;
-}
-
-.site-command-dock .onboarding-rail:hover,
-.site-command-dock .settings-gear-btn:hover {
-  border-color: rgba(71, 215, 255, 0.32);
-  background: rgba(71, 215, 255, 0.09);
-  transform: translateX(-3px);
-}
-
-.site-command-dock .settings-gear-btn svg {
-  flex: none;
-}
-
-.command-index {
-  color: var(--accent-blue);
-  font-family: var(--font-mono);
-  font-size: 0.62rem;
-}
-
-.command-dock-close {
-  display: none;
+  order: -1;
 }
 
 .onboarding-overlay {
@@ -592,7 +614,7 @@ body.site-cinema-mode .arena-controls {
 
 @media (max-width: 1100px) {
   :root {
-    --shell-dock-width: 160px;
+    --shell-dock-width: 64px;
   }
 
   .site-round-summary,
@@ -670,6 +692,9 @@ body.site-cinema-mode .arena-controls {
   .arena-shell-head {
     top: calc(var(--shell-safe-top) + var(--shell-header-height) + 6px);
     right: calc(var(--shell-safe-right) + 8px);
+    /* The base rule hides the head everywhere; on phones it must show so the
+       "Match feed" telemetry-sheet toggle is actually reachable. */
+    display: flex;
     max-width: calc(100% - 130px);
   }
 
@@ -700,11 +725,32 @@ body.site-cinema-mode .arena-controls {
   .hud-round {
     top: calc(var(--shell-safe-top) + var(--shell-header-height) + 56px);
     left: calc(var(--shell-safe-left) + 8px);
-    width: min(208px, calc(100% - 16px));
+    width: min(230px, calc(100% - 16px));
     max-height: calc(100dvh - 250px);
     padding: 9px;
+    overflow-y: auto;
     border-radius: 14px;
+    background: linear-gradient(180deg, rgba(8, 15, 24, 0.62), rgba(6, 11, 18, 0.68));
     font-size: 0.66rem;
+  }
+
+  /* One slim metric row instead of the 2x2 grid — halves the card height. */
+  .hud-round .hud-metric-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 5px;
+  }
+
+  .hud-round .hud-metric {
+    padding: 5px 6px;
+  }
+
+  .hud-round .hud-metric-value {
+    font-size: 0.78rem;
+  }
+
+  .hud-round .hud-metric-label {
+    font-size: 0.5rem;
+    letter-spacing: 0.06em;
   }
 
   .hud-round.is-collapsed {
@@ -803,6 +849,8 @@ body.site-cinema-mode .arena-controls {
     height: 96px !important;
   }
 
+  /* Phone nav: game-styled bottom sheet. The desktop look is the classic
+     arena.css rail; everything below restyles the same DOM into glass tiles. */
   .site-command-dock.onboarding-rail-stack {
     top: auto;
     right: 0;
@@ -812,27 +860,42 @@ body.site-cinema-mode .arena-controls {
     display: grid;
     grid-template-columns: 1fr 1fr;
     width: 100%;
-    max-height: min(72dvh, 620px);
-    gap: 8px;
+    max-height: min(78dvh, 640px);
+    gap: 10px;
     padding:
-      16px
-      calc(var(--shell-safe-right) + 12px)
-      calc(var(--shell-safe-bottom) + 14px)
-      calc(var(--shell-safe-left) + 12px);
+      10px
+      calc(var(--shell-safe-right) + 14px)
+      calc(var(--shell-safe-bottom) + 16px)
+      calc(var(--shell-safe-left) + 14px);
+    overflow: auto;
+    border: 1px solid rgba(71, 215, 255, 0.16);
     border-right: 0;
     border-bottom: 0;
     border-left: 0;
     border-radius: 26px 26px 0 0;
-    background: rgba(4, 10, 17, 0.97);
-    box-shadow: 0 -28px 80px rgba(0, 0, 0, 0.5);
+    background:
+      radial-gradient(130% 90% at 50% 0%, rgba(71, 215, 255, 0.1), transparent 55%),
+      linear-gradient(180deg, rgba(6, 17, 28, 0.96), rgba(3, 7, 12, 0.99));
+    box-shadow: 0 -28px 80px rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(20px) saturate(140%);
     pointer-events: none;
     transform: translateY(105%);
-    transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+    transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .site-command-dock.is-open {
     pointer-events: auto;
     transform: translateY(0);
+  }
+
+  .dock-grab {
+    display: block;
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: 44px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(126, 166, 207, 0.35);
   }
 
   .command-dock-heading {
@@ -859,6 +922,44 @@ body.site-cinema-mode .arena-controls {
     font-size: 1.35rem;
   }
 
+  .dock-live-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    padding: 5px 11px;
+    border: 1px solid rgba(126, 166, 207, 0.25);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    font: 600 0.6rem var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .dock-live-chip .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  .dock-live-chip.connected {
+    border-color: rgba(61, 220, 151, 0.35);
+    background: rgba(61, 220, 151, 0.08);
+    color: #3ddc97;
+  }
+
+  .dock-live-chip.connected .dot {
+    animation: dock-chip-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes dock-chip-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
   .command-dock-close {
     display: inline-flex;
     align-items: center;
@@ -873,14 +974,95 @@ body.site-cinema-mode .arena-controls {
     font-size: 1.3rem;
   }
 
+  /* Neutralize the desktop rail look (sideways mono text) into flat tiles. */
   .site-command-dock .onboarding-rail,
   .site-command-dock .settings-gear-btn {
-    min-height: 52px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-end;
+    width: 100%;
+    min-height: 74px;
+    gap: 8px;
+    padding: 12px;
+    overflow: hidden;
+    border: 1px solid rgba(126, 166, 207, 0.16);
+    border-radius: 16px;
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015));
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    line-height: 1.15;
+    text-align: left;
+    text-transform: none;
+    writing-mode: horizontal-tb;
+    box-shadow: none;
+    transform: none;
+    transition: border-color 0.2s ease, background 0.2s ease;
+  }
+
+  .site-command-dock .onboarding-rail:hover,
+  .site-command-dock .onboarding-rail:active,
+  .site-command-dock .settings-gear-btn:hover,
+  .site-command-dock .settings-gear-btn:active {
+    border-color: rgba(71, 215, 255, 0.45);
+    background: linear-gradient(160deg, rgba(71, 215, 255, 0.14), rgba(71, 215, 255, 0.04));
+    transform: none;
+  }
+
+  .site-command-dock .rail-icon {
+    display: block;
+    width: 20px;
+    height: 20px;
+    color: var(--accent-blue);
   }
 
   .site-command-dock .settings-gear-btn {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    align-self: stretch;
     grid-column: 1 / -1;
+    order: 0;
+    height: auto;
+    min-height: 54px;
   }
+
+  .site-command-dock .settings-gear-btn svg {
+    flex: none;
+    color: var(--accent-blue);
+  }
+
+  .site-command-dock .gear-label {
+    display: inline;
+  }
+
+  /* Staggered tile entrance while the sheet slides up. */
+  .site-command-dock .onboarding-rail,
+  .site-command-dock .settings-gear-btn {
+    opacity: 0;
+    translate: 0 14px;
+  }
+
+  .site-command-dock.is-open .onboarding-rail,
+  .site-command-dock.is-open .settings-gear-btn {
+    opacity: 1;
+    translate: 0 0;
+    transition:
+      opacity 0.3s ease,
+      translate 0.34s cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 0.2s ease,
+      background 0.2s ease;
+  }
+
+  .site-command-dock.is-open .onboarding-rail:nth-of-type(2) { transition-delay: 0.03s; }
+  .site-command-dock.is-open .onboarding-rail:nth-of-type(3) { transition-delay: 0.06s; }
+  .site-command-dock.is-open .onboarding-rail:nth-of-type(4) { transition-delay: 0.09s; }
+  .site-command-dock.is-open .onboarding-rail:nth-of-type(5) { transition-delay: 0.12s; }
+  .site-command-dock.is-open .settings-gear-btn { transition-delay: 0.15s; }
 
   body.site-menu-open .overlay-backdrop {
     z-index: 125;
@@ -1009,8 +1191,15 @@ body.site-cinema-mode .arena-controls {
 @media (prefers-reduced-motion: reduce) {
   .site-command-dock,
   .arena-sidebar,
-  .onboarding-drawer {
+  .onboarding-drawer,
+  .site-command-dock .onboarding-rail,
+  .site-command-dock .settings-gear-btn {
     scroll-behavior: auto;
     transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+
+  .dock-live-chip.connected .dot {
+    animation: none;
   }
 }

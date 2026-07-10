@@ -763,6 +763,9 @@ export class GameplayRenderer {
 
     for (const [id, mesh] of this.landmines) {
       if (!seen.has(id)) {
+        // Each mine owns a per-id StandardMaterial; mesh.dispose() alone
+        // orphans it (measured: 71 mine-mats accumulated in minutes).
+        if (mesh.material) mesh.material.dispose();
         mesh.dispose();
         this.landmines.delete(id);
       }
@@ -872,6 +875,16 @@ export class GameplayRenderer {
       mesh.material = mat;
       mesh.isPickable = false;
       this.voidTiles.set(key, mesh);
+    }
+
+    // Remove tiles the server stopped sending (round ended, sudden death
+    // reset) — without this, last round's void planes and their per-tile
+    // materials leak and linger on the next round's floor.
+    for (const [key, mesh] of this.voidTiles) {
+      if (seen.has(key)) continue;
+      if (mesh.material) mesh.material.dispose();
+      mesh.dispose();
+      this.voidTiles.delete(key);
     }
   }
 
@@ -1147,10 +1160,10 @@ export class GameplayRenderer {
     }
     for (const [, e] of this.hazardZones) { e.edges.forEach(m => m.dispose()); e.parent.dispose(); e.zaps.dispose(false); e.sparks.dispose(false); }
     for (const [, e] of this.burnFields) { e.disc.dispose(); e.ring.dispose(); e.discMat.dispose(); e.ringMat.dispose(); }
-    for (const m of this.landmines.values()) m.dispose();
+    for (const m of this.landmines.values()) { if (m.material) m.material.dispose(); m.dispose(); }
     for (const [, e] of this.gravityWells) { e.ring.dispose(); e.inner.dispose(); e.vortex.dispose(false); }
     for (const [, e] of this.staffImpacts) { e.outer.dispose(); e.disc.dispose(); e.outerMat.dispose(); e.discMat.dispose(); }
-    for (const m of this.voidTiles.values()) m.dispose();
+    for (const m of this.voidTiles.values()) { if (m.material) m.material.dispose(); m.dispose(); }
     if (this.flags) {
       for (const [, e] of this.flags) {
         e.pole.dispose();
