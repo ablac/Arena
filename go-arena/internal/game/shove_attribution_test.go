@@ -40,6 +40,9 @@ func TestLethalShoveWallSlamReplacesStaleAttribution(t *testing.T) {
 	if shover.RoundDamageDealt != 15 || victim.RoundDamageTaken != 15 {
 		t.Fatalf("wall-slam stats = dealt=%v taken=%v", shover.RoundDamageDealt, victim.RoundDamageTaken)
 	}
+	if shover.RoundWeaponDamageDealt != 0 {
+		t.Fatalf("universal shove counted as weapon damage: %v", shover.RoundWeaponDamageDealt)
+	}
 
 	deaths := CheckDeaths(bots, NewSpatialGrid(20), 100)
 	if len(deaths) != 1 {

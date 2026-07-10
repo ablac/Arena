@@ -31,7 +31,8 @@ func main() {
 	// start, rather than silently running in a broken degraded mode where
 	// every keyed bot join fails (the 2026-05-29 incident). Set
 	// ARENA_DB_OPTIONAL=true to allow running without a database.
-	ctx := context.Background()
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 	if err := db.Connect(ctx); err != nil {
 		if !config.C.DBOptional {
 			slog.Error("database required but unavailable after retries; exiting for restart", "error", err)
@@ -46,6 +47,15 @@ func main() {
 		if err := db.EnsureCoreSchema(ctx); err != nil {
 			slog.Warn("failed to ensure database schema", "error", err)
 		}
+		minElo, maxElo := config.EloBounds()
+		if changed, err := db.NormalizeEloRatings(ctx, minElo, maxElo); err != nil {
+			slog.Warn("failed to normalize persisted Elo ratings", "error", err)
+		} else if changed > 0 {
+			slog.Info("normalized persisted Elo ratings", "changed_rows", changed, "min", minElo, "max", maxElo)
+		}
+		if err := api.LoadPersistedGameConfigOverrides(ctx); err != nil {
+			slog.Warn("failed to load persisted admin game config", "error", err)
+		}
 	}
 
 	// Initialise Redis for rate limiting (optional).
@@ -55,11 +65,17 @@ func main() {
 
 	// Initialise grid-based weapon ranges from config cell size.
 	game.InitWeaponRanges(config.C.PathfindingCellSize)
+	if db.Pool != nil {
+		if err := api.LoadPersistedWeaponOverrides(ctx); err != nil {
+			slog.Warn("failed to load persisted admin weapon overrides", "error", err)
+		}
+	}
 	if err := game.LoadWeaponBalance(ctx); err != nil {
 		slog.Warn("failed to load weapon balance state", "error", err)
 	}
 
-	// Create and start the game engine.
+	// Create the game engine. It starts after the router captures the immutable
+	// startup configuration used by restart-staged admin settings.
 	engine := game.NewGameEngine()
 	if db.Pool != nil {
 		if entries, err := db.ListBountyBoardEntries(ctx); err != nil {
@@ -80,8 +96,6 @@ func main() {
 			slog.Info("seeded bounty board from recent winners", "bot", seed.Name, "streak", seed.WinStreak)
 		}
 	}
-	go engine.Run(ctx)
-
 	// Demo bots: create manager before router so admin endpoints can reference it.
 	var demoManager *demobots.Manager
 	if demoBotEnabled() {
@@ -96,6 +110,7 @@ func main() {
 	if demoManager != nil {
 		routerOpts = append(routerOpts, api.WithDemoManager(demoManager))
 	}
+	routerOpts = append(routerOpts, api.WithShutdown(cancel))
 	router := api.NewRouter(engine, routerOpts...)
 
 	// Wire up event hooks for dashboard logging.
@@ -108,6 +123,7 @@ func main() {
 	game.GameEventHook = func(eventName string, data map[string]interface{}) {
 		api.EmitGameEvent(api.GlobalEventBus, eventName, data)
 	}
+	go engine.Run(ctx)
 
 	// Start the HTTP server.
 	addr := fmt.Sprintf("%s:%d", config.C.ServerHost, config.C.ServerPort)
@@ -131,25 +147,35 @@ func main() {
 		go demoManager.Start(ctx)
 	}
 
-	// Graceful shutdown on SIGINT / SIGTERM.
+	// Graceful shutdown on SIGINT / SIGTERM or the authenticated admin restart
+	// endpoint. WebSockets are hijacked from net/http, so explicitly notify and
+	// close them before asking the HTTP server to drain.
+	shutdownDone := make(chan struct{})
 	go func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		<-sigChan
+		defer close(shutdownDone)
+		<-ctx.Done()
 		slog.Info("shutting down...")
+		engine.NotifyServiceRestart(60)
+		time.Sleep(350 * time.Millisecond)
 
 		// Stop demo bots first so they disconnect cleanly.
 		if demoManager != nil {
 			demoManager.Stop()
 		}
-
-		engine.Running = false
-		srv.Shutdown(context.Background())
+		engine.CloseAllWebSockets("service restart; retry in about 60 seconds")
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer shutdownCancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("HTTP shutdown did not fully drain", "error", err)
+		}
 	}()
 
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
+	}
+	if ctx.Err() != nil {
+		<-shutdownDone
 	}
 }
 

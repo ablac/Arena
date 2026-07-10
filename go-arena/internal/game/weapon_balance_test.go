@@ -36,18 +36,32 @@ func balanceTestBots(strongKills, weakKills int) map[string]*BotState {
 		}
 		id := weapon + "-" + string(rune('a'+i))
 		bots[id] = &BotState{
-			BotID:            id,
-			Weapon:           weapon,
-			Elo:              1000,
-			RoundKills:       kills,
-			BestKillStreak:   kills,
-			RoundDamageDealt: float64(kills) * 80,
-			RoundLongestLife: 600,
-			RoundShotsFired:  40,
-			RoundShotsHit:    20,
+			BotID:                  id,
+			Weapon:                 weapon,
+			Elo:                    1000,
+			RoundKills:             kills,
+			RoundWeaponKills:       kills,
+			BestKillStreak:         kills,
+			RoundDamageDealt:       float64(kills) * 80,
+			RoundWeaponDamageDealt: float64(kills) * 80,
+			RoundLongestLife:       600,
+			RoundShotsFired:        40,
+			RoundShotsHit:          20,
 		}
 	}
+	assignBalanceEngagements(bots)
 	return bots
+}
+
+func assignBalanceEngagements(bots map[string]*BotState) {
+	for _, bot := range bots {
+		bot.RoundWeaponOpponentIDs = make(map[string]struct{})
+		for opponentID, opponent := range bots {
+			if opponent != nil && opponentID != bot.BotID && opponent.Weapon != bot.Weapon {
+				bot.RoundWeaponOpponentIDs[opponentID] = struct{}{}
+			}
+		}
+	}
 }
 
 func runBalanceRounds(rounds int, bots map[string]*BotState, winnerID string) {
@@ -102,6 +116,54 @@ func TestAutoBalanceCorrectsConsistentEvidence(t *testing.T) {
 	}
 }
 
+func TestAutoBalanceAcceptsDistinctEngagedTwoBotCohort(t *testing.T) {
+	setupWeaponBalanceTest(t)
+	config.C.WeaponAutoBalanceMinRounds = 6
+	config.C.WeaponAutoBalanceMinBotSamples = 18
+	config.C.WeaponAutoBalanceMinDistinctBots = 2
+	bots := balanceTestBots(8, 0)
+	delete(bots, "sword-c")
+	delete(bots, "bow-f")
+	assignBalanceEngagements(bots)
+
+	runBalanceRounds(9, bots, "sword-a")
+
+	strong, _ := GetWeaponBalanceState("sword")
+	weak, _ := GetWeaponBalanceState("bow")
+	if strong.DamageScale >= 1 || weak.DamageScale <= 1 {
+		t.Fatalf("two-bot cohorts did not balance: sword=%.4f bow=%.4f", strong.DamageScale, weak.DamageScale)
+	}
+}
+
+func TestAutoBalanceRejectsBystanderDiversityForSingleVictimFarm(t *testing.T) {
+	setupWeaponBalanceTest(t)
+	config.C.WeaponAutoBalanceMinRounds = 6
+	config.C.WeaponAutoBalanceMinBotSamples = 18
+	config.C.WeaponAutoBalanceMinDistinctBots = 2
+
+	// Keep three bow bots in the comparison roster, but attribute every sword
+	// engagement to only bow-d. The other bots are bystanders and cannot satisfy
+	// opponent diversity merely by being present in the arena.
+	bots := balanceTestBots(8, 0)
+	delete(bots, "sword-c")
+	for _, bot := range bots {
+		bot.RoundWeaponOpponentIDs = make(map[string]struct{})
+		if bot.Weapon == "sword" {
+			bot.RoundWeaponOpponentIDs["bow-d"] = struct{}{}
+		} else {
+			bot.RoundWeaponOpponentIDs["sword-a"] = struct{}{}
+		}
+	}
+	runBalanceRounds(9, bots, "sword-a")
+
+	for _, weapon := range []string{"sword", "bow"} {
+		state, _ := GetWeaponBalanceState(weapon)
+		if state.DamageScale != 1 || state.CooldownScale != 1 {
+			t.Fatalf("single-opponent farming moved %s: damage=%.4f cooldown=%.4f", weapon, state.DamageScale, state.CooldownScale)
+		}
+	}
+}
+
 func TestAutoBalanceRejectsAlternatingNoise(t *testing.T) {
 	setupWeaponBalanceTest(t)
 
@@ -130,6 +192,8 @@ func TestAutoBalanceIgnoresInactiveAndUnknownSamples(t *testing.T) {
 			bot.RoundShotsHit = 0
 			bot.RoundKills = 0
 			bot.RoundDamageDealt = 0
+			bot.RoundWeaponKills = 0
+			bot.RoundWeaponDamageDealt = 0
 		}
 	}
 	bots["unknown"] = &BotState{
@@ -170,7 +234,7 @@ func TestAutoBalanceDoesNotRewardDeliberateMisses(t *testing.T) {
 
 func TestAutoBalanceRequiresAxisEvidence(t *testing.T) {
 	setupWeaponBalanceTest(t)
-	bots := balanceTestBots(0, 1)
+	bots := balanceTestBots(1, 1)
 	for _, bot := range bots {
 		if bot.Weapon == "sword" {
 			bot.RoundLongestLife = 4000
@@ -184,6 +248,51 @@ func TestAutoBalanceRequiresAxisEvidence(t *testing.T) {
 	state, _ := GetWeaponBalanceState("sword")
 	if state.DamageScale != 1 || state.CooldownScale != 1 {
 		t.Fatalf("survival confounder was attributed to weapon axes: damage=%.4f cooldown=%.4f", state.DamageScale, state.CooldownScale)
+	}
+}
+
+func TestAutoBalanceIgnoresNonWeaponRoundOutput(t *testing.T) {
+	setupWeaponBalanceTest(t)
+	bots := balanceTestBots(3, 3)
+	for _, bot := range bots {
+		if bot.Weapon == "sword" {
+			// Simulate mines, objective rewards, and survival output that belongs
+			// to the bot rather than the sword. Direct weapon counters stay even.
+			bot.RoundKills = 99
+			bot.RoundDamageDealt = 9999
+			bot.BestKillStreak = 99
+			bot.RoundLongestLife = 9000
+		}
+	}
+
+	runBalanceRounds(4, bots, "sword-a")
+
+	for _, weapon := range []string{"sword", "bow"} {
+		state, _ := GetWeaponBalanceState(weapon)
+		if state.DamageScale != 1 || state.CooldownScale != 1 {
+			t.Fatalf("non-weapon output moved %s: damage=%.4f cooldown=%.4f", weapon, state.DamageScale, state.CooldownScale)
+		}
+	}
+}
+
+func TestManualWeaponChangeDiscardsPartialEvidence(t *testing.T) {
+	setupWeaponBalanceTest(t)
+	bots := balanceTestBots(8, 0)
+	runBalanceRounds(3, bots, "sword-a")
+
+	wc, ok := GetBaseWeaponConfig("sword")
+	if !ok {
+		t.Fatal("missing sword config")
+	}
+	wc.Damage++
+	if !UpdateBaseWeaponConfig("sword", wc) {
+		t.Fatal("manual sword update failed")
+	}
+	AutoBalanceWeapons(context.Background(), bots, "sword-a")
+
+	state, _ := GetWeaponBalanceState("sword")
+	if state.DamageScale != 1 || state.CooldownScale != 1 {
+		t.Fatalf("pre-change evidence leaked: damage=%.4f cooldown=%.4f", state.DamageScale, state.CooldownScale)
 	}
 }
 
@@ -255,7 +364,7 @@ func TestEloCorrectionPreservesHitRateInvariant(t *testing.T) {
 		// Area attacks can record more targets hit than casts fired.
 		RoundShotsHit: 20, RoundLongestLife: 100,
 	}
-	addBotPerformance(entry, total, bot, bot.BotID, false, 0.75)
+	addBotPerformance(entry, total, bot, bot.BotID, 0.75)
 
 	if rate := entry.hitRate(); rate < 0 || rate > 1 {
 		t.Fatalf("Elo-corrected hit rate escaped [0,1]: %.4f", rate)

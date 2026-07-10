@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"arena-server/internal/config"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -184,6 +186,110 @@ func TestPostgresFreshSchemaCosmeticsAndLeaderboardResetSmoke(t *testing.T) {
 	}
 	if allTimeRows != 0 || windowRows != 0 {
 		t.Fatalf("leaderboard reset left rows: all_time=%d windows=%d", allTimeRows, windowRows)
+	}
+}
+
+func TestNormalizeEloRatingsRepairsCurrentAndWindowBoards(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	now := time.Now()
+	bot := &Bot{
+		ID: "elo-repair-bot", APIKeyID: "elo-repair-key", Name: "Elo Repair Bot", AvatarColor: "#123456",
+		DefaultWeapon: "sword", DefaultStats: JSONBStats{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
+		DefaultFallback: "aggressive", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := CreateAPIKeyAndBot(ctx, bot.APIKeyID, "elo-repair-hash", "arena_elo_repair", "127.0.0.1", bot); err != nil {
+		t.Fatalf("CreateAPIKeyAndBot: %v", err)
+	}
+	// Insert impossible legacy values directly: public write helpers now clamp
+	// at the persistence boundary, while startup normalization still has to
+	// repair rows created by older releases.
+	if _, err := Pool.Exec(ctx, `INSERT INTO bot_stats (bot_id, elo, rounds_played, updated_at)
+		VALUES ($1, 193480, 1, $2)`, bot.ID, now); err != nil {
+		t.Fatalf("insert legacy bot_stats Elo: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `INSERT INTO round_bot_stats (round_number, bot_id, bot_name, weapon, elo)
+		VALUES (1, $1, $2, 'sword', -50)`, bot.ID, bot.Name); err != nil {
+		t.Fatalf("insert legacy round_bot_stats Elo: %v", err)
+	}
+
+	changed, err := NormalizeEloRatings(ctx, 100, 3000)
+	if err != nil {
+		t.Fatalf("NormalizeEloRatings: %v", err)
+	}
+	if changed != 2 {
+		t.Fatalf("changed rows = %d, want 2", changed)
+	}
+	var current, historical int
+	if err := Pool.QueryRow(ctx, `
+		SELECT (SELECT elo FROM bot_stats WHERE bot_id = $1),
+		       (SELECT elo FROM round_bot_stats WHERE bot_id = $1)`, bot.ID).Scan(&current, &historical); err != nil {
+		t.Fatalf("read normalized Elo: %v", err)
+	}
+	if current != 3000 || historical != 100 {
+		t.Fatalf("normalized Elo = %d/%d, want 3000/100", current, historical)
+	}
+
+	changed, err = NormalizeEloRatings(ctx, 100, 3000)
+	if err != nil || changed != 0 {
+		t.Fatalf("idempotent normalize = (%d, %v), want (0, nil)", changed, err)
+	}
+}
+
+func TestEloPersistenceWritesClampToConfiguredBounds(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	previousConfig := config.C
+	config.C.EloMin = 800
+	config.C.EloMax = 1200
+	config.C.EloStarting = 1000
+	t.Cleanup(func() { config.C = previousConfig })
+
+	now := time.Now()
+	bot := &Bot{
+		ID: "elo-write-bot", APIKeyID: "elo-write-key", Name: "Elo Write Bot", AvatarColor: "#654321",
+		DefaultWeapon: "sword", DefaultStats: JSONBStats{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
+		DefaultFallback: "aggressive", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := CreateAPIKeyAndBot(ctx, bot.APIKeyID, "elo-write-hash", "arena_elo_write", "127.0.0.1", bot); err != nil {
+		t.Fatalf("CreateAPIKeyAndBot: %v", err)
+	}
+
+	if err := ApplyBotStatsDelta(ctx, &BotStatsDelta{BotID: bot.ID, Elo: 9999, CapturedAt: now}); err != nil {
+		t.Fatalf("ApplyBotStatsDelta: %v", err)
+	}
+	var current int
+	if err := Pool.QueryRow(ctx, `SELECT elo FROM bot_stats WHERE bot_id = $1`, bot.ID).Scan(&current); err != nil {
+		t.Fatalf("read delta Elo: %v", err)
+	}
+	if current != 1200 {
+		t.Fatalf("delta Elo = %d, want upper bound 1200", current)
+	}
+
+	if err := UpsertBotStats(ctx, &BotStats{BotID: bot.ID, Elo: -50, UpdatedAt: now.Add(time.Second)}); err != nil {
+		t.Fatalf("UpsertBotStats: %v", err)
+	}
+	if err := Pool.QueryRow(ctx, `SELECT elo FROM bot_stats WHERE bot_id = $1`, bot.ID).Scan(&current); err != nil {
+		t.Fatalf("read upsert Elo: %v", err)
+	}
+	if current != 800 {
+		t.Fatalf("upsert Elo = %d, want lower bound 800", current)
+	}
+
+	if err := InsertRoundBotStats(ctx, 1, bot.ID, bot.Name, "sword", 0, 0, 0, 0, 0, 0, 0, 0, 0, 9999, false); err != nil {
+		t.Fatalf("InsertRoundBotStats: %v", err)
+	}
+	var historical int
+	if err := Pool.QueryRow(ctx, `SELECT elo FROM round_bot_stats WHERE bot_id = $1`, bot.ID).Scan(&historical); err != nil {
+		t.Fatalf("read round Elo: %v", err)
+	}
+	if historical != 1200 {
+		t.Fatalf("round Elo = %d, want upper bound 1200", historical)
 	}
 }
 

@@ -88,6 +88,7 @@ node my_bot.js YOUR_API_KEY
 | `on_death(death_info)` | You were killed. | `killed_by`, `weapon_used`, `damage`, `respawn_in_seconds`. |
 | `on_respawn(respawn_info)` | You respawned. | `position`, `hp`. |
 | `on_round_end(round_info)` | Round ended. | `round_number`, `your_stats`, `round_winner`. |
+| `on_service_status(status)` | Public broadcast or maintenance status changed. | Full `service_status` replacement snapshot. |
 
 ### Action Helpers
 
@@ -121,6 +122,7 @@ Same API with JS naming conventions:
 | `on_death(info)` | `onDeath(info)` |
 | `on_respawn(info)` | `onRespawn(info)` |
 | `on_round_end(info)` | `onRoundEnd(info)` |
+| `on_service_status(status)` | `onServiceStatus(status)` |
 | `move_toward(...)` | `moveToward(...)` |
 | `move_away(...)` | `moveAway(...)` |
 | `shove(id)` | `shove(id)` |

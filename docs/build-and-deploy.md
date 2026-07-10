@@ -81,6 +81,12 @@ Recommended operator rules:
 - Restrict `ARENA_CORS_ORIGINS` if public cross-origin tooling is not needed.
 - Keep Postgres and Redis off the public internet.
 
+## Admin configuration persistence
+
+The Admin Panel stores accepted game configuration, Map Workshop settings, and weapon tuning values in PostgreSQL. The server loads environment/default configuration first, applies saved game and map overrides, initializes weapon ranges, then applies saved base weapon values before loading adaptive balance scales. This order prevents a saved weapon value from being multiplied into the base again.
+
+Game and map saves are deliberately restart-staged. The simulation has many direct reads of its immutable startup configuration, so changing that global object during a live match would create data races and half-applied rounds. Config responses show the saved desired values and include `_persistence.restart_required`, `_persistence.pending_values`, and `_persistence.active_values`. Weapon tuning remains live because its dedicated registry is lock-protected. Every save fails closed when PostgreSQL is unavailable or the transaction fails.
+
 ## Self-Update (Admin Panel "Update to latest")
 
 The Admin Panel's Controls tab has a **Version & Update** card that shows the

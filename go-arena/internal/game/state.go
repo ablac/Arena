@@ -255,17 +255,20 @@ type BotState struct {
 	Team int
 
 	// Round stats
-	RoundKills         int
-	RoundDeaths        int
-	RoundDamageDealt   float64
-	RoundDamageTaken   float64
-	RoundDistance      float64
-	RoundShotsFired    int
-	RoundShotsHit      int
-	RoundLongestLife   int
-	RoundPickups       int
-	RoundFlagCaptures  int
-	RoundLifeStartTick int
+	RoundKills             int
+	RoundDeaths            int
+	RoundDamageDealt       float64
+	RoundWeaponKills       int
+	RoundWeaponDamageDealt float64
+	RoundWeaponOpponentIDs map[string]struct{}
+	RoundDamageTaken       float64
+	RoundDistance          float64
+	RoundShotsFired        int
+	RoundShotsHit          int
+	RoundLongestLife       int
+	RoundPickups           int
+	RoundFlagCaptures      int
+	RoundLifeStartTick     int
 
 	// Persistence snapshot — tracks what was already synced to DB
 	PersistedKills       int
@@ -495,6 +498,9 @@ func (b *BotState) ResetRoundStats() {
 	b.RoundKills = 0
 	b.RoundDeaths = 0
 	b.RoundDamageDealt = 0
+	b.RoundWeaponKills = 0
+	b.RoundWeaponDamageDealt = 0
+	b.RoundWeaponOpponentIDs = nil
 	b.RoundDamageTaken = 0
 	b.RoundDistance = 0
 	b.RoundShotsFired = 0

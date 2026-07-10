@@ -1,6 +1,22 @@
 import WebSocket from 'ws';
 import { distance, directionToward, directionAway } from './helpers.js';
 
+function serviceStatusFingerprint(status) {
+  const canonicalize = (value) => {
+    if (Array.isArray(value)) return value.map(canonicalize);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]),
+      );
+    }
+    return value;
+  };
+  const semantic = { ...(status || {}) };
+  delete semantic.revision;
+  delete semantic.server_time;
+  return JSON.stringify(canonicalize(semantic));
+}
+
 /**
  * Base class for AI Battle Arena bots.
  * Subclass and override {@link onTick} (required), plus optionally
@@ -19,6 +35,10 @@ export default class ArenaBot {
     this._fallback = 'aggressive';
     this._running = false;
     this._lastPos = [0, 0];
+    this.serviceStatus = null;
+    this._serviceStatusRevision = -1;
+    this._serviceStatusFingerprint = null;
+    this._maintenanceRetryUntil = 0;
 
     // Terrain cache (populated by map_init)
     /** @type {string[][]|null} */ this._terrain = null;
@@ -55,6 +75,8 @@ export default class ArenaBot {
   async onRespawn(respawnInfo) {}
   /** @param {object} roundInfo */
   async onRoundEnd(roundInfo) {}
+  /** Called when a site broadcast or maintenance status changes. */
+  async onServiceStatus(status) {}
 
   // ── Action helpers ─────────────────────────────────────────────
 
@@ -301,6 +323,7 @@ export default class ArenaBot {
           type: 'select_loadout', weapon: this._weapon,
           stats: this._stats, fallback_behavior: this._fallback,
         });
+        if (msg.service_status) await this._handleServiceStatus(msg.service_status);
         break;
       case 'loadout_confirmed':
         console.log(`[ArenaBot] Loadout confirmed: ${msg.weapon}`);
@@ -320,6 +343,7 @@ export default class ArenaBot {
         await this.onMapInit(msg.terrain, msg.width, msg.height);
         break;
       case 'tick': {
+        if (msg.service_status) await this._handleServiceStatus(msg.service_status);
         const st = msg.your_state || {};
         if (st.position) this._lastPos = st.position;
         this.lastActionResult = st.last_action_result || null;
@@ -352,6 +376,9 @@ export default class ArenaBot {
         console.log(`[ArenaBot] Round ${msg.round_number} ended`);
         await this.onRoundEnd(msg);
         break;
+      case 'service_status':
+        await this._handleServiceStatus(msg);
+        break;
       case 'error':
         console.error(`[ArenaBot] Server error: ${msg.message}`);
         break;
@@ -369,6 +396,26 @@ export default class ArenaBot {
     }
   }
 
+  /** @private */
+  async _handleServiceStatus(status) {
+    const revision = Number(status?.revision || 0);
+    if (revision < this._serviceStatusRevision) return;
+    const fingerprint = serviceStatusFingerprint(status);
+    if (revision === this._serviceStatusRevision && fingerprint === this._serviceStatusFingerprint) return;
+    this._serviceStatusRevision = revision;
+    this._serviceStatusFingerprint = fingerprint;
+    this.serviceStatus = status;
+    const maintenance = status?.maintenance || null;
+    const retryAfter = Number(maintenance?.retry_after_seconds || 0);
+    this._maintenanceRetryUntil = retryAfter > 0 ? Date.now() + retryAfter * 1000 : 0;
+    if (maintenance) console.warn(`[ArenaBot] Maintenance: ${maintenance.message || 'server restarting'}`);
+    try {
+      await this.onServiceStatus(status);
+    } catch (error) {
+      console.error(`[ArenaBot] onServiceStatus error: ${error.message}`);
+    }
+  }
+
   /** Run the bot with automatic reconnection (exponential backoff). */
   async run() {
     this._running = true;
@@ -380,8 +427,10 @@ export default class ArenaBot {
         await new Promise((resolve) => { this.ws.on('close', resolve); });
       } catch { /* connection failed */ }
       if (!this._running) break;
-      console.log(`[ArenaBot] Reconnecting in ${delay / 1000}s...`);
-      await new Promise((r) => setTimeout(r, delay));
+      const maintenanceDelay = Math.max(0, this._maintenanceRetryUntil - Date.now());
+      const waitFor = Math.max(delay, maintenanceDelay);
+      console.log(`[ArenaBot] Reconnecting in ${Math.ceil(waitFor / 1000)}s...`);
+      await new Promise((r) => setTimeout(r, waitFor));
       delay = Math.min(delay * 2, 30000);
     }
   }

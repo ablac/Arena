@@ -13,22 +13,30 @@ func TestSpawnAndRoundResetClearDamageAttribution(t *testing.T) {
 	t.Cleanup(func() { ActiveTerrain = previousTerrain })
 
 	bot := &BotState{
-		BotID:            "victim",
-		MaxHP:            100,
-		LastDamagedBy:    "old-attacker",
-		LastDamageTick:   45,
-		LastDamageSource: "old-weapon",
-		LastDamageAmount: 99,
+		BotID:                  "victim",
+		MaxHP:                  100,
+		LastDamagedBy:          "old-attacker",
+		LastDamageTick:         45,
+		LastDamageSource:       "old-weapon",
+		LastDamageAmount:       99,
+		RoundWeaponOpponentIDs: map[string]struct{}{"old-opponent": {}},
 	}
 	SpawnBotAt(bot, NewVec2(2, 3), NewSpatialGrid(10), 50)
 	assertDamageAttributionCleared(t, bot)
+	if _, ok := bot.RoundWeaponOpponentIDs["old-opponent"]; !ok {
+		t.Fatal("respawn cleared the current round's weapon engagements")
+	}
 
 	bot.LastDamagedBy = "round-attacker"
 	bot.LastDamageTick = 75
 	bot.LastDamageSource = "round-weapon"
 	bot.LastDamageAmount = 25
+	bot.RoundWeaponOpponentIDs = map[string]struct{}{"round-opponent": {}}
 	bot.ResetRoundStats()
 	assertDamageAttributionCleared(t, bot)
+	if len(bot.RoundWeaponOpponentIDs) != 0 {
+		t.Fatalf("round weapon opponents survived reset: %v", bot.RoundWeaponOpponentIDs)
+	}
 }
 
 func assertDamageAttributionCleared(t *testing.T, bot *BotState) {
@@ -55,6 +63,9 @@ func TestCheckDeathsPreservesRecentHitSourceAndDamage(t *testing.T) {
 
 	if actual := ApplyDamage(victim, attacker, 10, "staff_burn", 100); actual != 7 {
 		t.Fatalf("actual damage = %v, want 7", actual)
+	}
+	if attacker.RoundWeaponDamageDealt != 7 {
+		t.Fatalf("weapon-attributed damage = %v, want 7", attacker.RoundWeaponDamageDealt)
 	}
 	attacker.Weapon = "sword"
 	victim.RoundDamageTaken = 999
@@ -146,6 +157,88 @@ func TestHandleKillCreditsUsesAttributedHitMetadata(t *testing.T) {
 	}
 	if dashboardEvent == nil || dashboardEvent["weapon"] != "landmine" || dashboardEvent["damage"] != float64(30) {
 		t.Fatalf("dashboard kill metadata = %+v, want attributed source and damage", dashboardEvent)
+	}
+	if killer.RoundWeaponKills != 0 {
+		t.Fatalf("landmine kill counted as sword output: %d", killer.RoundWeaponKills)
+	}
+	if len(killer.RoundWeaponOpponentIDs) != 0 {
+		t.Fatalf("landmine counted as sword engagement: %v", killer.RoundWeaponOpponentIDs)
+	}
+}
+
+func TestHandleKillCreditsCountsEquippedWeaponFinisher(t *testing.T) {
+	loadTestConfig(t)
+	killer := &BotState{BotID: "killer", Name: "Killer", Weapon: "sword", HP: 100, IsAlive: true, Elo: 1000}
+	victim := &BotState{BotID: "victim", Name: "Victim", Elo: 1000}
+	engine := &GameEngine{
+		Bots:       map[string]*BotState{killer.BotID: killer, victim.BotID: victim},
+		KillFeed:   NewKillFeed(10),
+		Bounty:     NewBountySystem(),
+		ModeRules:  ModeRulesFor(ModeFFA),
+		TeamScores: make(map[int]int),
+	}
+
+	engine.handleKillCredits([]DeathEvent{{
+		VictimID: victim.BotID, KillerID: killer.BotID, Weapon: "sword", Damage: 21,
+	}})
+
+	if killer.RoundWeaponKills != 1 {
+		t.Fatalf("weapon finishing kills = %d, want 1", killer.RoundWeaponKills)
+	}
+}
+
+func TestUniversalGrappleDamageIsNotGrappleWeaponOutput(t *testing.T) {
+	loadTestConfig(t)
+	attacker := &BotState{BotID: "attacker", Weapon: "grapple", IsAlive: true}
+	victim := &BotState{BotID: "victim", Weapon: "sword", IsAlive: true, HP: 100}
+
+	if actual := ApplyDamage(victim, attacker, 15, "grapple_ability", 1); actual != 15 {
+		t.Fatalf("universal grapple damage = %v, want 15", actual)
+	}
+	if attacker.RoundDamageDealt != 15 || attacker.RoundWeaponDamageDealt != 0 {
+		t.Fatalf("grapple attribution total=%v weapon=%v, want 15/0", attacker.RoundDamageDealt, attacker.RoundWeaponDamageDealt)
+	}
+	if len(attacker.RoundWeaponOpponentIDs) != 0 {
+		t.Fatalf("universal grapple counted as weapon engagement: %v", attacker.RoundWeaponOpponentIDs)
+	}
+}
+
+func TestWeaponEngagementTracksActualAndDerivedWeaponDamage(t *testing.T) {
+	loadTestConfig(t)
+	attacker := &BotState{BotID: "attacker", Weapon: "staff", IsAlive: true}
+	directVictim := &BotState{BotID: "direct", Weapon: "sword", IsAlive: true, HP: 100}
+	burnVictim := &BotState{BotID: "burn", Weapon: "sword", IsAlive: true, HP: 100}
+	absorbedVictim := &BotState{BotID: "absorbed", Weapon: "sword", IsAlive: true, HP: 100, ShieldAbsorb: 100}
+
+	ApplyDamage(directVictim, attacker, 10, "staff", 1)
+	ApplyDamage(burnVictim, attacker, 8, "staff_burn", 2)
+	ApplyDamage(absorbedVictim, attacker, 5, "staff", 3)
+	ApplyDamage(&BotState{BotID: "mine", IsAlive: true, HP: 100}, attacker, 7, "landmine", 4)
+
+	if len(attacker.RoundWeaponOpponentIDs) != 2 {
+		t.Fatalf("staff engagements = %v, want direct and burn only", attacker.RoundWeaponOpponentIDs)
+	}
+	for _, opponentID := range []string{directVictim.BotID, burnVictim.BotID} {
+		if _, ok := attacker.RoundWeaponOpponentIDs[opponentID]; !ok {
+			t.Errorf("missing weapon engagement for %s", opponentID)
+		}
+	}
+	if _, ok := attacker.RoundWeaponOpponentIDs[absorbedVictim.BotID]; ok {
+		t.Error("fully absorbed damage counted as an engagement")
+	}
+
+	attacker.ResetRoundStats()
+	attacker.Weapon = "grapple"
+	slamVictim := &BotState{BotID: "slam", Weapon: "sword", IsAlive: true, HP: 100}
+	abilityVictim := &BotState{BotID: "ability", Weapon: "sword", IsAlive: true, HP: 100}
+	ApplyDamage(slamVictim, attacker, 12, "grapple_slam", 5)
+	ApplyDamage(abilityVictim, attacker, 12, "grapple_ability", 6)
+
+	if len(attacker.RoundWeaponOpponentIDs) != 1 {
+		t.Fatalf("grapple engagements = %v, want slam only", attacker.RoundWeaponOpponentIDs)
+	}
+	if _, ok := attacker.RoundWeaponOpponentIDs[slamVictim.BotID]; !ok {
+		t.Error("grapple slam did not count as derived weapon engagement")
 	}
 }
 

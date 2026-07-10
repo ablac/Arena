@@ -11,11 +11,13 @@ export class SpectatorSocket {
    * @param {string} url - WebSocket URL (ws:// or wss://)
    * @param {Function} onState - Callback receiving arena state objects
    * @param {Function} onStatus - Callback receiving connection status string
+   * @param {Function} [onControl] - Callback receiving non-render control data
    */
-  constructor(url, onState, onStatus) {
+  constructor(url, onState, onStatus, onControl = () => {}) {
     this.url = url;
     this.onState = onState;
     this.onStatus = onStatus;
+    this.onControl = onControl;
     /** @type {WebSocket|null} */
     this.ws = null;
     this.reconnectDelay = 1000;
@@ -74,6 +76,10 @@ export class SpectatorSocket {
         // server therefore sends text heartbeats while gameplay is paused so
         // a healthy quiet stream does not trigger this client's stale timer.
         if (data.type === 'heartbeat') return;
+        if (data.type === 'service_status') {
+          this.onControl(data);
+          return;
+        }
         this.onState(data);
       } catch (err) {
         console.error('[SpectatorWS] Parse error:', err);

@@ -2,19 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>AI Battle Arena</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23030b13'/%3E%3Cpath d='M18 45 32 12l14 33-14-8z' fill='%2347d7ff'/%3E%3Ccircle cx='32' cy='32' r='5' fill='%23ff8f5c'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/arena.css?v=20260707c">
-  <link rel="stylesheet" href="css/sections.css?v=20260710b">
+  <link rel="stylesheet" href="css/sections.css?v=20260710c">
+  <link rel="stylesheet" href="css/site-shell.css?v=20260710c">
   <script src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/materialsLibrary/babylonjs.materials.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/gui/babylon.gui.min.js"></script>
   <script type="module" src="js/content-blocks.js?v=20260707d"></script>
-  <script type="module" src="js/app.js?v=20260710b"></script>
+  <script type="module" src="js/app.js?v=20260710c"></script>
+  <script type="module" src="js/service-status.js?v=20260710c"></script>
+  <script type="module" src="js/site-shell.js?v=20260710c"></script>
 </head>
 <body>
   <div class="page-backdrop">
@@ -25,75 +29,56 @@
   </div>
   <div class="overlay-backdrop" id="overlay-backdrop" aria-hidden="true"></div>
 
+  <aside
+    id="siteBroadcast"
+    class="service-status-banner"
+    data-service-status-root
+    role="status"
+    aria-live="polite"
+    aria-atomic="true"
+    hidden>
+    <span class="service-status-signal" aria-hidden="true"></span>
+    <span data-service-status data-service-status-message></span>
+    <button type="button" data-service-status-dismiss aria-label="Dismiss notice">&times;</button>
+  </aside>
+
   <header class="site-header">
-    <a href="#hero" class="site-brand">
+    <a href="#arena" class="site-brand" aria-label="AI Battle Arena live view">
       <span class="site-brand-mark"></span>
       <span>AI Battle Arena</span>
     </a>
-    <div class="site-live-pill" id="site-live-pill"><span class="dot"></span> Spectator syncing</div>
+    <div class="site-header-status">
+      <div class="site-live-pill" id="site-live-pill"><span class="dot"></span> Spectator syncing</div>
+      <span class="site-round-summary" id="footer-stats">Loading arena...</span>
+    </div>
+    <nav class="mobile-command-actions" aria-label="Quick actions">
+      <button type="button" data-overlay-open="onboarding-overlay">Join</button>
+      <button type="button" data-overlay-open="standings-overlay">Scores</button>
+      <button type="button" data-site-menu-toggle aria-controls="site-command-dock" aria-expanded="false">Menu</button>
+    </nav>
   </header>
 
   <main class="site-main">
 
-  <!-- Hero Section -->
-  <section class="hero" id="hero">
-    <div class="hero-grid">
-      <div class="hero-copy reveal-on-scroll">
-        <p class="hero-eyebrow" data-content-key="home.hero.eyebrow">Autonomous Combat Sandbox</p>
-        <h1 class="glow-text" data-content-key="home.hero.title">AI BATTLE ARENA</h1>
-        <p class="subtitle" data-content-key="home.hero.subtitle">Deploy a bot, stream live combat, and iterate against a scoreboard that is always moving.</p>
-        <div class="cta-group">
-          <button type="button" class="btn btn-gold" data-overlay-open="onboarding-overlay" data-content-key="home.hero.cta.primary">Get Started</button>
-          <button type="button" class="btn btn-secondary" data-overlay-open="dashboard-overlay" data-content-key="home.hero.cta.secondary">Dashboard</button>
-        </div>
-        <div class="hero-ticker" aria-hidden="true">
-          <span>Live spectator feed</span>
-          <span>Adaptive weapon balancing</span>
-          <span>Bounty board pressure</span>
-          <span>7-weapon sandbox</span>
-        </div>
-      </div>
-      <aside class="hero-spotlight card reveal-on-scroll">
-        <div class="hero-spotlight-head">
-          <p class="hero-spotlight-kicker">Live Intel</p>
-          <h2>Built for iteration, not screenshots</h2>
-        </div>
-        <div class="hero-spotlight-panel">
-          <div class="spotlight-row">
-            <span class="spotlight-label">Spectator Layer</span>
-            <span class="spotlight-value">Realtime 3D arena + HUD</span>
-          </div>
-          <div class="spotlight-row">
-            <span class="spotlight-label">Competitive Loop</span>
-            <span class="spotlight-value">Leaderboards, bounties, streak pressure</span>
-          </div>
-          <div class="spotlight-row">
-            <span class="spotlight-label">Bot Workflow</span>
-            <span class="spotlight-value">REST setup + WebSocket combat ticks</span>
-          </div>
-        </div>
-        <ul class="hero-feature-list">
-          <li>Track live rounds without leaving the page</li>
-          <li>Claim targets that chain round wins</li>
-          <li>Prototype against a balanced demo roster</li>
-        </ul>
-      </aside>
-    </div>
-  </section>
-
   <!-- Arena Viewer -->
-  <section class="arena-section" id="arena">
-    <div class="arena-shell reveal-on-scroll" id="arena-shell">
+  <section class="arena-section arena-first" id="arena" aria-label="Live AI Battle Arena">
+    <div class="arena-shell" id="arena-shell">
       <div class="arena-shell-head">
         <div class="arena-shell-copy">
           <p class="arena-shell-kicker">Live Arena</p>
-          <h2 class="arena-shell-title">Spectator Broadcast</h2>
+          <h1 class="arena-shell-title">Spectator Broadcast</h1>
         </div>
         <div class="arena-shell-status">
           <div class="arena-shell-pill">
             <span class="arena-shell-pill-label">Stream Status</span>
             <span class="ws-status" id="ws-status"><span class="dot"></span> Connecting</span>
           </div>
+          <button
+            type="button"
+            class="telemetry-toggle"
+            data-telemetry-toggle
+            aria-controls="arena-telemetry"
+            aria-expanded="false">Match feed</button>
         </div>
       </div>
       <div class="arena-layout">
@@ -114,11 +99,11 @@
             </div>
             <div class="control-group control-group-actions">
               <button class="btn btn-secondary arena-control-btn" id="auto-pan">Auto-Pan</button>
-              <button class="btn btn-secondary arena-control-btn" id="fullscreen-btn">Expand View</button>
+              <button class="btn btn-secondary arena-control-btn" id="fullscreen-btn" aria-pressed="false">Cinema Mode</button>
             </div>
           </div>
         </div>
-        <div class="arena-sidebar">
+        <aside class="arena-sidebar" id="arena-telemetry" aria-label="Live match telemetry">
           <div class="arena-sidebar-intro">
             <p class="arena-sidebar-kicker">Live Feed</p>
             <h3>Match Telemetry</h3>
@@ -140,7 +125,7 @@
               <div class="hud-lobby" id="hud-lobby"></div>
             </div>
           </div>
-        </div>
+        </aside>
       </div>
     </div>
   </section>
@@ -1302,24 +1287,43 @@ wss://arena.angel-serv.com/ws/spectator
 
   </main>
 
-  <div class="onboarding-rail-stack">
-    <button type="button" class="settings-gear-btn" id="settings-gear" data-overlay-open="settings-overlay" aria-label="Settings" title="Graphics &amp; animation settings">
+  <nav class="onboarding-rail-stack site-command-dock" id="site-command-dock" aria-label="Arena menu">
+    <div class="command-dock-heading">
+      <div>
+        <span class="command-dock-kicker">Arena command</span>
+        <strong>Explore</strong>
+      </div>
+      <button type="button" class="command-dock-close" data-site-menu-close aria-label="Close arena menu">&times;</button>
+    </div>
+    <button type="button" class="onboarding-rail onboarding-rail-top" id="onboarding-rail" data-overlay-open="onboarding-overlay">
+      <span class="command-index">01</span><span>Get Started</span>
+    </button>
+    <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="dashboard-overlay">
+      <span class="command-index">02</span><span>Bot Dashboard</span>
+    </button>
+    <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="standings-overlay">
+      <span class="command-index">03</span><span>Standings</span>
+    </button>
+    <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="toolkit-overlay">
+      <span class="command-index">04</span><span>Toolkit</span>
+    </button>
+    <button type="button" class="onboarding-rail onboarding-rail-bottom onboarding-rail-secondary" data-overlay-open="about-overlay">
+      <span class="command-index">05</span><span>About &amp; Contact</span>
+    </button>
+    <button type="button" class="settings-gear-btn" id="settings-gear" data-overlay-open="settings-overlay" aria-label="Graphics and animation settings" title="Graphics &amp; animation settings">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="3"></circle>
         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
       </svg>
+      <span>Display Settings</span>
     </button>
-    <button type="button" class="onboarding-rail onboarding-rail-top" id="onboarding-rail" data-overlay-open="onboarding-overlay">Get Started</button>
-    <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="standings-overlay">Standings</button>
-    <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="toolkit-overlay">Toolkit</button>
-    <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="dashboard-overlay">Dashboard</button>
-    <button type="button" class="onboarding-rail onboarding-rail-bottom onboarding-rail-secondary" data-overlay-open="about-overlay">About</button>
-  </div>
+  </nav>
 
   <div class="onboarding-overlay dashboard-overlay" id="dashboard-overlay" aria-hidden="true" data-overlay-side="left">
     <div class="onboarding-scrim" data-close-overlay="dashboard-overlay"></div>
     <aside class="onboarding-drawer dashboard-drawer" aria-labelledby="dashboard-title" role="dialog" aria-modal="true">
-      <div class="drawer-shell-label">//Dashboard</div>
+      <button type="button" class="drawer-close" data-close-overlay="dashboard-overlay" aria-label="Close Bot Dashboard">&times;</button>
+      <div class="drawer-shell-label" id="dashboard-title">//Dashboard</div>
       <div class="dashboard-frame-shell">
         <iframe
           id="dashboard-frame"
@@ -1335,7 +1339,8 @@ wss://arena.angel-serv.com/ws/spectator
   <div class="onboarding-overlay dashboard-overlay toolkit-overlay" id="toolkit-overlay" aria-hidden="true" data-overlay-side="left">
     <div class="onboarding-scrim" data-close-overlay="toolkit-overlay"></div>
     <aside class="onboarding-drawer dashboard-drawer" aria-labelledby="toolkit-title" role="dialog" aria-modal="true">
-      <div class="drawer-shell-label">//Toolkit</div>
+      <button type="button" class="drawer-close" data-close-overlay="toolkit-overlay" aria-label="Close Toolkit">&times;</button>
+      <div class="drawer-shell-label" id="toolkit-title">//Toolkit</div>
       <div class="dashboard-frame-shell">
         <iframe
           id="toolkit-frame"
@@ -1351,8 +1356,9 @@ wss://arena.angel-serv.com/ws/spectator
   <div class="onboarding-overlay overlay-standings" id="standings-overlay" aria-hidden="true" data-overlay-side="right">
     <div class="onboarding-scrim" data-close-overlay="standings-overlay"></div>
     <aside class="onboarding-drawer" aria-labelledby="standings-title" role="dialog" aria-modal="true">
+      <button type="button" class="drawer-close" data-close-overlay="standings-overlay" aria-label="Close Standings">&times;</button>
       <div class="onboarding-drawer-scroll">
-        <div class="drawer-shell-label">//Standings</div>
+        <div class="drawer-shell-label" id="standings-title">//Standings</div>
         <div class="onboarding-flow onboarding-flow-standings">
           <section class="onboarding-section onboarding-section-boards" id="standings-boards">
             <div class="card">
@@ -1419,6 +1425,7 @@ wss://arena.angel-serv.com/ws/spectator
   <div class="onboarding-overlay overlay-about" id="about-overlay" aria-hidden="true" data-overlay-side="right">
     <div class="onboarding-scrim" data-close-overlay="about-overlay"></div>
     <aside class="onboarding-drawer" aria-labelledby="about-title" role="dialog" aria-modal="true">
+      <button type="button" class="drawer-close" data-close-overlay="about-overlay" aria-label="Close About and Contact">&times;</button>
       <div class="onboarding-drawer-scroll">
         <div class="drawer-shell-label">//About</div>
         <div class="onboarding-flow">
@@ -1446,6 +1453,35 @@ wss://arena.angel-serv.com/ws/spectator
                 </div>
               </div>
             </div>
+            <div class="card about-builders" aria-labelledby="about-builders-title">
+              <p class="onboarding-kicker">Built by</p>
+              <h4 class="onboarding-section-title" id="about-builders-title">The people behind the arena</h4>
+              <div class="about-builder-list">
+                <a class="about-builder" href="https://www.linkedin.com/in/keith-swoger" target="_blank" rel="noopener">
+                  <span class="about-builder-order">01</span>
+                  <span><strong>Keith S</strong><small>Creator &amp; builder</small></span>
+                  <span aria-hidden="true">&nearr;</span>
+                </a>
+                <a class="about-builder" href="https://www.linkedin.com/in/andrew-demczuk-4038a217/" target="_blank" rel="noopener">
+                  <span class="about-builder-order">02</span>
+                  <span><strong>Andrew</strong><small>Builder</small></span>
+                  <span aria-hidden="true">&nearr;</span>
+                </a>
+                <div class="about-builder about-builder-pending">
+                  <span class="about-builder-order">03</span>
+                  <span><strong>Will</strong><small>Details coming soon</small></span>
+                </div>
+              </div>
+            </div>
+            <div class="card about-contact" aria-labelledby="about-contact-title">
+              <p class="onboarding-kicker">Contact us</p>
+              <h4 class="onboarding-section-title" id="about-contact-title">Build with Angel-Serv</h4>
+              <p>Questions, partnerships, or ideas for the Arena?</p>
+              <div class="about-contact-links">
+                <a href="https://angel-serv.com/" target="_blank" rel="noopener">Angel-Serv.com</a>
+                <a href="mailto:Hello@angel-serv.com">Hello@angel-serv.com</a>
+              </div>
+            </div>
           </section>
         </div>
       </div>
@@ -1455,6 +1491,7 @@ wss://arena.angel-serv.com/ws/spectator
   <div class="onboarding-overlay" id="settings-overlay" aria-hidden="true" data-overlay-side="right">
     <div class="onboarding-scrim" data-close-overlay="settings-overlay"></div>
     <aside class="onboarding-drawer settings-drawer" aria-labelledby="settings-title" role="dialog" aria-modal="true">
+      <button type="button" class="drawer-close" data-close-overlay="settings-overlay" aria-label="Close Display Settings">&times;</button>
       <div class="onboarding-drawer-scroll">
         <div class="drawer-shell-label">//Settings</div>
         <div class="onboarding-flow">
@@ -1481,8 +1518,9 @@ wss://arena.angel-serv.com/ws/spectator
   <div class="onboarding-overlay" id="onboarding-overlay" aria-hidden="true" data-overlay-side="right">
     <div class="onboarding-scrim" data-close-overlay="onboarding-overlay"></div>
     <aside class="onboarding-drawer" aria-labelledby="onboarding-title" role="dialog" aria-modal="true">
+      <button type="button" class="drawer-close" data-close-overlay="onboarding-overlay" aria-label="Close Get Started">&times;</button>
       <div class="onboarding-drawer-scroll">
-        <div class="drawer-shell-label">//Get Started</div>
+        <div class="drawer-shell-label" id="onboarding-title">//Get Started</div>
         <div class="onboarding-flow-shell">
           <div class="onboarding-flow-shell-scroll">
             <div class="onboarding-flow">
@@ -1607,90 +1645,13 @@ wss://arena.angel-serv.com/ws/spectator
       <div class="footer-contact">
         <p class="footer-kicker">Get In Touch</p>
         <p class="footer-links">
-          <a href="https://www.linkedin.com/in/andrew-demczuk-4038a217/" target="_blank" rel="noopener">LinkedIn</a>
+          <a href="https://angel-serv.com/" target="_blank" rel="noopener">Angel-Serv.com</a>
           <span class="footer-sep">/</span>
-          <a href="https://agentreef.net/" target="_blank" rel="noopener">agentreef.net</a>
+          <a href="mailto:Hello@angel-serv.com">Hello@angel-serv.com</a>
         </p>
       </div>
-      <p class="footer-stats" id="footer-stats">Loading stats...</p>
     </div>
   </footer>
-
-  <!-- Mobile view suggestion (small touch screens only, dismiss persists) -->
-  <style>
-    .mobile-suggest-banner {
-      position: fixed;
-      left: 12px;
-      right: 12px;
-      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-      /* Above the floating arena shell (120) and onboarding rails (110). */
-      z-index: 150;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 12px 14px;
-      background: var(--bg-card-strong);
-      border: 1px solid var(--border-strong);
-      border-radius: 14px;
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      box-shadow: var(--shadow-md);
-      font-size: 0.85rem;
-      color: var(--text-soft);
-    }
-    .mobile-suggest-banner a {
-      margin-left: auto;
-      flex: none;
-      padding: 8px 16px;
-      border-radius: 999px;
-      border: 1px solid rgba(71, 215, 255, 0.35);
-      background: rgba(71, 215, 255, 0.1);
-      color: var(--accent-blue);
-      text-decoration: none;
-      font-weight: 600;
-    }
-    .mobile-suggest-banner button {
-      appearance: none;
-      flex: none;
-      width: 36px;
-      height: 36px;
-      border: none;
-      border-radius: 50%;
-      background: none;
-      color: var(--text-muted);
-      font-size: 1.2rem;
-      line-height: 1;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0;
-    }
-    /* The flex display above would otherwise override the hidden attribute's
-       UA display:none — without this rule the banner shows on every device
-       and the dismiss button appears to do nothing. */
-    .mobile-suggest-banner[hidden] { display: none !important; }
-  </style>
-  <div class="mobile-suggest-banner" id="mobile-suggest-banner" hidden>
-    <span>This page is built for desktop &mdash; try the mobile spectator view.</span>
-    <a href="m/">Open</a>
-    <button type="button" aria-label="Dismiss">&times;</button>
-  </div>
-  <script>
-    (function () {
-      var KEY = 'arena-mobile-banner-dismissed';
-      try { if (localStorage.getItem(KEY)) return; } catch (e) { return; }
-      if (!window.matchMedia('(max-width: 768px)').matches ||
-          !window.matchMedia('(pointer: coarse)').matches) return;
-      var banner = document.getElementById('mobile-suggest-banner');
-      if (!banner) return;
-      banner.hidden = false;
-      banner.querySelector('button').addEventListener('click', function () {
-        banner.hidden = true;
-        try { localStorage.setItem(KEY, '1'); } catch (e) { /* ignore */ }
-      });
-    })();
-  </script>
 
 </body>
 </html>

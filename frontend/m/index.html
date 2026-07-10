@@ -18,6 +18,11 @@
 </head>
 <body>
 
+  <aside id="service-status-banner" class="service-status-banner" role="status" aria-live="polite" hidden>
+    <span data-service-status-message></span>
+    <button type="button" data-service-status-dismiss aria-label="Dismiss notice">&times;</button>
+  </aside>
+
   <!-- Full-viewport 3D stage -->
   <div id="stage">
     <canvas id="arena-canvas" aria-label="Live arena 3D view"></canvas>
