@@ -205,28 +205,40 @@ func buildMapPreview(req mapPreviewRequest) (mapPreviewResponse, error) {
 }
 
 func (h *AdminHandler) loadAdminRegistries(ctx context.Context) {
-	game.SetRandomShapePool(strings.Split(config.C.MapShapePool, ","))
 	if db.Pool == nil {
+		game.SetRandomShapePool(strings.Split(config.C.MapShapePool, ","))
 		return
 	}
 
 	rows, err := db.Pool.Query(ctx, `SELECT name, display_name, base_shape, seed, enabled FROM custom_map_templates`)
 	if err != nil {
 		slog.Warn("failed to load custom map templates", "error", err)
+		game.SetRandomShapePool(strings.Split(config.C.MapShapePool, ","))
 		return
 	}
 	defer rows.Close()
 
+	templates := make([]game.CustomMapTemplate, 0)
 	for rows.Next() {
 		var t game.CustomMapTemplate
 		if err := rows.Scan(&t.Name, &t.DisplayName, &t.BaseShape, &t.Seed, &t.Enabled); err != nil {
 			slog.Warn("failed to scan custom map template", "error", err)
 			continue
 		}
-		if t.Enabled {
-			game.RegisterCustomMap(t)
+		templates = append(templates, t)
+	}
+	registerCustomMapsAndApplyPool(templates, config.C.MapShapePool)
+}
+
+func registerCustomMapsAndApplyPool(templates []game.CustomMapTemplate, pool string) {
+	// Custom shapes must exist in the registry before normalization, otherwise
+	// SetRandomShapePool silently drops a valid persisted custom:<slug> entry.
+	for _, template := range templates {
+		if template.Enabled {
+			game.RegisterCustomMap(template)
 		}
 	}
+	game.SetRandomShapePool(strings.Split(pool, ","))
 }
 
 func PublicContentBlocks(w http.ResponseWriter, r *http.Request) {
@@ -509,7 +521,10 @@ func (h *AdminHandler) demoTemplateByName(ctx context.Context, name string) (dem
 }
 
 func (h *AdminHandler) getMapSettings(w http.ResponseWriter, r *http.Request) {
-	c := &config.C
+	h.overrideMu.Lock()
+	defer h.overrideMu.Unlock()
+	desired, _, desiredErr := h.desiredGameConfigLocked()
+	c := &desired
 	customMaps := game.ListCustomMaps()
 	if db.Pool != nil {
 		rows, err := db.Pool.Query(r.Context(), `SELECT name, display_name, base_shape, seed, enabled FROM custom_map_templates ORDER BY name`)
@@ -527,10 +542,10 @@ func (h *AdminHandler) getMapSettings(w http.ResponseWriter, r *http.Request) {
 	if customMaps == nil {
 		customMaps = []game.CustomMapTemplate{}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	response := map[string]interface{}{
 		"built_in_shapes":       game.BuiltInMapShapeNames(),
 		"custom_maps":           customMaps,
-		"enabled_shapes":        game.RandomShapePoolNames(),
+		"enabled_shapes":        mapShapePoolNames(c.MapShapePool),
 		"map_shape":             c.MapShape,
 		"map_shape_pool":        c.MapShapePool,
 		"obstacle_count_min":    c.ObstacleCountMin,
@@ -548,26 +563,63 @@ func (h *AdminHandler) getMapSettings(w http.ResponseWriter, r *http.Request) {
 		"zone_damage":           c.ZoneDamagePerTick,
 		"zone_min_radius":       c.ZoneMinRadius,
 		"round_modifier_chance": c.RoundModifierChance,
-	})
+	}
+	configResponse := h.gameConfigResponseLocked()
+	response["_persistence"] = configResponse["_persistence"]
+	if desiredErr != nil {
+		response["error"] = "stored map overrides could not be validated"
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *AdminHandler) updateMapSettings(w http.ResponseWriter, r *http.Request) {
+	if !h.adminOverridePersistenceAvailable() {
+		writeError(w, http.StatusServiceUnavailable, "database is required to save map settings")
+		return
+	}
 	var updates map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	applied := applyGameConfigUpdates(updates)
+	h.overrideMu.Lock()
+	defer h.overrideMu.Unlock()
+	staged := cloneOverrideValues(updates)
+	extraRejected := make([]string, 0, 1)
 	if raw, ok := updates["enabled_shapes"]; ok {
 		if list, ok := stringSlice(raw); ok {
-			applied["enabled_shapes"] = game.SetRandomShapePool(list)
-			config.C.MapShapePool = strings.Join(game.RandomShapePoolNames(), ",")
+			canonical, _ := canonicalMapShapePool(list)
+			staged["map_shape_pool"] = canonical
+		} else {
+			extraRejected = append(extraRejected, "enabled_shapes")
 		}
+		delete(staged, "enabled_shapes")
+	}
+	applied, rejected, restartRequired, err := h.stageGameConfigUpdatesLocked(r.Context(), staged)
+	if err != nil {
+		slog.Error("failed to persist admin map settings", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to persist map settings; active settings were not changed")
+		return
+	}
+	rejected = append(rejected, extraRejected...)
+	sort.Strings(rejected)
+	if len(applied) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": "no valid map settings were supplied", "rejected": rejected,
+		})
+		return
+	}
+	message := "map settings saved; values are already active"
+	if restartRequired {
+		message = "map settings saved; restart the server to activate them"
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message":  "map settings updated",
-		"applied":  applied,
-		"rejected": rejectedConfigKeys(updates, applied),
+		"message":          message,
+		"applied":          applied,
+		"rejected":         rejected,
+		"persisted":        true,
+		"restart_required": restartRequired,
+		"activation":       "server_restart",
 	})
 }
 
@@ -669,8 +721,12 @@ func validateCustomMap(req customMapPayload) (game.CustomMapTemplate, error) {
 	}, nil
 }
 
-func applyGameConfigUpdates(updates map[string]interface{}) map[string]interface{} {
-	c := &config.C
+// applyGameConfigUpdatesTo validates updates against an immutable base
+// snapshot. It never publishes the candidate to config.C, which makes it safe
+// for admin requests to validate restart-staged values while the engine keeps
+// reading its active startup configuration.
+func applyGameConfigUpdatesTo(base config.Config, updates map[string]interface{}) (config.Config, map[string]interface{}) {
+	c := &base
 	applied := make(map[string]interface{})
 	handled := make(map[string]bool)
 
@@ -776,15 +832,18 @@ func applyGameConfigUpdates(updates map[string]interface{}) map[string]interface
 		case "map_shape":
 			if v, ok := val.(string); ok {
 				v = strings.ToLower(strings.TrimSpace(v))
-				if v == "random" || game.IsKnownMapShape(v) {
+				if validPersistedMapShape(v) {
 					c.MapShape = v
 					applied[key] = v
 				}
 			}
 		case "map_shape_pool":
-			if v, ok := val.(string); ok {
-				applied[key] = game.SetRandomShapePool(strings.Split(v, ","))
-				c.MapShapePool = strings.Join(game.RandomShapePoolNames(), ",")
+			if canonical, ok := canonicalMapShapePool(val); ok {
+				c.MapShapePool = canonical
+				// Persist the same scalar shape that the startup loader accepts.
+				// Older releases stored []string here, so canonicalMapShapePool also
+				// accepts arrays when reading legacy rows.
+				applied[key] = canonical
 			}
 		case "zone_damage":
 			if v, ok := toFloat(val); ok && v >= 0 {
@@ -923,7 +982,59 @@ func applyGameConfigUpdates(updates map[string]interface{}) map[string]interface
 			}
 		}
 	}
+	return base, applied
+}
+
+// applyGameConfigUpdates is retained for startup-oriented helpers and focused
+// validation tests. Live admin handlers use applyGameConfigUpdatesTo and stage
+// the result for restart instead of mutating config.C.
+func applyGameConfigUpdates(updates map[string]interface{}) map[string]interface{} {
+	candidate, applied := applyGameConfigUpdatesTo(config.C, updates)
+	config.C = candidate
 	return applied
+}
+
+func canonicalMapShapePool(value interface{}) (string, bool) {
+	var names []string
+	switch typed := value.(type) {
+	case string:
+		names = strings.Split(typed, ",")
+	default:
+		var ok bool
+		names, ok = stringSlice(value)
+		if !ok {
+			return "", false
+		}
+	}
+
+	seen := make(map[string]bool)
+	canonical := make([]string, 0, len(names))
+	for _, raw := range names {
+		name := strings.ToLower(strings.TrimSpace(raw))
+		if name == "" || name == "random" || seen[name] {
+			continue
+		}
+		if !game.IsBuiltInMapShape(name) && !validCustomMapShapeName(name) {
+			continue
+		}
+		seen[name] = true
+		canonical = append(canonical, name)
+	}
+	if len(canonical) == 0 {
+		canonical = []string{"square"}
+	}
+	return strings.Join(canonical, ","), true
+}
+
+func validPersistedMapShape(name string) bool {
+	return name == "random" || game.IsKnownMapShape(name) || validCustomMapShapeName(name)
+}
+
+func validCustomMapShapeName(name string) bool {
+	if !strings.HasPrefix(name, "custom:") {
+		return false
+	}
+	return customMapNameRE.MatchString(strings.TrimPrefix(name, "custom:"))
 }
 
 func intConfigPair(updates map[string]interface{}, minKey, maxKey string, lowerBound int) (min, max int, present, valid bool) {

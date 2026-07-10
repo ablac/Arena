@@ -33,15 +33,43 @@ import (
 
 // AdminHandler holds references needed by admin endpoints.
 type AdminHandler struct {
-	Engine      *game.GameEngine
-	DemoManager *demobots.Manager
-	startTime   time.Time
+	Engine        *game.GameEngine
+	DemoManager   *demobots.Manager
+	ServiceStatus *ServiceStatusService
+	Shutdown      func()
+	startTime     time.Time
 	// resetLeaderboardData is injectable so the destructive endpoint can be
 	// contract-tested without connecting to a production-like database.
 	resetLeaderboardData func(context.Context) error
 	// Cache of DB token hashes to avoid DB hit on every request.
 	tokenHashes []string
 	tokenMu     sync.RWMutex
+	// overrideMu serializes restart-staged game configuration and live weapon
+	// tuning. Game configuration is never written into config.C after startup;
+	// doing so would race the simulation's many direct reads.
+	overrideMu sync.Mutex
+	// activeConfig is the immutable startup snapshot shown alongside pending
+	// PostgreSQL overrides. gameOverrides contains the desired restart state.
+	activeConfig    config.Config
+	activeConfigSet bool
+	gameOverrides   map[string]interface{}
+	// updateMu serializes the check/publish/submit transaction for self-update
+	// requests. A second request must not overwrite the first job's notice.
+	updateMu sync.Mutex
+	// saveAdminOverrides is injectable for transaction-order tests. Production
+	// handlers leave it nil and use db.SaveAdminOverrides.
+	saveAdminOverrides func(context.Context, string, map[string]interface{}) error
+}
+
+func (h *AdminHandler) adminOverridePersistenceAvailable() bool {
+	return db.Pool != nil || h.saveAdminOverrides != nil
+}
+
+func (h *AdminHandler) persistAdminOverrides(ctx context.Context, scope string, values map[string]interface{}) error {
+	if h.saveAdminOverrides != nil {
+		return h.saveAdminOverrides(ctx, scope, values)
+	}
+	return db.SaveAdminOverrides(ctx, scope, values)
 }
 
 // NewAdminHandler creates a new AdminHandler.
@@ -51,6 +79,9 @@ func NewAdminHandler(engine *game.GameEngine, demoManager *demobots.Manager) *Ad
 		DemoManager:          demoManager,
 		startTime:            time.Now(),
 		resetLeaderboardData: db.ResetLeaderboard,
+		activeConfig:         config.C,
+		activeConfigSet:      true,
+		gameOverrides:        make(map[string]interface{}),
 	}
 	// Initialize DB table and load token hashes.
 	ctx := context.Background()
@@ -61,9 +92,18 @@ func NewAdminHandler(engine *game.GameEngine, demoManager *demobots.Manager) *Ad
 		if err := db.EnsureAdminRegistryTables(ctx); err != nil {
 			slog.Warn("failed to ensure admin registry tables", "error", err)
 		}
+		if values, err := db.LoadAdminOverrides(ctx, db.AdminOverrideScopeGameConfig); err != nil {
+			slog.Warn("failed to load admin game overrides for pending-state display", "error", err)
+		} else {
+			h.gameOverrides = values
+		}
 		h.reloadTokenHashes()
 	}
 	h.loadAdminRegistries(ctx)
+	// Registry loading canonicalizes the configured map pool after registering
+	// custom shapes. Capture the active snapshot only after that startup-only
+	// normalization has completed.
+	h.activeConfig = config.C
 	return h
 }
 
@@ -230,6 +270,11 @@ func (h *AdminHandler) Routes(r chi.Router) {
 	r.Get("/content-blocks", h.listContentBlocks)
 	r.Put("/content-blocks/{key}", h.updateContentBlock)
 
+	// Site-wide public broadcast controls.
+	r.Get("/broadcasts", h.listBroadcasts)
+	r.Post("/broadcasts", h.createBroadcast)
+	r.Delete("/broadcasts/{id}", h.clearBroadcast)
+
 	// Data management.
 	r.Get("/db/stats", h.dbStats)
 	r.Post("/db/reset-leaderboard", h.resetLeaderboard)
@@ -276,7 +321,7 @@ func (h *AdminHandler) Routes(r chi.Router) {
 
 	// Self-update: running vs latest commit, trigger, and progress. See update.go.
 	r.Get("/version", adminVersionInfo)
-	r.Post("/update", triggerUpdate)
+	r.Post("/update", h.triggerUpdate)
 	r.Get("/update/status", updateStatus)
 }
 
@@ -617,68 +662,49 @@ func (h *AdminHandler) gameRestartRound(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *AdminHandler) getGameConfig(w http.ResponseWriter, r *http.Request) {
-	c := &config.C
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"tick_rate":              c.TickRate,
-		"max_bots":               c.MaxBots,
-		"max_spectators":         c.MaxSpectators,
-		"arena_width":            c.ArenaWidth,
-		"arena_height":           c.ArenaHeight,
-		"round_duration":         c.RoundDuration,
-		"intermission_time":      c.IntermissionTime,
-		"lobby_countdown":        c.LobbyCountdown,
-		"min_bots_to_start":      c.MinBotsToStart,
-		"stat_budget":            c.StatBudget,
-		"game_mode":              c.GameModeName,
-		"team_count":             c.TeamCount,
-		"friendly_fire":          c.FriendlyFire,
-		"round_modifier_chance":  c.RoundModifierChance,
-		"map_shape":              c.MapShape,
-		"map_shape_pool":         c.MapShapePool,
-		"zone_damage":            c.ZoneDamagePerTick,
-		"zone_shrink_pct":        c.ZoneShrinkPercent,
-		"zone_shrink_interval":   c.ZoneShrinkInterval,
-		"zone_min_radius":        c.ZoneMinRadius,
-		"zone_shrink_delay":      c.ZoneShrinkDelay,
-		"zone_initial_radius":    c.ZoneInitialRadius,
-		"zone_cover_map":         c.ZoneCoverMap,
-		"obstacle_count_min":     c.ObstacleCountMin,
-		"obstacle_count_max":     c.ObstacleCountMax,
-		"arena_size_dynamic":     c.ArenaSizeDynamic,
-		"arena_size_base_bots":   c.ArenaSizeBaseBots,
-		"arena_size_max_bots":    c.ArenaSizeMaxBots,
-		"arena_size_min_scale":   c.ArenaSizeMinScale,
-		"arena_size_max_scale":   c.ArenaSizeMaxScale,
-		"dodge_speed_mult":       c.DodgeSpeedMult,
-		"dodge_invuln_ticks":     c.DodgeInvulnTicks,
-		"dodge_cooldown_ticks":   c.DodgeCooldownTicks,
-		"projectile_speed":       c.ProjectileSpeed,
-		"afk_timeout_ticks":      c.AFKTimeoutTicks,
-		"stat_hp_base":           c.StatHPBase,
-		"stat_hp_per_point":      c.StatHPPerPoint,
-		"stat_speed_base":        c.StatSpeedBase,
-		"stat_speed_per_point":   c.StatSpeedPerPoint,
-		"stat_attack_base":       c.StatAttackBase,
-		"stat_attack_per_point":  c.StatAttackPerPoint,
-		"stat_defense_per_point": c.StatDefensePerPoint,
-	})
+	h.overrideMu.Lock()
+	defer h.overrideMu.Unlock()
+	writeJSON(w, http.StatusOK, h.gameConfigResponseLocked())
 }
 
 func (h *AdminHandler) updateGameConfig(w http.ResponseWriter, r *http.Request) {
+	if !h.adminOverridePersistenceAvailable() {
+		writeError(w, http.StatusServiceUnavailable, "database is required to save configuration")
+		return
+	}
 	var updates map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	h.overrideMu.Lock()
+	defer h.overrideMu.Unlock()
 
-	applied := applyGameConfigUpdates(updates)
-	rejected := rejectedConfigKeys(updates, applied)
+	applied, rejected, restartRequired, err := h.stageGameConfigUpdatesLocked(r.Context(), updates)
+	if err != nil {
+		slog.Error("failed to persist admin game config", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to persist configuration; active settings were not changed")
+		return
+	}
+	if len(applied) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": "no valid configuration values were supplied", "rejected": rejected,
+		})
+		return
+	}
 
-	slog.Info("admin updated game config", "applied", applied, "rejected", rejected)
+	slog.Info("admin staged game config", "applied", applied, "rejected", rejected, "restart_required", restartRequired)
+	message := "configuration saved; values are already active"
+	if restartRequired {
+		message = "configuration saved; restart the server to activate it"
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message":  "config updated",
-		"applied":  applied,
-		"rejected": rejected,
+		"message":          message,
+		"applied":          applied,
+		"rejected":         rejected,
+		"persisted":        true,
+		"restart_required": restartRequired,
+		"activation":       "server_restart",
 	})
 }
 
@@ -929,6 +955,19 @@ func (h *AdminHandler) triggerGC(w http.ResponseWriter, r *http.Request) {
 
 func (h *AdminHandler) restartServer(w http.ResponseWriter, r *http.Request) {
 	slog.Warn("admin triggered server restart")
+	if h.ServiceStatus != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		_, err := h.ServiceStatus.SetManualRestart(ctx)
+		cancel()
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "could not publish the required restart notice")
+			return
+		}
+	} else if h.Engine != nil {
+		// Legacy/test wiring without the durable service still gets a semantic
+		// status transition before the process accepts the restart.
+		h.Engine.NotifyServiceRestart(60)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "server restarting — Docker will auto-restart the container",
 	})
@@ -938,6 +977,10 @@ func (h *AdminHandler) restartServer(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		slog.Info("shutting down for restart...")
+		if h.Shutdown != nil {
+			h.Shutdown()
+			return
+		}
 		os.Exit(0)
 	}()
 }
@@ -1558,21 +1601,39 @@ func toI(v interface{}) int {
 // ============================================================================
 
 func (h *AdminHandler) getWeapons(w http.ResponseWriter, r *http.Request) {
+	h.overrideMu.Lock()
+	defer h.overrideMu.Unlock()
 	weapons := make(map[string]interface{})
+	overrides := map[string]interface{}{}
+	if db.Pool != nil {
+		if values, err := db.LoadAdminOverrides(r.Context(), db.AdminOverrideScopeWeapon); err == nil {
+			overrides = values
+		}
+	}
 	for _, name := range game.GetAvailableWeapons() {
-		wc := game.GetWeaponConfig(name)
+		wc, _ := game.GetBaseWeaponConfig(name)
+		effective := game.GetWeaponConfig(name)
 		balance, _ := game.GetWeaponBalanceState(name)
+		_, overridden := overrides[name]
+		configSource := "built_in"
+		if overridden {
+			configSource = "database_override"
+		}
 		weapons[name] = map[string]interface{}{
-			"name":             wc.Name,
-			"damage":           wc.Damage,
-			"range":            wc.Range,
-			"cooldown":         wc.Cooldown,
-			"special":          wc.Special,
-			"param":            wc.Param,
-			"damage_scale":     balance.DamageScale,
-			"cooldown_scale":   balance.CooldownScale,
-			"adjustment_scale": balance.AdjustmentScale,
-			"rounds_tracked":   balance.RoundsTracked,
+			"name":               wc.Name,
+			"damage":             wc.Damage,
+			"range":              wc.Range,
+			"cooldown":           wc.Cooldown,
+			"special":            wc.Special,
+			"param":              wc.Param,
+			"effective_damage":   effective.Damage,
+			"effective_range":    effective.Range,
+			"effective_cooldown": effective.Cooldown,
+			"damage_scale":       balance.DamageScale,
+			"cooldown_scale":     balance.CooldownScale,
+			"adjustment_scale":   balance.AdjustmentScale,
+			"rounds_tracked":     balance.RoundsTracked,
+			"config_source":      configSource,
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1581,16 +1642,23 @@ func (h *AdminHandler) getWeapons(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminHandler) updateWeapon(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	wc, ok := game.GetBaseWeaponConfig(name)
-	if !ok {
-		writeError(w, http.StatusNotFound, "weapon not found: "+name)
+	if !h.adminOverridePersistenceAvailable() {
+		writeError(w, http.StatusServiceUnavailable, "database is required to save weapon tuning")
 		return
 	}
+	name := chi.URLParam(r, "name")
 
 	var req map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	h.overrideMu.Lock()
+	defer h.overrideMu.Unlock()
+
+	wc, ok := game.GetBaseWeaponConfig(name)
+	if !ok {
+		writeError(w, http.StatusNotFound, "weapon not found: "+name)
 		return
 	}
 
@@ -1621,15 +1689,30 @@ func (h *AdminHandler) updateWeapon(w http.ResponseWriter, r *http.Request) {
 			applied = append(applied, fmt.Sprintf("param=%.2f", wc.Param))
 		}
 	}
+	if len(applied) == 0 {
+		writeError(w, http.StatusBadRequest, "no valid weapon values were supplied")
+		return
+	}
 
-	game.UpdateBaseWeaponConfig(name, wc)
+	if err := h.persistAdminOverrides(r.Context(), db.AdminOverrideScopeWeapon, map[string]interface{}{
+		name: persistedWeaponValue(wc),
+	}); err != nil {
+		slog.Error("failed to persist weapon tuning", "weapon", name, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to persist weapon tuning; no changes were applied")
+		return
+	}
+	if !game.UpdateBaseWeaponConfig(name, wc) {
+		writeError(w, http.StatusInternalServerError, "failed to apply persisted weapon tuning")
+		return
+	}
 
 	slog.Info("admin updated weapon", "weapon", name, "changes", applied)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "weapon updated",
-		"weapon":  name,
-		"applied": applied,
-		"config":  wc,
+		"message":   "weapon updated",
+		"weapon":    name,
+		"applied":   applied,
+		"config":    wc,
+		"persisted": true,
 	})
 }
 

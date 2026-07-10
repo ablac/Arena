@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -82,6 +83,12 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	} else {
 		adminHandler = NewAdminHandler(engine, nil)
 	}
+	serviceStatus := NewServiceStatusService(engine, bus)
+	adminHandler.ServiceStatus = serviceStatus
+	adminHandler.Shutdown = ro.shutdown
+	if err := serviceStatus.Load(context.Background()); err != nil {
+		slog.Warn("failed to restore service status", "error", err)
+	}
 
 	// Create dashboard handler.
 	dashboardHandler := NewDashboardHandler(bus, adminHandler)
@@ -117,6 +124,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		// Bot setup reference (public — no auth).
 		api.Get("/bot-setup", BotSetup())
 		api.Get("/content", PublicContentBlocks)
+		api.Get("/service-status", serviceStatus.publicStatus)
 		api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
 
 		// Key generation (public, rate-limited per IP for registration).
@@ -167,6 +175,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	// --- WebSocket endpoints ---
 	r.Get("/ws/bot", ws.BotHandler(engine))
 	r.Get("/ws/spectator", ws.SpectatorHandler(engine))
+	r.Post("/internal/updater/status", serviceStatus.updaterStatusCallback)
 
 	// The public reverse proxy can mount the app behind an /arena prefix.
 	// Mount the same routes under /arena prefix for compatibility.
@@ -179,6 +188,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			api.Get("/version", versionHandler())
 			api.Get("/bot-setup", BotSetup())
 			api.Get("/content", PublicContentBlocks)
+			api.Get("/service-status", serviceStatus.publicStatus)
 			api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
 			api.With(
 				security.RateLimitMiddleware(config.C.RateLimitRegisterPerHour),
@@ -316,6 +326,7 @@ func noCacheStaticHandler(next http.Handler) http.Handler {
 // routerOptions holds optional configuration for the router.
 type routerOptions struct {
 	demoManager *demobots.Manager
+	shutdown    func()
 }
 
 // RouterOption is a functional option for NewRouter.
@@ -325,6 +336,14 @@ type RouterOption func(*routerOptions)
 func WithDemoManager(m *demobots.Manager) RouterOption {
 	return func(o *routerOptions) {
 		o.demoManager = m
+	}
+}
+
+// WithShutdown provides the graceful process-cancellation callback used by the
+// authenticated admin restart endpoint.
+func WithShutdown(shutdown func()) RouterOption {
+	return func(o *routerOptions) {
+		o.shutdown = shutdown
 	}
 }
 

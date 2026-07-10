@@ -51,6 +51,7 @@ services:
         BUILD_TIME: ${BUILD_TIME:-unknown}
     container_name: arena-server
     restart: unless-stopped
+    stop_grace_period: 15s
     ports:
       - "127.0.0.1:8700:8000"
     depends_on:
@@ -92,6 +93,7 @@ services:
       COMPOSE_SERVICE: arena-server
       GITHUB_OWNER: ablac
       GITHUB_REPO: Arena
+      ARENA_INTERNAL_STATUS_URL: http://arena-server:8000/internal/updater/status
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${PWD}:${PWD}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"arena-server/internal/config"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -166,6 +168,12 @@ func EnsureCoreSchema(ctx context.Context) error {
 	if err := EnsureAdminRegistryTables(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema admin_registry: %w", err)
 	}
+	if err := EnsureAdminOverridesSchema(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema admin_overrides: %w", err)
+	}
+	if err := EnsureServiceNoticeEventsTable(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema service_notice_events: %w", err)
+	}
 	if err := EnsureCosmeticsSchema(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema cosmetics: %w", err)
 	}
@@ -225,6 +233,7 @@ func InsertRoundBotStats(ctx context.Context, roundNumber int, botID, botName, w
 	if Pool == nil {
 		return ErrNoDatabase
 	}
+	elo = config.ClampElo(elo)
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO round_bot_stats (round_number, bot_id, bot_name, weapon, kills, deaths, damage_dealt, damage_taken, longest_life_secs, shots_fired, shots_hit, pickups, distance, elo, won)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
@@ -841,6 +850,38 @@ func UpdateBot(ctx context.Context, bot *Bot) error {
 
 // ---------- bot_stats ----------
 
+// NormalizeEloRatings repairs ratings produced by older asymmetric formulas
+// and applies the configured bounds to both current and time-window boards.
+// It is safe to run at every startup and becomes a no-op after the first pass.
+func NormalizeEloRatings(ctx context.Context, minElo, maxElo int) (int64, error) {
+	if Pool == nil {
+		return 0, ErrNoDatabase
+	}
+	if minElo <= 0 || maxElo <= minElo {
+		return 0, fmt.Errorf("invalid Elo bounds %d..%d", minElo, maxElo)
+	}
+	tx, err := Pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("NormalizeEloRatings begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var changed int64
+	for _, table := range []string{"bot_stats", "round_bot_stats"} {
+		tag, updateErr := tx.Exec(ctx, fmt.Sprintf(
+			`UPDATE %s SET elo = LEAST($2, GREATEST($1, elo)) WHERE elo < $1 OR elo > $2`, table,
+		), minElo, maxElo)
+		if updateErr != nil {
+			return 0, fmt.Errorf("NormalizeEloRatings %s: %w", table, updateErr)
+		}
+		changed += tag.RowsAffected()
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("NormalizeEloRatings commit: %w", err)
+	}
+	return changed, nil
+}
+
 // GetBotStats retrieves stats for a given bot.
 func GetBotStats(ctx context.Context, botID string) (*BotStats, error) {
 	if Pool == nil {
@@ -869,6 +910,7 @@ func UpsertBotStats(ctx context.Context, stats *BotStats) error {
 	if Pool == nil {
 		return ErrNoDatabase
 	}
+	elo := config.ClampElo(stats.Elo)
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO bot_stats (bot_id, kills, deaths, assists, damage_dealt, damage_taken,
 		                        current_streak, best_streak, elo, time_alive_seconds,
@@ -892,7 +934,7 @@ func UpsertBotStats(ctx context.Context, stats *BotStats) error {
 		   distance_traveled = EXCLUDED.distance_traveled,
 		   updated_at = EXCLUDED.updated_at`,
 		stats.BotID, stats.Kills, stats.Deaths, stats.Assists, stats.DamageDealt,
-		stats.DamageTaken, stats.CurrentStreak, stats.BestStreak, stats.Elo,
+		stats.DamageTaken, stats.CurrentStreak, stats.BestStreak, elo,
 		stats.TimeAliveSecs, stats.LongestLifeSecs, stats.RoundsPlayed, stats.RoundWins,
 		stats.PickupsCollected, stats.DistanceTraveled, stats.UpdatedAt,
 	)
@@ -937,9 +979,10 @@ func ApplyBotStatsDelta(ctx context.Context, delta *BotStatsDelta) error {
 	if Pool == nil {
 		return ErrNoDatabase
 	}
+	elo := config.ClampElo(delta.Elo)
 	_, err := Pool.Exec(ctx, applyBotStatsDeltaSQL,
 		delta.BotID, delta.Kills, delta.Deaths, delta.DamageDealt, delta.DamageTaken,
-		delta.CurrentStreak, delta.BestStreak, delta.Elo, delta.LongestLifeSecs,
+		delta.CurrentStreak, delta.BestStreak, elo, delta.LongestLifeSecs,
 		delta.RoundsPlayed, delta.RoundWins, delta.PickupsCollected,
 		delta.DistanceTraveled, delta.CapturedAt,
 	)

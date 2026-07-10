@@ -1,30 +1,30 @@
 package game
 
 import (
-	"arena-server/internal/db"
 	"arena-server/internal/config"
+	"arena-server/internal/db"
 	"math"
 	"sort"
 )
 
 // BountyEntry tracks a bot that has built up a cross-round bounty.
 type BountyEntry struct {
-	BotID         string `json:"bot_id"`
-	Name          string `json:"name"`
-	AvatarColor   string `json:"avatar_color"`
-	Weapon        string `json:"weapon"`
-	WinStreak     int    `json:"win_streak"`
-	BountyPoints  int    `json:"bounty_points"`
-	Claims        int    `json:"claims"`
-	IsTarget      bool   `json:"is_target"`
+	BotID        string `json:"bot_id"`
+	Name         string `json:"name"`
+	AvatarColor  string `json:"avatar_color"`
+	Weapon       string `json:"weapon"`
+	WinStreak    int    `json:"win_streak"`
+	BountyPoints int    `json:"bounty_points"`
+	Claims       int    `json:"claims"`
+	IsTarget     bool   `json:"is_target"`
 }
 
 // BountySystem tracks the active bounty board plus the current in-round target.
 type BountySystem struct {
-	TargetID   string
-	TargetName string
+	TargetID         string
+	TargetName       string
 	RewardMultiplier float64
-	entries    map[string]*BountyEntry
+	entries          map[string]*BountyEntry
 }
 
 // NewBountySystem creates an empty bounty system.
@@ -192,7 +192,7 @@ func (bs *BountySystem) OnKill(killer, victim *BotState) float64 {
 	}
 	bonus := int(math.Round(float64(entry.BountyPoints) * mult))
 	if bonus > 0 && killer != nil {
-		killer.Elo += bonus
+		killer.Elo = ClampElo(killer.Elo + bonus)
 		killer.RoundDamageDealt += float64(bonus)
 	}
 
@@ -244,14 +244,14 @@ func (bs *BountySystem) Restore(entries []db.BountyBoardEntry) {
 	bs.TargetName = ""
 	for _, entry := range entries {
 		copyEntry := &BountyEntry{
-			BotID:         entry.BotID,
-			Name:          entry.Name,
-			AvatarColor:   entry.AvatarColor,
-			Weapon:        entry.Weapon,
-			WinStreak:     entry.WinStreak,
-			BountyPoints:  entry.BountyPoints,
-			Claims:        entry.Claims,
-			IsTarget:      entry.IsTarget,
+			BotID:        entry.BotID,
+			Name:         entry.Name,
+			AvatarColor:  entry.AvatarColor,
+			Weapon:       entry.Weapon,
+			WinStreak:    entry.WinStreak,
+			BountyPoints: entry.BountyPoints,
+			Claims:       entry.Claims,
+			IsTarget:     entry.IsTarget,
 		}
 		bs.entries[entry.BotID] = copyEntry
 		if entry.IsTarget {

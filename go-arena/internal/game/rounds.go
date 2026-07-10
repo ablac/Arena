@@ -269,30 +269,42 @@ func CalculateAwards(bots map[string]*BotState) map[string]string {
 // using the standard Elo formula with the configured K-factor.
 func CalculateEloChange(killerElo, victimElo int) (gain, loss int) {
 	kf := config.C.EloKFactor
+	if kf <= 0 {
+		return 0, 0
+	}
 	expected := 1.0 / (1.0 + math.Pow(10, float64(victimElo-killerElo)/400.0))
-
-	gain = int(math.Round(kf * (1 - expected)))
-	if gain < 1 {
-		gain = 1
+	delta := int(math.Round(kf * (1 - expected)))
+	if delta < 0 {
+		delta = 0
 	}
-
-	loss = int(math.Round(kf * expected))
-	if loss < 1 {
-		loss = 1
-	}
-
-	return gain, loss
+	return delta, delta
 }
 
-// ApplyEloChange adjusts the Elo ratings of killer and victim after a kill.
-// The victim's Elo will not drop below the configured minimum.
+// ClampElo contains legacy inflated values and keeps all non-kill rating
+// rewards inside the same published bounds.
+func ClampElo(elo int) int {
+	return config.ClampElo(elo)
+}
+
+// ApplyEloChange performs one matched transfer. If either player is already
+// at a bound, the transfer shrinks rather than creating or destroying points.
 func ApplyEloChange(killer, victim *BotState) {
-	gain, loss := CalculateEloChange(killer.Elo, victim.Elo)
-
-	killer.Elo += gain
-
-	victim.Elo -= loss
-	if victim.Elo < config.C.EloMin {
-		victim.Elo = config.C.EloMin
+	if killer == nil || victim == nil || killer == victim {
+		return
 	}
+	killer.Elo = ClampElo(killer.Elo)
+	victim.Elo = ClampElo(victim.Elo)
+	delta, _ := CalculateEloChange(killer.Elo, victim.Elo)
+	minElo, maxElo := config.EloBounds()
+	if available := victim.Elo - minElo; delta > available {
+		delta = available
+	}
+	if capacity := maxElo - killer.Elo; delta > capacity {
+		delta = capacity
+	}
+	if delta <= 0 {
+		return
+	}
+	killer.Elo += delta
+	victim.Elo -= delta
 }

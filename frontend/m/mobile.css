@@ -74,6 +74,38 @@ body {
   box-shadow: var(--shadow-md);
 }
 
+.service-status-banner {
+  position: fixed;
+  z-index: 60;
+  top: calc(62px + var(--safe-top));
+  left: calc(8px + var(--safe-left));
+  right: calc(8px + var(--safe-right));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid rgba(71, 215, 255, 0.45);
+  border-radius: 12px;
+  background: rgba(8, 20, 34, 0.94);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+  font-size: 0.82rem;
+}
+
+.service-status-banner[hidden] { display: none !important; }
+.service-status-banner[data-severity="warning"] { border-color: rgba(255, 206, 84, 0.7); }
+.service-status-banner[data-severity="critical"] { border-color: rgba(255, 95, 87, 0.8); }
+.service-status-banner [data-service-status-message] { flex: 1; }
+.service-status-banner button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 1.25rem;
+  line-height: 1;
+  padding: 4px;
+}
+
 /* ---------- Top bar ---------- */
 
 #topbar {

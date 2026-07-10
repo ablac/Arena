@@ -1559,6 +1559,24 @@ tr:hover td{background:rgba(88,166,255,0.07)}
                 <div class="ctrl-result" id="updateResult"></div>
               </section>
               <section class="ops-card">
+                <h3>Site Broadcast</h3>
+                <p class="muted">Publish a plain-text notice to every current and newly arriving Arena visitor.</p>
+                <textarea id="broadcastMessage" maxlength="500" rows="3" placeholder="Message shown across the Arena site" style="width:100%;margin-top:10px;resize:vertical"></textarea>
+                <div class="ops-command-row" style="margin-top:8px">
+                  <select id="broadcastSeverity" aria-label="Broadcast severity">
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                  <input id="broadcastExpiryMinutes" type="number" min="1" max="10080" placeholder="Expires (minutes)" aria-label="Expiry in minutes; leave blank until cleared" style="width:155px">
+                  <button class="btn-success" id="broadcastPublishBtn" onclick="publishBroadcast()">Publish</button>
+                  <button class="btn-danger" id="broadcastClearBtn" onclick="clearBroadcast()" disabled>Clear Current</button>
+                </div>
+                <div class="ctrl-result" id="broadcastResult"></div>
+                <div id="broadcastCurrent" class="muted" style="margin-top:8px">Loading current broadcast...</div>
+                <div id="broadcastHistory" class="muted" style="margin-top:8px;max-height:120px;overflow:auto"></div>
+              </section>
+              <section class="ops-card">
                 <h3>Round Control</h3>
                 <div class="ops-command-row">
                   <button class="btn-warn" onclick="gameAction('pause')">Pause Game</button>
@@ -1572,7 +1590,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 
             <section class="ops-card">
               <h3>Match Flow &amp; Rule Tuning</h3>
-              <div class="muted">Only high-touch match controls live here. Map pools, terrain generation, demo bots, weapons, and advanced stat tuning stay in their own focused workspaces.</div>
+              <div class="muted">Only high-touch match controls live here. Game and map settings are stored in PostgreSQL and activate on the next server restart, so a save never changes a match mid-round. Weapon tuning uses its own locked live registry. Map pools, terrain generation, demo bots, and advanced stat tuning stay in their own focused workspaces.</div>
               <div class="config-tabs" id="configGroupTabs"></div>
               <div id="gameConfigGrid" style="margin-top:12px"></div>
               <div class="ops-command-row" style="margin-top:12px">
@@ -2062,6 +2080,9 @@ function handleSSEEvent(type, data) {
         }
         if (evt.data && evt.data.event === 'damage') {
           handleDamageEvent(evt);
+        }
+        if (evt.data && evt.data.event === 'service_status_changed' && currentTab === 'controls') {
+          loadBroadcasts();
         }
         break;
     }
@@ -3505,6 +3526,7 @@ async function gameAction(action) {
 }
 
 let currentConfig = {};
+let currentBroadcastId = null;
 
 // ========== Arena Ops Console ==========
 const OPS_WEAPON_OPTIONS = ['sword','bow','daggers','shield','spear','staff','grapple'];
@@ -3520,7 +3542,7 @@ const OPS_CONFIG_GROUPS = [
     {key:'min_bots_to_start', label:'Min Bots to Start', min:1, hint:'Minimum live bots required.'}
   ]},
   {name:'Match Rules', fields:[
-    {key:'game_mode', label:'Game Mode', type:'select', options:['ffa','team_battle','ctf'], hint:'Applies next round.'},
+    {key:'game_mode', label:'Game Mode', type:'select', options:['ffa','team_battle','ctf'], hint:'Applies after a server restart.'},
     {key:'team_count', label:'Team Count', min:2, max:8, hint:'Used by team modes.'},
     {key:'friendly_fire', label:'Friendly Fire', type:'checkbox', hint:'Allow same-team damage.'}
   ]}
@@ -3538,9 +3560,103 @@ async function loadOpsConsole() {
     loadDemoBotStudio(),
     loadMapWorkshop(),
     refreshIPBans(),
-    loadCosmeticCatalog()
+    loadCosmeticCatalog(),
+    loadBroadcasts()
   ]);
   renderConfigHistory();
+}
+
+async function loadBroadcasts() {
+  const currentEl = document.getElementById('broadcastCurrent');
+  const historyEl = document.getElementById('broadcastHistory');
+  const clearBtn = document.getElementById('broadcastClearBtn');
+  if (!currentEl || !historyEl || !clearBtn) return;
+  try {
+    const data = await api('/broadcasts');
+    const current = data.current && data.current.broadcast ? data.current.broadcast : null;
+    currentBroadcastId = current ? Number(current.id) : null;
+    clearBtn.disabled = !currentBroadcastId;
+    currentEl.replaceChildren();
+    if (!current) {
+      currentEl.textContent = 'No active site broadcast.';
+    } else {
+      const label = document.createElement('b');
+      label.textContent = `${String(current.severity || 'info').toUpperCase()}: `;
+      const message = document.createElement('span');
+      message.textContent = current.message || '';
+      currentEl.append(label, message);
+    }
+
+    historyEl.replaceChildren();
+    const history = (data.events || []).filter((event) => event.slot === 'broadcast').slice(0, 8);
+    for (const event of history) {
+      const row = document.createElement('div');
+      row.style.cssText = 'padding:4px 0;border-top:1px solid var(--border)';
+      const action = event.active ? 'Published' : 'Cleared';
+      row.textContent = `${action} ${event.created_at ? new Date(event.created_at).toLocaleString() : ''}${event.message ? ` - ${event.message}` : ''}`;
+      historyEl.appendChild(row);
+    }
+    if (!history.length) historyEl.textContent = 'No broadcast history yet.';
+  } catch (error) {
+    currentEl.textContent = 'Broadcast status unavailable: ' + error.message;
+  }
+}
+
+async function publishBroadcast() {
+  const messageEl = document.getElementById('broadcastMessage');
+  const severityEl = document.getElementById('broadcastSeverity');
+  const expiryEl = document.getElementById('broadcastExpiryMinutes');
+  const button = document.getElementById('broadcastPublishBtn');
+  const result = document.getElementById('broadcastResult');
+  const message = messageEl.value.trim();
+  if (!message) {
+    result.textContent = 'Enter a message first.';
+    result.style.color = 'var(--red)';
+    return;
+  }
+  const payload = { message, severity: severityEl.value };
+  const minutes = Number(expiryEl.value);
+  if (expiryEl.value !== '' && Number.isFinite(minutes) && minutes > 0) {
+    payload.expires_in_seconds = Math.round(minutes * 60);
+  }
+  button.disabled = true;
+  result.textContent = 'Publishing...';
+  result.style.color = 'var(--text2)';
+  try {
+    await api('/broadcasts', { method:'POST', body:JSON.stringify(payload) });
+    messageEl.value = '';
+    result.textContent = 'Broadcast published.';
+    result.style.color = 'var(--green)';
+    toast('Site broadcast published', 'success');
+    logAudit('SITE_BROADCAST_PUBLISH', severityEl.value);
+    await loadBroadcasts();
+  } catch (error) {
+    result.textContent = 'Publish failed: ' + error.message;
+    result.style.color = 'var(--red)';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function clearBroadcast() {
+  if (!currentBroadcastId) return;
+  if (!confirm('Clear the current site broadcast for everyone?')) return;
+  const button = document.getElementById('broadcastClearBtn');
+  const result = document.getElementById('broadcastResult');
+  const expectedID = currentBroadcastId;
+  button.disabled = true;
+  try {
+    await api('/broadcasts/' + encodeURIComponent(expectedID), { method:'DELETE' });
+    result.textContent = 'Broadcast cleared.';
+    result.style.color = 'var(--green)';
+    toast('Site broadcast cleared', 'success');
+    logAudit('SITE_BROADCAST_CLEAR', String(expectedID));
+    await loadBroadcasts();
+  } catch (error) {
+    result.textContent = 'Clear failed: ' + error.message;
+    result.style.color = 'var(--red)';
+    await loadBroadcasts();
+  }
 }
 
 async function loadGameConfig() {
@@ -3550,7 +3666,11 @@ async function loadGameConfig() {
     currentConfig = data;
     if (data.arena_width > 0 && data.arena_height > 0) arenaSize = [data.arena_width, data.arena_height];
     renderConfigGrid(data);
-    if (el) { el.textContent = 'Config loaded'; el.style.color = 'var(--green)'; }
+    const pending = data._persistence?.restart_required === true;
+    if (el) {
+      el.textContent = pending ? 'Saved configuration is pending a server restart' : 'Config loaded - no restart pending';
+      el.style.color = pending ? 'var(--orange)' : 'var(--green)';
+    }
   } catch(e) {
     if (el) { el.textContent = 'Failed to load config: ' + e.message; el.style.color = 'var(--red)'; }
   }
@@ -3608,10 +3728,11 @@ async function saveGameConfig() {
     const appliedKeys = Object.entries(res.applied||{}).map(([k,v]) => k + '=' + v).join(', ');
     const rejectedKeys = res.rejected || [];
     el.textContent = rejectedKeys.length ?
-      'Config partially saved - rejected: ' + rejectedKeys.join(', ') :
-      'Config saved' + (appliedKeys ? ' - applied: ' + appliedKeys : ' - no changes');
+      'Config partially saved for restart - rejected: ' + rejectedKeys.join(', ') :
+      (res.restart_required ? 'Config saved - restart the server to activate it' : 'Config saved - values are already active') +
+        (appliedKeys ? ' - saved: ' + appliedKeys : ' - no changes');
     el.style.color = rejectedKeys.length ? 'var(--orange)' : 'var(--green)';
-    toast(rejectedKeys.length ? 'Some config values were rejected' : 'Game config updated', rejectedKeys.length ? 'error' : 'success');
+    toast(rejectedKeys.length ? 'Some config values were rejected' : (res.restart_required ? 'Game config saved; restart required' : 'Game config saved'), rejectedKeys.length ? 'error' : 'success');
     logConfigChange('Game Config', (appliedKeys || '(no changes)') + (rejectedKeys.length ? '; rejected=' + rejectedKeys.join('|') : ''));
     await loadGameConfig();
   } catch(e) {
@@ -3792,7 +3913,11 @@ async function loadMapWorkshop() {
     if (mapPool) mapPool.textContent = (opsMapSettings.enabled_shapes || []).length + ' active';
     renderMapWorkshop();
     await previewSelectedMap();
-    if (el) { el.textContent = 'Map workshop loaded'; el.style.color = 'var(--green)'; }
+    const pending = opsMapSettings._persistence?.restart_required === true;
+    if (el) {
+      el.textContent = pending ? 'Saved map settings are pending a server restart' : 'Map workshop loaded - no restart pending';
+      el.style.color = pending ? 'var(--orange)' : 'var(--green)';
+    }
   } catch(e) {
     if (el) { el.textContent = 'Failed to load map workshop: ' + e.message; el.style.color = 'var(--red)'; }
   }
@@ -3867,8 +3992,9 @@ async function saveMapSettings() {
     const applied = Object.entries(res.applied || {}).map(([k,v]) => k + '=' + (Array.isArray(v) ? v.join('|') : v)).join(', ');
     const rejected = res.rejected || [];
     el.textContent = rejected.length ?
-      'Map settings partially saved - rejected: ' + rejected.join(', ') :
-      'Map settings saved' + (applied ? ': ' + applied : '');
+      'Map settings partially saved for restart - rejected: ' + rejected.join(', ') :
+      (res.restart_required ? 'Map settings saved - restart the server to activate them' : 'Map settings saved - values are already active') +
+        (applied ? ': ' + applied : '');
     el.style.color = rejected.length ? 'var(--orange)' : 'var(--green)';
     logConfigChange('Map Workshop', (applied || '(no changes)') + (rejected.length ? '; rejected=' + rejected.join('|') : ''));
     await loadMapWorkshop();
@@ -4236,7 +4362,7 @@ async function refreshBalance() {
     const weapons = weaponsData.weapons || {};
     document.getElementById('weaponTuneBody').innerHTML = Object.entries(weapons).sort((a,b)=>a[0].localeCompare(b[0])).map(([name, w]) =>
       `<tr>
-        <td style="color:var(--orange);font-weight:bold">${esc(name)}</td>
+        <td style="color:var(--orange);font-weight:bold">${esc(name)}<div style="font-size:9px;color:var(--text2);font-weight:normal">${w.config_source==='database_override'?'saved override':'built-in base'}</div></td>
         <td><input type="number" id="wt_${name}_dmg" value="${w.damage}" min="0" style="width:60px"></td>
         <td><input type="number" id="wt_${name}_range" value="${w.range}" min="0" step="0.5" style="width:60px"></td>
         <td><input type="number" id="wt_${name}_cd" value="${w.cooldown}" min="0.1" step="0.1" style="width:60px"></td>
@@ -4522,10 +4648,10 @@ async function saveWeapon(name) {
   const param = parseFloat(document.getElementById('wt_'+name+'_param').value);
   try {
     const res = await api('/weapons/' + name, {method:'PUT', body:JSON.stringify({damage:dmg, range:range, cooldown:cd, param:param})});
-    toast(name + ' updated: ' + (res.applied||[]).join(', '), 'success');
+    toast(name + ' saved: ' + (res.applied||[]).join(', '), 'success');
     logAudit('WEAPON_UPDATE', name + ': ' + (res.applied||[]).join(', '));
     logConfigChange('Weapon: ' + name, (res.applied||[]).join(', '));
-    document.getElementById('weaponTuneResult').textContent = name + ' updated';
+    document.getElementById('weaponTuneResult').textContent = name + ' saved for future restarts';
     document.getElementById('weaponTuneResult').style.color = 'var(--green)';
   } catch(e) { toast('Failed to update ' + name, 'error'); }
 }

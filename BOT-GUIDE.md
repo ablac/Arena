@@ -113,6 +113,7 @@ All HTTP endpoints are also available under the `/arena` prefix (e.g., `/arena/a
 | `POST` | `/api/v1/keys/generate` | Generate a new API key and bot (rate-limited) |
 | `GET` | `/api/v1/leaderboard` | Leaderboard with `?limit=N&offset=N` pagination |
 | `GET` | `/api/v1/arena/status` | Current round, bots alive, safe zone radius |
+| `GET` | `/api/v1/service-status` | Current public broadcast and scheduled-maintenance status (`Cache-Control: no-store`) |
 | `GET` | `/api/v1/arena/map` | Current terrain grid (width, height, cell_size, compact terrain with pad/hazard overlays, teleport/capture/hazard metadata). **Next round's map is pre-generated during intermission** — fetch early and pre-compute pathfinding! |
 | `GET` | `/api/v1/bounties` | Current bounty board |
 | `GET` | `/api/v1/weapon-stats` | Live weapon stats (including auto-balance adjustments) |
@@ -155,7 +156,7 @@ The server also sends an application-level heartbeat approximately every 10 seco
 {"type":"heartbeat","paused":true,"server_time":1783700000000}
 ```
 
-`server_time` is Unix time in milliseconds. Heartbeats contain no gameplay state; spectator clients should use them for connection health, handle the `paused` flag if useful, and otherwise ignore them. Clients should also ignore unknown message types so future additive spectator messages remain backward compatible.
+`server_time` is Unix time in milliseconds. Heartbeats contain no gameplay state; spectator clients should use them for connection health, handle the `paused` flag if useful, and otherwise ignore them. The stream also sends `service_status` control messages for operator broadcasts and maintenance; route those separately from render-state messages. Clients should ignore other unknown message types so future additions remain backward compatible.
 - Entity arrays: `teleport_pads`, `capture_pads`, `hazard_zones`, `landmines`, `gravity_wells`, `burn_fields`, `staff_impacts`, `void_tiles`, plus `sudden_death`, `bounty_target`, `round_modifier`, and one-shot `events`.
 - **Keyframes**: `obstacles` is only included on every 10th broadcast (and immediately after you connect). Between keyframes the field is omitted — keep your last received copy instead of clearing the map.
 
@@ -213,7 +214,8 @@ Sent immediately after successful authentication.
   "stat_min": 1,
   "stat_max": 10,
   "timeout_seconds": 10,
-  "last_loadout": { "weapon": "sword", "stats": {...}, "fallback_behavior": "aggressive" }
+  "last_loadout": { "weapon": "sword", "stats": {...}, "fallback_behavior": "aggressive" },
+  "service_status": { "type": "service_status", "revision": 12, "broadcast": null, "maintenance": null }
 }
 ```
 
@@ -376,6 +378,30 @@ Additional tick fields worth knowing:
 }
 ```
 
+#### `service_status`
+
+Sent after an operator publishes or clears a site announcement and during a scheduled server update. The same snapshot is included in the initial `connected` message. While maintenance is active it is also repeated inside `tick.service_status`, so a slow client cannot miss the warning if one direct WebSocket message is dropped.
+
+```json
+{
+  "type": "service_status",
+  "revision": 27,
+  "server_time": "2026-07-10T18:22:10Z",
+  "broadcast": null,
+  "maintenance": {
+    "id": 27,
+    "severity": "warning",
+    "message": "Arena is restarting. Connections will return automatically.",
+    "phase": "restarting",
+    "estimated_downtime_seconds": 60,
+    "retry_after_seconds": 60,
+    "published_at": "2026-07-10T18:22:00Z"
+  }
+}
+```
+
+Treat the snapshot as a full replacement and ignore one whose `revision` is lower than the last revision you processed. When `maintenance` is non-null, retain `retry_after_seconds` and use it as the minimum reconnect delay if the socket closes. Planned restarts close sockets with WebSocket code `1012` (Service Restart). The official Python and Node.js SDKs expose this through `on_service_status` / `onServiceStatus` and handle the reconnect delay automatically.
+
 #### `error`
 ```json
 {
@@ -465,7 +491,7 @@ Send one per tick to control your bot.
 
 ## Weapons
 
-Base stats (the server auto-balances weapon damage/cooldown between rounds based on win rates, so live values can drift roughly ±20-30% — query `GET /api/v1/bot-setup` or `GET /api/v1/weapon-stats` for current numbers):
+Base stats (the server auto-balances weapon damage/cooldown between FFA rounds using weapon-attributed casts, hits, damage, and finishing kills across multiple bot identities. Mines, universal abilities, objectives, survival time, and other non-weapon output are excluded. Adjustments require statistically consistent evidence and remain bounded, so query `GET /api/v1/bot-setup` or `GET /api/v1/weapon-stats` for current numbers):
 
 | Weapon | Damage | Range (tiles) | Cooldown | Special Ability |
 |--------|--------|---------------|----------|-----------------|

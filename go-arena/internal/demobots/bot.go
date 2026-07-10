@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"time"
 
@@ -27,12 +26,12 @@ type demoBot struct {
 	attackRange int     // Chebyshev grid range from loadout_confirmed
 	maxHP       float64 // max HP from loadout_confirmed
 	botID       string  // bot ID from connected message
-	strategy    string  // current live strategy, rerolled each round
+	strategy    string  // stable configured archetype for comparable balance samples
 }
 
 // newDemoBot creates a demoBot from a config and server URL.
 func newDemoBot(cfg BotConfig, serverURL string) *demoBot {
-	initialStrategy := pickStrategyForWeapon(cfg.Weapon, cfg.Strategy)
+	initialStrategy := configuredStrategy(cfg.Weapon, cfg.Strategy)
 	return &demoBot{
 		config:    cfg,
 		serverURL: serverURL,
@@ -239,7 +238,7 @@ func (b *demoBot) session(ctx context.Context) error {
 	}
 
 	// 2. Send "select_loadout".
-	b.rollStrategy("session_start")
+	b.applyConfiguredStrategy("session_start")
 	loadout := map[string]interface{}{
 		"type":              "select_loadout",
 		"weapon":            b.config.Weapon,
@@ -323,7 +322,7 @@ func (b *demoBot) session(ctx context.Context) error {
 		case "round_start":
 			resetMineCount(b.botID)
 			resetGravWell(b.botID)
-			b.rollStrategy("round_start")
+			b.applyConfiguredStrategy("round_start")
 			if err := b.fetchMap(ctx); err != nil {
 				b.logger.Debug("map refresh failed", "error", err)
 			}
@@ -467,23 +466,24 @@ func fallbackBehaviorForStrategy(strategy string) string {
 	}
 }
 
-func pickStrategyForWeapon(weapon, current string) string {
+// configuredStrategy keeps each demo template on its declared archetype. The
+// automatic balancer needs stable, reproducible cohorts; rerolling every bot
+// from the same weapon-wide pool made paired templates behaviorally identical
+// and added strategy noise to weapon performance samples.
+func configuredStrategy(weapon, preferred string) string {
 	choices := strategyPoolForWeapon(weapon)
 	if len(choices) == 0 {
-		return current
+		if preferred != "" {
+			return preferred
+		}
+		return "aggressive"
 	}
-	if len(choices) == 1 {
-		return choices[0]
+	for _, choice := range choices {
+		if preferred == choice {
+			return preferred
+		}
 	}
-	idx := rand.Intn(len(choices))
-	next := choices[idx]
-	if current == "" {
-		return next
-	}
-	for attempts := 0; attempts < 4 && next == current; attempts++ {
-		next = choices[rand.Intn(len(choices))]
-	}
-	return next
+	return choices[0]
 }
 
 func strategyPoolForWeapon(weapon string) []string {
@@ -507,15 +507,12 @@ func strategyPoolForWeapon(weapon string) []string {
 	}
 }
 
-func (b *demoBot) rollStrategy(reason string) {
+func (b *demoBot) applyConfiguredStrategy(reason string) {
 	prev := b.strategy
-	next := pickStrategyForWeapon(b.config.Weapon, prev)
-	if next == "" {
-		next = b.config.Strategy
-	}
+	next := configuredStrategy(b.config.Weapon, b.config.Strategy)
 	b.strategy = next
 	if prev != next {
-		b.logger.Info("strategy rerolled", "reason", reason, "from", prev, "to", next)
+		b.logger.Info("strategy restored", "reason", reason, "from", prev, "to", next)
 	}
 }
 

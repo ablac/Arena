@@ -472,17 +472,11 @@ func bfsStepConstrained(sc, sr, gc, gr int, danger *dangerSet) ([2]int, bool) {
 		return [2]int{intSign(gc - sc), intSign(gr - sr)}, true
 	}
 
-	// The goal cell itself is never treated as dangerous: otherwise a target
-	// sitting inside a hazard (e.g. a pickup in a burn field) would force the
-	// whole path to fall back to danger-blind mode.
 	blocked := func(cx, cy, dx, dy int) bool {
 		if t.isMoveBlocked(cx, cy, dx, dy) {
 			return true
 		}
 		nc, nr := cx+dx, cy+dy
-		if nc == gc && nr == gr {
-			return false
-		}
 		return danger.has(nc, nr)
 	}
 
@@ -653,6 +647,9 @@ type actionResult struct {
 
 func moveDir(d [2]float64) actionResult {
 	snapped := [2]float64{fsign(d[0]), fsign(d[1])}
+	if snapped == [2]float64{} {
+		return idle()
+	}
 	return actionResult{Action: "move", Direction: &snapped}
 }
 
@@ -725,6 +722,9 @@ func atkPos(pos [2]float64, weapon string) actionResult {
 
 func dodge(d [2]float64) actionResult {
 	snapped := [2]float64{fsign(d[0]), fsign(d[1])}
+	if snapped == [2]float64{} {
+		return idle()
+	}
 	return actionResult{Action: "dodge", Direction: &snapped}
 }
 
@@ -771,6 +771,52 @@ func dangerEscapeDistance(col, row int, danger *dangerSet, terrain *botTerrain) 
 		}
 	}
 	return math.MaxInt32
+}
+
+// bestDangerEscapeDir chooses the passable adjacent step with the shortest
+// remaining route out of danger. Center-based "move away" heuristics fail for
+// overlapping hazards and at the exact center of a rectangular zone, where
+// they can produce a zero direction.
+func bestDangerEscapeDir(pos [2]float64, danger *dangerSet) ([2]float64, bool) {
+	if danger == nil || danger.empty() {
+		return [2]float64{}, false
+	}
+	cx, cy := int(math.Round(pos[0])), int(math.Round(pos[1]))
+	if !danger.has(cx, cy) {
+		return [2]float64{}, false
+	}
+
+	t := getTerrain()
+	directions := [][2]int{
+		{1, 0}, {-1, 0}, {0, 1}, {0, -1},
+		{1, 1}, {1, -1}, {-1, 1}, {-1, -1},
+	}
+	bestDistance := math.MaxInt32
+	var best [2]float64
+	found := false
+	for _, dir := range directions {
+		if t != nil && t.isMoveBlocked(cx, cy, dir[0], dir[1]) {
+			continue
+		}
+		distance := dangerEscapeDistance(cx+dir[0], cy+dir[1], danger, t)
+		if !found || distance < bestDistance {
+			bestDistance = distance
+			best = [2]float64{float64(dir[0]), float64(dir[1])}
+			found = true
+		}
+	}
+	return best, found
+}
+
+func escapeDanger(ts tickState, canDodge bool) actionResult {
+	dir, ok := bestDangerEscapeDir(ts.Position, ts.Danger)
+	if !ok {
+		return idle()
+	}
+	if canDodge {
+		return dodgeSafe(ts, dir)
+	}
+	return moveDir(dir)
 }
 
 // safeDodgeDir validates both cells of the server's two-cell dodge. A dodge
@@ -1809,14 +1855,39 @@ func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD f
 		return nil
 	}
 
-	pad, padD := nearestCapturePad(ts.Position, ts.CapturePads)
-	if pad == nil || !pad.Ready {
-		return nil
-	}
-
 	hpRatio := ts.HP / math.Max(ts.MaxHP, 1)
 	pressure := enemiesWithinRange(ts.Position, ts.Enemies, 4)
 	objectiveBias := strategy == "territorial" || strategy == "defensive" || strategy == "aggressive"
+
+	// Ready pads can be captured now. A cooling-down pad cannot be captured,
+	// but its owner must remain the sole contender to receive control pulses.
+	// The old early !Ready return made that ownership branch unreachable.
+	var pad, heldPad *entity
+	padD, heldPadD := math.Inf(1), math.Inf(1)
+	for i := range ts.CapturePads {
+		candidate := &ts.CapturePads[i]
+		d := chebyshev(ts.Position, candidate.Position)
+		if candidate.Ready && d < padD {
+			pad, padD = candidate, d
+		}
+		if !candidate.Ready && candidate.OwnerID == botID && d < heldPadD {
+			heldPad, heldPadD = candidate, d
+		}
+	}
+	if heldPad != nil && !heldPad.Contested && pressure <= 1 && hpRatio >= 0.45 {
+		if heldPadD <= 1 && pressure == 0 {
+			a := idle()
+			return &a
+		}
+		if heldPadD <= 7 && (pad == nil || heldPadD+2 < padD) {
+			a := moveTo(ts.Position, heldPad.Position, ts.Danger)
+			return &a
+		}
+	}
+	if pad == nil {
+		return nil
+	}
+
 	enemyOwned := pad.OwnerID != "" && pad.OwnerID != botID
 
 	if hpRatio < 0.35 && pressure > 0 {
@@ -1831,17 +1902,9 @@ func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD f
 	if near != nil && nearD <= 2 && ts.WeaponReady {
 		return nil
 	}
-	if pad.OwnerID == botID && !pad.Ready && !pad.Contested && pressure <= 1 && hpRatio >= 0.45 {
-		if padD > 1 && padD <= 7 {
-			a := moveTo(ts.Position, pad.Position, ts.Danger)
-			return &a
-		}
-		if padD <= 1 {
-			return nil
-		}
-	}
 	if padD <= 1 && !pad.Contested {
-		return nil
+		a := idle()
+		return &a
 	}
 	if pad.Contested && padD <= 8 && (objectiveBias || ts.HasHazardKey || ts.IsBountyTarget) {
 		a := moveTo(ts.Position, pad.Position, ts.Danger)
@@ -2107,6 +2170,39 @@ func finalizeWeaponAction(ts tickState, weapon string, wrange float64, action ac
 		return moveTo(ts.Position, near.Position, ts.Danger)
 	}
 	return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
+}
+
+// tryImmediateAttack converts a ready, in-range hit before non-emergency
+// utility. Previously sword, staff, bow, and ordinary grapple opportunities
+// could be displaced by an adjacent boost pickup, mine, or offensive grapple,
+// wasting the weapon cooldown window. Spear keeps its brace setup and bow
+// keeps intentional charge holds in their weapon-specific branches.
+func tryImmediateAttack(ts tickState, weapon string, wrange float64) *actionResult {
+	if !ts.WeaponReady {
+		return nil
+	}
+	if weapon == "spear" && !ts.BraceReady {
+		return nil
+	}
+	if weapon == "staff" {
+		if cast, ok := bestStaffCast(&ts, ts.Position, ts.Enemies, wrange); ok {
+			return cast
+		}
+		return nil
+	}
+
+	target := bestTarget(&ts, ts.Position, ts.Enemies, wrange)
+	if target == nil {
+		return nil
+	}
+	if weapon == "bow" {
+		dist := chebyshev(ts.Position, target.Position)
+		if shouldHoldBowCharge(ts, target, dist, wrange) {
+			return nil
+		}
+	}
+	a := atk(target, weapon)
+	return &a
 }
 
 // === Smart Pickup Prioritization ===
@@ -2718,6 +2814,8 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	canAtk := ts.WeaponReady
 	canDodge := ts.DodgeCool <= 0
 	visibleEnemies := countVisibleEnemies(ts.Enemies)
+	needsDefensiveDisengage := visibleEnemies > 0 &&
+		(hpRatio < 0.3 || (hpRatio < 0.45 && wrange <= 2 && hasVisibleRangedThreat(ts.Enemies)))
 	near, nearD := closestVisible(pos, ts.Enemies)
 	if near == nil {
 		near, nearD = closest(pos, ts.Enemies)
@@ -2749,25 +2847,11 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		}
 	}
 
-	// === HAZARD ZONE: Get out immediately (highest priority after stun) ===
-	if !ts.HasHazardKey && inHazardZone(pos, ts.HazardZones) {
-		// Move away from nearest hazard center
-		if len(ts.HazardZones) > 0 {
-			nearest := ts.HazardZones[0]
-			bestD := chebyshev(pos, nearest.Position)
-			for _, h := range ts.HazardZones[1:] {
-				d := chebyshev(pos, h.Position)
-				if d < bestD {
-					bestD = d
-					nearest = h
-				}
-			}
-			away := gridDirAway(pos, nearest.Position)
-			if canDodge {
-				return dodgeSafe(ts, away)
-			}
-			return moveDirSafe(ts, away)
-		}
+	// === DANGER: leave the shortest safe way immediately. This covers active
+	// hazards, enemy gravity wells, armed mines, and a void tile underfoot.
+	cell := [2]int{int(math.Round(pos[0])), int(math.Round(pos[1]))}
+	if ts.Danger.has(cell[0], cell[1]) {
+		return escapeDanger(ts, canDodge)
 	}
 
 	// Picking up an adjacent health pack is immediate and cannot be deferred
@@ -2871,6 +2955,14 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		}
 	}
 
+	// A ready hit in range beats optional utility. Emergency health, CTF,
+	// weapon setup, and low-HP escape above still retain higher priority.
+	if !needsDefensiveDisengage {
+		if attack := tryImmediateAttack(ts, weapon, wrange); attack != nil {
+			return finalizeWeaponAction(ts, weapon, wrange, *attack)
+		}
+	}
+
 	// === GRAVITY WELL: Deploy if 3+ enemies nearby ===
 	if gw := tryGravityWell(ts, botID); gw != nil {
 		setHasGravWell(botID, false)
@@ -2956,7 +3048,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 
 	// === DISENGAGE & BREAK LOS: melee bots under ranged fire at <45% HP,
 	// anyone at <30% — duck behind terrain or grab a closer health pack.
-	if visibleEnemies > 0 && (hpRatio < 0.3 || (hpRatio < 0.45 && wrange <= 2 && hasVisibleRangedThreat(ts.Enemies))) {
+	if needsDefensiveDisengage {
 		threat := strongestRangedThreat(&ts)
 		if threat == nil {
 			threat = near

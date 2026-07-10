@@ -36,6 +36,7 @@
 import { parseColor, makeMat } from './utils.js';
 import { getGuiTexture, _getTplShadow } from './bot-body.js?v=20260707c';
 import { SwordsmanAnimState } from './swordsman-anims.js?v=20260707c';
+import { getSwordsmanMaterials } from './swordsman-materials.js?v=20260710b';
 
 // ─── Scale ───────────────────────────────────────────────────────────────────
 // Editor character is ~1.85 units tall. Arena bots are ~24 units tall.
@@ -86,47 +87,8 @@ const GRIP_H   = 0.15 * S;
 const GRIP_D   = 0.03 * S;
 const POMMEL_R = 0.025 * S;
 
-// ─── Shared materials ───────────────────────────────────────────────────────
-let _swordBladeMat = null;
-let _swordGuardMat = null;
-let _swordGripMat = null;
-let _swordPommelMat = null;
-
 // Shadow disc scale relative to bot-body template (BODY_R * 1.3 = 6.5)
 const _SW_SHADOW_SCALE = (TORSO_W * 0.9) / (5 * 1.3);  // 5.85 / 6.5 ≈ 0.9
-
-function _getSwordMats(scene) {
-  const B = window.BABYLON;
-  // BABYLON.Material has no `isDisposed` property or method (unlike meshes),
-  // so these caches rely solely on the null check below; these materials are
-  // shared across every sword-wielding bot and intentionally never disposed
-  // (see disposeSwordsmanEntry's comment).
-  if (!_swordBladeMat) {
-    _swordBladeMat = makeMat('sw-blade', scene, new B.Color3(0.85, 0.85, 0.95), {
-      emissiveFactor: 0.5, specular: new B.Color3(0.6, 0.6, 0.6)
-    });
-    _swordBladeMat.freeze();
-  }
-  if (!_swordGuardMat) {
-    _swordGuardMat = makeMat('sw-guard', scene, new B.Color3(0.55, 0.45, 0.25), {
-      emissiveFactor: 0.3
-    });
-    _swordGuardMat.freeze();
-  }
-  if (!_swordGripMat) {
-    _swordGripMat = makeMat('sw-grip', scene, new B.Color3(0.3, 0.2, 0.1), {
-      emissiveFactor: 0.2
-    });
-    _swordGripMat.freeze();
-  }
-  if (!_swordPommelMat) {
-    _swordPommelMat = makeMat('sw-pommel', scene, new B.Color3(0.6, 0.5, 0.3), {
-      emissiveFactor: 0.3
-    });
-    _swordPommelMat.freeze();
-  }
-  return { blade: _swordBladeMat, guard: _swordGuardMat, grip: _swordGripMat, pommel: _swordPommelMat };
-}
 
 // ─── Helper: create a box mesh parented to a node ───────────────────────────
 function _box(name, w, h, d, scene, parent, mat) {
@@ -142,7 +104,7 @@ function _box(name, w, h, d, scene, parent, mat) {
 // ─── Build the longsword ────────────────────────────────────────────────────
 function _buildSword(id, scene, parent) {
   const B = window.BABYLON;
-  const mats = _getSwordMats(scene);
+  const mats = getSwordsmanMaterials(scene);
 
   const swordRoot = new B.TransformNode(`sw-sword-${id}`, scene);
   swordRoot.parent = parent;
@@ -460,7 +422,8 @@ export function createSwordsmanEntry(bot, scene) {
 
 /**
  * Dispose a swordsman entry and all its per-bot materials.
- * Shared weapon materials are NOT disposed (they persist across bots).
+ * Shared weapon materials are not disposed per bot. They persist across bots
+ * in one scene; scene disposal and swordsman-materials.js own rebuild cleanup.
  */
 export function disposeSwordsmanEntry(entry) {
   // Remove GUI controls — dispose children before parent

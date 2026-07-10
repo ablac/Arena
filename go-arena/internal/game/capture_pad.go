@@ -168,7 +168,7 @@ func applyCapturePadReward(bot *BotState) {
 	if bot == nil {
 		return
 	}
-	bot.Elo += config.C.CapturePadScoreBonus
+	bot.Elo = ClampElo(bot.Elo + config.C.CapturePadScoreBonus)
 	bot.ShieldAbsorb += config.C.CapturePadShieldBonus
 	bot.ActiveEffects = removeEffectByName(bot.ActiveEffects, "capture_pad_power")
 	bot.ActiveEffects = append(bot.ActiveEffects, Effect{
@@ -189,7 +189,7 @@ func maybeApplyCapturePadControlPulse(pad *CapturePad, contenders []*BotState, t
 	if holder == nil || !holder.IsAlive || holder.BotID != pad.LastCapturedBy {
 		return
 	}
-	holder.Elo += config.C.CapturePadControlPulseScore
+	holder.Elo = ClampElo(holder.Elo + config.C.CapturePadControlPulseScore)
 	holder.ShieldAbsorb += config.C.CapturePadControlPulseShield
 	pad.NextControlPulseTick = tickCount + config.C.CapturePadControlPulseTicks
 }

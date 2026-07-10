@@ -186,10 +186,11 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			slog.Error("failed to load bot stats", "error", err, "bot_id", botRecord.ID)
 		}
 
-		startingElo := cfg.EloStarting
+		startingElo := config.StartingElo()
 		if botStats != nil {
 			startingElo = botStats.Elo
 		}
+		startingElo = game.ClampElo(startingElo)
 		cosmetics, err := db.GetEquippedCosmetics(ctx, botRecord.ID)
 		if err != nil {
 			slog.Warn("failed to load bot cosmetics; using standard visuals", "error", err, "bot_id", botRecord.ID)
@@ -226,6 +227,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			"fallback_behavior": botRecord.DefaultFallback,
 		}
 		connMsg := game.BuildConnectedMessage(bot, lastLoadout)
+		connMsg["service_status"] = engine.GetServiceStatus()
 		if err := conn.WriteJSON(connMsg); err != nil {
 			slog.Error("failed to send connected message", "error", err, "bot", bot.Name)
 			return

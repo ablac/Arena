@@ -85,6 +85,7 @@ func SpectatorHandler(engine *game.GameEngine) http.HandlerFunc {
 			return
 		}
 		slog.Info("spectator connected", "remote", r.RemoteAddr)
+		engine.SendServiceStatusToSpectator(spec)
 
 		// Start writer goroutine (includes periodic ping).
 		ctx, cancel := context.WithCancel(context.Background())
