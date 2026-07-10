@@ -13,9 +13,9 @@ import (
 // Vec2 is a 2D vector that serializes as [x, y] for protocol compatibility.
 type Vec2 [2]float64
 
-func NewVec2(x, y float64) Vec2    { return Vec2{x, y} }
-func (v Vec2) X() float64          { return v[0] }
-func (v Vec2) Y() float64          { return v[1] }
+func NewVec2(x, y float64) Vec2     { return Vec2{x, y} }
+func (v Vec2) X() float64           { return v[0] }
+func (v Vec2) Y() float64           { return v[1] }
 func (v Vec2) WithX(x float64) Vec2 { return Vec2{x, v[1]} }
 func (v Vec2) WithY(y float64) Vec2 { return Vec2{v[0], y} }
 
@@ -102,11 +102,11 @@ type Effect struct {
 type PickupType string
 
 const (
-	PickupHealthPack   PickupType = "health_pack"
-	PickupSpeedBoost   PickupType = "speed_boost"
-	PickupDamageBoost  PickupType = "damage_boost"
-	PickupShieldBubble PickupType = "shield_bubble"
-	PickupGravityWell  PickupType = "gravity_well"
+	PickupHealthPack    PickupType = "health_pack"
+	PickupSpeedBoost    PickupType = "speed_boost"
+	PickupDamageBoost   PickupType = "damage_boost"
+	PickupShieldBubble  PickupType = "shield_bubble"
+	PickupGravityWell   PickupType = "gravity_well"
 	PickupCooldownShard PickupType = "cooldown_shard"
 	PickupBountyToken   PickupType = "bounty_token"
 	PickupHazardKey     PickupType = "hazard_key"
@@ -188,10 +188,11 @@ type ActionResult struct {
 // BotState holds all state for a connected bot.
 type BotState struct {
 	// Identity
-	BotID      string
-	APIKeyID   string
-	Name       string
+	BotID       string
+	APIKeyID    string
+	Name        string
 	AvatarColor string
+	Cosmetics   map[string]string
 
 	// Position & movement
 	Position          Vec2
@@ -200,17 +201,17 @@ type BotState struct {
 	Speed             float64
 
 	// Health & combat
-	HP               float64
-	MaxHP            float64
-	AttackMultiplier float64
-	DefenseReduction float64
-	Weapon           string
+	HP                float64
+	MaxHP             float64
+	AttackMultiplier  float64
+	DefenseReduction  float64
+	Weapon            string
 	CooldownRemaining float64
-	IsAlive          bool
-	KillStreak       int
-	BestKillStreak   int
-	RoundWinStreak   int
-	ActiveEffects    []Effect
+	IsAlive           bool
+	KillStreak        int
+	BestKillStreak    int
+	RoundWinStreak    int
+	ActiveEffects     []Effect
 
 	// AI
 	FallbackBehavior string
@@ -222,11 +223,11 @@ type BotState struct {
 	Elo   int
 
 	// Dodge / stun / invuln / freeze
-	DodgeCooldown int
-	InvulnTicks   int
-	StunTicks     int
+	DodgeCooldown          int
+	InvulnTicks            int
+	StunTicks              int
 	RecentlyDisruptedTicks int
-	Frozen        bool // admin freeze — cannot move or attack
+	Frozen                 bool // admin freeze — cannot move or attack
 
 	// Shove cooldown (separate from weapon cooldown)
 	ShoveCooldown float64
@@ -234,8 +235,13 @@ type BotState struct {
 	// Shield
 	ShieldAbsorb float64
 
-	// Movement cooldown: bots move every 2nd tick (halved base speed).
-	MoveCooldown int
+	// Movement pacing. MoveProgress carries fractional grid-cell movement
+	// between ticks so the configured speed stat still matters on terrain maps.
+	// MovementTrace records every entered position for same-tick arena effects.
+	// MoveCooldown is retained for the legacy non-terrain movement path.
+	MoveProgress  float64
+	MovementTrace []Vec2
+	MoveCooldown  int
 
 	// Stuck detection: counts consecutive ticks at the same grid cell.
 	StuckTicks int
@@ -249,16 +255,16 @@ type BotState struct {
 	Team int
 
 	// Round stats
-	RoundKills       int
-	RoundDeaths      int
-	RoundDamageDealt float64
-	RoundDamageTaken float64
-	RoundDistance     float64
-	RoundShotsFired  int
-	RoundShotsHit    int
-	RoundLongestLife  int
-	RoundPickups     int
-	RoundFlagCaptures int
+	RoundKills         int
+	RoundDeaths        int
+	RoundDamageDealt   float64
+	RoundDamageTaken   float64
+	RoundDistance      float64
+	RoundShotsFired    int
+	RoundShotsHit      int
+	RoundLongestLife   int
+	RoundPickups       int
+	RoundFlagCaptures  int
 	RoundLifeStartTick int
 
 	// Persistence snapshot — tracks what was already synced to DB
@@ -269,16 +275,25 @@ type BotState struct {
 	PersistedDistance    float64
 	PersistedPickups     int
 
+	// A leaderboard reset can happen in the middle of a live round. These
+	// baselines keep the match's visible streak/lifetime counters intact while
+	// ensuring only the post-reset portion is written back to the leaderboard.
+	LeaderboardRebased      bool
+	LeaderboardKillBaseline int
+	LeaderboardLifeBaseline int
+
 	// Kill attribution
 	LastDamagedBy    string
 	LastDamageTick   int
+	LastDamageSource string
+	LastDamageAmount float64
 
 	// Action history (last 100 actions for profiling)
-	ActionHistory []ActionType
+	ActionHistory    []ActionType
 	ActionHistoryMax int
 
 	// Bounty
-	IsBountyTarget bool
+	IsBountyTarget   bool
 	BountyTokenBonus int
 
 	// Landmines: active mines placed by this bot
@@ -293,12 +308,12 @@ type BotState struct {
 	BowChargeTicks  int
 
 	// Teleport pad cooldowns: padID -> tick when cooldown expires
-	TeleportCooldowns map[string]int
-	TeleportTouchedPads map[string]bool
+	TeleportCooldowns        map[string]int
+	TeleportTouchedPads      map[string]bool
 	TeleportHazardGraceTicks int
 
 	// Per-tick feedback (cleared each tick)
-	HitsReceived    []HitRecord
+	HitsReceived     []HitRecord
 	LastActionResult *ActionResult
 
 	// Connection tracking
@@ -322,10 +337,10 @@ const (
 type RoundModifier string
 
 const (
-	RoundModifierNone         RoundModifier = ""
-	RoundModifierFastZone     RoundModifier = "fast_zone"
-	RoundModifierPickupSurge  RoundModifier = "pickup_surge"
-	RoundModifierDoubleBounty RoundModifier = "double_bounty"
+	RoundModifierNone          RoundModifier = ""
+	RoundModifierFastZone      RoundModifier = "fast_zone"
+	RoundModifierPickupSurge   RoundModifier = "pickup_surge"
+	RoundModifierDoubleBounty  RoundModifier = "double_bounty"
 	RoundModifierTeleportSurge RoundModifier = "teleport_surge"
 	RoundModifierHazardStorm   RoundModifier = "hazard_storm"
 )
@@ -349,35 +364,36 @@ func (m RoundModifier) Label() string {
 
 // RoundState tracks current round info.
 type RoundState struct {
-	RoundNumber       int
-	StartTick         int
-	Phase             RoundPhase
-	Mode              GameMode
-	Modifier          RoundModifier
-	TimeRemaining     float64
-	IntermissionTicks int
+	RoundNumber         int
+	StartTick           int
+	Phase               RoundPhase
+	Mode                GameMode
+	Modifier            RoundModifier
+	TimeRemaining       float64
+	IntermissionTicks   int
 	LobbyCountdownTicks int
-	RoundID           string // UUID for DB
+	RoundID             string // UUID for DB
 }
 
 // DeathEvent is emitted when a bot dies.
 type DeathEvent struct {
-	VictimID   string
-	KillerID   string
-	KillerName string
-	Weapon     string
-	Damage     float64
+	VictimID    string
+	KillerID    string
+	KillerName  string
+	Weapon      string
+	Damage      float64
 	VictimKills int // kills this life
 }
 
 // KillEvent is emitted when a bot gets a kill.
 type KillEvent struct {
-	KillerID    string
-	VictimID    string
-	VictimName  string
-	Weapon      string
-	KillStreak  int
-	RoundKills  int
+	KillerID   string
+	VictimID   string
+	VictimName string
+	Weapon     string
+	Damage     float64
+	KillStreak int
+	RoundKills int
 }
 
 // RoundEndInfo holds data for the round_end message.
@@ -406,28 +422,28 @@ type ArenaEvent struct {
 
 // SpectatorState is the serialized arena state for spectators.
 type SpectatorState struct {
-	Type         string                   `json:"type"`
-	Tick         int                      `json:"tick"`
-	RoundTick    int                      `json:"round_tick"`
-	RoundNumber  int                      `json:"round_number,omitempty"`
-	Bots         []map[string]interface{} `json:"bots"`
-	SafeZone     map[string]interface{}   `json:"safe_zone"`
-	Pickups      []map[string]interface{} `json:"pickups"`
-	KillFeed     []map[string]interface{} `json:"kill_feed"`
-	Obstacles    []Obstacle               `json:"obstacles,omitempty"`
-	WaitingBots  []map[string]interface{} `json:"waiting_bots,omitempty"`
-	TeleportPads []map[string]interface{} `json:"teleport_pads,omitempty"`
-	CapturePads  []map[string]interface{} `json:"capture_pads,omitempty"`
-	HazardZones  []map[string]interface{} `json:"hazard_zones,omitempty"`
-	BurnFields   []map[string]interface{} `json:"burn_fields,omitempty"`
-	Landmines    []map[string]interface{} `json:"landmines,omitempty"`
-	GravityWells []map[string]interface{} `json:"gravity_wells,omitempty"`
-	StaffImpacts []map[string]interface{} `json:"staff_impacts,omitempty"`
-	VoidTiles    [][2]int                 `json:"void_tiles,omitempty"`
-	SuddenDeath  bool                     `json:"sudden_death"`
-	BountyTarget string                   `json:"bounty_target,omitempty"`
-	RoundModifier string                  `json:"round_modifier,omitempty"`
-	Events       []ArenaEvent             `json:"events,omitempty"`
+	Type          string                   `json:"type"`
+	Tick          int                      `json:"tick"`
+	RoundTick     int                      `json:"round_tick"`
+	RoundNumber   int                      `json:"round_number,omitempty"`
+	Bots          []map[string]interface{} `json:"bots"`
+	SafeZone      map[string]interface{}   `json:"safe_zone"`
+	Pickups       []map[string]interface{} `json:"pickups"`
+	KillFeed      []map[string]interface{} `json:"kill_feed"`
+	Obstacles     []Obstacle               `json:"obstacles,omitempty"`
+	WaitingBots   []map[string]interface{} `json:"waiting_bots,omitempty"`
+	TeleportPads  []map[string]interface{} `json:"teleport_pads,omitempty"`
+	CapturePads   []map[string]interface{} `json:"capture_pads,omitempty"`
+	HazardZones   []map[string]interface{} `json:"hazard_zones,omitempty"`
+	BurnFields    []map[string]interface{} `json:"burn_fields,omitempty"`
+	Landmines     []map[string]interface{} `json:"landmines,omitempty"`
+	GravityWells  []map[string]interface{} `json:"gravity_wells,omitempty"`
+	StaffImpacts  []map[string]interface{} `json:"staff_impacts,omitempty"`
+	VoidTiles     [][2]int                 `json:"void_tiles,omitempty"`
+	SuddenDeath   bool                     `json:"sudden_death"`
+	BountyTarget  string                   `json:"bounty_target,omitempty"`
+	RoundModifier string                   `json:"round_modifier,omitempty"`
+	Events        []ArenaEvent             `json:"events,omitempty"`
 
 	// Game modes (groundwork)
 	GameMode   string                   `json:"game_mode,omitempty"`
@@ -444,13 +460,13 @@ type SpectatorState struct {
 
 // DerivedStats are computed from stat allocations.
 type DerivedStats struct {
-	MaxHP           float64 `json:"max_hp"`
-	MoveSpeed       float64 `json:"move_speed"`
-	AttackMult      float64 `json:"attack_mult"`
+	MaxHP            float64 `json:"max_hp"`
+	MoveSpeed        float64 `json:"move_speed"`
+	AttackMult       float64 `json:"attack_mult"`
 	DefenseReduction float64 `json:"defense_red"`
-	AttackRange     float64 `json:"attack_range"`
-	CooldownSeconds float64 `json:"cooldown_seconds"`
-	WeaponDamage    float64 `json:"weapon_damage"`
+	AttackRange      float64 `json:"attack_range"`
+	CooldownSeconds  float64 `json:"cooldown_seconds"`
+	WeaponDamage     float64 `json:"weapon_damage"`
 }
 
 // ComputeDerivedStats calculates derived stats from base allocations and weapon.
@@ -491,6 +507,10 @@ func (b *BotState) ResetRoundStats() {
 	b.RecentlyDisruptedTicks = 0
 	b.BowChargeTicks = 0
 	b.StillTicks = 0
+	b.MoveProgress = 0
+	b.MovementTrace = nil
+	b.MoveCooldown = 0
+	b.ResetDamageAttribution()
 	// Reset persistence snapshots so deltas start fresh
 	b.PersistedKills = 0
 	b.PersistedDeaths = 0
@@ -498,6 +518,18 @@ func (b *BotState) ResetRoundStats() {
 	b.PersistedDamageTaken = 0
 	b.PersistedDistance = 0
 	b.PersistedPickups = 0
+	b.LeaderboardRebased = false
+	b.LeaderboardKillBaseline = 0
+	b.LeaderboardLifeBaseline = 0
+}
+
+// ResetDamageAttribution prevents a hit from a previous life or round from
+// receiving credit for a later environmental death.
+func (b *BotState) ResetDamageAttribution() {
+	b.LastDamagedBy = ""
+	b.LastDamageTick = 0
+	b.LastDamageSource = ""
+	b.LastDamageAmount = 0
 }
 
 // ClearTickFeedback resets per-tick transient data.

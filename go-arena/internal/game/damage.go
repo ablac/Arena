@@ -52,6 +52,25 @@ func scaledCooldownTicks(base int, mult float64) int {
 	return value
 }
 
+// recordAttributedDamage keeps the exact effective hit that most recently
+// damaged a bot. Death handling uses this snapshot rather than reconstructing
+// a source from the attacker's current loadout or using cumulative round
+// damage as if it were the killing blow.
+func recordAttributedDamage(target, attacker *BotState, actual float64, source string, tickCount int) {
+	if target == nil || attacker == nil || actual <= 0 {
+		return
+	}
+	target.LastDamagedBy = attacker.BotID
+	target.LastDamageTick = tickCount
+	target.LastDamageSource = source
+	target.LastDamageAmount = actual
+	target.HitsReceived = append(target.HitsReceived, HitRecord{
+		AttackerID: attacker.BotID,
+		Damage:     actual,
+		Weapon:     source,
+	})
+}
+
 // ApplyDamage applies damage from attacker to target, respecting invulnerability,
 // shield passive, and shield absorb. Returns the actual damage dealt.
 func ApplyDamage(target, attacker *BotState, baseDamage float64, weapon string, tickCount int) float64 {
@@ -90,16 +109,7 @@ func ApplyDamage(target, attacker *BotState, baseDamage float64, weapon string, 
 	target.RoundDamageTaken += actual
 	attacker.RoundDamageDealt += actual
 
-	// Kill attribution.
-	target.LastDamagedBy = attacker.BotID
-	target.LastDamageTick = tickCount
-
-	// Record the hit.
-	target.HitsReceived = append(target.HitsReceived, HitRecord{
-		AttackerID: attacker.BotID,
-		Damage:     actual,
-		Weapon:     weapon,
-	})
+	recordAttributedDamage(target, attacker, actual, weapon, tickCount)
 
 	// Emit damage event to dashboard.
 	if GameEventHook != nil {
@@ -123,6 +133,10 @@ func ApplyDamage(target, attacker *BotState, baseDamage float64, weapon string, 
 
 // ApplyHitKnockback pushes the target away from the attacker position.
 func ApplyHitKnockback(target *BotState, attackerPos Vec2, knockbackDist float64, obstacles []Obstacle) {
+	applyHitKnockback(target, attackerPos, knockbackDist, obstacles, nil, "", 0)
+}
+
+func applyHitKnockback(target *BotState, attackerPos Vec2, knockbackDist float64, obstacles []Obstacle, attacker *BotState, source string, tickCount int) {
 	dir := target.Position.Sub(attackerPos).Normalized()
 	if dir.Length() < 1e-10 {
 		// Target is at the exact same position; push in an arbitrary direction.
@@ -160,8 +174,20 @@ func ApplyHitKnockback(target *BotState, attackerPos Vec2, knockbackDist float64
 
 	// Wall slam damage — track attribution so kills are credited.
 	if wallHit {
-		target.HP -= config.C.KnockbackWallDamage
-		target.RoundDamageTaken += config.C.KnockbackWallDamage
+		applyWallSlamDamage(target, attacker, source, tickCount)
+	}
+}
+
+func applyWallSlamDamage(target, attacker *BotState, source string, tickCount int) {
+	damage := config.C.KnockbackWallDamage
+	if target == nil || damage <= 0 {
+		return
+	}
+	target.HP -= damage
+	target.RoundDamageTaken += damage
+	if attacker != nil && attacker != target {
+		attacker.RoundDamageDealt += damage
+		recordAttributedDamage(target, attacker, damage, source, tickCount)
 	}
 }
 
@@ -170,8 +196,19 @@ func ApplyHitKnockback(target *BotState, attackerPos Vec2, knockbackDist float64
 // destination is blocked, closer cells are tried. Wall-slam damage is applied
 // if the target hits the arena boundary.
 func ApplyGridKnockback(target *BotState, attackerPos Vec2, gridTiles int, obstacles []Obstacle) {
+	applyGridKnockback(target, attackerPos, gridTiles, obstacles, nil, "", 0)
+}
+
+// ApplyAttributedGridKnockback records any resulting wall-slam damage as the
+// supplied attacker's hit. This is required for non-damaging shoves, which do
+// not have an earlier ApplyDamage call to establish correct kill attribution.
+func ApplyAttributedGridKnockback(target, attacker *BotState, attackerPos Vec2, gridTiles int, obstacles []Obstacle, source string, tickCount int) {
+	applyGridKnockback(target, attackerPos, gridTiles, obstacles, attacker, source, tickCount)
+}
+
+func applyGridKnockback(target *BotState, attackerPos Vec2, gridTiles int, obstacles []Obstacle, attacker *BotState, source string, tickCount int) {
 	if ActiveTerrain == nil {
-		ApplyHitKnockback(target, attackerPos, float64(gridTiles)*config.C.PathfindingCellSize, obstacles)
+		applyHitKnockback(target, attackerPos, float64(gridTiles)*config.C.PathfindingCellSize, obstacles, attacker, source, tickCount)
 		return
 	}
 
@@ -222,8 +259,7 @@ func ApplyGridKnockback(target *BotState, attackerPos Vec2, gridTiles int, obsta
 	target.LastValidPosition = target.Position
 
 	if wallHit {
-		target.HP -= config.C.KnockbackWallDamage
-		target.RoundDamageTaken += config.C.KnockbackWallDamage
+		applyWallSlamDamage(target, attacker, source, tickCount)
 	}
 }
 

@@ -2424,3 +2424,131 @@ body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
   border-radius: 6px;
   padding: 2px 8px;
 }
+
+/* --- Bot cosmetics ----------------------------------------------------- */
+
+.cosmetics-shell {
+  display: grid;
+  gap: 18px;
+}
+
+.cosmetics-intro {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.cosmetics-intro p {
+  color: var(--text-soft);
+  max-width: 68ch;
+}
+
+.cosmetics-checkout-state {
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 206, 84, 0.25);
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: var(--accent-gold);
+  font: 0.72rem var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cosmetics-auth {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.cosmetics-auth input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(126, 166, 207, 0.24);
+  border-radius: 10px;
+  background: rgba(8, 12, 20, 0.72);
+  color: var(--text-primary);
+  padding: 11px 13px;
+  font-family: var(--font-mono);
+}
+
+.cosmetics-status {
+  min-height: 1.4em;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.cosmetics-status[data-state="success"] { color: #8ce6b0; }
+.cosmetics-status[data-state="error"] { color: #ff9b91; }
+
+.cosmetics-catalog,
+.cosmetic-slot {
+  display: grid;
+  gap: 12px;
+}
+
+.cosmetics-catalog { gap: 20px; }
+
+.cosmetic-slot h4 {
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.cosmetic-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.cosmetic-item {
+  display: grid;
+  gap: 10px;
+  min-height: 158px;
+  padding: 15px;
+  border: 1px solid rgba(126, 166, 207, 0.16);
+  border-radius: 14px;
+  background: rgba(8, 12, 20, 0.56);
+}
+
+.cosmetic-item.rarity-rare { border-color: rgba(71, 215, 255, 0.24); }
+.cosmetic-item.rarity-epic { border-color: rgba(190, 126, 255, 0.28); }
+
+.cosmetic-item-header,
+.cosmetic-item-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cosmetic-item-header strong { color: var(--text-primary); }
+
+.cosmetic-price,
+.cosmetic-state {
+  color: var(--accent-gold);
+  font: 0.72rem var(--font-mono);
+  white-space: nowrap;
+}
+
+.cosmetic-item p {
+  color: var(--text-soft);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.cosmetic-item-footer { margin-top: auto; }
+
+.cosmetic-equip:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+@media (max-width: 720px) {
+  .cosmetics-intro { flex-direction: column; }
+  .cosmetics-auth { grid-template-columns: 1fr; }
+  .cosmetics-auth .btn { width: 100%; }
+}

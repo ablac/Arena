@@ -317,14 +317,10 @@ func estimateBotVelocity(bot *BotState) Vec2 {
 		return Vec2{}
 	}
 
-	cells := 1.0
-	for _, eff := range bot.ActiveEffects {
-		if eff.Name == "speed_boost" {
-			cells = 2.0
-			break
-		}
+	moveUnitsPerSecond := effectiveMoveSpeed(bot) * float64(config.C.TickRate) / 2.0
+	if ActiveTerrain != nil {
+		moveUnitsPerSecond = config.C.PathfindingCellSize * terrainMoveCellsPerTick(bot) * float64(config.C.TickRate)
 	}
-	moveUnitsPerSecond := config.C.PathfindingCellSize * cells * float64(config.C.TickRate) / 2.0
 
 	switch bot.PendingAction.Type {
 	case ActionMove:
@@ -476,7 +472,7 @@ func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string
 	dealt := ApplyDamage(target, bot, rawDmg, wc.Name, tickCount)
 
 	// Apply standard knockback (1 grid tile).
-	ApplyGridKnockback(target, bot.Position, 1, obstacles)
+	ApplyAttributedGridKnockback(target, bot, bot.Position, 1, obstacles, wc.Name, tickCount)
 
 	bot.CooldownRemaining = wc.Cooldown * effectCooldownMultiplier(bot)
 	bot.RoundShotsFired++
@@ -512,7 +508,7 @@ func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string
 		processShieldBash(target)
 
 	case "knockback":
-		processExtraKnockback(target, bot.Position, wc, obstacles, braced)
+		processExtraKnockback(target, bot, wc, obstacles, braced, tickCount)
 	}
 	if braced {
 		markDisrupted(target, config.C.ShieldDisruptWindowTicks)
@@ -547,7 +543,7 @@ func processCleave(bot, primaryTarget *BotState, wc *WeaponConfig, bots map[stri
 
 		cleaveDmg := CalculateDamage(float64(wc.Damage), effectiveAttackMultiplier(bot), other.DefenseReduction) * 0.5
 		ApplyDamage(other, bot, cleaveDmg, wc.Name, tickCount)
-		ApplyGridKnockback(other, bot.Position, 1, obstacles)
+		ApplyAttributedGridKnockback(other, bot, bot.Position, 1, obstacles, wc.Name, tickCount)
 		cleaveCount++
 	}
 }
@@ -559,11 +555,11 @@ func processShieldBash(target *BotState) {
 }
 
 // processExtraKnockback applies additional knockback from spear hits.
-func processExtraKnockback(target *BotState, attackerPos Vec2, wc *WeaponConfig, obstacles []Obstacle, braced bool) {
+func processExtraKnockback(target, attacker *BotState, wc *WeaponConfig, obstacles []Obstacle, braced bool, tickCount int) {
 	// Spear knockback: push 1 additional tile.
-	ApplyGridKnockback(target, attackerPos, 1, obstacles)
+	ApplyAttributedGridKnockback(target, attacker, attacker.Position, 1, obstacles, wc.Name, tickCount)
 	if braced && config.C.SpearBraceBonusKnockback > 0 {
-		ApplyGridKnockback(target, attackerPos, config.C.SpearBraceBonusKnockback, obstacles)
+		ApplyAttributedGridKnockback(target, attacker, attacker.Position, config.C.SpearBraceBonusKnockback, obstacles, wc.Name, tickCount)
 	}
 }
 
@@ -647,7 +643,7 @@ func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []O
 		if config.C.GrappleSlamStunTicks > target.StunTicks {
 			target.StunTicks = config.C.GrappleSlamStunTicks
 		}
-		ApplyGridKnockback(target, bot.Position, 1, obstacles)
+		ApplyAttributedGridKnockback(target, bot, bot.Position, 1, obstacles, "grapple_slam", tickCount)
 		markDisrupted(target, config.C.ShieldDisruptWindowTicks)
 		if arenaEvents != nil {
 			*arenaEvents = append(*arenaEvents, buildGrappleSlamEvent(bot, target, tickCount))
@@ -752,7 +748,7 @@ func ProcessBurnFields(burnFields *[]BurnField, bots map[string]*BotState, tickC
 					if hasEffectByName(bot.ActiveEffects, "hazard_key") {
 						continue
 					}
-					if !IsInRange(bot.Position, field.Position, int(field.Radius)) {
+					if _, enteredRange := firstMovementPositionInRange(bot, field.Position, int(field.Radius)); !enteredRange {
 						continue
 					}
 					ApplyDamage(bot, attacker, field.Damage, "staff_burn", tickCount)
@@ -802,7 +798,7 @@ func BuildBurnFieldView(field BurnField, useGridPos bool) map[string]interface{}
 
 // ProcessShoves handles all SHOVE actions for the current tick.
 // Shoves deal no damage but knock the target back far and apply a short stun.
-func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle) {
+func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle, tickCount int) {
 
 	for _, bot := range bots {
 		if !bot.IsAlive || bot.PendingAction == nil {
@@ -862,7 +858,7 @@ func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle) {
 		}
 
 		// Apply knockback (2 grid tiles for shove).
-		ApplyGridKnockback(target, bot.Position, 2, obstacles)
+		ApplyAttributedGridKnockback(target, bot, bot.Position, 2, obstacles, "shove_wall_slam", tickCount)
 
 		// Apply stun.
 		if config.C.ShoveStunTicks > target.StunTicks {

@@ -1,5 +1,8 @@
 'use strict';
 
+import { apiPath } from './paths.js?v=20260710a';
+import { onArenaAPIKeyClear } from './credential-events.js?v=20260710a';
+
 /**
  * API key generation and display.
  * @module key-generator
@@ -8,11 +11,14 @@
 /**
  * Initialize the key generator UI.
  * @param {HTMLElement} container - The keygen card container
+ * @param {(data: Object) => void} [onGenerated] - Called after a key is shown
  */
-export function initKeyGenerator(container) {
+export function initKeyGenerator(container, onGenerated) {
   const btn = container.querySelector('.keygen-btn');
   const resultDiv = container.querySelector('.keygen-result');
   if (!btn || !resultDiv) return;
+
+  onArenaAPIKeyClear(() => clearGeneratedKey(resultDiv));
 
   btn.addEventListener('click', async () => {
     btn.disabled = true;
@@ -20,6 +26,11 @@ export function initKeyGenerator(container) {
     try {
       const data = await generateKey();
       showKey(resultDiv, data);
+      if (typeof onGenerated === 'function') {
+        try { onGenerated(data); } catch (callbackError) {
+          console.error('[Key Generator] post-generation callback failed', callbackError);
+        }
+      }
       btn.textContent = 'Generate another key';
     } catch (err) {
       resultDiv.innerHTML = `<p class="keygen-error">Error: ${escapeHtml(err.message)}</p>`;
@@ -34,8 +45,7 @@ export function initKeyGenerator(container) {
  * @returns {Promise<{api_key: string, bot_id: string}>}
  */
 async function generateKey() {
-  const baseUrl = window.location.origin;
-  const resp = await fetch(`${baseUrl}/api/v1/keys/generate`, { method: 'POST' });
+  const resp = await fetch(apiPath('/keys/generate'), { method: 'POST' });
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
     throw new Error(body.detail || `HTTP ${resp.status}`);
@@ -62,8 +72,16 @@ function showKey(container, data) {
         <p class="keygen-warning">Store this key now. It cannot be recovered later.</p>
         <p class="keygen-bot-id">Bot ID: <code>${escapeHtml(data.bot_id)}</code></p>
       </div>
-      <a class="keygen-next-link" href="#onboarding-setup">Continue to bot configuration</a>
+      <a class="keygen-next-link" href="#onboarding-cosmetics">Choose your bot cosmetics</a>
     </div>`;
+}
+
+/** Zero and remove a generated credential from its result container. */
+export function clearGeneratedKey(container) {
+  if (!container) return;
+  const keyField = container.querySelector('#key-display');
+  if (keyField) keyField.value = '';
+  container.replaceChildren();
 }
 
 /** @private */

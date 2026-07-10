@@ -25,8 +25,8 @@ export class SpectatorSocket {
     this._pingInterval = null;
     /** @type {number|null} */
     this._staleTimer = null;
-    /** Milliseconds of silence before forcing a reconnect. */
-    this._staleTimeout = 30000;
+    /** Milliseconds of application-message silence before forcing reconnect. */
+    this._staleTimeout = 45000;
   }
 
   /** Start connecting to the spectator stream. */
@@ -70,6 +70,10 @@ export class SpectatorSocket {
       this._resetStaleTimer();
       try {
         const data = JSON.parse(event.data);
+        // WebSocket ping frames are not exposed to browser JavaScript. The
+        // server therefore sends text heartbeats while gameplay is paused so
+        // a healthy quiet stream does not trigger this client's stale timer.
+        if (data.type === 'heartbeat') return;
         this.onState(data);
       } catch (err) {
         console.error('[SpectatorWS] Parse error:', err);

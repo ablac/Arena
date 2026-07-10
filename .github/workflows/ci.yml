@@ -13,6 +13,22 @@ jobs:
   backend:
     name: Go tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: arena
+          POSTGRES_PASSWORD: arena
+          POSTGRES_DB: arena_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U arena -d arena_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ARENA_TEST_DATABASE_URL: postgres://arena:arena@localhost:5432/arena_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -43,6 +59,13 @@ jobs:
         shell: bash
         run: |
           git ls-files 'frontend/**/*.js' 'sdk/nodejs/**/*.js' | xargs -r -n 1 node --check
+          node scripts/check-admin-inline-js.mjs
+          node scripts/test-admin-sse-parser.mjs
+          node scripts/test-admin-sse-reconnect.mjs
+          node scripts/test-dashboard-startup.mjs
+          node scripts/test-cosmetics-ui.mjs
+          node scripts/test-public-paths.mjs
+          node scripts/test-spectator-client.mjs
       - name: Check Python syntax
         run: python -m compileall sdk/python/arena_sdk sdk/python/examples bots
       - name: Check whitespace

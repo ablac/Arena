@@ -82,7 +82,7 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 
 			if ownerOk {
 				ApplyDamage(bot, owner, proj.Damage, proj.Weapon, tickCount)
-				ApplyGridKnockback(bot, proj.Position.Sub(proj.Direction.Scale(proj.Speed*dt)), 1, obstacles)
+				ApplyAttributedGridKnockback(bot, owner, proj.Position.Sub(proj.Direction.Scale(proj.Speed*dt)), 1, obstacles, proj.Weapon, tickCount)
 				owner.RoundShotsHit++
 			}
 			if proj.Weapon == "bow" && arenaEvents != nil {

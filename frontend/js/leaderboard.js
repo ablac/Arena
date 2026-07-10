@@ -6,6 +6,7 @@
  */
 
 import { isEnabled } from './settings.js';
+import { apiPath } from './paths.js?v=20260710a';
 
 const SORT_OPTIONS = {
   elo: 'ELO Rating',
@@ -23,22 +24,19 @@ const PERIOD_OPTIONS = {
 };
 
 export async function fetchLeaderboard(sort = 'elo', limit = 50, period = 'all_time') {
-  const baseUrl = window.location.origin;
-  const resp = await fetch(`${baseUrl}/api/v1/leaderboard?sort=${sort}&limit=${limit}&period=${period}`);
+  const resp = await fetch(`${apiPath('/leaderboard')}?sort=${sort}&limit=${limit}&period=${period}`);
   if (!resp.ok) throw new Error(`Leaderboard fetch failed: ${resp.status}`);
   return resp.json();
 }
 
 export async function fetchBountyBoard() {
-  const baseUrl = window.location.origin;
-  const resp = await fetch(`${baseUrl}/api/v1/bounties`);
+  const resp = await fetch(apiPath('/bounties'));
   if (!resp.ok) throw new Error(`Bounty board fetch failed: ${resp.status}`);
   return resp.json();
 }
 
 export async function fetchWeaponStats() {
-  const baseUrl = window.location.origin;
-  const resp = await fetch(`${baseUrl}/api/v1/weapon-stats`);
+  const resp = await fetch(apiPath('/weapon-stats'));
   if (!resp.ok) throw new Error(`Weapon stats fetch failed: ${resp.status}`);
   return resp.json();
 }

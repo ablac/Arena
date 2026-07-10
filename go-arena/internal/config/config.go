@@ -320,6 +320,12 @@ type Config struct {
 	WeaponAutoBalanceMaxCooldownScale float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MAX_COOLDOWN_SCALE" default:"1.20"`
 	WeaponAutoBalanceDamageWeight     float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_DAMAGE_WEIGHT" default:"0.65"`
 	WeaponAutoBalanceCooldownWeight   float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_COOLDOWN_WEIGHT" default:"0.45"`
+	WeaponAutoBalanceMinRounds        int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_ROUNDS" default:"6"`
+	WeaponAutoBalanceMinBotSamples    int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_BOT_SAMPLES" default:"18"`
+	WeaponAutoBalanceMinDistinctBots  int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_DISTINCT_BOTS" default:"3"`
+	WeaponAutoBalanceMinActions       int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_ACTIONS" default:"5"`
+	WeaponAutoBalanceConfidenceZ      float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_CONFIDENCE_Z" default:"1.96"`
+	WeaponAutoBalanceMinEffect        float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_EFFECT" default:"0.05"`
 
 	// OIDC / SSO (opt-in)
 	OIDCEnabled      bool   `envconfig:"ARENA_OIDC_ENABLED" default:"false"`

@@ -20,6 +20,7 @@ if (window.BABYLON) log('✅ BabylonJS loaded: ' + BABYLON.Engine.Version);
 else log('❌ BabylonJS not available');
 </script>
 <script type="module">
+import { wsURL } from './js/paths.js?v=20260710a';
 const log = (msg) => document.getElementById('log').textContent += msg + '\n';
 log('--- Module loading ---');
 try {
@@ -44,7 +45,7 @@ try {
 try {
   const { SpectatorSocket } = await import('./js/spectator-ws.js');
   log('✅ SpectatorSocket imported');
-  const ws = new SpectatorSocket('wss://' + location.host + '/ws/spectator',
+  const ws = new SpectatorSocket(wsURL('/spectator'),
     (s) => log('📨 State: ' + s.type),
     (s) => log('🔌 Status: ' + s));
   ws.connect();

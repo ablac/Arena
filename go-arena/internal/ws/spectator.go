@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
@@ -18,12 +19,17 @@ const (
 	spectatorPingInterval = 30 * time.Second
 	// How long to wait for a pong before considering the connection dead.
 	spectatorPongTimeout = 60 * time.Second
+	// Application-level heartbeats are visible to browser JavaScript, unlike
+	// WebSocket ping frames, and keep its stale-stream timer healthy while the
+	// game is paused and no arena states are being broadcast.
+	spectatorHeartbeatInterval = 10 * time.Second
+	spectatorWriteTimeout      = 10 * time.Second
 )
 
 // spectatorUpgrader is the shared WebSocket upgrader for spectator connections.
 var spectatorUpgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 4096,
+	ReadBufferSize:    1024,
+	WriteBufferSize:   4096,
 	EnableCompression: true,
 	CheckOrigin: func(r *http.Request) bool {
 		return true // allow all origins for now
@@ -36,10 +42,13 @@ var spectatorUpgrader = websocket.Upgrader{
 func SpectatorHandler(engine *game.GameEngine) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cfg := &config.C
+		clientIP := security.ExtractClientIP(r)
 
-		// Check spectator limit before upgrading.
-		if engine.SpectatorCount() >= cfg.MaxSpectators {
-			http.Error(w, "spectator limit reached", http.StatusServiceUnavailable)
+		// IP bans are shared by bot and spectator admission. The admin panel's
+		// spectator "Ban IP" action would otherwise disconnect only the current
+		// socket while allowing the same client to reconnect immediately.
+		if engine.IsIPBanned(clientIP) {
+			http.Error(w, "IP banned", http.StatusForbidden)
 			return
 		}
 
@@ -61,19 +70,27 @@ func SpectatorHandler(engine *game.GameEngine) http.HandlerFunc {
 			Conn:        conn,
 			SendChan:    make(chan []byte, 32),
 			Done:        make(chan struct{}),
-			IP:          security.ExtractClientIP(r),
+			IP:          clientIP,
 			ConnectedAt: time.Now(),
 		}
 
-		// Register with the engine.
-		engine.AddSpectator(spec)
+		// Admission and capacity checking must be one atomic engine operation;
+		// otherwise simultaneous upgrades can all pass a separate count check.
+		if !engine.TryAddSpectator(spec, cfg.MaxSpectators) {
+			_ = conn.WriteControl(
+				websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "spectator limit reached"),
+				time.Now().Add(spectatorWriteTimeout),
+			)
+			return
+		}
 		slog.Info("spectator connected", "remote", r.RemoteAddr)
 
 		// Start writer goroutine (includes periodic ping).
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		go spectatorWriter(ctx, spec)
+		go spectatorWriter(ctx, spec, engine.IsPaused)
 
 		// Reader loop: read and discard messages to keep the connection alive
 		// and detect disconnects.
@@ -122,40 +139,79 @@ func spectatorReader(conn *websocket.Conn) {
 // spectatorWriter drains the spectator's SendChan and writes each message to
 // the WebSocket connection. It also sends periodic WebSocket ping frames to
 // keep the connection alive through reverse proxies.
-func spectatorWriter(ctx context.Context, spec *game.SpectatorConn) {
-	ticker := time.NewTicker(spectatorPingInterval)
-	defer ticker.Stop()
+func spectatorWriter(ctx context.Context, spec *game.SpectatorConn, isPaused func() bool) {
+	spectatorWriterWithIntervals(ctx, spec, isPaused, spectatorPingInterval, spectatorHeartbeatInterval)
+}
+
+func spectatorWriterWithIntervals(ctx context.Context, spec *game.SpectatorConn, isPaused func() bool, pingInterval, heartbeatInterval time.Duration) {
+	pingTicker := time.NewTicker(pingInterval)
+	heartbeatTicker := time.NewTicker(heartbeatInterval)
+	defer pingTicker.Stop()
+	defer heartbeatTicker.Stop()
+	defer spec.Conn.Close()
 
 	for {
 		select {
 		case <-ctx.Done():
-			spec.Conn.WriteMessage(
+			_ = writeSpectatorMessage(spec.Conn,
 				websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 			)
 			return
 
-		case <-ticker.C:
+		case <-pingTicker.C:
 			// Send a WebSocket ping frame to keep the connection alive.
-			if err := spec.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			if err := writeSpectatorMessage(spec.Conn, websocket.PingMessage, nil); err != nil {
 				slog.Warn("spectator ping error", "error", err)
+				return
+			}
+
+		case now := <-heartbeatTicker.C:
+			paused := false
+			if isPaused != nil {
+				paused = isPaused()
+			}
+			if err := writeSpectatorMessage(spec.Conn, websocket.TextMessage, spectatorHeartbeatMessage(paused, now)); err != nil {
+				slog.Warn("spectator heartbeat error", "error", err)
 				return
 			}
 
 		case msg, ok := <-spec.SendChan:
 			if !ok {
 				// Channel closed.
-				spec.Conn.WriteMessage(
+				_ = writeSpectatorMessage(spec.Conn,
 					websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 				)
 				return
 			}
 
-			if err := spec.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			if err := writeSpectatorMessage(spec.Conn, websocket.TextMessage, msg); err != nil {
 				slog.Warn("spectator write error", "error", err)
 				return
 			}
 		}
 	}
+}
+
+type spectatorHeartbeat struct {
+	Type       string `json:"type"`
+	Paused     bool   `json:"paused"`
+	ServerTime int64  `json:"server_time"`
+}
+
+func spectatorHeartbeatMessage(paused bool, now time.Time) []byte {
+	payload, _ := json.Marshal(spectatorHeartbeat{
+		Type:       "heartbeat",
+		Paused:     paused,
+		ServerTime: now.UnixMilli(),
+	})
+	return payload
+}
+
+func writeSpectatorMessage(conn *websocket.Conn, messageType int, payload []byte) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(spectatorWriteTimeout)); err != nil {
+		return err
+	}
+	return conn.WriteMessage(messageType, payload)
 }

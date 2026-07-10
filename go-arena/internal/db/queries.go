@@ -166,6 +166,9 @@ func EnsureCoreSchema(ctx context.Context) error {
 	if err := EnsureAdminRegistryTables(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema admin_registry: %w", err)
 	}
+	if err := EnsureCosmeticsSchema(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema cosmetics: %w", err)
+	}
 
 	return nil
 }
@@ -664,16 +667,17 @@ func GetAllAdminTokenHashes(ctx context.Context) ([]string, error) {
 
 // ---------- api_keys ----------
 
+const getActiveAPIKeyByPrefixSQL = `SELECT id, key_hash, key_prefix, created_at, last_seen, is_active, ip_created
+ FROM api_keys WHERE key_prefix = $1 AND is_active = true`
+
 // GetAPIKeyByPrefix retrieves an active API key by its prefix.
 func GetAPIKeyByPrefix(ctx context.Context, prefix string) (*ApiKey, error) {
 	if Pool == nil {
 		return nil, ErrNoDatabase
 	}
 	k := &ApiKey{}
-	err := Pool.QueryRow(ctx,
-		`SELECT id, key_hash, key_prefix, created_at, last_seen, is_active, ip_created
-		 FROM api_keys WHERE key_prefix = $1 AND is_active = true`, prefix,
-	).Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.CreatedAt, &k.LastSeen, &k.IsActive, &k.IPCreated)
+	err := Pool.QueryRow(ctx, getActiveAPIKeyByPrefixSQL, prefix).
+		Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.CreatedAt, &k.LastSeen, &k.IsActive, &k.IPCreated)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -688,11 +692,7 @@ func CreateAPIKey(ctx context.Context, id, keyHash, keyPrefix, ipCreated string)
 	if Pool == nil {
 		return ErrNoDatabase
 	}
-	_, err := Pool.Exec(ctx,
-		`INSERT INTO api_keys (id, key_hash, key_prefix, created_at, is_active, ip_created)
-		 VALUES ($1, $2, $3, NOW(), true, $4)`,
-		id, keyHash, keyPrefix, ipCreated,
-	)
+	_, err := Pool.Exec(ctx, insertAPIKeySQL, id, keyHash, keyPrefix, ipCreated)
 	if err != nil {
 		return fmt.Errorf("CreateAPIKey: %w", err)
 	}
@@ -811,10 +811,7 @@ func CreateBot(ctx context.Context, bot *Bot) error {
 	if Pool == nil {
 		return ErrNoDatabase
 	}
-	_, err := Pool.Exec(ctx,
-		`INSERT INTO bots (id, api_key_id, name, avatar_color, default_weapon, default_stats,
-		                    default_fallback, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+	_, err := Pool.Exec(ctx, insertBotSQL,
 		bot.ID, bot.APIKeyID, bot.Name, bot.AvatarColor, bot.DefaultWeapon, bot.DefaultStats,
 		bot.DefaultFallback, bot.CreatedAt, bot.UpdatedAt,
 	)
@@ -901,6 +898,53 @@ func UpsertBotStats(ctx context.Context, stats *BotStats) error {
 	)
 	if err != nil {
 		return fmt.Errorf("UpsertBotStats: %w", err)
+	}
+	return nil
+}
+
+const applyBotStatsDeltaSQL = `INSERT INTO bot_stats (bot_id, kills, deaths, assists, damage_dealt, damage_taken,
+                        current_streak, best_streak, elo, time_alive_seconds,
+                        longest_life_secs, rounds_played, round_wins,
+                        pickups_collected, distance_traveled, updated_at)
+ VALUES ($1,$2,$3,0,$4,$5,$6,$7,$8,0,$9,$10,$11,$12,$13,$14)
+ ON CONFLICT (bot_id) DO UPDATE SET
+   kills = bot_stats.kills + EXCLUDED.kills,
+   deaths = bot_stats.deaths + EXCLUDED.deaths,
+   damage_dealt = bot_stats.damage_dealt + EXCLUDED.damage_dealt,
+   damage_taken = bot_stats.damage_taken + EXCLUDED.damage_taken,
+   current_streak = CASE
+     WHEN EXCLUDED.updated_at >= bot_stats.updated_at THEN EXCLUDED.current_streak
+     ELSE bot_stats.current_streak
+   END,
+   best_streak = GREATEST(bot_stats.best_streak, EXCLUDED.best_streak),
+   elo = CASE
+     WHEN EXCLUDED.updated_at >= bot_stats.updated_at THEN EXCLUDED.elo
+     ELSE bot_stats.elo
+   END,
+   longest_life_secs = GREATEST(bot_stats.longest_life_secs, EXCLUDED.longest_life_secs),
+   rounds_played = bot_stats.rounds_played + EXCLUDED.rounds_played,
+   round_wins = bot_stats.round_wins + EXCLUDED.round_wins,
+   pickups_collected = bot_stats.pickups_collected + EXCLUDED.pickups_collected,
+   distance_traveled = bot_stats.distance_traveled + EXCLUDED.distance_traveled,
+   updated_at = GREATEST(bot_stats.updated_at, EXCLUDED.updated_at)`
+
+// ApplyBotStatsDelta atomically adds one captured stats delta. The arithmetic
+// happens inside Postgres so overlapping background persists cannot both read
+// the same old totals and overwrite each other. Snapshot-time ordering keeps
+// non-additive fields from moving backwards when goroutines finish out of
+// order.
+func ApplyBotStatsDelta(ctx context.Context, delta *BotStatsDelta) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
+	_, err := Pool.Exec(ctx, applyBotStatsDeltaSQL,
+		delta.BotID, delta.Kills, delta.Deaths, delta.DamageDealt, delta.DamageTaken,
+		delta.CurrentStreak, delta.BestStreak, delta.Elo, delta.LongestLifeSecs,
+		delta.RoundsPlayed, delta.RoundWins, delta.PickupsCollected,
+		delta.DistanceTraveled, delta.CapturedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("ApplyBotStatsDelta: %w", err)
 	}
 	return nil
 }
@@ -1064,6 +1108,8 @@ var validSortColumns = map[string]string{
 	"elo":         "s.elo DESC",
 	"streak":      "s.best_streak DESC",
 	"best_streak": "s.best_streak DESC",
+	"wins":        "s.round_wins DESC",
+	"damage":      "s.damage_dealt DESC",
 	"kd_ratio":    "CASE WHEN s.deaths = 0 THEN s.kills ELSE s.kills::float / s.deaths END DESC",
 }
 
@@ -1310,63 +1356,12 @@ func GetBotRank(ctx context.Context, botID, sortBy string) (int, error) {
 
 // ---------- rate_limits ----------
 
-// CheckRateLimit checks whether the given IP is allowed to generate another key.
-// It returns (allowed, remaining, error). If the current window has expired (>1 hour),
-// it resets the counter. If under the limit, it increments.
+// CheckRateLimit atomically consumes one registration slot for the given IP.
+// Concurrent requests for the same IP serialize through PostgreSQL's
+// ON CONFLICT row lock, so at most maxPerHour requests can be admitted.
 func CheckRateLimit(ctx context.Context, ip string, maxPerHour int) (bool, int, error) {
 	if Pool == nil {
 		return false, 0, ErrNoDatabase
 	}
-	var rl RateLimit
-	err := Pool.QueryRow(ctx,
-		`SELECT ip_address, keys_generated, window_start
-		 FROM rate_limits WHERE ip_address = $1`, ip,
-	).Scan(&rl.IPAddress, &rl.KeysGenerated, &rl.WindowStart)
-
-	if err != nil && err != pgx.ErrNoRows {
-		return false, 0, fmt.Errorf("CheckRateLimit select: %w", err)
-	}
-
-	now := time.Now()
-
-	// No existing record -- create one and allow.
-	if err == pgx.ErrNoRows {
-		_, insertErr := Pool.Exec(ctx,
-			`INSERT INTO rate_limits (ip_address, keys_generated, window_start)
-			 VALUES ($1, 1, $2)`, ip, now,
-		)
-		if insertErr != nil {
-			return false, 0, fmt.Errorf("CheckRateLimit insert: %w", insertErr)
-		}
-		return true, maxPerHour - 1, nil
-	}
-
-	// Window expired -- reset.
-	if now.Sub(rl.WindowStart) > time.Hour {
-		_, resetErr := Pool.Exec(ctx,
-			`UPDATE rate_limits SET keys_generated = 1, window_start = $1
-			 WHERE ip_address = $2`, now, ip,
-		)
-		if resetErr != nil {
-			return false, 0, fmt.Errorf("CheckRateLimit reset: %w", resetErr)
-		}
-		return true, maxPerHour - 1, nil
-	}
-
-	// Under limit -- increment.
-	if rl.KeysGenerated < maxPerHour {
-		_, incErr := Pool.Exec(ctx,
-			`UPDATE rate_limits SET keys_generated = keys_generated + 1
-			 WHERE ip_address = $1`, ip,
-		)
-		if incErr != nil {
-			return false, 0, fmt.Errorf("CheckRateLimit increment: %w", incErr)
-		}
-		remaining := maxPerHour - rl.KeysGenerated - 1
-		return true, remaining, nil
-	}
-
-	// Over limit.
-	remaining := 0
-	return false, remaining, nil
+	return consumeRegistrationRateLimit(ctx, Pool, ip, maxPerHour, time.Now())
 }

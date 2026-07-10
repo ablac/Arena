@@ -59,12 +59,12 @@ func SendTickUpdate(bot *BotState, yourState map[string]interface{}, nearbyEntit
 	zoneTargetCenter := posToGrid(arena.ZoneTargetCenter)
 
 	msg := map[string]interface{}{
-		"type":             "tick",
-		"tick":             tickCount,
-		"tick_number":      tickCount,
-		"your_state":       yourState,
-		"nearby_entities":  nearbyEntities,
-		"fog_radius":       fogRadius,
+		"type":            "tick",
+		"tick":            tickCount,
+		"tick_number":     tickCount,
+		"your_state":      yourState,
+		"nearby_entities": nearbyEntities,
+		"fog_radius":      fogRadius,
 		"safe_zone": map[string]interface{}{
 			"center":        [2]int{zoneCenter[0], zoneCenter[1]},
 			"radius":        int(math.Round(arena.ZoneRadius / cellSize)),
@@ -87,13 +87,13 @@ func SendTickUpdate(bot *BotState, yourState map[string]interface{}, nearbyEntit
 // SendDeathMessage notifies a bot that it has died.
 func SendDeathMessage(bot *BotState, event DeathEvent) {
 	msg := map[string]interface{}{
-		"type":                "death",
-		"killed_by":           event.KillerID,
-		"killer_name":         event.KillerName,
-		"weapon_used":         event.Weapon,
-		"damage":              event.Damage,
+		"type":                 "death",
+		"killed_by":            event.KillerID,
+		"killer_name":          event.KillerName,
+		"weapon_used":          event.Weapon,
+		"damage":               event.Damage,
 		"your_kills_this_life": event.VictimKills,
-		"respawn":             false,
+		"respawn":              false,
 	}
 	SendToBot(bot, msg)
 }
@@ -105,6 +105,7 @@ func SendKillMessage(bot *BotState, event KillEvent) {
 		"victim_name":      event.VictimName,
 		"victim_id":        event.VictimID,
 		"weapon_used":      event.Weapon,
+		"damage":           event.Damage,
 		"your_kill_streak": event.KillStreak,
 		"your_round_kills": event.RoundKills,
 	}
@@ -141,13 +142,13 @@ func SendRoundStart(bot *BotState, round RoundState, bots map[string]*BotState, 
 	zoneTargetCenter := posToGrid(arena.ZoneTargetCenter)
 
 	msg := map[string]interface{}{
-		"type":           "round_start",
-		"round_number":   round.RoundNumber,
-		"round_modifier": string(round.Modifier),
+		"type":                 "round_start",
+		"round_number":         round.RoundNumber,
+		"round_modifier":       string(round.Modifier),
 		"round_modifier_label": round.Modifier.Label(),
-		"position":       [2]int{gridPos[0], gridPos[1]},
-		"bots_in_round":  len(bots),
-		"all_positions":  allPositions,
+		"position":             [2]int{gridPos[0], gridPos[1]},
+		"bots_in_round":        len(bots),
+		"all_positions":        allPositions,
 		"safe_zone": map[string]interface{}{
 			"center":        [2]int{zoneCenter[0], zoneCenter[1]},
 			"radius":        int(math.Round(arena.ZoneRadius / cellSize)),

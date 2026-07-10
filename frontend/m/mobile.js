@@ -9,9 +9,10 @@
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260707c';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260710a';
 import { Minimap } from '../js/renderer/minimap.js';
 import { SpectatorSocket } from '../js/spectator-ws.js';
+import { apiPath, wsURL } from '../js/paths.js?v=20260710a';
 
 const ARENA_WIDTH = 2000;
 const ARENA_HEIGHT = 2000;
@@ -299,7 +300,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (ranksLoading || now - ranksFetchedAt < RANKS_REFRESH_MS) return;
     ranksLoading = true;
     try {
-      const resp = await fetch('/api/v1/leaderboard?sort=elo&limit=20');
+      const resp = await fetch(`${apiPath('/leaderboard')}?sort=elo&limit=20`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       // All-time responses use "entries"; period responses use "leaderboard".
@@ -335,7 +336,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (now - statusFetchedAt < 5000) return;
     statusFetchedAt = now;
     try {
-      const resp = await fetch('/api/v1/arena/status');
+      const resp = await fetch(apiPath('/arena/status'));
       if (!resp.ok) return;
       const data = await resp.json();
       if (Number.isFinite(data.round_number)) roundNumber = data.round_number;
@@ -418,8 +419,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderKillFeed(state.kill_feed || []);
   }
 
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${wsProtocol}//${window.location.host}/ws/spectator`;
+  const wsUrl = wsURL('/spectator');
   const spectator = new SpectatorSocket(wsUrl,
     (state) => {
       engine.setState(state); // full tick rate for the 3D scene

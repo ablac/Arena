@@ -27,8 +27,8 @@ var WSMessageHook func(botID, botName, action string, data map[string]interface{
 
 // upgrader is the shared WebSocket upgrader for bot connections.
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  4096,
-	WriteBufferSize: 65536,
+	ReadBufferSize:    4096,
+	WriteBufferSize:   65536,
 	EnableCompression: true,
 	CheckOrigin: func(r *http.Request) bool {
 		return true // allow all origins for now
@@ -190,6 +190,11 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		if botStats != nil {
 			startingElo = botStats.Elo
 		}
+		cosmetics, err := db.GetEquippedCosmetics(ctx, botRecord.ID)
+		if err != nil {
+			slog.Warn("failed to load bot cosmetics; using standard visuals", "error", err, "bot_id", botRecord.ID)
+			cosmetics = map[string]string{}
+		}
 
 		// ----------------------------------------------------------------
 		// 3. Create BotState
@@ -199,6 +204,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			APIKeyID:         botRecord.APIKeyID,
 			Name:             botRecord.Name,
 			AvatarColor:      botRecord.AvatarColor,
+			Cosmetics:        cosmetics,
 			Weapon:           botRecord.DefaultWeapon,
 			Stats:            map[string]int(botRecord.DefaultStats),
 			FallbackBehavior: botRecord.DefaultFallback,

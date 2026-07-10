@@ -564,7 +564,11 @@ func (h *AdminHandler) updateMapSettings(w http.ResponseWriter, r *http.Request)
 			config.C.MapShapePool = strings.Join(game.RandomShapePoolNames(), ",")
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "map settings updated", "applied": applied})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":  "map settings updated",
+		"applied":  applied,
+		"rejected": rejectedConfigKeys(updates, applied),
+	})
 }
 
 func (h *AdminHandler) previewMap(w http.ResponseWriter, r *http.Request) {
@@ -668,7 +672,41 @@ func validateCustomMap(req customMapPayload) (game.CustomMapTemplate, error) {
 func applyGameConfigUpdates(updates map[string]interface{}) map[string]interface{} {
 	c := &config.C
 	applied := make(map[string]interface{})
+	handled := make(map[string]bool)
+
+	// Coupled bounds must be validated and applied together. Iterating the JSON
+	// object directly is nondeterministic, and validating the second value
+	// against a possibly updated first value caused identical requests to be
+	// only half-applied depending on Go's map iteration order.
+	if min, max, present, valid := intConfigPair(updates, "obstacle_count_min", "obstacle_count_max", 0); present {
+		handled["obstacle_count_min"] = true
+		handled["obstacle_count_max"] = true
+		if valid {
+			c.ObstacleCountMin, c.ObstacleCountMax = min, max
+			applied["obstacle_count_min"], applied["obstacle_count_max"] = min, max
+		}
+	}
+	if min, max, present, valid := intConfigPair(updates, "arena_size_base_bots", "arena_size_max_bots", 1); present {
+		handled["arena_size_base_bots"] = true
+		handled["arena_size_max_bots"] = true
+		if valid {
+			c.ArenaSizeBaseBots, c.ArenaSizeMaxBots = min, max
+			applied["arena_size_base_bots"], applied["arena_size_max_bots"] = min, max
+		}
+	}
+	if min, max, present, valid := floatConfigPair(updates, "arena_size_min_scale", "arena_size_max_scale"); present {
+		handled["arena_size_min_scale"] = true
+		handled["arena_size_max_scale"] = true
+		if valid {
+			c.ArenaSizeMinScale, c.ArenaSizeMaxScale = min, max
+			applied["arena_size_min_scale"], applied["arena_size_max_scale"] = min, max
+		}
+	}
+
 	for key, val := range updates {
+		if handled[key] {
+			continue
+		}
 		switch key {
 		case "tick_rate":
 			if v, ok := toInt(val); ok && v >= 1 && v <= 60 {
@@ -683,6 +721,16 @@ func applyGameConfigUpdates(updates map[string]interface{}) map[string]interface
 		case "max_spectators":
 			if v, ok := toInt(val); ok && v >= 0 {
 				c.MaxSpectators = v
+				applied[key] = v
+			}
+		case "arena_width":
+			if v, ok := toFloat(val); ok && v > 0 {
+				c.ArenaWidth = v
+				applied[key] = v
+			}
+		case "arena_height":
+			if v, ok := toFloat(val); ok && v > 0 {
+				c.ArenaHeight = v
 				applied[key] = v
 			}
 		case "round_duration":
@@ -703,6 +751,11 @@ func applyGameConfigUpdates(updates map[string]interface{}) map[string]interface
 		case "min_bots_to_start":
 			if v, ok := toInt(val); ok && v >= 1 {
 				c.MinBotsToStart = v
+				applied[key] = v
+			}
+		case "stat_budget":
+			if v, ok := toInt(val); ok && v >= 1 {
+				c.StatBudget = v
 				applied[key] = v
 			}
 		case "game_mode":
@@ -863,9 +916,47 @@ func applyGameConfigUpdates(updates map[string]interface{}) map[string]interface
 				c.DodgeCooldownTicks = v
 				applied[key] = v
 			}
+		case "projectile_speed":
+			if v, ok := toFloat(val); ok && v > 0 {
+				c.ProjectileSpeed = v
+				applied[key] = v
+			}
 		}
 	}
 	return applied
+}
+
+func intConfigPair(updates map[string]interface{}, minKey, maxKey string, lowerBound int) (min, max int, present, valid bool) {
+	minRaw, hasMin := updates[minKey]
+	maxRaw, hasMax := updates[maxKey]
+	if !hasMin || !hasMax {
+		return 0, 0, false, false
+	}
+	min, minOK := toInt(minRaw)
+	max, maxOK := toInt(maxRaw)
+	return min, max, true, minOK && maxOK && min >= lowerBound && max >= min
+}
+
+func floatConfigPair(updates map[string]interface{}, minKey, maxKey string) (min, max float64, present, valid bool) {
+	minRaw, hasMin := updates[minKey]
+	maxRaw, hasMax := updates[maxKey]
+	if !hasMin || !hasMax {
+		return 0, 0, false, false
+	}
+	min, minOK := toFloat(minRaw)
+	max, maxOK := toFloat(maxRaw)
+	return min, max, true, minOK && maxOK && min > 0 && max >= min
+}
+
+func rejectedConfigKeys(updates, applied map[string]interface{}) []string {
+	rejected := make([]string, 0)
+	for key := range updates {
+		if _, ok := applied[key]; !ok {
+			rejected = append(rejected, key)
+		}
+	}
+	sort.Strings(rejected)
+	return rejected
 }
 
 func cloneStats(stats map[string]int) map[string]int {
