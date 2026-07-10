@@ -14,13 +14,13 @@ import (
 type EventType string
 
 const (
-	EventConnection   EventType = "connection"
-	EventAuthFailure  EventType = "auth_failure"
-	EventHTTPRequest  EventType = "http_request"
-	EventGameEvent    EventType = "game_event"
-	EventError        EventType = "error"
-	EventWSMessage    EventType = "ws_message"
-	EventRateLimit    EventType = "rate_limit"
+	EventConnection  EventType = "connection"
+	EventAuthFailure EventType = "auth_failure"
+	EventHTTPRequest EventType = "http_request"
+	EventGameEvent   EventType = "game_event"
+	EventError       EventType = "error"
+	EventWSMessage   EventType = "ws_message"
+	EventRateLimit   EventType = "rate_limit"
 )
 
 // DashboardEvent is a single event stored in the ring buffer.
@@ -54,8 +54,15 @@ func (rb *RingBuffer) Add(evt DashboardEvent) int64 {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
-	rb.nextID++
-	evt.ID = rb.nextID
+	// EventBus assigns one global ID before copying an event into its
+	// type-specific and unified buffers. Standalone RingBuffer callers still
+	// get the original local auto-increment behaviour.
+	if evt.ID <= 0 {
+		rb.nextID++
+		evt.ID = rb.nextID
+	} else if evt.ID > rb.nextID {
+		rb.nextID = evt.ID
+	}
 	if evt.Timestamp.IsZero() {
 		evt.Timestamp = time.Now()
 	}
@@ -212,6 +219,11 @@ type EventBus struct {
 	// SSE subscribers.
 	subscribers   []*SSESubscriber
 	subscribersMu sync.RWMutex
+
+	// Emit is serialized so the ID stored in history is the same ID delivered
+	// live, and concurrent event producers cannot fan out IDs out of order.
+	emitMu      sync.Mutex
+	nextEventID int64
 }
 
 // NewEventBus creates the event bus with default buffer sizes.
@@ -229,34 +241,37 @@ func NewEventBus() *EventBus {
 
 // Emit publishes an event to the appropriate ring buffer and all SSE subscribers.
 func (eb *EventBus) Emit(evt DashboardEvent) {
+	eb.emitMu.Lock()
+	defer eb.emitMu.Unlock()
+
 	if evt.Timestamp.IsZero() {
 		evt.Timestamp = time.Now()
 	}
+	eb.nextEventID++
+	evt.ID = eb.nextEventID
 
 	// Store in type-specific buffer.
 	switch evt.Type {
 	case EventConnection, EventAuthFailure:
-		evt.ID = eb.Connections.Add(evt)
+		eb.Connections.Add(evt)
 	case EventHTTPRequest:
-		evt.ID = eb.HTTPLog.Add(evt)
+		eb.HTTPLog.Add(evt)
 	case EventGameEvent:
-		evt.ID = eb.GameEvents.Add(evt)
+		eb.GameEvents.Add(evt)
 	case EventWSMessage:
-		evt.ID = eb.WSMessages.Add(evt)
+		eb.WSMessages.Add(evt)
 	case EventRateLimit:
-		evt.ID = eb.RateLimits.Add(evt)
+		eb.RateLimits.Add(evt)
 	case EventError:
 		msg, _ := evt.Data["message"].(string)
 		code, _ := evt.Data["code"].(string)
 		stack, _ := evt.Data["stack"].(string)
 		eb.Errors.Record(msg, code, stack)
-		evt.ID = eb.AllEvents.Add(evt)
 	}
 
-	// Also store in the unified buffer (if not already stored there by error path).
-	if evt.Type != EventError {
-		eb.AllEvents.Add(evt)
-	}
+	// Every event is stored once in the unified buffer with the exact same ID
+	// used by type history and live SSE delivery.
+	eb.AllEvents.Add(evt)
 
 	// Fan out to SSE subscribers.
 	eb.subscribersMu.RLock()

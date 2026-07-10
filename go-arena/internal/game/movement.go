@@ -22,10 +22,94 @@ func normalizeActionTargetPosition(tp Vec2) Vec2 {
 	return ActiveTerrain.GridToWorld(cell)
 }
 
+// effectiveMoveSpeed returns the bot's configured movement speed with active
+// speed effects applied. Keeping this calculation in the movement system
+// makes the speed stat authoritative for both directional and path movement.
+func effectiveMoveSpeed(bot *BotState) float64 {
+	if bot == nil {
+		return 0
+	}
+	speed := bot.Speed
+	for _, eff := range bot.ActiveEffects {
+		if eff.Name == "speed_boost" {
+			speed *= eff.Value
+		}
+	}
+	return speed
+}
+
+// terrainMoveCellsPerTick is the authoritative conversion from the continuous
+// speed stat to average terrain cells per tick. Movement pacing and projectile
+// lead prediction both use it so changing a speed allocation cannot make the
+// server aim with stale fixed-speed assumptions.
+func terrainMoveCellsPerTick(bot *BotState) float64 {
+	referencePoints := float64(config.C.StatBudget) / 4
+	referenceSpeed := config.C.StatSpeedBase + referencePoints*config.C.StatSpeedPerPoint
+	if referenceSpeed <= 0 {
+		referenceSpeed = 1
+	}
+
+	speed := effectiveMoveSpeed(bot)
+	if speed <= 0 {
+		speed = referenceSpeed
+	}
+	return 0.5 * speed / referenceSpeed
+}
+
+// gridMoveCellsForTick converts continuous MoveSpeed into grid-cell movement
+// credits. A balanced loadout (one quarter of the stat budget in speed)
+// preserves the previous half-cell-per-tick cadence, while lower and higher
+// allocations now move proportionally slower or faster. Fractional credits
+// carry across ticks so small stat differences are not rounded away.
+func gridMoveCellsForTick(bot *BotState) int {
+	bot.MoveProgress += terrainMoveCellsPerTick(bot)
+	cells := int(math.Floor(bot.MoveProgress + 1e-9))
+	if cells > 0 {
+		bot.MoveProgress -= float64(cells)
+	}
+	return cells
+}
+
+func movementSign(v int) int {
+	if v > 0 {
+		return 1
+	}
+	if v < 0 {
+		return -1
+	}
+	return 0
+}
+
+func recordMovementPosition(bot *BotState, position Vec2) {
+	if bot == nil {
+		return
+	}
+	bot.MovementTrace = append(bot.MovementTrace, position)
+}
+
+// firstMovementPositionInRange checks every cell entered this tick before the
+// final position. Arena effects use this to prevent multi-cell moves from
+// jumping over mines, burn fields, and teleport pads.
+func firstMovementPositionInRange(bot *BotState, position Vec2, gridRange int) (Vec2, bool) {
+	if bot == nil {
+		return Vec2{}, false
+	}
+	for _, entered := range bot.MovementTrace {
+		if IsInRange(entered, position, gridRange) {
+			return entered, true
+		}
+	}
+	if IsInRange(bot.Position, position, gridRange) {
+		return bot.Position, true
+	}
+	return Vec2{}, false
+}
+
 // ProcessMovement handles MOVE, MOVE_TO, and DODGE actions for all alive bots.
-// Movement is grid-based: bots move 1 cell per tick (2 with speed boost).
+// Terrain movement uses fractional cell credits derived from the speed stat.
 func ProcessMovement(bots map[string]*BotState, obstacles []Obstacle, grid *SpatialGrid, navGrid *NavGrid, dt float64) {
 	for _, bot := range bots {
+		bot.MovementTrace = bot.MovementTrace[:0]
 		if !bot.IsAlive || bot.PendingAction == nil {
 			continue
 		}
@@ -35,9 +119,10 @@ func ProcessMovement(bots map[string]*BotState, obstacles []Obstacle, grid *Spat
 			continue
 		}
 
-		// Movement cooldown: bots move every 2nd tick (halved base speed).
+		// The legacy non-terrain movement path keeps its every-other-tick
+		// cadence. Terrain movement is paced by gridMoveCellsForTick instead.
 		// Dodge always goes through immediately (it's a combat ability).
-		if bot.PendingAction.Type != ActionDodge {
+		if ActiveTerrain == nil && bot.PendingAction.Type != ActionDodge {
 			if bot.MoveCooldown > 0 {
 				bot.MoveCooldown--
 				continue
@@ -49,12 +134,30 @@ func ProcessMovement(bots map[string]*BotState, obstacles []Obstacle, grid *Spat
 			processDodge(bot, obstacles, grid, dt)
 
 		case ActionMove:
-			processMove(bot, obstacles, grid, dt)
-			bot.MoveCooldown = 1 // skip next tick
+			cells := 1
+			if ActiveTerrain != nil {
+				cells = gridMoveCellsForTick(bot)
+				if cells == 0 {
+					continue
+				}
+			}
+			processMove(bot, obstacles, grid, dt, cells)
+			if ActiveTerrain == nil {
+				bot.MoveCooldown = 1 // skip next tick
+			}
 
 		case ActionMoveTo:
-			processMoveTo(bot, obstacles, grid, navGrid, dt)
-			bot.MoveCooldown = 1 // skip next tick
+			cells := 1
+			if ActiveTerrain != nil {
+				cells = gridMoveCellsForTick(bot)
+				if cells == 0 {
+					continue
+				}
+			}
+			processMoveTo(bot, obstacles, grid, navGrid, dt, cells)
+			if ActiveTerrain == nil {
+				bot.MoveCooldown = 1 // skip next tick
+			}
 		}
 	}
 
@@ -67,8 +170,7 @@ func ProcessMovement(bots map[string]*BotState, obstacles []Obstacle, grid *Spat
 }
 
 // processMove executes grid-based directional movement for a single bot.
-// The bot moves 1 cell per tick (2 with speed boost).
-func processMove(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, dt float64) {
+func processMove(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, dt float64, maxCells int) {
 	if ActiveTerrain == nil {
 		return
 	}
@@ -80,24 +182,16 @@ func processMove(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, dt floa
 		return
 	}
 
-	// Determine number of cells to move (1 base, 2 with speed boost).
-	cells := 1
-	for _, eff := range bot.ActiveEffects {
-		if eff.Name == "speed_boost" {
-			cells = 2
-			break
-		}
-	}
-
 	currentCell := ActiveTerrain.WorldToGrid(bot.Position)
 	oldPos := bot.Position
 
-	for step := 0; step < cells; step++ {
+	for step := 0; step < maxCells; step++ {
 		// Hard wall check: if the target cell is blocked, STOP. No sliding.
 		if ActiveTerrain.IsMoveBlocked(currentCell[0], currentCell[1], dx, dy) {
 			break
 		}
 		currentCell = [2]int{currentCell[0] + dx, currentCell[1] + dy}
+		recordMovementPosition(bot, ActiveTerrain.GridToWorld(currentCell))
 	}
 
 	newPos := ActiveTerrain.GridToWorld(currentCell)
@@ -161,6 +255,7 @@ func processDodge(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, dt flo
 		}
 		prev = next
 		destCell = next
+		recordMovementPosition(bot, ActiveTerrain.GridToWorld(next))
 		placed = true
 	}
 
@@ -198,8 +293,7 @@ func processDodge(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, dt flo
 }
 
 // processMoveTo executes pathfinding-based movement for a single bot.
-// Moves 1 cell per tick along the A* path.
-func processMoveTo(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, navGrid *NavGrid, dt float64) {
+func processMoveTo(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, navGrid *NavGrid, dt float64, maxCells int) {
 	action := bot.PendingAction
 
 	// Determine the goal position.
@@ -255,48 +349,48 @@ func processMoveTo(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, navGr
 		return
 	}
 
-	waypoint := bot.CurrentPath[0]
-
 	if ActiveTerrain != nil {
-		// Grid-based: move 1 cell toward the waypoint.
-		currentCell := ActiveTerrain.WorldToGrid(bot.Position)
-		wpCell := ActiveTerrain.WorldToGrid(waypoint)
-
-		dx := 0
-		if wpCell[0] > currentCell[0] {
-			dx = 1
-		} else if wpCell[0] < currentCell[0] {
-			dx = -1
-		}
-		dy := 0
-		if wpCell[1] > currentCell[1] {
-			dy = 1
-		} else if wpCell[1] < currentCell[1] {
-			dy = -1
-		}
-
-		// Hard wall check: if blocked, don't move. No sliding.
-		if !ActiveTerrain.IsMoveBlocked(currentCell[0], currentCell[1], dx, dy) {
-			targetCell := [2]int{currentCell[0] + dx, currentCell[1] + dy}
-			// Final validation: never place bot in a blocked cell.
-			if !ActiveTerrain.IsBlocked(targetCell[0], targetCell[1]) {
-				oldPos := bot.Position
-				bot.Position = ActiveTerrain.GridToWorld(targetCell)
-				bot.RoundDistance += oldPos.DistanceTo(bot.Position)
-				bot.LastValidPosition = bot.Position
-				if dx != 0 || dy != 0 {
-					bot.Facing = Vec2{float64(dx), float64(dy)}.Normalized()
-				}
+		// Spend movement credits one cell at a time. Checking every traversed
+		// edge prevents a high-speed bot from tunnelling through a wall.
+		for step := 0; step < maxCells && len(bot.CurrentPath) > 0; step++ {
+			currentCell := ActiveTerrain.WorldToGrid(bot.Position)
+			for len(bot.CurrentPath) > 0 && ActiveTerrain.WorldToGrid(bot.CurrentPath[0]) == currentCell {
+				bot.CurrentPath = bot.CurrentPath[1:]
 			}
-		}
+			if len(bot.CurrentPath) == 0 {
+				break
+			}
 
-		// If we reached the waypoint cell, advance.
-		newCell := ActiveTerrain.WorldToGrid(bot.Position)
-		if newCell == wpCell {
-			bot.CurrentPath = bot.CurrentPath[1:]
+			wpCell := ActiveTerrain.WorldToGrid(bot.CurrentPath[0])
+			dx := movementSign(wpCell[0] - currentCell[0])
+			dy := movementSign(wpCell[1] - currentCell[1])
+			if dx == 0 && dy == 0 {
+				bot.CurrentPath = bot.CurrentPath[1:]
+				step--
+				continue
+			}
+
+			if ActiveTerrain.IsMoveBlocked(currentCell[0], currentCell[1], dx, dy) {
+				break
+			}
+			targetCell := [2]int{currentCell[0] + dx, currentCell[1] + dy}
+			if ActiveTerrain.IsBlocked(targetCell[0], targetCell[1]) {
+				break
+			}
+
+			oldPos := bot.Position
+			bot.Position = ActiveTerrain.GridToWorld(targetCell)
+			recordMovementPosition(bot, bot.Position)
+			bot.RoundDistance += oldPos.DistanceTo(bot.Position)
+			bot.LastValidPosition = bot.Position
+			bot.Facing = Vec2{float64(dx), float64(dy)}.Normalized()
+			if targetCell == wpCell {
+				bot.CurrentPath = bot.CurrentPath[1:]
+			}
 		}
 	} else {
 		// Fallback: float-based movement.
+		waypoint := bot.CurrentPath[0]
 		dir := waypoint.Sub(bot.Position).Normalized()
 		if dir.Length() < 1e-10 {
 			bot.CurrentPath = bot.CurrentPath[1:]
@@ -319,6 +413,7 @@ func processMoveTo(bot *BotState, obstacles []Obstacle, grid *SpatialGrid, navGr
 		newY = clampToArena(newY, config.C.BotRadius, config.C.ArenaHeight)
 
 		bot.Position = NewVec2(newX, newY)
+		recordMovementPosition(bot, bot.Position)
 		bot.RoundDistance += oldPos.DistanceTo(bot.Position)
 		bot.Facing = dir
 

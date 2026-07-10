@@ -8,13 +8,13 @@ import (
 
 // Landmine represents a player-placed mine on the arena floor.
 type Landmine struct {
-	ID        string
-	OwnerID   string
-	Position  Vec2
-	Damage    float64
+	ID          string
+	OwnerID     string
+	Position    Vec2
+	Damage      float64
 	BlastRadius int
-	Armed     bool // becomes true after arm delay
-	ArmTick   int  // tick at which it becomes armed
+	Armed       bool // becomes true after arm delay
+	ArmTick     int  // tick at which it becomes armed
 }
 
 // PlaceMine creates a new landmine at the bot's current position.
@@ -34,13 +34,13 @@ func PlaceMine(bot *BotState, mines *[]Landmine, tickCount int) *Landmine {
 	}
 
 	mine := Landmine{
-		ID:       uuid.New().String(),
-		OwnerID:  bot.BotID,
-		Position: bot.Position,
-		Damage:   c.MineDamage,
+		ID:          uuid.New().String(),
+		OwnerID:     bot.BotID,
+		Position:    bot.Position,
+		Damage:      c.MineDamage,
 		BlastRadius: c.MineBlastRadius,
-		Armed:    false,
-		ArmTick:  tickCount + c.MineArmDelayTicks,
+		Armed:       false,
+		ArmTick:     tickCount + c.MineArmDelayTicks,
 	}
 	*mines = append(*mines, mine)
 	bot.MineCount++
@@ -56,6 +56,12 @@ func UpdateMines(mines *[]Landmine, bots map[string]*BotState, tickCount int) []
 	active := (*mines)[:0]
 	for i := range *mines {
 		mine := &(*mines)[i]
+		owner, ownerPresent := bots[mine.OwnerID]
+		if !ownerPresent {
+			// Mines cannot apply team rules or award legitimate attribution once
+			// their owner has left the match, so discard orphaned mines.
+			continue
+		}
 
 		// Arm the mine after delay.
 		if !mine.Armed && tickCount >= mine.ArmTick {
@@ -70,46 +76,32 @@ func UpdateMines(mines *[]Landmine, bots map[string]*BotState, tickCount int) []
 		// Check if any enemy bot is in blast radius.
 		triggered := false
 		for _, bot := range bots {
-			if !bot.IsAlive || bot.BotID == mine.OwnerID {
+			if !bot.IsAlive || bot.BotID == mine.OwnerID || !ActiveModeRules.CanDamage(owner, bot) {
 				continue
 			}
-			if IsInRange(bot.Position, mine.Position, mine.BlastRadius) {
+			if _, enteredRange := firstMovementPositionInRange(bot, mine.Position, mine.BlastRadius); enteredRange {
 				// Detonate: deal damage to all bots in blast radius (except owner).
 				for _, target := range bots {
-					if !target.IsAlive || target.BotID == mine.OwnerID {
+					if !target.IsAlive || target.BotID == mine.OwnerID || !ActiveModeRules.CanDamage(owner, target) {
 						continue
 					}
-					if IsInRange(target.Position, mine.Position, mine.BlastRadius) {
+					if _, enteredRange := firstMovementPositionInRange(target, mine.Position, mine.BlastRadius); enteredRange {
 						if target.InvulnTicks > 0 {
 							continue
 						}
 						target.HP -= mine.Damage
 						target.RoundDamageTaken += mine.Damage
-
-						// Attribute damage to mine owner.
-						target.LastDamagedBy = mine.OwnerID
-						target.LastDamageTick = tickCount
-						target.HitsReceived = append(target.HitsReceived, HitRecord{
-							AttackerID: mine.OwnerID,
-							Damage:     mine.Damage,
-							Weapon:     "landmine",
-						})
-
-						// Track damage dealt for owner.
-						if owner, ok := bots[mine.OwnerID]; ok {
-							owner.RoundDamageDealt += mine.Damage
-						}
+						owner.RoundDamageDealt += mine.Damage
+						recordAttributedDamage(target, owner, mine.Damage, "landmine", tickCount)
 					}
 				}
 				triggered = true
 				events = append(events, buildMineDetonationEvent(*mine, tickCount))
 
 				// Decrement owner's mine count.
-				if owner, ok := bots[mine.OwnerID]; ok {
-					owner.MineCount--
-					if owner.MineCount < 0 {
-						owner.MineCount = 0
-					}
+				owner.MineCount--
+				if owner.MineCount < 0 {
+					owner.MineCount = 0
 				}
 				break
 			}

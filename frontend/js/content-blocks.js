@@ -1,4 +1,6 @@
-const apiBase = window.location.pathname.startsWith('/arena/') ? '/arena/api/v1' : '/api/v1';
+import { apiBase } from './paths.js?v=20260710a';
+
+const publicAPIBase = apiBase();
 
 function applyContentBlocks(blocks) {
   document.querySelectorAll('[data-content-key]').forEach((el) => {
@@ -16,7 +18,7 @@ function applyContentBlocks(blocks) {
 
 async function loadContentBlocks() {
   try {
-    const res = await fetch(`${apiBase}/content`, { headers: { Accept: 'application/json' } });
+    const res = await fetch(`${publicAPIBase}/content`, { headers: { Accept: 'application/json' } });
     if (!res.ok) return;
     const data = await res.json();
     applyContentBlocks(data.blocks || {});

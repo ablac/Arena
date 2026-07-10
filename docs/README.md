@@ -13,6 +13,7 @@ Start here if you are learning the repo or preparing a contribution.
 ## Feature Notes
 
 - [Graphics and animation settings](settings-system.md): how to add viewer-facing visual toggles
+- [Cosmetics and fair monetization](cosmetics-and-monetization.md): no-pay-to-win customization contracts and payment launch roadmap
 - [Combat animation plan](combat-animation-plan.md): historical notes for combat animation work
 - [Agent-readable frontend reference](../frontend/llms.txt): compact protocol reference for AI agents
 

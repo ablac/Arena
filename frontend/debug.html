@@ -4,7 +4,8 @@
 <body>
 <h2>Arena WebSocket Debug</h2>
 <div id="log" style="font-family:monospace;white-space:pre-wrap;"></div>
-<script>
+<script type="module">
+import { apiPath, wsURL } from './js/paths.js?v=20260710a';
 const log = (msg) => {
   document.getElementById('log').textContent += new Date().toISOString().substr(11,8) + ' ' + msg + '\n';
 };
@@ -12,8 +13,7 @@ log('Page loaded');
 log('Protocol: ' + window.location.protocol);
 log('Host: ' + window.location.host);
 
-const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsUrl = wsProto + '//' + window.location.host + '/ws/spectator';
+const wsUrl = wsURL('/spectator');
 log('Connecting to: ' + wsUrl);
 
 try {
@@ -33,7 +33,7 @@ try {
 }
 
 // Also test fetch API
-fetch('/api/v1/arena/status').then(r => r.json()).then(d => log('API: ' + JSON.stringify(d))).catch(e => log('API err: ' + e));
+fetch(apiPath('/arena/status')).then(r => r.json()).then(d => log('API: ' + JSON.stringify(d))).catch(e => log('API err: ' + e));
 </script>
 </body>
 </html>

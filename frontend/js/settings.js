@@ -91,6 +91,15 @@ export const SETTINGS_SCHEMA = {
       trailBrightness: { label: 'Trail brightness / glow' },
     },
   },
+  botCosmetics: {
+    label: 'Bot Cosmetics',
+    description: 'Player-selected visual customization with no gameplay effect.',
+    effects: {
+      skins: { label: 'Chassis skins' },
+      weaponFinishes: { label: 'Weapon finishes' },
+      attachments: { label: 'Bot attachments' },
+    },
+  },
   rendering: {
     label: 'Rendering',
     description: 'Post-processing (also affects GPU cost).',

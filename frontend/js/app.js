@@ -5,14 +5,16 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260707c';
+import { ArenaEngine } from './renderer/engine.js?v=20260710a';
 import { HudRenderer } from './renderer/hud.js?v=20260523a';
 import { Minimap } from './renderer/minimap.js';
 import { SpectatorSocket } from './spectator-ws.js';
 import { initLeaderboardWidget } from './leaderboard.js?v=20260706e';
-import { initKeyGenerator } from './key-generator.js';
+import { initKeyGenerator } from './key-generator.js?v=20260710a';
+import { initCosmeticsPanel } from './cosmetics-panel.js?v=20260710a';
 import { isEnabled, onSettingsChange } from './settings.js';
 import { initSettingsPanel } from './settings-panel.js';
+import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';
 
 const ARENA_WIDTH = 2000;
 const ARENA_HEIGHT = 2000;
@@ -78,8 +80,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Spectator WebSocket
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${wsProtocol}//${window.location.host}/ws/spectator`;
+  const wsUrl = wsURL('/spectator');
   // The 3D scene stays fully smooth off the raw ~10Hz tick, but the HUD/
   // leaderboard/dropdown DOM writes are only human-legible at a few Hz, so
   // they're throttled independently to cut redundant layout/reflow work.
@@ -128,9 +129,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Leaderboard
   initLeaderboardWidgets();
 
-  // Key generator
+  // Cosmetic catalog/equip UI and key generator. A freshly-created key is
+  // handed directly to the in-memory panel; it is never stored in the browser.
+  const cosmeticsPanel = initCosmeticsPanel(document.getElementById('cosmetics-panel'));
   const keygenEl = document.getElementById('keygen-card');
-  if (keygenEl) initKeyGenerator(keygenEl);
+  if (keygenEl) {
+    initKeyGenerator(keygenEl, data => cosmeticsPanel?.setKey(data.api_key, true));
+  }
 
   hud.onSelectBot = (botID) => {
     arenaEngine.selectBot(botID);
@@ -307,7 +312,7 @@ function setupControls(engine) {
       // send phones to the dedicated mobile spectator site instead.
       if (window.matchMedia('(max-width: 768px)').matches &&
           window.matchMedia('(pointer: coarse)').matches) {
-        window.location.href = '/m/';
+        window.location.href = appPath('/m/');
         return;
       }
       if (expanded) {
@@ -368,7 +373,7 @@ function setupArenaTabs() {
 /** @private Fetch arena status for footer stats. */
 async function fetchArenaStatus() {
   try {
-    const resp = await fetch(`${window.location.origin}/api/v1/arena/status`);
+    const resp = await fetch(apiPath('/arena/status'));
     if (!resp.ok) return;
     const data = await resp.json();
     const el = document.getElementById('footer-stats');
@@ -543,7 +548,7 @@ function initLeaderboardWidgets() {
 function initAboutPanel() {
   const commitEl = document.getElementById('about-commit');
   if (!commitEl) return;
-  fetch('/api/v1/version')
+  fetch(apiPath('/version'))
     .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
     .then((v) => {
       commitEl.textContent = v.commit_short || 'unknown';
@@ -622,7 +627,7 @@ function setupOverlays() {
 
     const lazyFrame = overlay.querySelector('iframe[data-src]');
     if (lazyFrame && !lazyFrame.getAttribute('src')) {
-      lazyFrame.setAttribute('src', lazyFrame.dataset.src);
+      lazyFrame.setAttribute('src', appPath(lazyFrame.dataset.src));
     }
 
     if (!targetSelector) {

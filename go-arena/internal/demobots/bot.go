@@ -186,7 +186,7 @@ func (b *demoBot) session(ctx context.Context) error {
 	wsURL := httpToWS(b.serverURL) + "/ws/bot?key=" + b.apiKey
 
 	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
+		HandshakeTimeout:  10 * time.Second,
 		EnableCompression: true,
 	}
 
@@ -297,23 +297,7 @@ func (b *demoBot) session(ctx context.Context) error {
 		switch msgType {
 		case "tick":
 			action := PickAction(b.strategy, msg, b.config.Weapon, b.attackRange, b.botID)
-			payload := map[string]interface{}{
-				"type": "action",
-				"tick": msg["tick"],
-			}
-			payload["action"] = action.Action
-			if action.Target != "" {
-				payload["target"] = action.Target
-			}
-			if action.Direction != nil {
-				payload["direction"] = action.Direction
-			}
-			if action.TargetPosition != nil {
-				payload["target_position"] = action.TargetPosition
-			}
-			if action.ItemID != "" {
-				payload["item_id"] = action.ItemID
-			}
+			payload := buildActionPayload(msg["tick"], action)
 			if err := conn.WriteJSON(payload); err != nil {
 				return fmt.Errorf("send action: %w", err)
 			}
@@ -363,6 +347,33 @@ func (b *demoBot) session(ctx context.Context) error {
 			// Ignore unknown message types gracefully.
 		}
 	}
+}
+
+// buildActionPayload converts an AI decision to the public bot protocol. Keep
+// every action field here so new tactics cannot silently disappear between
+// PickAction and the WebSocket (charged bow shots previously lost Charged).
+func buildActionPayload(tick interface{}, action actionResult) map[string]interface{} {
+	payload := map[string]interface{}{
+		"type":   "action",
+		"tick":   tick,
+		"action": action.Action,
+	}
+	if action.Target != "" {
+		payload["target"] = action.Target
+	}
+	if action.Direction != nil {
+		payload["direction"] = action.Direction
+	}
+	if action.TargetPosition != nil {
+		payload["target_position"] = action.TargetPosition
+	}
+	if action.ItemID != "" {
+		payload["item_id"] = action.ItemID
+	}
+	if action.Charged {
+		payload["charged"] = true
+	}
+	return payload
 }
 
 func (b *demoBot) fetchMap(ctx context.Context) error {

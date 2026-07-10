@@ -343,3 +343,240 @@ func TestBuildDangerSet(t *testing.T) {
 		t.Error("hazard key must not clear void tiles or mines")
 	}
 }
+
+func TestBuildActionPayloadPreservesChargedShot(t *testing.T) {
+	action := actionResult{Action: "attack", Target: "enemy", Charged: true}
+	payload := buildActionPayload(float64(17), action)
+
+	if got, ok := payload["charged"].(bool); !ok || !got {
+		t.Fatalf("charged action payload = %#v, want charged=true", payload)
+	}
+	if payload["target"] != "enemy" || payload["action"] != "attack" {
+		t.Fatalf("action payload lost combat fields: %#v", payload)
+	}
+
+	plain := buildActionPayload(float64(18), actionResult{Action: "attack", Target: "enemy"})
+	if _, ok := plain["charged"]; ok {
+		t.Fatalf("plain attack unexpectedly serialized charged field: %#v", plain)
+	}
+}
+
+func TestBestTargetFocusesAllyTarget(t *testing.T) {
+	ts := &tickState{
+		Allies: []entity{{ID: "ally", TargetID: "focus", HP: 100, MaxHP: 100}},
+	}
+	enemies := []entity{
+		{ID: "near", Position: [2]float64{1, 0}, HP: 80, MaxHP: 100, IsAlive: true, HasLOS: true},
+		{ID: "focus", Position: [2]float64{3, 0}, HP: 80, MaxHP: 100, IsAlive: true, HasLOS: true},
+	}
+
+	got := bestTarget(ts, [2]float64{0, 0}, enemies, 8)
+	if got == nil || got.ID != "focus" {
+		t.Fatalf("bestTarget = %+v, want ally's focus target", got)
+	}
+}
+
+func TestRangedGrapplePreservesSpacing(t *testing.T) {
+	ts := tickState{
+		Position:        [2]float64{5, 5},
+		HP:              100,
+		MaxHP:           100,
+		GrappleCharges:  1,
+		GrappleCooldown: 0,
+		Enemies: []entity{{
+			ID: "melee", Position: [2]float64{15, 5}, HP: 100, MaxHP: 100,
+			Weapon: "sword", IsAlive: true, HasLOS: true,
+		}},
+	}
+
+	if got := tryUniversalGrapple(ts, "bow", 8); got != nil {
+		t.Fatalf("bow pulled a healthy melee enemy into close range: %+v", *got)
+	}
+
+	ts.Enemies[0] = entity{
+		ID: "ranged", Position: [2]float64{15, 5}, HP: 100, MaxHP: 100,
+		Weapon: "bow", IsAlive: true, HasLOS: true,
+	}
+	got := tryUniversalGrapple(ts, "bow", 8)
+	if got == nil || got.Action != "grapple" || got.Target != "ranged" {
+		t.Fatalf("bow failed to disrupt out-of-range ranged enemy: %+v", got)
+	}
+}
+
+func TestKiteUsesWeaponAppropriateSpacing(t *testing.T) {
+	setTerrain(t, 20, 10, nil)
+	danger := &dangerSet{}
+	danger.reset()
+	ts := tickState{
+		Tick: 10, Position: [2]float64{5, 5}, HP: 100, MaxHP: 100,
+		Danger: danger,
+	}
+	enemy := entity{
+		ID: "melee", Position: [2]float64{10, 5}, HP: 100, MaxHP: 100,
+		Weapon: "sword", IsAlive: true, HasLOS: true,
+	}
+	ts.Enemies = []entity{enemy}
+
+	got := aiKite(ts, &ts.Enemies[0], 5, 8, "bow", false, false, "bow-bot")
+	if got.Action != "move" || got.Direction == nil || got.Direction[0] != -1 || got.Direction[1] != 0 {
+		t.Fatalf("bow cooldown spacing action = %+v, want move directly away", got)
+	}
+}
+
+func TestSafeDodgeAvoidsBlockedDirection(t *testing.T) {
+	setTerrain(t, 12, 12, [][2]int{{6, 5}})
+	danger := &dangerSet{}
+	danger.reset()
+
+	got, ok := safeDodgeDir([2]float64{5, 5}, [2]float64{1, 0}, danger)
+	if !ok {
+		t.Fatal("safeDodgeDir reported no route despite open perpendicular cells")
+	}
+	if got != [2]float64{0, 1} {
+		t.Fatalf("safeDodgeDir = %v, want deterministic perpendicular [0 1]", got)
+	}
+}
+
+func TestSafeDodgeRefusesSurroundedDanger(t *testing.T) {
+	setTerrain(t, 12, 12, nil)
+	danger := &dangerSet{}
+	danger.reset()
+	for dx := -2; dx <= 2; dx++ {
+		for dy := -2; dy <= 2; dy++ {
+			if dx != 0 || dy != 0 {
+				danger.add(5+dx, 5+dy)
+			}
+		}
+	}
+
+	if got, ok := safeDodgeDir([2]float64{5, 5}, [2]float64{1, 0}, danger); ok {
+		t.Fatalf("safeDodgeDir returned unsafe surrounded route %v", got)
+	}
+	ts := tickState{Position: [2]float64{5, 5}, Danger: danger}
+	if got := dodgeSafe(ts, [2]float64{1, 0}); got.Action != "idle" {
+		t.Fatalf("dodgeSafe surrounded action = %+v, want idle", got)
+	}
+}
+
+func TestPickActionDodgesTowardSafetyFromDeepHazard(t *testing.T) {
+	setTerrain(t, 20, 20, nil)
+	center := [2]float64{5, 5}
+	msg := map[string]interface{}{
+		"type": "tick",
+		"tick": float64(15),
+		"your_state": map[string]interface{}{
+			"position":       []interface{}{center[0], center[1]},
+			"hp":             float64(100),
+			"max_hp":         float64(100),
+			"dodge_cooldown": float64(0),
+		},
+		"nearby_entities": []interface{}{
+			map[string]interface{}{
+				"type": "hazard_zone", "position": []interface{}{center[0], center[1]},
+				"width": float64(5), "height": float64(5), "active": true,
+			},
+		},
+	}
+
+	got := PickAction("aggressive", msg, "sword", 1, "me")
+	if got.Action != "dodge" || got.Direction == nil {
+		t.Fatalf("deep-hazard action = %+v, want a dodge toward safety", got)
+	}
+
+	danger := &dangerSet{}
+	danger.reset()
+	danger.addRect(center, 5, 5)
+	startDistance := dangerEscapeDistance(5, 5, danger, getTerrain())
+	endCol := 5 + 2*int(got.Direction[0])
+	endRow := 5 + 2*int(got.Direction[1])
+	endDistance := dangerEscapeDistance(endCol, endRow, danger, getTerrain())
+	if endDistance >= startDistance {
+		t.Fatalf("deep-hazard dodge %v changed escape distance %d -> %d, want a measurable reduction",
+			*got.Direction, startDistance, endDistance)
+	}
+}
+
+func TestPickActionUsesEmergencyHealthBeforeUtility(t *testing.T) {
+	setTerrain(t, 20, 20, nil)
+	msg := map[string]interface{}{
+		"type": "tick",
+		"tick": float64(12),
+		"your_state": map[string]interface{}{
+			"position": []interface{}{float64(5), float64(5)},
+			"hp":       float64(20), "max_hp": float64(100),
+			"weapon_ready":    false,
+			"dodge_cooldown":  float64(20),
+			"grapple_charges": float64(0),
+		},
+		"nearby_entities": []interface{}{
+			map[string]interface{}{
+				"type": "bot", "id": "enemy", "position": []interface{}{float64(6), float64(5)},
+				"hp": float64(100), "max_hp": float64(100), "weapon": "sword",
+				"is_alive": true, "has_los": true, "can_attack": true,
+			},
+			map[string]interface{}{
+				"type": "pickup", "id": "heal", "pickup_type": "health_pack",
+				"position": []interface{}{float64(5), float64(5)},
+			},
+		},
+	}
+
+	got := PickAction("aggressive", msg, "sword", 1, "me")
+	if got.Action != "use_item" || got.ItemID != "heal" {
+		t.Fatalf("critical bot action = %+v, want immediate health pickup", got)
+	}
+}
+
+func TestPickActionEscapesBeforeOffensiveGrapple(t *testing.T) {
+	setTerrain(t, 30, 20, nil)
+	msg := map[string]interface{}{
+		"type": "tick",
+		"tick": float64(20),
+		"your_state": map[string]interface{}{
+			"position": []interface{}{float64(10), float64(10)},
+			"hp":       float64(35), "max_hp": float64(100),
+			"weapon_ready":    false,
+			"grapple_charges": float64(1), "grapple_cooldown": float64(0),
+		},
+		"nearby_entities": []interface{}{
+			map[string]interface{}{
+				"type": "bot", "id": "enemy", "position": []interface{}{float64(12), float64(10)},
+				"hp": float64(100), "max_hp": float64(100), "weapon": "sword",
+				"is_alive": true, "has_los": true, "can_attack": true,
+			},
+		},
+	}
+
+	got := PickAction("aggressive", msg, "sword", 1, "me")
+	if got.Action != "grapple" || got.Target != "" || got.TargetPosition == nil {
+		t.Fatalf("low-HP grapple action = %+v, want anchor escape rather than enemy pull", got)
+	}
+	if got.TargetPosition[0] >= 10 {
+		t.Fatalf("anchor %v did not move away from enemy at x=12", *got.TargetPosition)
+	}
+}
+
+func TestPickActionWaitsForSafeSpearBrace(t *testing.T) {
+	setTerrain(t, 20, 20, nil)
+	msg := map[string]interface{}{
+		"type": "tick",
+		"tick": float64(30),
+		"your_state": map[string]interface{}{
+			"position": []interface{}{float64(5), float64(5)},
+			"hp":       float64(100), "max_hp": float64(100),
+			"weapon_ready": true, "brace_ready": false,
+		},
+		"nearby_entities": []interface{}{
+			map[string]interface{}{
+				"type": "bot", "id": "enemy", "position": []interface{}{float64(7), float64(5)},
+				"hp": float64(100), "max_hp": float64(100), "weapon": "sword",
+				"is_alive": true, "has_los": true, "can_attack": true,
+			},
+		},
+	}
+
+	got := PickAction("aggressive", msg, "spear", 2, "me")
+	if got.Action != "idle" {
+		t.Fatalf("safe spear setup action = %+v, want idle to build brace", got)
+	}
+}

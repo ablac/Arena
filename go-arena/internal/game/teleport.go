@@ -99,7 +99,8 @@ func ProcessTeleports(bots map[string]*BotState, pads []TeleportPad, grid *Spati
 
 		for i := range pads {
 			pad := &pads[i]
-			if !IsInRange(bot.Position, pad.Position, collectRadius) {
+			touchPosition, touched := firstMovementPositionInRange(bot, pad.Position, collectRadius)
+			if !touched {
 				continue
 			}
 			touchedNow[pad.ID] = true
@@ -127,7 +128,7 @@ func ProcessTeleports(bots map[string]*BotState, pads []TeleportPad, grid *Spati
 			}
 
 			// Teleport the bot.
-			from := bot.Position
+			from := touchPosition
 			grid.Remove(bot.BotID)
 			bot.Position = linked.Position
 			bot.LastValidPosition = linked.Position

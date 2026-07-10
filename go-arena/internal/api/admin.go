@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -35,6 +36,9 @@ type AdminHandler struct {
 	Engine      *game.GameEngine
 	DemoManager *demobots.Manager
 	startTime   time.Time
+	// resetLeaderboardData is injectable so the destructive endpoint can be
+	// contract-tested without connecting to a production-like database.
+	resetLeaderboardData func(context.Context) error
 	// Cache of DB token hashes to avoid DB hit on every request.
 	tokenHashes []string
 	tokenMu     sync.RWMutex
@@ -43,9 +47,10 @@ type AdminHandler struct {
 // NewAdminHandler creates a new AdminHandler.
 func NewAdminHandler(engine *game.GameEngine, demoManager *demobots.Manager) *AdminHandler {
 	h := &AdminHandler{
-		Engine:      engine,
-		DemoManager: demoManager,
-		startTime:   time.Now(),
+		Engine:               engine,
+		DemoManager:          demoManager,
+		startTime:            time.Now(),
+		resetLeaderboardData: db.ResetLeaderboard,
 	}
 	// Initialize DB table and load token hashes.
 	ctx := context.Background()
@@ -667,11 +672,13 @@ func (h *AdminHandler) updateGameConfig(w http.ResponseWriter, r *http.Request) 
 	}
 
 	applied := applyGameConfigUpdates(updates)
+	rejected := rejectedConfigKeys(updates, applied)
 
-	slog.Info("admin updated game config", "applied", applied)
+	slog.Info("admin updated game config", "applied", applied, "rejected", rejected)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "config updated",
-		"applied": applied,
+		"message":  "config updated",
+		"applied":  applied,
+		"rejected": rejected,
 	})
 }
 
@@ -697,7 +704,7 @@ func (h *AdminHandler) dbStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get table row counts.
-	tables := []string{"api_keys", "bots", "bot_stats", "kill_log", "rounds"}
+	tables := []string{"api_keys", "bots", "bot_stats", "round_bot_stats", "kill_log", "rounds"}
 	tableCounts := make(map[string]int)
 	for _, table := range tables {
 		var count int
@@ -716,11 +723,6 @@ func (h *AdminHandler) dbStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminHandler) resetLeaderboard(w http.ResponseWriter, r *http.Request) {
-	if db.Pool == nil {
-		writeError(w, http.StatusServiceUnavailable, "database not available")
-		return
-	}
-
 	var req struct {
 		Confirm string `json:"confirm"`
 	}
@@ -734,15 +736,30 @@ func (h *AdminHandler) resetLeaderboard(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_, err := db.Pool.Exec(r.Context(), `TRUNCATE bot_stats`)
+	reset := h.resetLeaderboardData
+	if reset == nil {
+		reset = db.ResetLeaderboard
+	}
+	var err error
+	if h.Engine != nil {
+		err = h.Engine.ResetLeaderboard(r.Context(), reset)
+	} else {
+		err = reset(r.Context())
+	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reset leaderboard: "+err.Error())
+		if errors.Is(err, db.ErrNoDatabase) {
+			writeError(w, http.StatusServiceUnavailable, "database not available")
+			return
+		}
+		slog.Error("admin failed to reset leaderboard", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to reset leaderboard")
 		return
 	}
 
-	slog.Warn("admin reset leaderboard - all stats wiped")
+	slog.Warn("admin reset leaderboard - all-time and time-window stats wiped")
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "leaderboard reset successfully",
+		"message":         "leaderboard reset successfully",
+		"cleared_sources": []string{"all_time", "time_windows"},
 	})
 }
 
