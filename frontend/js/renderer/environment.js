@@ -1074,7 +1074,12 @@ export class EnvironmentRenderer {
     // the arena-resize rebuild path must not leak per-frame work).
     const baseY = 200;
     this._holoTitleObs = this.scene.onBeforeRenderObservable.add(() => {
-      const on = isEnabled('arenaAmbience', 'holoTitle');
+      // Portrait phones: Babylon's vertical-fixed FOV shows only ~380 world
+      // units of width at the default zoom, so this 520-unit banner would
+      // span well past both screen edges. Landscape/desktop only.
+      const eng = this.scene.getEngine();
+      const on = isEnabled('arenaAmbience', 'holoTitle') &&
+        eng.getRenderWidth() >= eng.getRenderHeight();
       plane.setEnabled(on);
       if (!on) return;
       const t = performance.now() / 1000;

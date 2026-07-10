@@ -35,11 +35,53 @@ export class EffectRenderer {
     /** @type {Array<{dispose: Function, created: number}>} */
     this.active = [];
     this._dmgCount = 0;
+    this._glowTex = null;
+    this._initGlowTexture();
+  }
+
+  /** @private Shared glow particle texture (same pattern as gameplay.js). */
+  _initGlowTexture() {
+    const B = window.BABYLON;
+    this._glowTex = new B.DynamicTexture('fxGlowTex', 32, this.scene, false);
+    const ctx = this._glowTex.getContext();
+    const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.4)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 32, 32);
+    this._glowTex.update();
+    this._glowTex.hasAlpha = true;
+  }
+
+  /**
+   * @private Start a transient particle system and hand its lifetime to the
+   * wall-clock registry swept by update().
+   *
+   * Two Babylon traps live here. (1) A texture-less ParticleSystem never
+   * animates (isReady() stays false), so targetStopDuration never fires and
+   * the system stays in scene.particleSystems forever — the shared glow
+   * texture is load-bearing, not cosmetic. (2) disposeOnStop calls dispose()
+   * with disposeTexture=true, which would destroy that shared texture for
+   * every other system; manual dispose(false) from the registry is the only
+   * safe owner. The registry sweep runs from the WS-driven update() path, so
+   * cleanup keeps working while a hidden/occluded tab has no rAF frames.
+   */
+  _launch(ps) {
+    ps.particleTexture = this._glowTex;
+    ps.start();
+    this.active.push({
+      created: Date.now(),
+      dispose: () => { try { ps.dispose(false); } catch { /* already gone */ } },
+    });
   }
 
   update(bots) {
     const now = Date.now();
     const alive = new Set();
+    // Hidden/occluded tabs still receive WS states at 10Hz but render no
+    // frames — skip spawning eye-candy there (state tracking continues).
+    const spawnOk = !document.hidden;
 
     for (const bot of bots) {
       if (bot.is_alive) {
@@ -48,12 +90,12 @@ export class EffectRenderer {
         // was already alive last frame, pop a floating number at the victim.
         // spawnDamageNumber is a pre-built pooled system that had no caller.
         const prev = this.prevHp.get(bot.bot_id);
-        if (prev != null && this.prevAlive.has(bot.bot_id) && bot.hp < prev) {
+        if (prev != null && spawnOk && this.prevAlive.has(bot.bot_id) && bot.hp < prev) {
           this.spawnDamageNumber(bot.position[0], bot.position[1], prev - bot.hp);
         }
         this.prevHp.set(bot.bot_id, bot.hp);
       } else {
-        if (this.prevAlive.has(bot.bot_id)) {
+        if (this.prevAlive.has(bot.bot_id) && spawnOk) {
           this._deathBurst(bot.position[0], bot.position[1], bot.avatar_color);
         }
         // Reset on death so a respawn back to full hp is not read as a hit.
@@ -99,8 +141,7 @@ export class EffectRenderer {
     ps.gravity = new B.Vector3(0, -50, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = cfg.stop;
-    ps.disposeOnStop = true;
-    ps.start();
+        this._launch(ps);
   }
 
   /**
@@ -146,8 +187,7 @@ export class EffectRenderer {
       dust.gravity = new B.Vector3(0, -15, 0);
       dust.blendMode = B.ParticleSystem.BLENDMODE_STANDARD;
       dust.targetStopDuration = 0.06;
-      dust.disposeOnStop = true;
-      dust.start();
+            this._launch(dust);
     }
 
     const start = performance.now();
@@ -188,8 +228,7 @@ export class EffectRenderer {
     ps.gravity = new B.Vector3(0, -10, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.05;
-    ps.disposeOnStop = true;
-    ps.start();
+        this._launch(ps);
   }
 
   /**
@@ -229,8 +268,7 @@ export class EffectRenderer {
     ps.gravity = new B.Vector3(0, -20, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.06;
-    ps.disposeOnStop = true;
-    ps.start();
+        this._launch(ps);
   }
 
   /**
@@ -563,8 +601,7 @@ export class EffectRenderer {
     ps.gravity = new B.Vector3(0, -40, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.1;
-    ps.disposeOnStop = true;
-    ps.start();
+        this._launch(ps);
 
     // A kill is the most spectator-tracked event; the burst alone was the
     // smallest effect in this file. Three additions, all self-disposing
@@ -641,8 +678,7 @@ export class EffectRenderer {
     embers.gravity = new B.Vector3(0, -8, 0);
     embers.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     embers.targetStopDuration = 0.15;
-    embers.disposeOnStop = true;
-    embers.start();
+        this._launch(embers);
   }
 
   /**
@@ -732,8 +768,7 @@ export class EffectRenderer {
       ps.gravity = new B.Vector3(0, -30, 0);
       ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
       ps.targetStopDuration = 0.4;
-      ps.disposeOnStop = true;
-      ps.start();
+            this._launch(ps);
       return ps;
     };
 
@@ -873,8 +908,7 @@ export class EffectRenderer {
     ps.gravity = new B.Vector3(0, -35, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.10;
-    ps.disposeOnStop = true;
-    ps.start();
+        this._launch(ps);
 
     const start = performance.now();
     const obs = this.scene.onBeforeRenderObservable.add(() => {
@@ -966,8 +1000,7 @@ export class EffectRenderer {
     ps.gravity = new B.Vector3(0, -18, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.08;
-    ps.disposeOnStop = true;
-    ps.start();
+        this._launch(ps);
 
     const start = performance.now();
     const obs = this.scene.onBeforeRenderObservable.add(() => {
@@ -1041,8 +1074,7 @@ export class EffectRenderer {
     ps.gravity = new B.Vector3(0, -12, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.08;
-    ps.disposeOnStop = true;
-    ps.start();
+        this._launch(ps);
 
     const start = performance.now();
     const obs = this.scene.onBeforeRenderObservable.add(() => {
@@ -1091,8 +1123,7 @@ export class EffectRenderer {
       ps.gravity = new B.Vector3(0, invert ? 10 : -10, 0);
       ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
       ps.targetStopDuration = 0.06;
-      ps.disposeOnStop = true;
-      ps.start();
+            this._launch(ps);
     };
     const rippleAt = (x, z, tint = 1) => {
       const ring = B.MeshBuilder.CreateTorus(`tp-ripple-${++_psCounter}`, {
