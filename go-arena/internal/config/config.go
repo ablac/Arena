@@ -335,6 +335,17 @@ type Config struct {
 	OIDCClientSecret string `envconfig:"ARENA_OIDC_CLIENT_SECRET" default:""`
 	OIDCRedirectURI  string `envconfig:"ARENA_OIDC_REDIRECT_URI" default:""`
 	OIDCSessionTTL   int    `envconfig:"ARENA_OIDC_SESSION_TTL_HOURS" default:"8"`
+	OIDCAdminEmails  string `envconfig:"ARENA_OIDC_ADMIN_EMAILS" default:""`
+
+	// Customer OIDC is deliberately a separate client/application from admin
+	// SSO. A public customer login must never mint an admin-authorized session.
+	CustomerOIDCEnabled      bool   `envconfig:"ARENA_CUSTOMER_OIDC_ENABLED" default:"false"`
+	CustomerOIDCIssuer       string `envconfig:"ARENA_CUSTOMER_OIDC_ISSUER" default:""`
+	CustomerOIDCClientID     string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_ID" default:""`
+	CustomerOIDCClientSecret string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_SECRET" default:""`
+	CustomerOIDCRedirectURI  string `envconfig:"ARENA_CUSTOMER_OIDC_REDIRECT_URI" default:""`
+	CustomerOIDCSessionTTL   int    `envconfig:"ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS" default:"24"`
+	CustomerBotLinkRPM       int    `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
 }
 
 var C Config

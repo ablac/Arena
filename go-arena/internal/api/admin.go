@@ -805,18 +805,28 @@ func (h *AdminHandler) cleanupStale(w http.ResponseWriter, r *http.Request) {
 
 	cutoff := time.Now().AddDate(0, 0, -req.Days)
 
-	result, err := db.Pool.Exec(r.Context(),
-		`DELETE FROM api_keys WHERE last_seen < $1 OR (last_seen IS NULL AND created_at < $1)`, cutoff)
+	// Deactivate instead of deleting. API keys cascade to bots, bot links, and
+	// legacy entitlement evidence; destructive cleanup can therefore erase the
+	// only proof a customer has before an old purchase is claimed. Keeping the
+	// rows also avoids a delete-vs-link snapshot race. PostgreSQL rechecks this
+	// direct UPDATE predicate after row-lock waits, so a concurrently refreshed
+	// last_seen value is not incorrectly cleaned up.
+	result, err := db.Pool.Exec(r.Context(), `
+		UPDATE api_keys
+		SET is_active = false
+		WHERE is_active = true
+		  AND (last_seen < $1 OR (last_seen IS NULL AND created_at < $1))`, cutoff)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to cleanup: "+err.Error())
 		return
 	}
+	deactivated := result.RowsAffected()
 
-	affected := result.RowsAffected()
-	slog.Info("admin cleaned up stale bots", "days", req.Days, "removed", affected)
+	slog.Info("admin deactivated stale bot keys", "days", req.Days, "deactivated", deactivated)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message":     fmt.Sprintf("removed %d stale entries older than %d days", affected, req.Days),
-		"removed":     affected,
+		"message":     fmt.Sprintf("deactivated %d stale keys older than %d days; bot and purchase records were preserved", deactivated, req.Days),
+		"removed":     0,
+		"deactivated": deactivated,
 		"cutoff_date": cutoff.Format(time.RFC3339),
 	})
 }

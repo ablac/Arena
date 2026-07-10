@@ -53,7 +53,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   corsOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Arena-Key", "X-Admin-Token"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Arena-Key", "X-Admin-Token", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: false,
 		MaxAge:           300,
@@ -96,6 +96,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 	// Initialise OIDC handler (nil if disabled/misconfigured).
 	oidcHandler := NewOIDCHandler()
+	customerOIDCHandler := NewCustomerOIDCHandler()
 
 	// --- OIDC routes (mounted OUTSIDE admin auth — these handle pre-auth flow) ---
 	if oidcHandler != nil {
@@ -113,6 +114,15 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		r.Get("/arena/admin/logout", oidcHandler.LogoutHandler)
 		r.Get("/arena/api/v1/admin/session", oidcHandler.SessionInfoHandler)
 	}
+	if customerOIDCHandler != nil {
+		customerOIDCEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
+		r.With(customerOIDCEntry).Get("/account/login", customerOIDCHandler.LoginHandler)
+		r.With(customerOIDCEntry).Get("/account/callback", customerOIDCHandler.CallbackHandler)
+		r.With(MakeCustomerAuthMiddleware(customerOIDCHandler)).Post("/account/logout", customerOIDCHandler.LogoutHandler)
+		r.With(customerOIDCEntry).Get("/arena/account/login", customerOIDCHandler.LoginHandler)
+		r.With(customerOIDCEntry).Get("/arena/account/callback", customerOIDCHandler.CallbackHandler)
+		r.With(MakeCustomerAuthMiddleware(customerOIDCHandler)).Post("/arena/account/logout", customerOIDCHandler.LogoutHandler)
+	}
 
 	r.Route("/api/v1", func(api chi.Router) {
 		// Health check (public).
@@ -126,6 +136,27 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		api.Get("/content", PublicContentBlocks)
 		api.Get("/service-status", serviceStatus.publicStatus)
 		api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
+		if customerOIDCHandler != nil {
+			customerOIDCEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
+			api.With(customerOIDCEntry).Get("/dashboard/login", customerOIDCHandler.LoginHandler)
+			api.With(MakeCustomerAuthMiddleware(customerOIDCHandler)).Post("/dashboard/logout", customerOIDCHandler.LogoutHandler)
+			api.Get("/account/session", customerOIDCHandler.SessionInfoHandler)
+		} else {
+			api.Get("/dashboard/login", CustomerLoginUnavailableHandler)
+			api.Post("/dashboard/logout", CustomerLoginUnavailableHandler)
+			api.Get("/account/session", CustomerSessionUnavailableHandler)
+		}
+		api.Route("/account", func(account chi.Router) {
+			account.Use(MakeCustomerAuthMiddleware(customerOIDCHandler))
+			account.Get("/cosmetics", cosmeticsHandler.AccountInventory)
+			account.With(
+				security.RateLimitMiddleware(config.C.CustomerBotLinkRPM),
+			).Post("/bots", cosmeticsHandler.LinkAccountBot)
+			account.Delete("/bots/{bot_id}", cosmeticsHandler.UnlinkAccountBot)
+			account.Put("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
+			account.Delete("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
+			account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountLicense)
+		})
 
 		// Key generation (public, rate-limited per IP for registration).
 		api.With(
@@ -164,6 +195,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			adminHandler.Routes(admin)
 			admin.Post("/cosmetics/grants", cosmeticsHandler.Grant)
 			admin.Delete("/cosmetics/grants", cosmeticsHandler.Revoke)
+			admin.Delete("/cosmetics/licenses/{license_id}", cosmeticsHandler.Revoke)
 
 			// Dashboard API endpoints.
 			admin.Route("/dashboard", func(dash chi.Router) {
@@ -190,6 +222,27 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			api.Get("/content", PublicContentBlocks)
 			api.Get("/service-status", serviceStatus.publicStatus)
 			api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
+			if customerOIDCHandler != nil {
+				customerOIDCEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
+				api.With(customerOIDCEntry).Get("/dashboard/login", customerOIDCHandler.LoginHandler)
+				api.With(MakeCustomerAuthMiddleware(customerOIDCHandler)).Post("/dashboard/logout", customerOIDCHandler.LogoutHandler)
+				api.Get("/account/session", customerOIDCHandler.SessionInfoHandler)
+			} else {
+				api.Get("/dashboard/login", CustomerLoginUnavailableHandler)
+				api.Post("/dashboard/logout", CustomerLoginUnavailableHandler)
+				api.Get("/account/session", CustomerSessionUnavailableHandler)
+			}
+			api.Route("/account", func(account chi.Router) {
+				account.Use(MakeCustomerAuthMiddleware(customerOIDCHandler))
+				account.Get("/cosmetics", cosmeticsHandler.AccountInventory)
+				account.With(
+					security.RateLimitMiddleware(config.C.CustomerBotLinkRPM),
+				).Post("/bots", cosmeticsHandler.LinkAccountBot)
+				account.Delete("/bots/{bot_id}", cosmeticsHandler.UnlinkAccountBot)
+				account.Put("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
+				account.Delete("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
+				account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountLicense)
+			})
 			api.With(
 				security.RateLimitMiddleware(config.C.RateLimitRegisterPerHour),
 			).Post("/keys/generate", GenerateKey)
@@ -217,6 +270,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				adminHandler.Routes(admin)
 				admin.Post("/cosmetics/grants", cosmeticsHandler.Grant)
 				admin.Delete("/cosmetics/grants", cosmeticsHandler.Revoke)
+				admin.Delete("/cosmetics/licenses/{license_id}", cosmeticsHandler.Revoke)
 
 				admin.Route("/dashboard", func(dash chi.Router) {
 					dashboardHandler.DashboardRoutes(dash)

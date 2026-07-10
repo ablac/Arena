@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"log/slog"
 	"net/http"
@@ -31,14 +33,23 @@ type OIDCHandler struct {
 	oauth2Config *oauth2.Config
 	verifier     *oidc.IDTokenVerifier
 
-	sessions   map[string]*OIDCSession
-	states     map[string]time.Time // CSRF state tokens
-	mu         sync.RWMutex
+	sessions      map[string]*OIDCSession
+	states        map[string]adminOIDCTransaction
+	allowedEmails map[string]struct{}
+	mu            sync.RWMutex
+}
+
+type adminOIDCTransaction struct {
+	ExpiresAt            time.Time
+	BrowserBindingDigest [sha256.Size]byte
+	Nonce                string
+	PKCEVerifier         string
 }
 
 const (
-	sessionCookieName = "arena_admin_session"
-	stateTTL          = 10 * time.Minute
+	sessionCookieName    = "arena_admin_session"
+	adminStateCookieName = "arena_admin_oauth_state"
+	stateTTL             = 10 * time.Minute
 )
 
 // NewOIDCHandler initialises the OIDC provider and returns a handler.
@@ -50,6 +61,11 @@ func NewOIDCHandler() *OIDCHandler {
 	}
 	if cfg.OIDCIssuer == "" || cfg.OIDCClientID == "" || cfg.OIDCClientSecret == "" || cfg.OIDCRedirectURI == "" {
 		slog.Warn("OIDC enabled but missing required config (issuer/client_id/client_secret/redirect_uri)")
+		return nil
+	}
+	allowedEmails := parseAdminEmailAllowlist(cfg.OIDCAdminEmails)
+	if len(allowedEmails) == 0 {
+		slog.Warn("OIDC admin auth disabled: ARENA_OIDC_ADMIN_EMAILS must contain at least one verified admin email")
 		return nil
 	}
 
@@ -73,11 +89,12 @@ func NewOIDCHandler() *OIDCHandler {
 	verifier := provider.Verifier(&oidc.Config{ClientID: cfg.OIDCClientID})
 
 	h := &OIDCHandler{
-		provider:     provider,
-		oauth2Config: oauth2Cfg,
-		verifier:     verifier,
-		sessions:     make(map[string]*OIDCSession),
-		states:       make(map[string]time.Time),
+		provider:      provider,
+		oauth2Config:  oauth2Cfg,
+		verifier:      verifier,
+		sessions:      make(map[string]*OIDCSession),
+		states:        make(map[string]adminOIDCTransaction),
+		allowedEmails: allowedEmails,
 	}
 
 	// Background goroutine to clean expired sessions and states.
@@ -96,6 +113,25 @@ func generateToken(bytes int) string {
 	return hex.EncodeToString(b)
 }
 
+func parseAdminEmailAllowlist(raw string) map[string]struct{} {
+	allowed := make(map[string]struct{})
+	for _, value := range strings.Split(raw, ",") {
+		email := strings.ToLower(strings.TrimSpace(value))
+		if email != "" && strings.Contains(email, "@") {
+			allowed[email] = struct{}{}
+		}
+	}
+	return allowed
+}
+
+func (h *OIDCHandler) isAllowedAdminEmail(raw string) bool {
+	if h == nil {
+		return false
+	}
+	_, ok := h.allowedEmails[strings.ToLower(strings.TrimSpace(raw))]
+	return ok
+}
+
 // adminDashboardPath returns the path to redirect back to after an OIDC
 // login/logout, honoring whichever prefix the request arrived on. The
 // router mirrors /admin/* under /arena/admin/* for prefixed deployments, so a hardcoded
@@ -109,26 +145,57 @@ func adminDashboardPath(r *http.Request) string {
 
 // LoginHandler redirects the user to the Authentik authorization page.
 func (h *OIDCHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
-	state := generateToken(16)
+	setCustomerNoStore(w)
+	state := generateToken(32)
+	browserBinding := generateToken(32)
+	pkceVerifier := generateToken(32)
+	nonce := generateToken(32)
+	txn := adminOIDCTransaction{
+		ExpiresAt:            time.Now().Add(stateTTL),
+		BrowserBindingDigest: sha256.Sum256([]byte(browserBinding)),
+		Nonce:                nonce,
+		PKCEVerifier:         pkceVerifier,
+	}
 	h.mu.Lock()
-	h.states[state] = time.Now().Add(stateTTL)
+	h.states[state] = txn
 	h.mu.Unlock()
+	http.SetCookie(w, &http.Cookie{
+		Name: adminStateCookieName, Value: browserBinding, Path: "/", MaxAge: int(stateTTL.Seconds()),
+		HttpOnly: true, Secure: secureCookie(r), SameSite: http.SameSiteLaxMode,
+	})
 
-	http.Redirect(w, r, h.oauth2Config.AuthCodeURL(state), http.StatusFound)
+	authURL := h.oauth2Config.AuthCodeURL(state,
+		oauth2.S256ChallengeOption(pkceVerifier),
+		oauth2.SetAuthURLParam("nonce", nonce),
+	)
+	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
 // CallbackHandler handles the OAuth2 callback from Authentik.
 func (h *OIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
+	setCustomerNoStore(w)
 	// Verify state parameter (CSRF protection).
-	state := r.URL.Query().Get("state")
-	h.mu.Lock()
-	expiry, ok := h.states[state]
-	if ok {
-		delete(h.states, state)
+	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	stateCookie, cookieErr := r.Cookie(adminStateCookieName)
+	var txn adminOIDCTransaction
+	validState := false
+	if cookieErr == nil && state != "" && stateCookie.Value != "" {
+		bindingDigest := sha256.Sum256([]byte(stateCookie.Value))
+		h.mu.Lock()
+		if candidate, exists := h.states[state]; exists && time.Now().Before(candidate.ExpiresAt) &&
+			subtle.ConstantTimeCompare(bindingDigest[:], candidate.BrowserBindingDigest[:]) == 1 {
+			txn = candidate
+			validState = true
+			delete(h.states, state)
+		}
+		h.mu.Unlock()
 	}
-	h.mu.Unlock()
+	http.SetCookie(w, &http.Cookie{
+		Name: adminStateCookieName, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: secureCookie(r), SameSite: http.SameSiteLaxMode,
+	})
 
-	if !ok || time.Now().After(expiry) {
+	if !validState {
 		http.Error(w, "invalid or expired state parameter", http.StatusBadRequest)
 		return
 	}
@@ -151,7 +218,7 @@ func (h *OIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	oauth2Token, err := h.oauth2Config.Exchange(ctx, code)
+	oauth2Token, err := h.oauth2Config.Exchange(ctx, code, oauth2.VerifierOption(txn.PKCEVerifier))
 	if err != nil {
 		slog.Error("OIDC token exchange failed", "error", err)
 		http.Error(w, "token exchange failed", http.StatusInternalServerError)
@@ -172,6 +239,10 @@ func (h *OIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id_token", http.StatusForbidden)
 		return
 	}
+	if idToken.Nonce == "" || subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(txn.Nonce)) != 1 {
+		http.Error(w, "invalid id_token nonce", http.StatusForbidden)
+		return
+	}
 
 	// Extract claims.
 	var claims struct {
@@ -185,12 +256,21 @@ func (h *OIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to parse claims", http.StatusInternalServerError)
 		return
 	}
+	if !claims.EmailVerified || strings.TrimSpace(claims.Email) == "" {
+		http.Error(w, "a verified email address is required", http.StatusForbidden)
+		return
+	}
+	if !h.isAllowedAdminEmail(claims.Email) {
+		slog.Warn("OIDC admin login denied by email allowlist", "email", claims.Email, "subject", idToken.Subject)
+		http.Error(w, "administrator access is not authorized", http.StatusForbidden)
+		return
+	}
 
 	// Create session.
 	sessionID := generateToken(32)
 	ttl := time.Duration(config.C.OIDCSessionTTL) * time.Hour
 	session := &OIDCSession{
-		Email:     claims.Email,
+		Email:     strings.ToLower(strings.TrimSpace(claims.Email)),
 		Name:      claims.Name,
 		Subject:   idToken.Subject,
 		CreatedAt: time.Now(),
@@ -213,7 +293,7 @@ func (h *OIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		MaxAge:   int(ttl.Seconds()),
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -223,6 +303,7 @@ func (h *OIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 
 // LogoutHandler clears the session and optionally redirects to Authentik logout.
 func (h *OIDCHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
+	setCustomerNoStore(w)
 	cookie, err := r.Cookie(sessionCookieName)
 	if err == nil && cookie.Value != "" {
 		h.mu.Lock()
@@ -237,7 +318,7 @@ func (h *OIDCHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -247,6 +328,7 @@ func (h *OIDCHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 
 // SessionInfoHandler returns the current session info as JSON (for the frontend).
 func (h *OIDCHandler) SessionInfoHandler(w http.ResponseWriter, r *http.Request) {
+	setCustomerNoStore(w)
 	session := h.GetSession(r)
 	if session == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -298,8 +380,8 @@ func (h *OIDCHandler) cleanupLoop() {
 				delete(h.sessions, id)
 			}
 		}
-		for state, expiry := range h.states {
-			if now.After(expiry) {
+		for state, txn := range h.states {
+			if now.After(txn.ExpiresAt) {
 				delete(h.states, state)
 			}
 		}
