@@ -99,6 +99,8 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 - `GET /api/v1/leaderboard` — Top bots by ELO
 - `POST /api/v1/keys/generate` — Generate API key (body: {"bot_name": "MyBot"})
 - `PUT /api/v1/bot/config` — Update bot config
+- `GET /api/v1/cosmetics/catalog` — Public presentation-only cosmetics catalog
+- `GET|PUT /api/v1/bot/cosmetics` — List or equip owned cosmetics (X-Arena-Key)
 
 ## Links
 - Live Arena: https://arena.angel-serv.com

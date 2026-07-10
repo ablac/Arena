@@ -10,15 +10,15 @@ import (
 
 // HazardZone represents a pulsing damage zone on the arena floor.
 type HazardZone struct {
-	ID             string
-	Position       Vec2    // center position
-	Width          int     // grid tiles
-	Height         int     // grid tiles
-	DamagePerTick  float64
-	Active         bool
-	PulseOnTicks   int
-	PulseOffTicks  int
-	TickCounter    int
+	ID            string
+	Position      Vec2 // center position
+	Width         int  // grid tiles
+	Height        int  // grid tiles
+	DamagePerTick float64
+	Active        bool
+	PulseOnTicks  int
+	PulseOffTicks int
+	TickCounter   int
 }
 
 // SpawnHazardZones creates hazard zones at valid terrain positions.
@@ -90,12 +90,24 @@ func UpdateHazards(zones []HazardZone, bots map[string]*BotState, tickCount int,
 			if bot.InvulnTicks > 0 {
 				continue
 			}
-			if isBotInHazardZone(bot.Position, zone) {
+			if botMovementIntersectsHazard(bot, zone) {
 				bot.HP -= damagePerTick
 				bot.RoundDamageTaken += damagePerTick
 			}
 		}
 	}
+}
+
+func botMovementIntersectsHazard(bot *BotState, zone *HazardZone) bool {
+	if bot == nil {
+		return false
+	}
+	for _, entered := range bot.MovementTrace {
+		if isBotInHazardZone(entered, zone) {
+			return true
+		}
+	}
+	return isBotInHazardZone(bot.Position, zone)
 }
 
 // isBotInHazardZone checks if a bot position is within the rectangular hazard zone.
@@ -118,14 +130,14 @@ func isBotInHazardZone(pos Vec2, zone *HazardZone) bool {
 func BuildHazardZoneView(zone HazardZone, useGridPos bool, mod RoundModifier) map[string]interface{} {
 	onTicks, offTicks, damagePerTick := effectiveHazardProfile(mod, zone)
 	view := map[string]interface{}{
-		"type":       "hazard_zone",
-		"id":         zone.ID,
-		"width":      zone.Width,
-		"height":     zone.Height,
-		"active":     zone.Active,
-		"on_ticks":   onTicks,
-		"off_ticks":  offTicks,
-		"tick_counter": zone.TickCounter,
+		"type":            "hazard_zone",
+		"id":              zone.ID,
+		"width":           zone.Width,
+		"height":          zone.Height,
+		"active":          zone.Active,
+		"on_ticks":        onTicks,
+		"off_ticks":       offTicks,
+		"tick_counter":    zone.TickCounter,
 		"damage_per_tick": damagePerTick,
 	}
 	if useGridPos {

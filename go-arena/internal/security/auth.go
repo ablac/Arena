@@ -145,3 +145,10 @@ func GetBotFromContext(ctx context.Context) *db.Bot {
 	bot, _ := ctx.Value(botContextKey).(*db.Bot)
 	return bot
 }
+
+// WithBotContext attaches an already-authenticated bot to a context. Runtime
+// code should normally rely on AuthMiddleware; this helper keeps downstream
+// handlers testable without weakening the private context-key boundary.
+func WithBotContext(ctx context.Context, bot *db.Bot) context.Context {
+	return context.WithValue(ctx, botContextKey, bot)
+}

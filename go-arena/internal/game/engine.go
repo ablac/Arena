@@ -2,6 +2,7 @@ package game
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
 	"sort"
@@ -36,23 +37,23 @@ type GameEngine struct {
 	mu sync.RWMutex
 
 	// State
-	Bots         map[string]*BotState
-	WaitingBots  map[string]*BotState
-	Pickups      []Pickup
-	Projectiles  []Projectile
-	StaffImpacts []StaffImpact
-	BurnFields   []BurnField
-	Round        RoundState
-	Arena        *ArenaMap
-	Grid         *SpatialGrid
-	NavGrid      *NavGrid
-	Terrain      *TerrainGrid
-	NextTerrain  *TerrainGrid   // Pre-generated terrain for next round (available during intermission)
-	NextObstacles []Obstacle    // Pre-generated obstacles for next round
-	NextNavGrid  *NavGrid       // Pre-generated nav grid for next round
-	NextMapShape MapShape       // Pre-generated map shape for next round
-	NextMaskRects []Obstacle    // Pre-generated boundary rectangles for the next round's shape
-	KillFeed     *KillFeed
+	Bots          map[string]*BotState
+	WaitingBots   map[string]*BotState
+	Pickups       []Pickup
+	Projectiles   []Projectile
+	StaffImpacts  []StaffImpact
+	BurnFields    []BurnField
+	Round         RoundState
+	Arena         *ArenaMap
+	Grid          *SpatialGrid
+	NavGrid       *NavGrid
+	Terrain       *TerrainGrid
+	NextTerrain   *TerrainGrid // Pre-generated terrain for next round (available during intermission)
+	NextObstacles []Obstacle   // Pre-generated obstacles for next round
+	NextNavGrid   *NavGrid     // Pre-generated nav grid for next round
+	NextMapShape  MapShape     // Pre-generated map shape for next round
+	NextMaskRects []Obstacle   // Pre-generated boundary rectangles for the next round's shape
+	KillFeed      *KillFeed
 
 	// Anti-teaming
 	AntiTeam *AntiTeamTracker
@@ -92,15 +93,16 @@ type GameEngine struct {
 	bannedIPsMu sync.RWMutex
 
 	// Events (buffered, drained after each tick)
-	DeathEvents   []DeathEvent
-	KillEvents    []KillEvent
-	RecentEvents  []ArenaEvent
+	DeathEvents  []DeathEvent
+	KillEvents   []KillEvent
+	RecentEvents []ArenaEvent
 	// forceKeyframe requests that the next spectator broadcast include the
 	// static round data regardless of the keyframe interval (set on join).
 	// Guarded by spectatorsMu.
 	forceKeyframe bool
 	// Persistence tracking
-	lastPersistTick int
+	lastPersistTick      int
+	skipLeaderboardRound int // active round that straddled a leaderboard reset
 }
 
 // GameEventHook is a callback for emitting game events to the dashboard.
@@ -323,7 +325,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	}
 
 	// Shoves (before combat so shoved bots can't attack this tick).
-	ProcessShoves(e.Bots, e.Arena.Obstacles)
+	ProcessShoves(e.Bots, e.Arena.Obstacles, e.TickCount)
 
 	// Combat.
 	ProcessCombat(e.Bots, e.Arena.Obstacles, &e.Projectiles, &e.StaffImpacts, &e.RecentEvents, e.Grid, e.TickCount, dt)
@@ -427,11 +429,12 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	}
 
 	// Check deaths.
-	deaths := CheckDeaths(e.Bots, e.Grid)
-	e.DeathEvents = append(e.DeathEvents, deaths...)
+	deaths := CheckDeaths(e.Bots, e.Grid, e.TickCount)
 
-	// Handle kill credits.
+	// Handle kill credits before buffering death events so the enriched source
+	// and damage metadata is included in the messages sent to bots.
 	e.handleKillCredits(deaths)
+	e.DeathEvents = append(e.DeathEvents, deaths...)
 
 	// No respawns — dead bots stay dead until next round.
 
@@ -697,25 +700,27 @@ func (e *GameEngine) endRound() {
 		}
 	}
 
-	// Persist final stats for the round.
+	// A leaderboard reset during an active round must not rewrite pre-reset
+	// round history, but it also must not alter the live match's score. Keep
+	// post-reset cumulative deltas while omitting that straddling round from
+	// rounds-played/wins and the time-window table.
+	roundNum := e.Round.RoundNumber
+	recordCompletedRound := e.skipLeaderboardRound != roundNum
 	finalSnaps := e.snapshotBotStats()
-	safeGo(func() { PersistBotStatsFromSnapshot(context.Background(), finalSnaps, winnerID, true) })
+	safeGo(func() {
+		PersistBotStatsFromSnapshot(context.Background(), finalSnaps, winnerID, recordCompletedRound)
+	})
 
 	// Record per-round per-bot stats for time-based leaderboards.
-	roundNum := e.Round.RoundNumber
-	roundBots := e.copyBotsForPersist()
-	safeGo(func() {
-		bots, wID := roundBots, winnerID
-		ctx := context.Background()
-		for _, bot := range bots {
-			won := bot.BotID == wID
-			lifeSecs := int(math.Round(float64(bot.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))))
-			db.InsertRoundBotStats(ctx, roundNum, bot.BotID, bot.Name, bot.Weapon,
-				bot.RoundKills, bot.RoundDeaths,
-				int64(bot.RoundDamageDealt), int64(bot.RoundDamageTaken),
-				lifeSecs, bot.RoundShotsFired, bot.RoundShotsHit, bot.RoundPickups, bot.RoundDistance, bot.Elo, won)
-		}
-	})
+	if recordCompletedRound {
+		roundBots := e.copyBotsForPersist()
+		roundStatsEpoch := botStatsPersistenceEpoch.Load()
+		safeGo(func() {
+			PersistRoundBotStats(context.Background(), roundStatsEpoch, roundNum, roundBots, winnerID)
+		})
+	} else {
+		e.skipLeaderboardRound = 0
+	}
 
 	// Pre-generate next round's terrain so bots can GET /api/v1/arena/map during intermission.
 	// Size the next round's map for everyone expected to play it: current
@@ -784,6 +789,7 @@ func (e *GameEngine) AddBot(bot *BotState) bool {
 func (e *GameEngine) RemoveBot(botID string, expected *BotState) {
 	e.mu.Lock()
 	var bot *BotState
+	var statsSnapshot *BotStatsSnapshot
 	if current := e.Bots[botID]; current != nil && current == expected {
 		bot = current
 		delete(e.Bots, botID)
@@ -805,10 +811,14 @@ func (e *GameEngine) RemoveBot(botID string, expected *BotState) {
 		}
 		e.Landmines = live
 	}
+	if bot != nil {
+		snapshot := takeBotStatsSnapshot(bot)
+		statsSnapshot = &snapshot
+	}
 	e.mu.Unlock()
 
-	if bot != nil {
-		safeGo(func() { PersistSingleBot(context.Background(), bot) })
+	if statsSnapshot != nil {
+		safeGo(func() { PersistSingleBot(context.Background(), *statsSnapshot) })
 	}
 }
 
@@ -840,6 +850,27 @@ func (e *GameEngine) SetBotAction(botID string, action *Action) {
 func (e *GameEngine) AddSpectator(conn *SpectatorConn) {
 	e.spectatorsMu.Lock()
 	defer e.spectatorsMu.Unlock()
+	e.addSpectatorLocked(conn)
+}
+
+// TryAddSpectator atomically checks the configured capacity and registers the
+// connection. Keeping both operations under spectatorsMu prevents concurrent
+// upgrades from all observing the same pre-admission count and oversubscribing
+// the arena.
+func (e *GameEngine) TryAddSpectator(conn *SpectatorConn, maxSpectators int) bool {
+	if conn == nil || maxSpectators <= 0 {
+		return false
+	}
+	e.spectatorsMu.Lock()
+	defer e.spectatorsMu.Unlock()
+	if len(e.Spectators) >= maxSpectators {
+		return false
+	}
+	e.addSpectatorLocked(conn)
+	return true
+}
+
+func (e *GameEngine) addSpectatorLocked(conn *SpectatorConn) {
 	e.Spectators = append(e.Spectators, conn)
 	// Make sure the next broadcast is a keyframe so the new spectator gets
 	// the static round data (obstacles, map shape) immediately.
@@ -1374,9 +1405,9 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 			killer = e.Bots[death.KillerID]
 		}
 
-		killerName := ""
-		weapon := ""
-		damage := 0.0
+		killerName := death.KillerName
+		weapon := death.Weapon
+		damage := death.Damage
 
 		if killer != nil {
 			killer.KillStreak++
@@ -1385,7 +1416,9 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 			}
 			killer.RoundKills++
 			killerName = killer.Name
-			weapon = killer.Weapon
+			if weapon == "" {
+				weapon = killer.Weapon
+			}
 			death.KillerName = killerName
 			death.Weapon = weapon
 
@@ -1413,11 +1446,6 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 			e.persistBountyBoardAsync()
 		}
 
-		if victimOk {
-			damage = victim.RoundDamageTaken
-			death.Damage = damage
-		}
-
 		victimName := ""
 		if victimOk {
 			victimName = victim.Name
@@ -1430,6 +1458,7 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 			VictimID:   death.VictimID,
 			VictimName: victimName,
 			Weapon:     weapon,
+			Damage:     damage,
 			KillStreak: 0,
 			RoundKills: 0,
 		})
@@ -1444,7 +1473,10 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 		// Log the kill to the database.
 		if killer != nil && victimOk {
 			roundID, tick := e.Round.RoundID, e.TickCount
-			safeGo(func() { InsertKillLog(context.Background(), roundID, killer, victim, weapon, damage, tick) })
+			killerID, victimID, killerHP := killer.BotID, victim.BotID, int(killer.HP)
+			safeGo(func() {
+				InsertKillLog(context.Background(), roundID, killerID, victimID, weapon, damage, killerHP, tick)
+			})
 		}
 
 		// Emit game event for dashboard.
@@ -1658,10 +1690,10 @@ func (e *GameEngine) sendBotTickUpdates() {
 
 		// Add sudden death, bounty, and game-mode info to tick.
 		tickExtra := map[string]interface{}{
-			"sudden_death":  e.SuddenDeath.Active,
-			"bounty_target": e.Bounty.TargetID,
-			"nearby_mines":  nearbyMineCount,
-			"round_tick":    e.TickCount - e.Round.StartTick,
+			"sudden_death":   e.SuddenDeath.Active,
+			"bounty_target":  e.Bounty.TargetID,
+			"nearby_mines":   nearbyMineCount,
+			"round_tick":     e.TickCount - e.Round.StartTick,
 			"round_modifier": string(e.Round.Modifier),
 		}
 		// Void tiles within the bot's fog radius (omitted entirely while
@@ -1922,6 +1954,75 @@ func (e *GameEngine) IsPaused() bool {
 	return e.Paused
 }
 
+// ResetLeaderboard serializes the database reset with all bot-stat writes and
+// reserves a clean persistence baseline without changing the live match score.
+// Snapshots captured before a successful reset carry the old epoch and are
+// discarded when their background goroutines eventually reach the gate.
+func (e *GameEngine) ResetLeaderboard(ctx context.Context, reset func(context.Context) error) error {
+	if reset == nil {
+		return fmt.Errorf("reset leaderboard: nil reset function")
+	}
+
+	botStatsPersistenceMu.Lock()
+	defer botStatsPersistenceMu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	backups := make(map[*BotState]BotState, len(e.Bots)+len(e.WaitingBots))
+	previousSkippedRound := e.skipLeaderboardRound
+	if e.Round.Phase == PhaseActive {
+		e.skipLeaderboardRound = e.Round.RoundNumber
+	}
+	resetBot := func(bot *BotState) {
+		if bot == nil {
+			return
+		}
+		if _, seen := backups[bot]; seen {
+			return
+		}
+		backups[bot] = *bot
+		resetBotLeaderboardState(bot)
+	}
+	for _, bot := range e.Bots {
+		resetBot(bot)
+	}
+	for _, bot := range e.WaitingBots {
+		resetBot(bot)
+	}
+
+	if err := reset(ctx); err != nil {
+		for bot, previous := range backups {
+			*bot = previous
+		}
+		e.skipLeaderboardRound = previousSkippedRound
+		return fmt.Errorf("reset leaderboard: %w", err)
+	}
+
+	pendingBotStatsDeltas = make(map[string]db.BotStatsDelta)
+	botStatsPersistenceEpoch.Add(1)
+	return nil
+}
+
+func resetBotLeaderboardState(bot *BotState) {
+	startingElo := config.C.EloStarting
+	if startingElo <= 0 {
+		startingElo = 1000
+	}
+	bot.Elo = startingElo
+	// Preserve active-match score and mechanics. Reserving the current
+	// cumulative counters makes the next snapshot start at the reset boundary
+	// instead of repopulating the newly-truncated leaderboard with old data.
+	bot.PersistedKills = bot.RoundKills
+	bot.PersistedDeaths = bot.RoundDeaths
+	bot.PersistedDamageDealt = bot.RoundDamageDealt
+	bot.PersistedDamageTaken = bot.RoundDamageTaken
+	bot.PersistedDistance = bot.RoundDistance
+	bot.PersistedPickups = bot.RoundPickups
+	bot.LeaderboardRebased = true
+	bot.LeaderboardKillBaseline = bot.KillStreak
+	bot.LeaderboardLifeBaseline = bot.RoundLongestLife
+}
+
 // KickBot disconnects a bot by ID. Returns true if found.
 func (e *GameEngine) KickBot(botID, reason string) bool {
 	e.mu.Lock()
@@ -1936,13 +2037,14 @@ func (e *GameEngine) KickBot(botID, reason string) bool {
 	delete(e.Bots, botID)
 	delete(e.WaitingBots, botID)
 	e.Grid.Remove(botID)
+	statsSnapshot := takeBotStatsSnapshot(bot)
 	e.mu.Unlock()
 
 	SendKick(bot, reason)
 	if bot.Conn != nil {
 		bot.Conn.Close()
 	}
-	safeGo(func() { PersistSingleBot(context.Background(), bot) })
+	safeGo(func() { PersistSingleBot(context.Background(), statsSnapshot) })
 	slog.Info("admin kicked bot", "bot_id", botID, "name", bot.Name, "reason", reason)
 	return true
 }
@@ -2031,48 +2133,48 @@ func (e *GameEngine) GetBotProfile(botID string) (map[string]interface{}, bool) 
 	}
 
 	return map[string]interface{}{
-		"bot_id":               bot.BotID,
-		"name":                 bot.Name,
-		"weapon":               bot.Weapon,
-		"avatar_color":         bot.AvatarColor,
-		"stats":                bot.Stats,
-		"elo":                  bot.Elo,
-		"fallback_behavior":    bot.FallbackBehavior,
-		"is_alive":             bot.IsAlive,
-		"hp":                   round1(bot.HP),
-		"max_hp":               round1(bot.MaxHP),
-		"position":             bot.Position,
-		"speed":                round1(bot.Speed),
-		"frozen":               bot.Frozen,
-		"current_action":       currentAction,
-		"action_target":        actionTarget,
-		"cooldown_remaining":   round1(bot.CooldownRemaining),
-		"dodge_cooldown":       bot.DodgeCooldown,
-		"invuln_ticks":         bot.InvulnTicks,
-		"stun_ticks":           bot.StunTicks,
-		"shield_absorb":        round1(bot.ShieldAbsorb),
-		"active_effects":       bot.ActiveEffects,
-		"kill_streak":          bot.KillStreak,
-		"round_kills":          bot.RoundKills,
-		"round_deaths":         bot.RoundDeaths,
-		"round_damage_dealt":   round1(bot.RoundDamageDealt),
-		"round_damage_taken":   round1(bot.RoundDamageTaken),
-		"round_shots_fired":    bot.RoundShotsFired,
-		"round_shots_hit":      bot.RoundShotsHit,
-		"round_distance":       round1(bot.RoundDistance),
-		"round_pickups":        bot.RoundPickups,
-		"accuracy":             round1(accuracy),
-		"damage_per_kill":      round1(dmgPerKill),
-		"avg_enemy_distance":   round1(avgEnemyDist),
-		"closest_enemy_dist":   round1(closestEnemyDist),
-		"closest_enemy_name":   closestEnemyName,
-		"dist_to_zone_center":  round1(distToZoneCenter),
-		"in_zone":              inZone,
-		"ticks_alive":          ticksAlive,
-		"attack_multiplier":    round1(bot.AttackMultiplier),
-		"defense_reduction":    round1(bot.DefenseReduction),
-		"last_action_tick":     bot.LastActionTick,
-		"last_damaged_by":      bot.LastDamagedBy,
+		"bot_id":              bot.BotID,
+		"name":                bot.Name,
+		"weapon":              bot.Weapon,
+		"avatar_color":        bot.AvatarColor,
+		"stats":               bot.Stats,
+		"elo":                 bot.Elo,
+		"fallback_behavior":   bot.FallbackBehavior,
+		"is_alive":            bot.IsAlive,
+		"hp":                  round1(bot.HP),
+		"max_hp":              round1(bot.MaxHP),
+		"position":            bot.Position,
+		"speed":               round1(bot.Speed),
+		"frozen":              bot.Frozen,
+		"current_action":      currentAction,
+		"action_target":       actionTarget,
+		"cooldown_remaining":  round1(bot.CooldownRemaining),
+		"dodge_cooldown":      bot.DodgeCooldown,
+		"invuln_ticks":        bot.InvulnTicks,
+		"stun_ticks":          bot.StunTicks,
+		"shield_absorb":       round1(bot.ShieldAbsorb),
+		"active_effects":      bot.ActiveEffects,
+		"kill_streak":         bot.KillStreak,
+		"round_kills":         bot.RoundKills,
+		"round_deaths":        bot.RoundDeaths,
+		"round_damage_dealt":  round1(bot.RoundDamageDealt),
+		"round_damage_taken":  round1(bot.RoundDamageTaken),
+		"round_shots_fired":   bot.RoundShotsFired,
+		"round_shots_hit":     bot.RoundShotsHit,
+		"round_distance":      round1(bot.RoundDistance),
+		"round_pickups":       bot.RoundPickups,
+		"accuracy":            round1(accuracy),
+		"damage_per_kill":     round1(dmgPerKill),
+		"avg_enemy_distance":  round1(avgEnemyDist),
+		"closest_enemy_dist":  round1(closestEnemyDist),
+		"closest_enemy_name":  closestEnemyName,
+		"dist_to_zone_center": round1(distToZoneCenter),
+		"in_zone":             inZone,
+		"ticks_alive":         ticksAlive,
+		"attack_multiplier":   round1(bot.AttackMultiplier),
+		"defense_reduction":   round1(bot.DefenseReduction),
+		"last_action_tick":    bot.LastActionTick,
+		"last_damaged_by":     bot.LastDamagedBy,
 	}, true
 }
 
@@ -2270,12 +2372,12 @@ func (e *GameEngine) GetFullGameState() map[string]interface{} {
 		"bots":          bots,
 		// Dynamic arena sizing can change dimensions between rounds; admin
 		// minimaps should rescale from this instead of assuming a fixed size.
-		"arena_size":    [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
-		"game_mode":     string(e.Round.Mode),
-		"map_shape":     string(ActiveMapShape),
-		"pickups":       len(e.Pickups),
-		"pickups_list":  e.Pickups,
-		"projectiles":   len(e.Projectiles),
+		"arena_size":   [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
+		"game_mode":    string(e.Round.Mode),
+		"map_shape":    string(ActiveMapShape),
+		"pickups":      len(e.Pickups),
+		"pickups_list": e.Pickups,
+		"projectiles":  len(e.Projectiles),
 		"zone": map[string]interface{}{
 			"center":        e.Arena.ZoneCenter,
 			"radius":        round1(e.Arena.ZoneRadius),
@@ -2300,7 +2402,7 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 
 	connInfo := map[string]interface{}{
 		"has_conn":      bot.Conn != nil,
-		"has_send_chan":  bot.SendChan != nil,
+		"has_send_chan": bot.SendChan != nil,
 	}
 	if bot.Conn != nil {
 		connInfo["remote_addr"] = bot.Conn.RemoteAddr().String()
@@ -2312,31 +2414,31 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 	}
 
 	return map[string]interface{}{
-		"bot_id":            bot.BotID,
-		"api_key_id":        bot.APIKeyID,
-		"name":              bot.Name,
-		"avatar_color":      bot.AvatarColor,
-		"position":          bot.Position,
-		"hp":                round1(bot.HP),
-		"max_hp":            round1(bot.MaxHP),
-		"speed":             round1(bot.Speed),
-		"weapon":            bot.Weapon,
-		"is_alive":          bot.IsAlive,
-		"elo":               bot.Elo,
-		"stats":             bot.Stats,
-		"fallback_behavior": bot.FallbackBehavior,
-		"kill_streak":       bot.KillStreak,
-		"attack_multiplier": round1(bot.AttackMultiplier),
-		"defense_reduction": round1(bot.DefenseReduction),
+		"bot_id":             bot.BotID,
+		"api_key_id":         bot.APIKeyID,
+		"name":               bot.Name,
+		"avatar_color":       bot.AvatarColor,
+		"position":           bot.Position,
+		"hp":                 round1(bot.HP),
+		"max_hp":             round1(bot.MaxHP),
+		"speed":              round1(bot.Speed),
+		"weapon":             bot.Weapon,
+		"is_alive":           bot.IsAlive,
+		"elo":                bot.Elo,
+		"stats":              bot.Stats,
+		"fallback_behavior":  bot.FallbackBehavior,
+		"kill_streak":        bot.KillStreak,
+		"attack_multiplier":  round1(bot.AttackMultiplier),
+		"defense_reduction":  round1(bot.DefenseReduction),
 		"cooldown_remaining": round1(bot.CooldownRemaining),
-		"dodge_cooldown":    bot.DodgeCooldown,
-		"invuln_ticks":      bot.InvulnTicks,
-		"stun_ticks":        bot.StunTicks,
-		"frozen":            bot.Frozen,
-		"shield_absorb":     round1(bot.ShieldAbsorb),
-		"active_effects":    bot.ActiveEffects,
-		"round_kills":       bot.RoundKills,
-		"round_deaths":      bot.RoundDeaths,
+		"dodge_cooldown":     bot.DodgeCooldown,
+		"invuln_ticks":       bot.InvulnTicks,
+		"stun_ticks":         bot.StunTicks,
+		"frozen":             bot.Frozen,
+		"shield_absorb":      round1(bot.ShieldAbsorb),
+		"active_effects":     bot.ActiveEffects,
+		"round_kills":        bot.RoundKills,
+		"round_deaths":       bot.RoundDeaths,
 		"round_damage_dealt": round1(bot.RoundDamageDealt),
 		"round_damage_taken": round1(bot.RoundDamageTaken),
 		"round_distance":     round1(bot.RoundDistance),
@@ -2346,8 +2448,8 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 		"last_action_tick":   bot.LastActionTick,
 		"last_action_result": lastAction,
 		"current_action":     bot.PendingAction,
-		"connected_at":      bot.ConnectedAt,
-		"action_counts":     botActionCounts(bot),
+		"connected_at":       bot.ConnectedAt,
+		"action_counts":      botActionCounts(bot),
 		"connection":         connInfo,
 	}, true
 }
@@ -2369,35 +2471,35 @@ func (e *GameEngine) ListAllBots() []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(e.Bots)+len(e.WaitingBots))
 	for _, bot := range e.Bots {
 		entry := map[string]interface{}{
-			"bot_id":      bot.BotID,
-			"api_key_id":  bot.APIKeyID,
-			"name":        bot.Name,
-			"hp":          round1(bot.HP),
-			"is_alive":    bot.IsAlive,
-			"weapon":      bot.Weapon,
-			"elo":         bot.Elo,
-			"kills":       bot.RoundKills,
-			"deaths":      bot.RoundDeaths,
-			"status":      "active",
-			"connected":     bot.Conn != nil,
-			"connected_at":  bot.ConnectedAt,
+			"bot_id":       bot.BotID,
+			"api_key_id":   bot.APIKeyID,
+			"name":         bot.Name,
+			"hp":           round1(bot.HP),
+			"is_alive":     bot.IsAlive,
+			"weapon":       bot.Weapon,
+			"elo":          bot.Elo,
+			"kills":        bot.RoundKills,
+			"deaths":       bot.RoundDeaths,
+			"status":       "active",
+			"connected":    bot.Conn != nil,
+			"connected_at": bot.ConnectedAt,
 		}
 		result = append(result, entry)
 	}
 	for _, bot := range e.WaitingBots {
 		entry := map[string]interface{}{
-			"bot_id":      bot.BotID,
-			"api_key_id":  bot.APIKeyID,
-			"name":        bot.Name,
-			"hp":          round1(bot.HP),
-			"is_alive":    bot.IsAlive,
-			"weapon":      bot.Weapon,
-			"elo":         bot.Elo,
-			"kills":       bot.RoundKills,
-			"deaths":      bot.RoundDeaths,
-			"status":      "waiting",
-			"connected":     bot.Conn != nil,
-			"connected_at":  bot.ConnectedAt,
+			"bot_id":       bot.BotID,
+			"api_key_id":   bot.APIKeyID,
+			"name":         bot.Name,
+			"hp":           round1(bot.HP),
+			"is_alive":     bot.IsAlive,
+			"weapon":       bot.Weapon,
+			"elo":          bot.Elo,
+			"kills":        bot.RoundKills,
+			"deaths":       bot.RoundDeaths,
+			"status":       "waiting",
+			"connected":    bot.Conn != nil,
+			"connected_at": bot.ConnectedAt,
 		}
 		result = append(result, entry)
 	}
@@ -2449,8 +2551,8 @@ func (e *GameEngine) ListConnections() map[string]interface{} {
 	return map[string]interface{}{
 		"bot_connections":       botConns,
 		"spectator_connections": specConns,
-		"total_bots":           len(botConns),
-		"total_spectators":     len(specConns),
+		"total_bots":            len(botConns),
+		"total_spectators":      len(specConns),
 	}
 }
 
@@ -2458,23 +2560,18 @@ func (e *GameEngine) ListConnections() map[string]interface{} {
 // avoiding concurrent reads on the live BotState pointers.
 type BotStatsSnapshot struct {
 	BotID            string
-	APIKeyID         string
 	Elo              int
 	KillStreak       int
 	BestStreak       int
-	RoundKills       int
-	RoundDeaths      int
-	RoundDamageDealt float64
-	RoundDamageTaken float64
-	RoundDistance    float64
+	KillsDelta       int
+	DeathsDelta      int
+	DamageDealtDelta int64
+	DamageTakenDelta int64
+	DistanceDelta    float64
 	RoundLongestLife int
-	RoundPickups     int
-	PersistedKills       int
-	PersistedDeaths      int
-	PersistedDamageDealt float64
-	PersistedDamageTaken float64
-	PersistedDistance    float64
-	PersistedPickups     int
+	PickupsDelta     int
+	CapturedAt       time.Time
+	PersistenceEpoch uint64
 }
 
 // copyBotsForPersist returns a deep copy of bots safe for goroutine use.
@@ -2502,31 +2599,52 @@ func (e *GameEngine) copyBotsForPersist() map[string]*BotState {
 	return cp
 }
 
-// snapshotBotStats returns value copies of the stats fields needed for
-// persistence, safe to read from a separate goroutine without locks.
+// takeBotStatsSnapshot reserves the delta represented by this snapshot before
+// a persistence goroutine starts. The caller must ensure the bot is not being
+// mutated concurrently (the engine methods call it while holding e.mu).
+func takeBotStatsSnapshot(bot *BotState) BotStatsSnapshot {
+	currentStreak := bot.KillStreak
+	bestStreak := bot.BestKillStreak
+	longestLife := bot.RoundLongestLife
+	if bot.LeaderboardRebased {
+		// Arena rounds currently have one life per bot, so KillStreak grows
+		// monotonically for the rest of the straddling round. Rebasing it gives
+		// both current and best post-reset streaks without mutating live combat
+		// state. ResetRoundStats removes the rebase at the next round boundary.
+		currentStreak = max(0, bot.KillStreak-bot.LeaderboardKillBaseline)
+		bestStreak = currentStreak
+		longestLife = max(0, bot.RoundLongestLife-bot.LeaderboardLifeBaseline)
+	}
+	snapshot := BotStatsSnapshot{
+		BotID:            bot.BotID,
+		Elo:              bot.Elo,
+		KillStreak:       currentStreak,
+		BestStreak:       bestStreak,
+		KillsDelta:       max(0, bot.RoundKills-bot.PersistedKills),
+		DeathsDelta:      max(0, bot.RoundDeaths-bot.PersistedDeaths),
+		DamageDealtDelta: max(0, int64(bot.RoundDamageDealt)-int64(bot.PersistedDamageDealt)),
+		DamageTakenDelta: max(0, int64(bot.RoundDamageTaken)-int64(bot.PersistedDamageTaken)),
+		DistanceDelta:    math.Max(0, bot.RoundDistance-bot.PersistedDistance),
+		RoundLongestLife: longestLife,
+		PickupsDelta:     max(0, bot.RoundPickups-bot.PersistedPickups),
+		CapturedAt:       time.Now(),
+		PersistenceEpoch: botStatsPersistenceEpoch.Load(),
+	}
+
+	bot.PersistedKills = bot.RoundKills
+	bot.PersistedDeaths = bot.RoundDeaths
+	bot.PersistedDamageDealt = bot.RoundDamageDealt
+	bot.PersistedDamageTaken = bot.RoundDamageTaken
+	bot.PersistedDistance = bot.RoundDistance
+	bot.PersistedPickups = bot.RoundPickups
+	return snapshot
+}
+
+// snapshotBotStats captures disjoint deltas for background persistence.
 func (e *GameEngine) snapshotBotStats() []BotStatsSnapshot {
 	snaps := make([]BotStatsSnapshot, 0, len(e.Bots))
 	for _, bot := range e.Bots {
-		snaps = append(snaps, BotStatsSnapshot{
-			BotID:            bot.BotID,
-			APIKeyID:         bot.APIKeyID,
-			Elo:              bot.Elo,
-			KillStreak:       bot.KillStreak,
-			BestStreak:       bot.BestKillStreak,
-			RoundKills:       bot.RoundKills,
-			RoundDeaths:      bot.RoundDeaths,
-			RoundDamageDealt: bot.RoundDamageDealt,
-			RoundDamageTaken: bot.RoundDamageTaken,
-			RoundDistance:    bot.RoundDistance,
-			RoundLongestLife: bot.RoundLongestLife,
-			RoundPickups:     bot.RoundPickups,
-			PersistedKills:       bot.PersistedKills,
-			PersistedDeaths:      bot.PersistedDeaths,
-			PersistedDamageDealt: bot.PersistedDamageDealt,
-			PersistedDamageTaken: bot.PersistedDamageTaken,
-			PersistedDistance:    bot.PersistedDistance,
-			PersistedPickups:     bot.PersistedPickups,
-		})
+		snaps = append(snaps, takeBotStatsSnapshot(bot))
 	}
 	return snaps
 }

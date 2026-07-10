@@ -82,6 +82,26 @@ type BotStats struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
+// BotStatsDelta is one monotonic increment captured from the live game state.
+// Applying deltas atomically avoids both repeated cumulative totals and lost
+// updates when periodic, round-final, and disconnect writes overlap.
+type BotStatsDelta struct {
+	BotID            string
+	Kills            int
+	Deaths           int
+	DamageDealt      int64
+	DamageTaken      int64
+	CurrentStreak    int
+	BestStreak       int
+	Elo              int
+	LongestLifeSecs  int
+	RoundsPlayed     int
+	RoundWins        int
+	PickupsCollected int
+	DistanceTraveled float64
+	CapturedAt       time.Time
+}
+
 // KillLog represents a row in the kill_log table.
 type KillLog struct {
 	ID        string    `json:"id"`

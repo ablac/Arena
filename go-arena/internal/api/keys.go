@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"arena-server/internal/config"
 	"arena-server/internal/db"
+	"arena-server/internal/game"
 	"arena-server/internal/security"
 
 	"github.com/google/uuid"
@@ -19,37 +21,32 @@ func GenerateKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ip := security.ExtractClientIP(r)
 
+	// API-key authentication is database-backed. Returning a plaintext key in
+	// database-optional mode would create a credential that can never pass the
+	// next authenticated request or WebSocket connection.
+	if db.Pool == nil {
+		writeError(w, http.StatusServiceUnavailable, "key registration requires the database")
+		return
+	}
+
 	// Rate-limit key registration per IP.
-	if db.Pool != nil {
-		allowed, _, err := db.CheckRateLimit(ctx, ip, config.C.RateLimitRegisterPerHour)
-		if err != nil {
-			slog.Error("rate limit check failed", "error", err)
-		} else if !allowed {
-			writeStructuredError(w, GlobalEventBus, http.StatusTooManyRequests,
-				"rate limit exceeded for key generation", "RATE_LIMITED",
-				map[string]interface{}{
-					"limit":       config.C.RateLimitRegisterPerHour,
-					"window":      "1h",
-					"retry_after": 3600,
-				})
-			return
-		}
-	} else {
-		allowed, remaining, resetAt, err := security.CheckRateLimit(ctx, "register:"+ip, config.C.RateLimitRegisterPerHour, 3600)
-		if err != nil {
-			slog.Warn("redis rate limit check failed", "error", err)
-		} else if !allowed {
-			retryAfter := int(time.Until(resetAt).Seconds()) + 1
-			writeStructuredError(w, GlobalEventBus, http.StatusTooManyRequests,
-				"rate limit exceeded for key generation", "RATE_LIMITED",
-				map[string]interface{}{
-					"limit":       config.C.RateLimitRegisterPerHour,
-					"remaining":   remaining,
-					"retry_after": retryAfter,
-					"window":      "1h",
-				})
-			return
-		}
+	allowed, _, err := db.CheckRateLimit(ctx, ip, config.C.RateLimitRegisterPerHour)
+	if err != nil {
+		slog.Error("rate limit check failed", "error", err)
+		// Registration writes to this same database moments later. Failing
+		// open here only bypasses abuse controls and cannot provide a reliable
+		// degraded registration path.
+		writeError(w, http.StatusServiceUnavailable, "key registration is temporarily unavailable")
+		return
+	} else if !allowed {
+		writeStructuredError(w, GlobalEventBus, http.StatusTooManyRequests,
+			"rate limit exceeded for key generation", "RATE_LIMITED",
+			map[string]interface{}{
+				"limit":       config.C.RateLimitRegisterPerHour,
+				"window":      "1h",
+				"retry_after": 3600,
+			})
+		return
 	}
 
 	// Generate API key material.
@@ -65,31 +62,23 @@ func GenerateKey(w http.ResponseWriter, r *http.Request) {
 	botID := uuid.New().String()
 	now := time.Now()
 
-	// Persist the API key.
-	if db.Pool != nil {
-		if err := db.CreateAPIKey(ctx, keyID, keyHash, keyPrefix, ip); err != nil {
-			slog.Error("failed to create API key", "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to create API key")
-			return
-		}
-
-		// Create a default bot associated with the key.
-		bot := &db.Bot{
-			ID:              botID,
-			APIKeyID:        keyID,
-			Name:            "Unnamed Bot",
-			AvatarColor:     "#888888",
-			DefaultWeapon:   "sword",
-			DefaultStats:    db.JSONBStats{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
-			DefaultFallback: "aggressive",
-			CreatedAt:       now,
-			UpdatedAt:       now,
-		}
-		if err := db.CreateBot(ctx, bot); err != nil {
-			slog.Error("failed to create bot", "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to create bot")
-			return
-		}
+	// Persist the API key and its bot atomically. A bot insert failure must not
+	// leave an active credential with no associated bot.
+	bot := &db.Bot{
+		ID:              botID,
+		APIKeyID:        keyID,
+		Name:            "Unnamed Bot",
+		AvatarColor:     "#888888",
+		DefaultWeapon:   "sword",
+		DefaultStats:    db.JSONBStats{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
+		DefaultFallback: "aggressive",
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := db.CreateAPIKeyAndBot(ctx, keyID, keyHash, keyPrefix, ip, bot); err != nil {
+		slog.Error("failed to create API key and bot", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to create API key")
+		return
 	}
 
 	resp := KeyGenerateResponse{
@@ -101,25 +90,39 @@ func GenerateKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-// RevokeKey handles DELETE /api/v1/keys/revoke.
-// It deactivates the API key associated with the authenticated bot.
-func RevokeKey(w http.ResponseWriter, r *http.Request) {
-	bot := security.GetBotFromContext(r.Context())
-	if bot == nil {
-		writeError(w, http.StatusUnauthorized, "authentication required")
-		return
-	}
+type botSessionRevoker interface {
+	KickBot(botID, reason string) bool
+}
 
-	if db.Pool != nil {
-		if err := db.DeactivateAPIKey(r.Context(), bot.APIKeyID); err != nil {
+type deactivateAPIKeyFunc func(context.Context, string) error
+
+// RevokeKey handles DELETE /api/v1/keys/revoke. Database deactivation happens
+// before the live session is removed, so a reconnect cannot race the kick with
+// an active credential.
+func RevokeKey(engine *game.GameEngine) http.HandlerFunc {
+	return revokeKeyHandler(engine, db.DeactivateAPIKey)
+}
+
+func revokeKeyHandler(sessions botSessionRevoker, deactivate deactivateAPIKeyFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		bot := security.GetBotFromContext(r.Context())
+		if bot == nil {
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+
+		if err := deactivate(r.Context(), bot.APIKeyID); err != nil {
 			slog.Error("failed to deactivate API key", "error", err, "key_id", bot.APIKeyID)
 			writeError(w, http.StatusInternalServerError, "failed to revoke key")
 			return
 		}
+
+		if sessions != nil {
+			sessions.KickBot(bot.ID, "API key revoked")
+		}
+
+		writeJSON(w, http.StatusOK, KeyRevokeResponse{
+			Message: "API key revoked successfully",
+		})
 	}
-
-	writeJSON(w, http.StatusOK, KeyRevokeResponse{
-		Message: "API key revoked successfully",
-	})
 }
-

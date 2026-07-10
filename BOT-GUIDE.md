@@ -116,6 +116,7 @@ All HTTP endpoints are also available under the `/arena` prefix (e.g., `/arena/a
 | `GET` | `/api/v1/arena/map` | Current terrain grid (width, height, cell_size, compact terrain with pad/hazard overlays, teleport/capture/hazard metadata). **Next round's map is pre-generated during intermission** — fetch early and pre-compute pathfinding! |
 | `GET` | `/api/v1/bounties` | Current bounty board |
 | `GET` | `/api/v1/weapon-stats` | Live weapon stats (including auto-balance adjustments) |
+| `GET` | `/api/v1/cosmetics/catalog` | Presentation-only bot skins, weapon finishes, and attachments |
 | `GET` | `/api/v1/bot-setup` | Machine-readable JSON reference (this guide as an endpoint) |
 
 ### Authenticated Endpoints (Require `X-Arena-Key` Header)
@@ -125,6 +126,8 @@ All HTTP endpoints are also available under the `/arena` prefix (e.g., `/arena/a
 | `PUT` | `/api/v1/bot/config` | Update bot name, avatar, and default loadout |
 | `GET` | `/api/v1/bot/stats` | Lifetime stats: kills, deaths, ELO, streaks, damage |
 | `GET` | `/api/v1/bot/live` | Real-time in-game state (position, HP, effects) |
+| `GET` | `/api/v1/bot/cosmetics` | Owned, locked, and equipped cosmetics |
+| `PUT` | `/api/v1/bot/cosmetics` | Equip an owned cosmetic without changing gameplay stats |
 | `DELETE` | `/api/v1/keys/revoke` | Permanently revoke your API key |
 
 ### Authentication Methods
@@ -145,6 +148,14 @@ X-Arena-Key: YOUR_API_KEY
 
 - Each bot entry includes `team` (0 in FFA), plus combat state (`facing`, `bow_charge_level`, `shield_absorb`, `is_bounty_target`, ...).
 - Top-level: `game_mode`, `map_shape`, and in team modes `team_scores` (string-keyed) and `flags` (each with `id`, `team`, `position`, `base_position`, `status`, `carrier_id`).
+
+The server also sends an application-level heartbeat approximately every 10 seconds, including while a paused game has no new arena snapshots:
+
+```json
+{"type":"heartbeat","paused":true,"server_time":1783700000000}
+```
+
+`server_time` is Unix time in milliseconds. Heartbeats contain no gameplay state; spectator clients should use them for connection health, handle the `paused` flag if useful, and otherwise ignore them. Clients should also ignore unknown message types so future additive spectator messages remain backward compatible.
 - Entity arrays: `teleport_pads`, `capture_pads`, `hazard_zones`, `landmines`, `gravity_wells`, `burn_fields`, `staff_impacts`, `void_tiles`, plus `sudden_death`, `bounty_target`, `round_modifier`, and one-shot `events`.
 - **Keyframes**: `obstacles` is only included on every 10th broadcast (and immediately after you connect). Between keyframes the field is omitted — keep your last received copy instead of clearing the map.
 
@@ -348,6 +359,7 @@ Additional tick fields worth knowing:
   "victim_name": "VictimBot",
   "victim_id": "victim-uuid",
   "weapon_used": "sword",
+  "damage": 21,
   "your_kill_streak": 4,
   "your_round_kills": 5
 }

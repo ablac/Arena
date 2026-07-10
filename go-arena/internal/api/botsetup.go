@@ -33,8 +33,8 @@ func BotSetup() http.HandlerFunc {
 		}
 
 		resp := map[string]interface{}{
-			"api_base_url":          "https://arena.angel-serv.com",
-			"websocket_url":        "wss://arena.angel-serv.com/ws/bot",
+			"api_base_url":            "https://arena.angel-serv.com",
+			"websocket_url":           "wss://arena.angel-serv.com/ws/bot",
 			"spectator_websocket_url": "wss://arena.angel-serv.com/ws/spectator",
 
 			// ── Getting Started ─────────────────────────────────
@@ -76,12 +76,15 @@ func BotSetup() http.HandlerFunc {
 					{"method": "GET", "path": "/api/v1/leaderboard", "description": "Get leaderboard (supports ?limit=N&offset=N)"},
 					{"method": "GET", "path": "/api/v1/arena/status", "description": "Current arena status: round number, bots alive, safe zone"},
 					{"method": "GET", "path": "/api/v1/arena/map", "description": "Current terrain grid (width, height, cell_size, compact terrain) plus teleport pads, capture pads, and hazard zones. The next round's map is pre-generated during intermission, so you can fetch and analyze it before the round starts."},
-				{"method": "GET", "path": "/api/v1/bot-setup", "description": "This endpoint — full bot-building reference"},
+					{"method": "GET", "path": "/api/v1/cosmetics/catalog", "description": "Public no-pay-to-win cosmetic catalog and checkout readiness"},
+					{"method": "GET", "path": "/api/v1/bot-setup", "description": "This endpoint — full bot-building reference"},
 				},
 				"authenticated": []map[string]interface{}{
 					{"method": "PUT", "path": "/api/v1/bot/config", "description": "Update bot name, avatar color, and default loadout", "auth": "X-Arena-Key header"},
 					{"method": "GET", "path": "/api/v1/bot/stats", "description": "Get your bot's lifetime stats (kills, deaths, ELO, etc)", "auth": "X-Arena-Key header"},
 					{"method": "GET", "path": "/api/v1/bot/live", "description": "Get your bot's real-time in-game state", "auth": "X-Arena-Key header"},
+					{"method": "GET", "path": "/api/v1/bot/cosmetics", "description": "List owned, locked, and equipped cosmetics", "auth": "X-Arena-Key header"},
+					{"method": "PUT", "path": "/api/v1/bot/cosmetics", "description": "Equip one owned cosmetic by slot", "auth": "X-Arena-Key header"},
 					{"method": "DELETE", "path": "/api/v1/keys/revoke", "description": "Revoke your API key (permanent)", "auth": "X-Arena-Key header"},
 				},
 				"websocket": []map[string]interface{}{
@@ -132,7 +135,7 @@ func BotSetup() http.HandlerFunc {
 					},
 					"kill": map[string]interface{}{
 						"description": "Sent when your bot kills another bot",
-						"fields":      "victim_name, victim_id, weapon_used, your_kill_streak, your_round_kills",
+						"fields":      "victim_name, victim_id, weapon_used, damage, your_kill_streak, your_round_kills",
 					},
 					"round_end": map[string]interface{}{
 						"description": "Sent when the round ends",
@@ -188,39 +191,39 @@ func BotSetup() http.HandlerFunc {
 
 			// ── Stats System ────────────────────────────────────
 			"stats": map[string]interface{}{
-				"budget":      c.StatBudget,
-				"min_per_stat": c.StatMin,
-				"max_per_stat": c.StatMax,
-				"stat_names":  []string{"hp", "speed", "attack", "defense"},
+				"budget":             c.StatBudget,
+				"min_per_stat":       c.StatMin,
+				"max_per_stat":       c.StatMax,
+				"stat_names":         []string{"hp", "speed", "attack", "defense"},
 				"default_allocation": map[string]int{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
 				"formulas": map[string]interface{}{
-					"max_hp":           fmt.Sprintf("%.0f + (hp_points * %.0f) — e.g. 5 points = %.0f HP", c.StatHPBase, c.StatHPPerPoint, c.StatHPBase+5*c.StatHPPerPoint),
-					"move_speed":       fmt.Sprintf("%.1f + (speed_points * %.1f) — e.g. 5 points = %.1f speed", c.StatSpeedBase, c.StatSpeedPerPoint, c.StatSpeedBase+5*c.StatSpeedPerPoint),
+					"max_hp":            fmt.Sprintf("%.0f + (hp_points * %.0f) — e.g. 5 points = %.0f HP", c.StatHPBase, c.StatHPPerPoint, c.StatHPBase+5*c.StatHPPerPoint),
+					"move_speed":        fmt.Sprintf("%.1f + (speed_points * %.1f) — e.g. 5 points = %.1f speed", c.StatSpeedBase, c.StatSpeedPerPoint, c.StatSpeedBase+5*c.StatSpeedPerPoint),
 					"attack_multiplier": fmt.Sprintf("%.1f + (attack_points * %.1f) — e.g. 5 points = %.1fx damage", c.StatAttackBase, c.StatAttackPerPoint, c.StatAttackBase+5*c.StatAttackPerPoint),
 					"defense_reduction": fmt.Sprintf("defense_points * %.2f — e.g. 5 points = %.0f%% damage reduction", c.StatDefensePerPoint, 5*c.StatDefensePerPoint*100),
 					"damage_formula":    "weapon_damage * attack_multiplier * (1 - target_defense_reduction)",
 				},
-				"fallback_behaviors": []string{"aggressive", "defensive", "opportunistic"},
+				"fallback_behaviors":   []string{"aggressive", "defensive", "opportunistic"},
 				"fallback_description": "When your bot doesn't send an action for a tick, the server runs this AI behavior for you.",
 			},
 
 			// ── Game Mechanics ───────────────────────────────────
 			"game_mechanics": map[string]interface{}{
-				"tick_rate":       c.TickRate,
+				"tick_rate":      c.TickRate,
 				"arena_size":     []float64{c.ArenaWidth, c.ArenaHeight},
-				"grid_cell_size":  c.PathfindingCellSize,
+				"grid_cell_size": c.PathfindingCellSize,
 				"fog_of_war": map[string]interface{}{
 					"radius_tiles": c.FogRadius,
 					"description":  "You can only see entities within this radius (in grid tiles). The server sends hints for distant bots when none are visible.",
 				},
 				"safe_zone": map[string]interface{}{
-					"initial_radius":      c.ZoneInitialRadius,
-					"min_radius":          c.ZoneMinRadius,
-					"shrink_delay_secs":   c.ZoneShrinkDelay,
+					"initial_radius":       c.ZoneInitialRadius,
+					"min_radius":           c.ZoneMinRadius,
+					"shrink_delay_secs":    c.ZoneShrinkDelay,
 					"shrink_interval_secs": c.ZoneShrinkInterval,
-					"shrink_percent":      c.ZoneShrinkPercent,
-					"damage_per_tick":     c.ZoneDamagePerTick,
-					"description":         "The safe zone shrinks over time. Bots outside take damage every tick. Stay inside!",
+					"shrink_percent":       c.ZoneShrinkPercent,
+					"damage_per_tick":      c.ZoneDamagePerTick,
+					"description":          "The safe zone shrinks over time. Bots outside take damage every tick. Stay inside!",
 				},
 				"pickups": map[string]interface{}{
 					"types": []map[string]interface{}{
@@ -242,9 +245,9 @@ func BotSetup() http.HandlerFunc {
 					"pickup_surge_note":    fmt.Sprintf("During Pickup Surge rounds, spawn cadence accelerates to %.0f%% of normal", c.RoundModifierPickupSurgeIntervalMult*100),
 				},
 				"rounds": map[string]interface{}{
-					"duration_secs":    c.RoundDuration,
+					"duration_secs":     c.RoundDuration,
 					"intermission_secs": c.IntermissionTime,
-					"lobby_countdown":  c.LobbyCountdown,
+					"lobby_countdown":   c.LobbyCountdown,
 					"min_bots_to_start": c.MinBotsToStart,
 				},
 				"terrain": map[string]interface{}{
@@ -259,16 +262,16 @@ func BotSetup() http.HandlerFunc {
 					"knockback": fmt.Sprintf("Wall collision deals %.0f bonus damage", c.KnockbackWallDamage),
 				},
 				"new_features": map[string]interface{}{
-					"teleport_pads": "3 linked pairs spawn each round. Nearby pad entities expose is_ready and cooldown_remaining_ticks so bots can avoid locked pads. During teleport_surge rounds, pads re-arm much faster.",
-					"capture_pad": fmt.Sprintf("A neutral objective pad spawns each round. Stand on it uncontested for %d ticks to capture it, gain +%d score, %.0f shield, and %.1fx damage for %d ticks. While the pad is cooling down, the owner can hold it uncontested for a control pulse every %d ticks worth +%d score and %.0f shield. Capture pads expose progress_ticks, capture_ticks, owner_id, is_contested, contender_count, is_ready, cooldown_remaining_ticks, and next_control_pulse_ticks.", c.CapturePadCaptureTicks, c.CapturePadScoreBonus, c.CapturePadShieldBonus, c.CapturePadDamageBoostMult, c.CapturePadEffectTicks, c.CapturePadControlPulseTicks, c.CapturePadControlPulseScore, c.CapturePadControlPulseShield),
-					"combat_reads": "Bots now receive brace_ready, bow_charge_ticks, bow_charge_level, charged_shot_ready, recently_disrupted_ticks, rear_exposed, and near_impact_surface so they can reason about spear braces, charged bow shots, backstabs, shield bashes, and grapple slams.",
-					"environmental_hazards": "6 pulsing damage zones placed around the arena. Nearby hazard entities expose active, on_ticks, off_ticks, tick_counter, and damage_per_tick. During hazard_storm rounds they stay active longer, recover faster, and hit harder.",
-					"sudden_death": "Activates when the safe zone reaches minimum radius. Random tiles become void (instant death). Keep moving!",
-					"bounty_system": "Consecutive round winners build a public bounty board. The live bounty target is exposed in ticks, and the full board is available via GET /api/v1/bounties.",
+					"teleport_pads":           "3 linked pairs spawn each round. Nearby pad entities expose is_ready and cooldown_remaining_ticks so bots can avoid locked pads. During teleport_surge rounds, pads re-arm much faster.",
+					"capture_pad":             fmt.Sprintf("A neutral objective pad spawns each round. Stand on it uncontested for %d ticks to capture it, gain +%d score, %.0f shield, and %.1fx damage for %d ticks. While the pad is cooling down, the owner can hold it uncontested for a control pulse every %d ticks worth +%d score and %.0f shield. Capture pads expose progress_ticks, capture_ticks, owner_id, is_contested, contender_count, is_ready, cooldown_remaining_ticks, and next_control_pulse_ticks.", c.CapturePadCaptureTicks, c.CapturePadScoreBonus, c.CapturePadShieldBonus, c.CapturePadDamageBoostMult, c.CapturePadEffectTicks, c.CapturePadControlPulseTicks, c.CapturePadControlPulseScore, c.CapturePadControlPulseShield),
+					"combat_reads":            "Bots now receive brace_ready, bow_charge_ticks, bow_charge_level, charged_shot_ready, recently_disrupted_ticks, rear_exposed, and near_impact_surface so they can reason about spear braces, charged bow shots, backstabs, shield bashes, and grapple slams.",
+					"environmental_hazards":   "6 pulsing damage zones placed around the arena. Nearby hazard entities expose active, on_ticks, off_ticks, tick_counter, and damage_per_tick. During hazard_storm rounds they stay active longer, recover faster, and hit harder.",
+					"sudden_death":            "Activates when the safe zone reaches minimum radius. Random tiles become void (instant death). Keep moving!",
+					"bounty_system":           "Consecutive round winners build a public bounty board. The live bounty target is exposed in ticks, and the full board is available via GET /api/v1/bounties.",
 					"special_round_modifiers": "Occasional rounds roll a modifier and expose it as round_modifier in round_start/tick. fast_zone accelerates the safe zone, pickup_surge spawns pickups faster, double_bounty doubles bounty-target claim rewards, teleport_surge dramatically shortens teleporter re-arm time, and hazard_storm makes hazard zones pulse faster and hit harder.",
-					"landmines": "Use the place_mine action to plant a landmine at your current position. Max 3 per bot. Mines arm after 1 second and punish choke points, teleporter lanes, and retreat paths.",
-					"gravity_well": "Pick up a gravity_well pickup to gain 1 charge. Use the use_gravity_well action to deploy it at a target position. Pulls nearby enemies toward its center for 3 seconds.",
-					"grappling_hook": "Grapple is a universal ability ALL bots get (not just a weapon). Every bot starts with 2 grapple charges per round. Use the 'grapple' action with a target bot_id to yank an enemy within 12 tiles, or use target_position to anchor-pull yourself to a valid landing. Cooldown 4s, 15 damage on enemy pulls, 3-tick stun. The grapple weapon still exists as a separate loadout.",
+					"landmines":               "Use the place_mine action to plant a landmine at your current position. Max 3 per bot. Mines arm after 1 second and punish choke points, teleporter lanes, and retreat paths.",
+					"gravity_well":            "Pick up a gravity_well pickup to gain 1 charge. Use the use_gravity_well action to deploy it at a target position. Pulls nearby enemies toward its center for 3 seconds.",
+					"grappling_hook":          "Grapple is a universal ability ALL bots get (not just a weapon). Every bot starts with 2 grapple charges per round. Use the 'grapple' action with a target bot_id to yank an enemy within 12 tiles, or use target_position to anchor-pull yourself to a valid landing. Cooldown 4s, 15 damage on enemy pulls, 3-tick stun. The grapple weapon still exists as a separate loadout.",
 				},
 			},
 

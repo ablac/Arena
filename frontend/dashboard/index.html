@@ -455,7 +455,7 @@ if (window.self !== window.top) {
   <div class="error" id="loginError"></div>
   <div class="saved-keys" id="savedKeysList"></div>
   <div style="margin-top:16px;font-size:11px;color:var(--text2)">
-    <a href="/">Back to Arena</a> &nbsp;|&nbsp; Don't have a key? <a href="/#keygen">Generate one</a>
+    <a href="../">Back to Arena</a> &nbsp;|&nbsp; Don't have a key? <a href="../#keygen">Generate one</a>
   </div>
 </div>
 
@@ -688,7 +688,14 @@ renderSavedKeys();
 let apiKey = '';
 let stats = null;
 const DASHBOARD_VIEW = new URLSearchParams(window.location.search).get('view') === 'public' ? 'public' : 'private';
-function getBase() { return location.pathname.startsWith('/arena/') ? '/arena/api/v1' : '/api/v1'; }
+function dashboardAPIBase(pathname, paths) {
+  if (paths && typeof paths.apiBase === 'function') {
+    return paths.apiBase(pathname);
+  }
+  const mounted = pathname === '/arena' || pathname.startsWith('/arena/');
+  return (mounted ? '/arena' : '') + '/api/v1';
+}
+function getBase() { return dashboardAPIBase(location.pathname, window.ArenaPaths); }
 async function api(path, opts={}) {
   const r = await fetch(getBase()+path, {...opts, headers:{'X-Arena-Key':apiKey,'Content-Type':'application/json',...(opts.headers||{})}});
   if (r.status===401||r.status===403) throw new Error('unauthorized');
@@ -783,7 +790,19 @@ function initDashboardMode() {
   activateTab('overview');
 }
 
-initDashboardMode();
+async function startDashboard() {
+  try {
+    window.ArenaPaths = await import('../js/paths.js?v=20260710a');
+  } catch (error) {
+    // getBase() has a synchronous root-/mount-aware fallback, so a transient
+    // module-load failure must not leave the otherwise self-contained
+    // dashboard blank.
+    console.warn('Dashboard path helper unavailable; using local fallback', error);
+  }
+  initDashboardMode();
+}
+
+startDashboard();
 
 function getActivePublicTab() {
   return document.querySelector('.tbtn.active[data-view="public"]')?.dataset.tab || 'simulator';

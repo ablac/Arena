@@ -4,6 +4,9 @@ import (
 	"context"
 	"log/slog"
 	"math"
+	"sort"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"arena-server/internal/config"
@@ -12,129 +15,146 @@ import (
 	"github.com/google/uuid"
 )
 
+var (
+	botStatsPersistenceMu    sync.Mutex
+	botStatsPersistenceEpoch atomic.Uint64
+	pendingBotStatsDeltas    = make(map[string]db.BotStatsDelta)
+	applyBotStatsDelta       = db.ApplyBotStatsDelta
+	insertRoundBotStats      = db.InsertRoundBotStats
+)
+
 // PersistBotStatsFromSnapshot saves accumulated round stats using pre-copied
 // stat snapshots. This avoids data races because the snapshot values are
 // copied under the engine lock before the goroutine starts.
 func PersistBotStatsFromSnapshot(ctx context.Context, snaps []BotStatsSnapshot, winnerID string, finalizeRound bool) {
+	botStatsPersistenceMu.Lock()
+	defer botStatsPersistenceMu.Unlock()
+
 	for _, snap := range snaps {
-		persistOneSnapshot(ctx, snap, winnerID, finalizeRound)
+		if snap.PersistenceEpoch != botStatsPersistenceEpoch.Load() {
+			continue
+		}
+		queueBotStatsDeltaLocked(botStatsDeltaFromSnapshot(snap, winnerID, finalizeRound))
+	}
+	flushBotStatsDeltasLocked(ctx)
+}
+
+func botStatsDeltaFromSnapshot(snap BotStatsSnapshot, winnerID string, finalizeRound bool) db.BotStatsDelta {
+	roundsPlayed := 0
+	roundWins := 0
+	if finalizeRound {
+		roundsPlayed = 1
+		if snap.BotID == winnerID {
+			roundWins = 1
+		}
+	}
+	lifeSecs := int(math.Round(float64(snap.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))))
+	capturedAt := snap.CapturedAt
+	if capturedAt.IsZero() {
+		capturedAt = time.Now()
+	}
+	return db.BotStatsDelta{
+		BotID:            snap.BotID,
+		Kills:            snap.KillsDelta,
+		Deaths:           snap.DeathsDelta,
+		DamageDealt:      snap.DamageDealtDelta,
+		DamageTaken:      snap.DamageTakenDelta,
+		CurrentStreak:    snap.KillStreak,
+		BestStreak:       snap.BestStreak,
+		Elo:              snap.Elo,
+		LongestLifeSecs:  lifeSecs,
+		RoundsPlayed:     roundsPlayed,
+		RoundWins:        roundWins,
+		PickupsCollected: snap.PickupsDelta,
+		DistanceTraveled: snap.DistanceDelta,
+		CapturedAt:       capturedAt,
 	}
 }
 
-// persistOneSnapshot performs the load-merge-upsert for one bot using a
-// value-copy snapshot instead of a live BotState pointer.
-func persistOneSnapshot(ctx context.Context, snap BotStatsSnapshot, winnerID string, finalizeRound bool) {
-	existing, err := db.GetBotStats(ctx, snap.BotID)
-	if err != nil {
-		slog.Error("persist: failed to get bot stats", "bot_id", snap.BotID, "error", err)
+func queueBotStatsDeltaLocked(delta db.BotStatsDelta) {
+	pending, exists := pendingBotStatsDeltas[delta.BotID]
+	if !exists {
+		pendingBotStatsDeltas[delta.BotID] = delta
 		return
 	}
+	pending.Kills += delta.Kills
+	pending.Deaths += delta.Deaths
+	pending.DamageDealt += delta.DamageDealt
+	pending.DamageTaken += delta.DamageTaken
+	pending.RoundsPlayed += delta.RoundsPlayed
+	pending.RoundWins += delta.RoundWins
+	pending.PickupsCollected += delta.PickupsCollected
+	pending.DistanceTraveled += delta.DistanceTraveled
+	if delta.BestStreak > pending.BestStreak {
+		pending.BestStreak = delta.BestStreak
+	}
+	if delta.LongestLifeSecs > pending.LongestLifeSecs {
+		pending.LongestLifeSecs = delta.LongestLifeSecs
+	}
+	if !delta.CapturedAt.Before(pending.CapturedAt) {
+		pending.CurrentStreak = delta.CurrentStreak
+		pending.Elo = delta.Elo
+		pending.CapturedAt = delta.CapturedAt
+	}
+	pendingBotStatsDeltas[delta.BotID] = pending
+}
 
-	now := time.Now()
-
-	if existing == nil {
-		existing = &db.BotStats{
-			BotID:     snap.BotID,
-			Elo:       snap.Elo,
-			UpdatedAt: now,
+func flushBotStatsDeltasLocked(ctx context.Context) {
+	botIDs := make([]string, 0, len(pendingBotStatsDeltas))
+	for botID := range pendingBotStatsDeltas {
+		botIDs = append(botIDs, botID)
+	}
+	sort.Strings(botIDs)
+	for _, botID := range botIDs {
+		delta := pendingBotStatsDeltas[botID]
+		if err := applyBotStatsDelta(ctx, &delta); err != nil {
+			slog.Error("persist: failed to apply bot stats delta", "bot_id", botID, "error", err)
+			continue
 		}
-	}
-
-	// Accumulate only the delta since last persist to avoid double-counting.
-	existing.Kills += snap.RoundKills - snap.PersistedKills
-	existing.Deaths += snap.RoundDeaths - snap.PersistedDeaths
-	existing.DamageDealt += int64(snap.RoundDamageDealt) - int64(snap.PersistedDamageDealt)
-	existing.DamageTaken += int64(snap.RoundDamageTaken) - int64(snap.PersistedDamageTaken)
-	existing.DistanceTraveled += snap.RoundDistance - snap.PersistedDistance
-	existing.PickupsCollected += snap.RoundPickups - snap.PersistedPickups
-	existing.CurrentStreak = snap.KillStreak
-	if snap.BestStreak > existing.BestStreak {
-		existing.BestStreak = snap.BestStreak
-	}
-	lifeSecs := int(math.Round(float64(snap.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))))
-	if lifeSecs > existing.LongestLifeSecs {
-		existing.LongestLifeSecs = lifeSecs
-	}
-	if finalizeRound {
-		existing.RoundsPlayed++
-		if snap.BotID == winnerID {
-			existing.RoundWins++
-		}
-	}
-
-	existing.Elo = snap.Elo
-	existing.UpdatedAt = now
-
-	if err := db.UpsertBotStats(ctx, existing); err != nil {
-		slog.Error("persist: failed to upsert bot stats", "bot_id", snap.BotID, "error", err)
+		delete(pendingBotStatsDeltas, botID)
 	}
 }
 
 // PersistSingleBot saves a single bot's stats, typically called on
 // disconnect.
-func PersistSingleBot(ctx context.Context, bot *BotState) {
-	persistOne(ctx, bot)
+func PersistSingleBot(ctx context.Context, snapshot BotStatsSnapshot) {
+	PersistBotStatsFromSnapshot(ctx, []BotStatsSnapshot{snapshot}, "", false)
 }
 
-// persistOne performs the actual load-merge-upsert for one bot.
-func persistOne(ctx context.Context, bot *BotState) {
-	existing, err := db.GetBotStats(ctx, bot.BotID)
-	if err != nil {
-		slog.Error("persist: failed to get bot stats", "bot_id", bot.BotID, "error", err)
+// PersistRoundBotStats serializes the time-window source with leaderboard
+// resets. An epoch captured before a successful reset is stale even if its
+// goroutine was scheduled afterward, so it must not recreate truncated rows.
+func PersistRoundBotStats(ctx context.Context, epoch uint64, roundNumber int, bots map[string]*BotState, winnerID string) {
+	botStatsPersistenceMu.Lock()
+	defer botStatsPersistenceMu.Unlock()
+	if epoch != botStatsPersistenceEpoch.Load() {
 		return
 	}
 
-	now := time.Now()
-
-	if existing == nil {
-		// First time: create a fresh stats row.
-		existing = &db.BotStats{
-			BotID:     bot.BotID,
-			Elo:       bot.Elo,
-			UpdatedAt: now,
+	botIDs := make([]string, 0, len(bots))
+	for botID := range bots {
+		botIDs = append(botIDs, botID)
+	}
+	sort.Strings(botIDs)
+	for _, botID := range botIDs {
+		bot := bots[botID]
+		if bot == nil {
+			continue
 		}
-	}
-
-	// Accumulate only the delta since last persist to avoid double-counting.
-	existing.Kills += bot.RoundKills - bot.PersistedKills
-	existing.Deaths += bot.RoundDeaths - bot.PersistedDeaths
-	existing.DamageDealt += int64(bot.RoundDamageDealt) - int64(bot.PersistedDamageDealt)
-	existing.DamageTaken += int64(bot.RoundDamageTaken) - int64(bot.PersistedDamageTaken)
-	existing.DistanceTraveled += bot.RoundDistance - bot.PersistedDistance
-	existing.PickupsCollected += bot.RoundPickups - bot.PersistedPickups
-
-	// Update snapshot so next persist only adds new deltas.
-	bot.PersistedKills = bot.RoundKills
-	bot.PersistedDeaths = bot.RoundDeaths
-	bot.PersistedDamageDealt = bot.RoundDamageDealt
-	bot.PersistedDamageTaken = bot.RoundDamageTaken
-	bot.PersistedDistance = bot.RoundDistance
-	bot.PersistedPickups = bot.RoundPickups
-
-	// Streak tracking.
-	existing.CurrentStreak = bot.KillStreak
-	if bot.BestKillStreak > existing.BestStreak {
-		existing.BestStreak = bot.BestKillStreak
-	}
-
-	// ELO.
-	existing.Elo = bot.Elo
-
-	// Longest life (in ticks, stored as seconds).
-	lifeSecs := int(math.Round(float64(bot.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))))
-	if lifeSecs > existing.LongestLifeSecs {
-		existing.LongestLifeSecs = lifeSecs
-	}
-
-	existing.UpdatedAt = now
-
-	if err := db.UpsertBotStats(ctx, existing); err != nil {
-		slog.Error("persist: failed to upsert bot stats", "bot_id", bot.BotID, "error", err)
+		won := bot.BotID == winnerID
+		lifeSecs := int(math.Round(float64(bot.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))))
+		if err := insertRoundBotStats(ctx, roundNumber, bot.BotID, bot.Name, bot.Weapon,
+			bot.RoundKills, bot.RoundDeaths,
+			int64(bot.RoundDamageDealt), int64(bot.RoundDamageTaken),
+			lifeSecs, bot.RoundShotsFired, bot.RoundShotsHit, bot.RoundPickups,
+			bot.RoundDistance, bot.Elo, won); err != nil {
+			slog.Error("persist: failed to insert round bot stats", "bot_id", bot.BotID, "round", roundNumber, "error", err)
+		}
 	}
 }
 
 // InsertKillLog records a kill event in the database.
-func InsertKillLog(ctx context.Context, roundID string, killer, victim *BotState, weapon string, damage float64, tick int) {
+func InsertKillLog(ctx context.Context, roundID, killerID, victimID, weapon string, damage float64, killerHP, tick int) {
 	var rID *string
 	if roundID != "" {
 		rID = &roundID
@@ -143,11 +163,11 @@ func InsertKillLog(ctx context.Context, roundID string, killer, victim *BotState
 	entry := &db.KillLog{
 		ID:        uuid.New().String(),
 		RoundID:   rID,
-		KillerID:  killer.BotID,
-		VictimID:  victim.BotID,
+		KillerID:  killerID,
+		VictimID:  victimID,
 		Weapon:    weapon,
 		Damage:    int(damage),
-		KillerHP:  int(killer.HP),
+		KillerHP:  killerHP,
 		Tick:      tick,
 		CreatedAt: time.Now(),
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -21,17 +22,14 @@ type WeaponBalanceState struct {
 }
 
 type weaponRoundPerformance struct {
-	weapon           string
-	bots             int
-	wins             int
-	score            float64
-	totalKills       int
-	totalDamage      float64
-	totalStreak      int
-	totalLifeSecs    float64
-	totalShotsFired  int
-	totalShotsHit    int
-	totalDamageTaken float64
+	bots            int
+	score           float64
+	totalKills      float64
+	totalDamage     float64
+	totalLifeSecs   float64
+	totalShotsFired float64
+	totalShotsHit   float64
+	botIDs          []string
 }
 
 func (p *weaponRoundPerformance) avgDamage() float64 {
@@ -41,25 +39,18 @@ func (p *weaponRoundPerformance) avgDamage() float64 {
 	return p.totalDamage / float64(p.bots)
 }
 
-func (p *weaponRoundPerformance) avgLifeSecs() float64 {
+func (p *weaponRoundPerformance) avgScore() float64 {
 	if p == nil || p.bots == 0 {
 		return 0
 	}
-	return p.totalLifeSecs / float64(p.bots)
+	return p.score / float64(p.bots)
 }
 
 func (p *weaponRoundPerformance) hitRate() float64 {
 	if p == nil || p.totalShotsFired <= 0 {
 		return 0
 	}
-	return float64(p.totalShotsHit) / float64(p.totalShotsFired)
-}
-
-func (p *weaponRoundPerformance) damagePerShot() float64 {
-	if p == nil || p.totalShotsFired <= 0 {
-		return 0
-	}
-	return p.totalDamage / float64(p.totalShotsFired)
+	return clampFloat(p.totalShotsHit/p.totalShotsFired, 0, 1)
 }
 
 func (p *weaponRoundPerformance) damagePerHit() float64 {
@@ -73,14 +64,14 @@ func (p *weaponRoundPerformance) shotsPerLife() float64 {
 	if p == nil || p.totalLifeSecs <= 0 {
 		return 0
 	}
-	return float64(p.totalShotsFired) / p.totalLifeSecs
+	return p.totalShotsFired / p.totalLifeSecs
 }
 
 func (p *weaponRoundPerformance) killsPerHit() float64 {
 	if p == nil || p.totalShotsHit <= 0 {
 		return 0
 	}
-	return float64(p.totalKills) / float64(p.totalShotsHit)
+	return p.totalKills / p.totalShotsHit
 }
 
 func (p *weaponRoundPerformance) damagePerLife() float64 {
@@ -90,19 +81,102 @@ func (p *weaponRoundPerformance) damagePerLife() float64 {
 	return p.totalDamage / p.totalLifeSecs
 }
 
-func (p *weaponRoundPerformance) confidence() float64 {
-	if p == nil {
-		return 0.35
+func (p *weaponRoundPerformance) subtract(other *weaponRoundPerformance) *weaponRoundPerformance {
+	if p == nil || other == nil {
+		return nil
 	}
-	botFactor := clampFloat(float64(p.bots)/2.0, 0.35, 1.0)
-	volumeFactor := clampFloat(float64(p.totalShotsFired)/18.0, 0.2, 1.0)
-	damageFactor := clampFloat(p.totalDamage/160.0, 0.2, 1.0)
-	return clampFloat(botFactor*0.35+volumeFactor*0.4+damageFactor*0.25, 0.25, 1.0)
+	return &weaponRoundPerformance{
+		bots:            p.bots - other.bots,
+		score:           p.score - other.score,
+		totalKills:      p.totalKills - other.totalKills,
+		totalDamage:     p.totalDamage - other.totalDamage,
+		totalLifeSecs:   p.totalLifeSecs - other.totalLifeSecs,
+		totalShotsFired: p.totalShotsFired - other.totalShotsFired,
+		totalShotsHit:   p.totalShotsHit - other.totalShotsHit,
+	}
+}
+
+type runningBalanceStat struct {
+	count int
+	mean  float64
+	m2    float64
+}
+
+func (s *runningBalanceStat) add(value float64) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return
+	}
+	s.count++
+	delta := value - s.mean
+	s.mean += delta / float64(s.count)
+	s.m2 += delta * (value - s.mean)
+}
+
+func (s runningBalanceStat) standardError() float64 {
+	if s.count < 2 {
+		return math.Inf(1)
+	}
+	variance := math.Max(0, s.m2/float64(s.count-1))
+	return math.Sqrt(variance / float64(s.count))
+}
+
+// directionOutside returns -1 or 1 only when the full confidence interval is
+// outside the practical deadzone. A zero result means the evidence is either
+// too small, too noisy, or too close to balanced to justify changing gameplay.
+func (s runningBalanceStat) directionOutside(deadzone, confidenceZ float64) int {
+	margin := confidenceZ * s.standardError()
+	if s.mean-margin > deadzone {
+		return 1
+	}
+	if s.mean+margin < -deadzone {
+		return -1
+	}
+	return 0
+}
+
+func (s runningBalanceStat) conservativeMagnitude(confidenceZ float64) float64 {
+	return math.Max(0, math.Abs(s.mean)-confidenceZ*s.standardError())
+}
+
+type weaponBalanceEvidence struct {
+	rounds              int
+	botSamples          int
+	opponentSamples     int
+	distinctBots        map[string]struct{}
+	hitRateParityRounds int
+	scoreDiff           runningBalanceStat
+	damagePressure      runningBalanceStat
+	cooldownPressure    runningBalanceStat
+}
+
+func (e *weaponBalanceEvidence) add(entry, opponents *weaponRoundPerformance, scoreDiff, damagePressure, cooldownPressure float64) {
+	if e.distinctBots == nil {
+		e.distinctBots = make(map[string]struct{})
+	}
+	e.rounds++
+	e.botSamples += entry.bots
+	e.opponentSamples += opponents.bots
+	for _, id := range entry.botIDs {
+		if id != "" {
+			e.distinctBots[id] = struct{}{}
+		}
+	}
+	if opponents.hitRate() <= 0 || entry.hitRate() >= opponents.hitRate()*0.75 {
+		e.hitRateParityRounds++
+	}
+	e.scoreDiff.add(scoreDiff)
+	e.damagePressure.add(damagePressure)
+	e.cooldownPressure.add(cooldownPressure)
+}
+
+func (e *weaponBalanceEvidence) reset() {
+	*e = weaponBalanceEvidence{}
 }
 
 var (
 	baseWeaponConfigs map[string]WeaponConfig
 	weaponBalance     map[string]WeaponBalanceState
+	weaponEvidence    map[string]*weaponBalanceEvidence
 	weaponBalanceMu   sync.RWMutex
 )
 
@@ -163,6 +237,7 @@ func init() {
 	}
 	WeaponConfigs = cloneWeaponConfigs(baseWeaponConfigs)
 	weaponBalance = make(map[string]WeaponBalanceState, len(baseWeaponConfigs))
+	weaponEvidence = make(map[string]*weaponBalanceEvidence, len(baseWeaponConfigs))
 }
 
 func cloneWeaponConfigs(src map[string]WeaponConfig) map[string]WeaponConfig {
@@ -174,10 +249,7 @@ func cloneWeaponConfigs(src map[string]WeaponConfig) map[string]WeaponConfig {
 }
 
 func defaultWeaponBalanceState(weapon string) WeaponBalanceState {
-	startStep := config.C.WeaponAutoBalanceStartStep
-	if startStep <= 0 {
-		startStep = 0.05
-	}
+	_, startStep := weaponBalanceStepBounds()
 	return WeaponBalanceState{
 		Weapon:          weapon,
 		DamageScale:     1.0,
@@ -190,20 +262,33 @@ func normalizeWeaponBalanceState(state WeaponBalanceState) WeaponBalanceState {
 	if state.Weapon == "" {
 		return state
 	}
-	if state.DamageScale <= 0 {
+	if !finitePositive(state.DamageScale) {
 		state.DamageScale = 1.0
 	}
-	if state.CooldownScale <= 0 {
+	if !finitePositive(state.CooldownScale) {
 		state.CooldownScale = 1.0
 	}
-	minStep := config.C.WeaponAutoBalanceMinStep
-	if minStep <= 0 {
-		minStep = 0.005
-	}
-	if state.AdjustmentScale < minStep {
-		state.AdjustmentScale = minStep
+	minStep, startStep := weaponBalanceStepBounds()
+	if !finitePositive(state.AdjustmentScale) {
+		state.AdjustmentScale = startStep
+	} else {
+		state.AdjustmentScale = clampFloat(state.AdjustmentScale, minStep, startStep)
 	}
 	return state
+}
+
+func weaponBalanceStepBounds() (float64, float64) {
+	minStep := config.C.WeaponAutoBalanceMinStep
+	if !finitePositive(minStep) {
+		minStep = 0.005
+	}
+	minStep = math.Min(minStep, 0.05)
+	startStep := config.C.WeaponAutoBalanceStartStep
+	if !finitePositive(startStep) {
+		startStep = 0.05
+	}
+	startStep = clampFloat(startStep, minStep, 0.10)
+	return minStep, startStep
 }
 
 func effectiveWeaponConfigLocked(name string) WeaponConfig {
@@ -225,17 +310,14 @@ func effectiveWeaponConfigLocked(name string) WeaponConfig {
 
 func currentDeadzone(state WeaponBalanceState) float64 {
 	start := config.C.WeaponAutoBalanceDeadzoneStart
-	if start <= 0 {
+	if !finitePositive(start) {
 		start = 0.02
 	}
 	minDeadzone := config.C.WeaponAutoBalanceDeadzoneMin
-	if minDeadzone <= 0 {
+	if !finitePositive(minDeadzone) {
 		minDeadzone = 0.003
 	}
-	startStep := config.C.WeaponAutoBalanceStartStep
-	if startStep <= 0 {
-		startStep = 0.05
-	}
+	_, startStep := weaponBalanceStepBounds()
 	progress := state.AdjustmentScale / startStep
 	if progress > 1 {
 		progress = 1
@@ -249,10 +331,10 @@ func currentDeadzone(state WeaponBalanceState) float64 {
 func damageScaleBounds() (float64, float64) {
 	minV := config.C.WeaponAutoBalanceMinDamageScale
 	maxV := config.C.WeaponAutoBalanceMaxDamageScale
-	if minV <= 0 {
+	if !finitePositive(minV) {
 		minV = 0.8
 	}
-	if maxV <= minV {
+	if !finitePositive(maxV) || maxV <= minV {
 		maxV = 1.3
 	}
 	return minV, maxV
@@ -261,16 +343,143 @@ func damageScaleBounds() (float64, float64) {
 func cooldownScaleBounds() (float64, float64) {
 	minV := config.C.WeaponAutoBalanceMinCooldownScale
 	maxV := config.C.WeaponAutoBalanceMaxCooldownScale
-	if minV <= 0 {
+	if !finitePositive(minV) {
 		minV = 0.85
 	}
-	if maxV <= minV {
+	if !finitePositive(maxV) || maxV <= minV {
 		maxV = 1.2
 	}
 	return minV, maxV
 }
 
-func persistWeaponBalanceSnapshot(ctx context.Context, state WeaponBalanceState, entry *weaponRoundPerformance, globalMean float64, damageDelta, cooldownDelta float64) {
+func balanceEvidenceThresholds() (minRounds, minBotSamples, minDistinctBots, minActions int) {
+	minRounds = config.C.WeaponAutoBalanceMinRounds
+	if minRounds < 2 {
+		minRounds = 6
+	}
+	minBotSamples = config.C.WeaponAutoBalanceMinBotSamples
+	if minBotSamples < minRounds {
+		minBotSamples = minRounds * 3
+	}
+	minDistinctBots = config.C.WeaponAutoBalanceMinDistinctBots
+	if minDistinctBots < 2 {
+		minDistinctBots = 3
+	}
+	minActions = config.C.WeaponAutoBalanceMinActions
+	if minActions < 1 {
+		minActions = 5
+	}
+	return
+}
+
+func balanceConfidenceZ() float64 {
+	z := config.C.WeaponAutoBalanceConfidenceZ
+	if !finitePositive(z) || z < 1 || z > 4 {
+		return 1.96
+	}
+	return z
+}
+
+func balanceMinEffect() float64 {
+	effect := config.C.WeaponAutoBalanceMinEffect
+	if !finitePositive(effect) || effect > 0.5 {
+		return 0.05
+	}
+	return effect
+}
+
+func evidenceReady(e *weaponBalanceEvidence, minRounds, minBotSamples, minDistinctBots int) bool {
+	return e != nil &&
+		e.rounds >= minRounds &&
+		e.botSamples >= minBotSamples &&
+		e.opponentSamples >= minBotSamples &&
+		len(e.distinctBots) >= minDistinctBots
+}
+
+// eloSkillFactor estimates how much performance the round should expect from
+// this bot relative to an average participant. The narrow clamp intentionally
+// makes this a modest confounder correction, not a way for rating to erase a
+// real weapon advantage. Elo is sampled at round end, so a wider correction
+// would create a feedback loop between this round's result and its weighting.
+func eloSkillFactor(elo int, roundMeanElo float64) float64 {
+	if elo <= 0 || roundMeanElo <= 0 {
+		return 1
+	}
+	expected := 1 / (1 + math.Pow(10, (roundMeanElo-float64(elo))/400))
+	return clampFloat(expected/0.5, 0.75, 1.25)
+}
+
+func botRoundBalanceScore(bot *BotState, won bool) float64 {
+	if bot == nil {
+		return 0
+	}
+	lifeSecs := float64(bot.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))
+	score := float64(bot.RoundKills)*28 +
+		bot.RoundDamageDealt*0.18 +
+		float64(bot.BestKillStreak)*14 +
+		lifeSecs*0.3
+	if won {
+		score += 60
+	}
+	return score
+}
+
+func validWeaponBalanceSample(bot *BotState, minActions int) bool {
+	return bot != nil &&
+		bot.Weapon != "" &&
+		bot.RoundShotsFired >= minActions &&
+		bot.RoundShotsHit >= 0 &&
+		bot.RoundKills >= 0 &&
+		bot.RoundLongestLife >= 0 &&
+		!math.IsNaN(bot.RoundDamageDealt) &&
+		!math.IsInf(bot.RoundDamageDealt, 0) &&
+		bot.RoundDamageDealt >= 0
+}
+
+func addBotPerformance(entry, total *weaponRoundPerformance, bot *BotState, identity string, won bool, skillFactor float64) {
+	if skillFactor <= 0 {
+		skillFactor = 1
+	}
+	lifeSecs := float64(bot.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))
+	adjustedScore := botRoundBalanceScore(bot, won) / skillFactor
+	adjustedKills := float64(bot.RoundKills) / skillFactor
+	adjustedDamage := bot.RoundDamageDealt / skillFactor
+	adjustedLife := lifeSecs / skillFactor
+	adjustedShotsFired := float64(bot.RoundShotsFired) / skillFactor
+	adjustedHits := float64(bot.RoundShotsHit) / skillFactor
+
+	for _, target := range []*weaponRoundPerformance{entry, total} {
+		target.bots++
+		target.score += adjustedScore
+		target.totalKills += adjustedKills
+		target.totalDamage += adjustedDamage
+		target.totalLifeSecs += adjustedLife
+		target.totalShotsFired += adjustedShotsFired
+		target.totalShotsHit += adjustedHits
+	}
+	entry.botIDs = append(entry.botIDs, identity)
+}
+
+func sampleReliability(a, b int) float64 {
+	if a <= 0 || b <= 0 {
+		return 0
+	}
+	// Harmonic sample size is dominated by the smaller side of the
+	// comparison. A two-sample prior shrinks sparse weapon matchups toward no
+	// effect instead of allowing one rare pick to dictate the next patch.
+	effective := 2 * float64(a*b) / float64(a+b)
+	return effective / (effective + 2)
+}
+
+func symmetricRelativeDelta(value, baseline float64) float64 {
+	denominator := math.Abs(value) + math.Abs(baseline)
+	if denominator <= 1e-9 {
+		return 0
+	}
+	return clampFloat(2*(value-baseline)/denominator, -2, 2)
+}
+
+func persistWeaponBalanceSnapshot(ctx context.Context, state WeaponBalanceState, entry *weaponRoundPerformance, comparisonMean, diffRatio, damageDelta, cooldownDelta float64) {
 	if db.Pool == nil {
 		return
 	}
@@ -291,9 +500,9 @@ func persistWeaponBalanceSnapshot(ctx context.Context, state WeaponBalanceState,
 		DamageScale:     state.DamageScale,
 		CooldownScale:   state.CooldownScale,
 		AdjustmentScale: state.AdjustmentScale,
-		AvgScore:        entry.score,
-		MeanScore:       globalMean,
-		DiffPct:         ((entry.score - globalMean) / math.Max(globalMean, 0.001)) * 100,
+		AvgScore:        entry.avgScore(),
+		MeanScore:       comparisonMean,
+		DiffPct:         diffRatio * 100,
 		DamageDelta:     damageDelta,
 		CooldownDelta:   cooldownDelta,
 		CreatedAt:       state.UpdatedAt,
@@ -366,6 +575,7 @@ func GetWeaponConfig(name string) WeaponConfig {
 
 func LoadWeaponBalance(ctx context.Context) error {
 	weaponBalanceMu.Lock()
+	weaponEvidence = make(map[string]*weaponBalanceEvidence, len(baseWeaponConfigs))
 	for name := range baseWeaponConfigs {
 		weaponBalance[name] = defaultWeaponBalanceState(name)
 	}
@@ -401,216 +611,230 @@ func LoadWeaponBalance(ctx context.Context) error {
 }
 
 func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, winnerID string) {
-	if !config.C.WeaponAutoBalanceEnabled {
+	if !config.C.WeaponAutoBalanceEnabled || ActiveModeRules.HasTeams() {
 		return
 	}
 
-	// Only learn from free-for-all rounds. Team battles and CTF distort the
-	// per-weapon signal: kills/damage depend on team composition, friendly
-	// targets are excluded, and objective play (flag running) suppresses a
-	// weapon's combat stats without the weapon being weak. Feeding those
-	// rounds into the balancer would push scales around for the wrong
-	// reasons; balance still applies in team modes, it just doesn't train
-	// there.
-	if ActiveModeRules.HasTeams() {
-		return
+	minRounds, minBotSamples, minDistinctBots, minActions := balanceEvidenceThresholds()
+	weaponBalanceMu.RLock()
+	knownWeapons := make(map[string]struct{}, len(baseWeaponConfigs))
+	for weapon := range baseWeaponConfigs {
+		knownWeapons[weapon] = struct{}{}
 	}
+	weaponBalanceMu.RUnlock()
 
-	perf := make(map[string]*weaponRoundPerformance)
-	for _, bot := range bots {
-		if bot == nil || bot.Weapon == "" {
+	type eligibleBot struct {
+		identity string
+		bot      *BotState
+	}
+	eligible := make([]eligibleBot, 0, len(bots))
+	meanElo := 0.0
+	ratedBots := 0
+	for mapID, bot := range bots {
+		if !validWeaponBalanceSample(bot, minActions) {
 			continue
 		}
-		entry := perf[bot.Weapon]
+		if _, known := knownWeapons[bot.Weapon]; !known {
+			continue
+		}
+		identity := bot.BotID
+		if identity == "" {
+			identity = mapID
+		}
+		eligible = append(eligible, eligibleBot{identity: identity, bot: bot})
+		if bot.Elo > 0 {
+			meanElo += float64(bot.Elo)
+			ratedBots++
+		}
+	}
+	if ratedBots > 0 {
+		meanElo /= float64(ratedBots)
+	}
+
+	performance := make(map[string]*weaponRoundPerformance)
+	total := &weaponRoundPerformance{}
+	for _, sample := range eligible {
+		bot := sample.bot
+		entry := performance[bot.Weapon]
 		if entry == nil {
-			entry = &weaponRoundPerformance{weapon: bot.Weapon}
-			perf[bot.Weapon] = entry
+			entry = &weaponRoundPerformance{}
+			performance[bot.Weapon] = entry
 		}
-		entry.bots++
-		if bot.BotID == winnerID {
-			entry.wins++
-		}
-		lifeSecs := float64(bot.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))
-		killScore := float64(bot.RoundKills) * 28
-		damageScore := bot.RoundDamageDealt * 0.18
-		streakScore := float64(bot.BestKillStreak) * 14
-		survivalScore := lifeSecs * 0.3
-		entry.score += killScore + damageScore + streakScore + survivalScore
-		entry.totalKills += bot.RoundKills
-		entry.totalDamage += bot.RoundDamageDealt
-		entry.totalStreak += bot.BestKillStreak
-		entry.totalLifeSecs += lifeSecs
-		entry.totalShotsFired += bot.RoundShotsFired
-		entry.totalShotsHit += bot.RoundShotsHit
-		entry.totalDamageTaken += bot.RoundDamageTaken
-		if bot.BotID == winnerID {
-			entry.score += 60
-		}
+		won := bot.BotID == winnerID
+		addBotPerformance(entry, total, bot, sample.identity, won, eloSkillFactor(bot.Elo, meanElo))
 	}
-	if len(perf) < 2 {
+	if len(performance) < 2 {
 		return
 	}
 
-	globalMean := 0.0
-	meanAvgDamage := 0.0
-	meanHitRate := 0.0
-	meanDamagePerHit := 0.0
-	meanShotsPerLife := 0.0
-	meanDamagePerLife := 0.0
-	meanKillsPerHit := 0.0
-	participants := 0
-	for _, entry := range perf {
-		if entry.bots == 0 {
+	type weaponRoundSignal struct {
+		entry            *weaponRoundPerformance
+		opponents        *weaponRoundPerformance
+		scoreDiff        float64
+		damagePressure   float64
+		cooldownPressure float64
+	}
+	weapons := make([]string, 0, len(performance))
+	signals := make(map[string]weaponRoundSignal, len(performance))
+	for weapon, entry := range performance {
+		opponents := total.subtract(entry)
+		if opponents == nil || opponents.bots == 0 {
 			continue
 		}
-		entry.score /= float64(entry.bots)
-		globalMean += entry.score
-		meanAvgDamage += entry.avgDamage()
-		meanHitRate += entry.hitRate()
-		meanDamagePerHit += entry.damagePerHit()
-		meanShotsPerLife += entry.shotsPerLife()
-		meanDamagePerLife += entry.damagePerLife()
-		meanKillsPerHit += entry.killsPerHit()
-		participants++
+		reliability := sampleReliability(entry.bots, opponents.bots)
+		scoreDiff := symmetricRelativeDelta(entry.avgScore(), opponents.avgScore()) * reliability
+		damagePressure := weightedRelative(
+			symmetricRelativeDelta(entry.damagePerHit(), opponents.damagePerHit()), 0.5,
+			symmetricRelativeDelta(entry.killsPerHit(), opponents.killsPerHit()), 0.3,
+			symmetricRelativeDelta(entry.avgDamage(), opponents.avgDamage()), 0.2,
+		) * reliability
+		cooldownPressure := weightedRelative(
+			symmetricRelativeDelta(entry.shotsPerLife(), opponents.shotsPerLife()), 0.55,
+			symmetricRelativeDelta(entry.hitRate(), opponents.hitRate()), 0.2,
+			symmetricRelativeDelta(entry.damagePerLife(), opponents.damagePerLife()), 0.25,
+		) * reliability
+		signals[weapon] = weaponRoundSignal{
+			entry: entry, opponents: opponents, scoreDiff: scoreDiff,
+			damagePressure: damagePressure, cooldownPressure: cooldownPressure,
+		}
+		weapons = append(weapons, weapon)
 	}
-	if participants < 2 {
+	if len(weapons) < 2 {
 		return
 	}
-	globalMean /= float64(participants)
-	meanAvgDamage /= float64(participants)
-	meanHitRate /= float64(participants)
-	meanDamagePerHit /= float64(participants)
-	meanShotsPerLife /= float64(participants)
-	meanDamagePerLife /= float64(participants)
-	meanKillsPerHit /= float64(participants)
-	if globalMean <= 0 {
-		return
-	}
+	sort.Strings(weapons)
 
-	minStep := config.C.WeaponAutoBalanceMinStep
-	if minStep <= 0 {
-		minStep = 0.005
-	}
-	startStep := config.C.WeaponAutoBalanceStartStep
-	if startStep <= 0 {
-		startStep = 0.05
-	}
+	minStep, startStep := weaponBalanceStepBounds()
 	decay := config.C.WeaponAutoBalanceDecay
-	if decay <= 0 || decay >= 1 {
+	if !finitePositive(decay) || decay >= 1 {
 		decay = 0.94
 	}
+	damageWeight := config.C.WeaponAutoBalanceDamageWeight
+	if !finitePositive(damageWeight) {
+		damageWeight = 0.65
+	}
+	damageWeight = math.Min(damageWeight, 1)
+	cooldownWeight := config.C.WeaponAutoBalanceCooldownWeight
+	if !finitePositive(cooldownWeight) {
+		cooldownWeight = 0.45
+	}
+	cooldownWeight = math.Min(cooldownWeight, 1)
+	confidenceZ := balanceConfidenceZ()
+	minEffect := balanceMinEffect()
+	minDamageScale, maxDamageScale := damageScaleBounds()
+	minCooldownScale, maxCooldownScale := cooldownScaleBounds()
+	now := time.Now()
+
+	type pendingSnapshot struct {
+		state                      WeaponBalanceState
+		entry                      *weaponRoundPerformance
+		comparisonMean, diffRatio  float64
+		damageDelta, cooldownDelta float64
+	}
+	pending := make([]pendingSnapshot, 0, len(weapons))
 
 	weaponBalanceMu.Lock()
-	defer weaponBalanceMu.Unlock()
-
-	for weapon, entry := range perf {
+	if weaponEvidence == nil {
+		weaponEvidence = make(map[string]*weaponBalanceEvidence, len(baseWeaponConfigs))
+	}
+	for _, weapon := range weapons {
+		signal := signals[weapon]
 		state := normalizeWeaponBalanceState(weaponBalance[weapon])
 		if state.Weapon == "" {
 			state = defaultWeaponBalanceState(weapon)
 		}
-		prevDamageScale := state.DamageScale
-		prevCooldownScale := state.CooldownScale
+		previousDamageScale := state.DamageScale
+		previousCooldownScale := state.CooldownScale
 
-		diffRatio := (entry.score - globalMean) / globalMean
-		if math.Abs(diffRatio) < currentDeadzone(state) {
-			state.RoundsTracked++
-			state.AdjustmentScale = math.Max(minStep, state.AdjustmentScale*decay)
-			state.UpdatedAt = time.Now()
-			weaponBalance[weapon] = state
-			WeaponConfigs[weapon] = effectiveWeaponConfigLocked(weapon)
-			persistWeaponBalanceSnapshot(ctx, state, entry, globalMean, 0, 0)
-			continue
+		evidence := weaponEvidence[weapon]
+		if evidence == nil {
+			evidence = &weaponBalanceEvidence{}
+			weaponEvidence[weapon] = evidence
 		}
-
-		magnitude := state.AdjustmentScale * math.Min(1, math.Abs(diffRatio)) * entry.confidence()
-		if magnitude < minStep {
-			magnitude = minStep
-		}
-		damageWeight := config.C.WeaponAutoBalanceDamageWeight
-		if damageWeight <= 0 {
-			damageWeight = 0.65
-		}
-		cooldownWeight := config.C.WeaponAutoBalanceCooldownWeight
-		if cooldownWeight <= 0 {
-			cooldownWeight = 0.45
-		}
-		minDamageScale, maxDamageScale := damageScaleBounds()
-		minCooldownScale, maxCooldownScale := cooldownScaleBounds()
-		axisDeadzone := math.Max(0.02, currentDeadzone(state)*0.85)
-
-		damagePressure := weightedRelative(
-			relativeDelta(entry.damagePerHit(), meanDamagePerHit), 0.5,
-			relativeDelta(entry.killsPerHit(), meanKillsPerHit), 0.3,
-			relativeDelta(entry.avgDamage(), meanAvgDamage), 0.2,
-		)
-		cooldownPressure := weightedRelative(
-			relativeDelta(entry.shotsPerLife(), meanShotsPerLife), 0.55,
-			relativeDelta(entry.hitRate(), meanHitRate), 0.2,
-			relativeDelta(entry.damagePerLife(), meanDamagePerLife), 0.25,
-		)
-
-		adjustDamage := false
-		adjustCooldown := false
-		if diffRatio > 0 {
-			adjustDamage = damagePressure > axisDeadzone
-			adjustCooldown = cooldownPressure > axisDeadzone
-		} else {
-			adjustDamage = damagePressure < -axisDeadzone
-			adjustCooldown = cooldownPressure < -axisDeadzone && entry.hitRate() >= meanHitRate*0.9
-		}
-		if !adjustDamage && !adjustCooldown {
-			if math.Abs(damagePressure) >= math.Abs(cooldownPressure) {
-				adjustDamage = true
-			} else {
-				adjustCooldown = true
-			}
-		}
-
-		damageAxisScale := axisMagnitudeScale(damagePressure, axisDeadzone)
-		cooldownAxisScale := axisMagnitudeScale(cooldownPressure, axisDeadzone)
-		if adjustDamage && diffRatio > 0 {
-			state.DamageScale = clampFloat(state.DamageScale*(1-magnitude*damageWeight*damageAxisScale), minDamageScale, maxDamageScale)
-		} else if adjustDamage {
-			state.DamageScale = clampFloat(state.DamageScale*(1+magnitude*damageWeight*damageAxisScale), minDamageScale, maxDamageScale)
-		}
-		if adjustCooldown && diffRatio > 0 {
-			state.CooldownScale = clampFloat(state.CooldownScale*(1+magnitude*cooldownWeight*cooldownAxisScale), minCooldownScale, maxCooldownScale)
-		} else if adjustCooldown {
-			state.CooldownScale = clampFloat(state.CooldownScale*(1-magnitude*cooldownWeight*cooldownAxisScale), minCooldownScale, maxCooldownScale)
-		}
-
+		evidence.add(signal.entry, signal.opponents, signal.scoreDiff, signal.damagePressure, signal.cooldownPressure)
 		state.RoundsTracked++
-		// The weapon is still outside the deadzone, so it is actively being
-		// corrected — grow the step slightly (capped at the starting step)
-		// instead of decaying it. The old behaviour decayed the step on every
-		// round, so a persistently unbalanced weapon was corrected slower and
-		// slower exactly when the system should keep pushing; the step only
-		// shrinks once the weapon settles inside the deadzone.
-		state.AdjustmentScale = clampFloat(state.AdjustmentScale*1.05, minStep, startStep)
-		state.UpdatedAt = time.Now()
+		state.UpdatedAt = now
+
+		if evidenceReady(evidence, minRounds, minBotSamples, minDistinctBots) {
+			deadzone := math.Max(minEffect, currentDeadzone(state))
+			axisDeadzone := math.Max(minEffect*0.75, currentDeadzone(state)*0.85)
+			scoreDirection := evidence.scoreDiff.directionOutside(deadzone, confidenceZ)
+			damageDirection := evidence.damagePressure.directionOutside(axisDeadzone, confidenceZ)
+			cooldownDirection := evidence.cooldownPressure.directionOutside(axisDeadzone, confidenceZ)
+			hitRateParity := float64(evidence.hitRateParityRounds) / float64(evidence.rounds)
+			adjustDamage := scoreDirection != 0 && damageDirection == scoreDirection
+			adjustCooldown := scoreDirection != 0 && cooldownDirection == scoreDirection
+			if scoreDirection < 0 && hitRateParity < 0.75 {
+				// Missing on purpose is indistinguishable from a weak weapon in
+				// raw telemetry, so a low-hit-rate batch can never earn a buff.
+				adjustDamage = false
+				adjustCooldown = false
+			}
+
+			if adjustDamage || adjustCooldown {
+				magnitude := state.AdjustmentScale * math.Min(1, evidence.scoreDiff.conservativeMagnitude(confidenceZ))
+				damageAxisScale := axisMagnitudeScale(evidence.damagePressure.mean, axisDeadzone)
+				cooldownAxisScale := axisMagnitudeScale(evidence.cooldownPressure.mean, axisDeadzone)
+				if adjustDamage && scoreDirection > 0 {
+					state.DamageScale = clampFloat(state.DamageScale*(1-magnitude*damageWeight*damageAxisScale), minDamageScale, maxDamageScale)
+				} else if adjustDamage {
+					state.DamageScale = clampFloat(state.DamageScale*(1+magnitude*damageWeight*damageAxisScale), minDamageScale, maxDamageScale)
+				}
+				if adjustCooldown && scoreDirection > 0 {
+					state.CooldownScale = clampFloat(state.CooldownScale*(1+magnitude*cooldownWeight*cooldownAxisScale), minCooldownScale, maxCooldownScale)
+				} else if adjustCooldown {
+					state.CooldownScale = clampFloat(state.CooldownScale*(1-magnitude*cooldownWeight*cooldownAxisScale), minCooldownScale, maxCooldownScale)
+				}
+				state.AdjustmentScale = clampFloat(state.AdjustmentScale*1.03, minStep, startStep)
+				slog.Info("weapon auto-balance adjusted",
+					"weapon", weapon,
+					"evidence_rounds", evidence.rounds,
+					"bot_samples", evidence.botSamples,
+					"distinct_bots", len(evidence.distinctBots),
+					"score_effect", round1(evidence.scoreDiff.mean),
+					"score_margin", round1(confidenceZ*evidence.scoreDiff.standardError()),
+					"damage_scale", round1(state.DamageScale),
+					"cooldown_scale", round1(state.CooldownScale),
+					"adjust_damage", adjustDamage,
+					"adjust_cooldown", adjustCooldown,
+				)
+			} else if scoreDirection == 0 {
+				// Only a statistically steady batch is convergence evidence.
+				state.AdjustmentScale = math.Max(minStep, state.AdjustmentScale*decay)
+			} else {
+				slog.Debug("weapon auto-balance rejected confounded batch",
+					"weapon", weapon,
+					"score_direction", scoreDirection,
+					"damage_direction", damageDirection,
+					"cooldown_direction", cooldownDirection,
+					"hit_rate_parity", round1(hitRateParity),
+				)
+			}
+			evidence.reset()
+		} else if evidence.rounds >= minRounds*3 {
+			// Do not let one identity stockpile unlimited historical weight.
+			evidence.reset()
+		}
+
 		weaponBalance[weapon] = state
 		WeaponConfigs[weapon] = effectiveWeaponConfigLocked(weapon)
+		pending = append(pending, pendingSnapshot{
+			state: state, entry: signal.entry,
+			comparisonMean: signal.opponents.avgScore(), diffRatio: signal.scoreDiff,
+			damageDelta:   state.DamageScale - previousDamageScale,
+			cooldownDelta: state.CooldownScale - previousCooldownScale,
+		})
+	}
+	weaponBalanceMu.Unlock()
 
-		slog.Info("weapon auto-balance adjusted",
-			"weapon", weapon,
-			"round_score", round1(entry.score),
-			"mean_score", round1(globalMean),
-			"damage_scale", round1(state.DamageScale),
-			"cooldown_scale", round1(state.CooldownScale),
-			"damage_pressure", round1(damagePressure),
-			"cooldown_pressure", round1(cooldownPressure),
-			"adjust_damage", adjustDamage,
-			"adjust_cooldown", adjustCooldown,
-			"confidence", round1(entry.confidence()),
-			"next_step", round1(state.AdjustmentScale),
-			"participants", entry.bots,
-			"wins", entry.wins,
-		)
-
-		persistWeaponBalanceSnapshot(ctx, state, entry, globalMean, state.DamageScale-prevDamageScale, state.CooldownScale-prevCooldownScale)
+	// Database latency must never hold weaponBalanceMu: GetWeaponConfig is on
+	// the combat path, and this routine performs two writes per sampled weapon.
+	for _, snapshot := range pending {
+		persistWeaponBalanceSnapshot(ctx, snapshot.state, snapshot.entry,
+			snapshot.comparisonMean, snapshot.diffRatio,
+			snapshot.damageDelta, snapshot.cooldownDelta)
 	}
 }
-
 func clampFloat(v, minV, maxV float64) float64 {
 	if v < minV {
 		return minV
@@ -621,11 +845,8 @@ func clampFloat(v, minV, maxV float64) float64 {
 	return v
 }
 
-func relativeDelta(value, mean float64) float64 {
-	if mean <= 0 {
-		return 0
-	}
-	return (value - mean) / mean
+func finitePositive(value float64) bool {
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func weightedRelative(parts ...float64) float64 {

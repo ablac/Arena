@@ -85,6 +85,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 	// Create dashboard handler.
 	dashboardHandler := NewDashboardHandler(bus, adminHandler)
+	cosmeticsHandler := NewCosmeticsHandler(engine)
 
 	// Initialise OIDC handler (nil if disabled/misconfigured).
 	oidcHandler := NewOIDCHandler()
@@ -116,6 +117,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		// Bot setup reference (public — no auth).
 		api.Get("/bot-setup", BotSetup())
 		api.Get("/content", PublicContentBlocks)
+		api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
 
 		// Key generation (public, rate-limited per IP for registration).
 		api.With(
@@ -126,12 +128,14 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		api.Group(func(auth chi.Router) {
 			auth.Use(security.AuthMiddleware)
 
-			auth.Delete("/keys/revoke", RevokeKey)
+			auth.Delete("/keys/revoke", RevokeKey(engine))
 			auth.With(
 				security.RateLimitMiddleware(config.C.RateLimitBotConfigPerMin),
 			).Put("/bot/config", UpdateBotConfig)
 			auth.Get("/bot/stats", GetBotStats(engine))
 			auth.Get("/bot/live", GetBotLive(engine))
+			auth.Get("/bot/cosmetics", cosmeticsHandler.BotInventory)
+			auth.Put("/bot/cosmetics", cosmeticsHandler.Equip)
 		})
 
 		// Leaderboard (public).
@@ -150,6 +154,8 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
 			admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
 			adminHandler.Routes(admin)
+			admin.Post("/cosmetics/grants", cosmeticsHandler.Grant)
+			admin.Delete("/cosmetics/grants", cosmeticsHandler.Revoke)
 
 			// Dashboard API endpoints.
 			admin.Route("/dashboard", func(dash chi.Router) {
@@ -173,17 +179,20 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			api.Get("/version", versionHandler())
 			api.Get("/bot-setup", BotSetup())
 			api.Get("/content", PublicContentBlocks)
+			api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
 			api.With(
 				security.RateLimitMiddleware(config.C.RateLimitRegisterPerHour),
 			).Post("/keys/generate", GenerateKey)
 			api.Group(func(auth chi.Router) {
 				auth.Use(security.AuthMiddleware)
-				auth.Delete("/keys/revoke", RevokeKey)
+				auth.Delete("/keys/revoke", RevokeKey(engine))
 				auth.With(
 					security.RateLimitMiddleware(config.C.RateLimitBotConfigPerMin),
 				).Put("/bot/config", UpdateBotConfig)
 				auth.Get("/bot/stats", GetBotStats(engine))
 				auth.Get("/bot/live", GetBotLive(engine))
+				auth.Get("/bot/cosmetics", cosmeticsHandler.BotInventory)
+				auth.Put("/bot/cosmetics", cosmeticsHandler.Equip)
 			})
 			api.Get("/leaderboard", GetLeaderboard)
 			api.Get("/bounties", GetBountyBoard(engine))
@@ -196,6 +205,8 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
 				admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
 				adminHandler.Routes(admin)
+				admin.Post("/cosmetics/grants", cosmeticsHandler.Grant)
+				admin.Delete("/cosmetics/grants", cosmeticsHandler.Revoke)
 
 				admin.Route("/dashboard", func(dash chi.Router) {
 					dashboardHandler.DashboardRoutes(dash)

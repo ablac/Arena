@@ -75,13 +75,13 @@ func (dh *DashboardHandler) overview(w http.ResponseWriter, r *http.Request) {
 	engine := dh.Admin.Engine
 
 	data := map[string]interface{}{
-		"bots_online":  engine.ConnectedBotCount(),
-		"spectators":   engine.SpectatorCount(),
-		"tick_rate":    config.C.TickRate,
-		"uptime":       uptime.Round(time.Second).String(),
-		"uptime_secs":  int(uptime.Seconds()),
-		"paused":       engine.IsPaused(),
-		"goroutines":   runtime.NumGoroutine(),
+		"bots_online": engine.ConnectedBotCount(),
+		"spectators":  engine.SpectatorCount(),
+		"tick_rate":   config.C.TickRate,
+		"uptime":      uptime.Round(time.Second).String(),
+		"uptime_secs": int(uptime.Seconds()),
+		"paused":      engine.IsPaused(),
+		"goroutines":  runtime.NumGoroutine(),
 		"memory": map[string]interface{}{
 			"alloc_mb":      fmt.Sprintf("%.1f", float64(memStats.Alloc)/1024/1024),
 			"sys_mb":        fmt.Sprintf("%.1f", float64(memStats.Sys)/1024/1024),
@@ -89,7 +89,7 @@ func (dh *DashboardHandler) overview(w http.ResponseWriter, r *http.Request) {
 			"heap_objects":  memStats.HeapObjects,
 			"gc_runs":       memStats.NumGC,
 		},
-		"game_state":   engine.GetFullGameState(),
+		"game_state": engine.GetFullGameState(),
 		"event_counts": map[string]int{
 			"connections": dh.Bus.Connections.Count(),
 			"http_log":    dh.Bus.HTTPLog.Count(),
@@ -293,6 +293,7 @@ func (dh *DashboardHandler) handleSSE(w http.ResponseWriter, r *http.Request, fi
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("X-Accel-Buffering", "no")
 
 	sub := dh.Bus.Subscribe(filter)
 	defer dh.Bus.Unsubscribe(sub)
@@ -301,10 +302,32 @@ func (dh *DashboardHandler) handleSSE(w http.ResponseWriter, r *http.Request, fi
 	fmt.Fprintf(w, ": connected\n\n")
 	flusher.Flush()
 
+	lastSentID := int64(0)
+	writeEvent := func(evt DashboardEvent) bool {
+		// The subscription is installed before history is read so no event can
+		// be missed. An event can therefore appear in both replay and the
+		// subscriber queue; the shared global ID makes that duplicate safe to
+		// suppress here.
+		if evt.ID <= lastSentID {
+			return false
+		}
+		data, err := json.Marshal(evt)
+		if err != nil {
+			slog.Error("failed to marshal SSE event", "error", err)
+			return false
+		}
+		fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", evt.ID, evt.Type, data)
+		lastSentID = evt.ID
+		return true
+	}
+
 	// Optionally send recent history.
 	sinceStr := r.URL.Query().Get("since_id")
 	if sinceStr != "" {
-		sinceID, _ := strconv.ParseInt(sinceStr, 10, 64)
+		sinceID, err := strconv.ParseInt(sinceStr, 10, 64)
+		if err == nil && sinceID > 0 {
+			lastSentID = sinceID
+		}
 		var buf *RingBuffer
 		switch filter {
 		case EventConnection, EventAuthFailure:
@@ -319,8 +342,7 @@ func (dh *DashboardHandler) handleSSE(w http.ResponseWriter, r *http.Request, fi
 			buf = dh.Bus.AllEvents
 		}
 		for _, evt := range buf.GetSince(sinceID) {
-			data, _ := json.Marshal(evt)
-			fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", evt.ID, evt.Type, data)
+			writeEvent(evt)
 		}
 		flusher.Flush()
 	}
@@ -336,13 +358,9 @@ func (dh *DashboardHandler) handleSSE(w http.ResponseWriter, r *http.Request, fi
 		case <-sub.Done:
 			return
 		case evt := <-sub.Events:
-			data, err := json.Marshal(evt)
-			if err != nil {
-				slog.Error("failed to marshal SSE event", "error", err)
-				continue
+			if writeEvent(evt) {
+				flusher.Flush()
 			}
-			fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", evt.ID, evt.Type, data)
-			flusher.Flush()
 		case <-ticker.C:
 			fmt.Fprintf(w, ": keepalive\n\n")
 			flusher.Flush()

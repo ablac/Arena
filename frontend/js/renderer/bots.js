@@ -9,6 +9,7 @@
 import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260707c';
 import { updateBotAnim, triggerAttack, triggerDodge, triggerShove, meleeContactDelay } from './animations.js?v=20260707c';
 import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance, triggerSwordsmanHit } from './swordsman-anims.js?v=20260707c';
+import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260710a';
 import { isEnabled } from '../settings.js';
 
 export class BotRenderer {
@@ -83,6 +84,7 @@ export class BotRenderer {
         this.entries.set(bot.bot_id, entry);
       }
       entry.botData = bot;
+      applyBotCosmetics(entry, bot, this.scene);
 
       // Entity interpolation: store last two server positions + timing.
       const now = performance.now();
@@ -296,6 +298,7 @@ export class BotRenderer {
     for (const [id, entry] of this.entries) {
       if (!seen.has(id)) {
         if (this.selectedBotId === id) this.clearSelection();
+        disposeBotCosmetics(entry);
         disposeBotEntry(entry);
         this.entries.delete(id);
       }
