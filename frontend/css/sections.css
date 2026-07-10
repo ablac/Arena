@@ -2425,6 +2425,12 @@ body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
   padding: 2px 8px;
 }
 
+.keygen-clear {
+  margin-left: auto;
+  padding: 6px 10px;
+  font-size: 0.74rem;
+}
+
 /* --- Bot cosmetics ----------------------------------------------------- */
 
 .cosmetics-shell {
@@ -2461,6 +2467,18 @@ body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
   gap: 10px;
   align-items: center;
 }
+
+.cosmetics-account-cta {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.cosmetics-account-cta > div {
+  display: grid;
+  gap: 3px;
+}
+
+.cosmetics-account-cta strong { color: var(--text-primary); }
+.cosmetics-account-cta span { color: var(--text-soft); font-size: 0.84rem; }
 
 .cosmetics-auth input {
   width: 100%;

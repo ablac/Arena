@@ -1,11 +1,6 @@
 'use strict';
 
-import { apiPath } from './paths.js?v=20260710a';
-import {
-  createLatestRequestGate,
-  onArenaAPIKeyClear,
-  requestArenaAPIKeyClear,
-} from './credential-events.js?v=20260710a';
+import { apiPath } from './paths.js?v=20260710b';
 
 const SLOT_LABELS = {
   bot_skin: 'Chassis Skins',
@@ -32,7 +27,7 @@ async function readJSON(response) {
   return body;
 }
 
-function itemCard(item, authenticated, onEquip) {
+function itemCard(item, checkoutEnabled) {
   const card = document.createElement('article');
   card.className = `cosmetic-item rarity-${item.rarity || 'common'}`;
 
@@ -42,7 +37,8 @@ function itemCard(item, authenticated, onEquip) {
   name.textContent = item.name || item.id || 'Cosmetic';
   const price = document.createElement('span');
   price.className = 'cosmetic-price';
-  price.textContent = formatPrice(item);
+  const saleReady = checkoutEnabled && item.is_purchasable === true;
+  price.textContent = item.is_free ? 'Free' : (saleReady ? formatPrice(item) : 'Preview');
   header.append(name, price);
 
   const description = document.createElement('p');
@@ -52,34 +48,14 @@ function itemCard(item, authenticated, onEquip) {
   footer.className = 'cosmetic-item-footer';
   const badge = document.createElement('span');
   badge.className = 'cosmetic-state';
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'btn btn-secondary cosmetic-equip';
+  badge.textContent = item.is_free ? 'Starter item' : (saleReady ? 'Email-account license' : 'Coming soon');
+  footer.append(badge);
 
-  if (!authenticated) {
-    badge.textContent = item.is_free ? 'Starter' : 'Preview';
-    button.textContent = 'Load bot key';
-    button.disabled = true;
-  } else if (item.equipped) {
-    badge.textContent = 'Equipped';
-    button.textContent = 'Equipped';
-    button.disabled = true;
-  } else if (item.owned) {
-    badge.textContent = 'Owned';
-    button.textContent = 'Equip';
-    button.addEventListener('click', () => onEquip(item, button));
-  } else {
-    badge.textContent = item.is_purchasable ? 'Locked' : 'Preview only';
-    button.textContent = item.is_purchasable ? 'Checkout unavailable' : 'Coming soon';
-    button.disabled = true;
-  }
-
-  footer.append(badge, button);
   card.append(header, description, footer);
   return card;
 }
 
-function renderCatalog(root, items, authenticated, onEquip) {
+function renderCatalog(root, items, checkoutEnabled) {
   root.replaceChildren();
   for (const [slot, label] of Object.entries(SLOT_LABELS)) {
     const section = document.createElement('section');
@@ -88,135 +64,46 @@ function renderCatalog(root, items, authenticated, onEquip) {
     heading.textContent = label;
     const grid = document.createElement('div');
     grid.className = 'cosmetic-items';
-    const slotItems = items.filter(item => item.slot === slot);
-    for (const item of slotItems) grid.appendChild(itemCard(item, authenticated, onEquip));
+    for (const item of items.filter(candidate => candidate.slot === slot)) {
+      grid.appendChild(itemCard(item, checkoutEnabled));
+    }
     section.append(heading, grid);
     root.appendChild(section);
   }
 }
 
 /**
- * Mount the starter cosmetic catalog and authenticated equip UI.
- * The API key stays only in the input/closure and is never persisted.
+ * Mount the public catalog preview. Durable ownership and bot assignment live
+ * in the verified-email Bot Dashboard; this page never asks for an API key.
  */
 export function initCosmeticsPanel(container) {
   if (!container) return null;
-  const keyInput = container.querySelector('[data-cosmetic-key]');
-  const loadButton = container.querySelector('[data-cosmetic-load]');
-  const clearButton = container.querySelector('[data-cosmetic-clear]');
   const status = container.querySelector('[data-cosmetic-status]');
   const catalogRoot = container.querySelector('[data-cosmetic-catalog]');
   const checkoutState = container.querySelector('[data-cosmetic-checkout]');
-  if (!keyInput || !loadButton || !status || !catalogRoot) return null;
+  if (!status || !catalogRoot) return null;
 
-  let activeKey = '';
-  let busy = false;
-  const requestGate = createLatestRequestGate();
-
-  const setStatus = (message, state = '') => {
-    status.textContent = message;
-    status.dataset.state = state;
-  };
-
-  const setBusy = (next) => {
-    busy = next;
-    loadButton.disabled = next;
-    loadButton.textContent = next ? 'Loading...' : 'Load my cosmetics';
-  };
-
-  const loadPublicCatalog = async () => {
-    const version = requestGate.next();
+  const loadCatalog = async () => {
     try {
-      const response = await fetch(apiPath('/cosmetics/catalog'), {headers: {Accept: 'application/json'}});
-      const data = await readJSON(response);
-      if (!requestGate.isCurrent(version)) return;
-      renderCatalog(catalogRoot, Array.isArray(data.items) ? data.items : [], false, () => {});
-      if (checkoutState) {
-        checkoutState.textContent = data.checkout_enabled ? 'Checkout enabled' : 'Preview catalog · checkout not yet enabled';
-      }
-    } catch (error) {
-      if (!requestGate.isCurrent(version)) return;
-      setStatus(`Catalog unavailable: ${error.message}`, 'error');
-    }
-  };
-
-  const equip = async (item, button) => {
-    if (!activeKey || busy) return;
-    const version = requestGate.next();
-    const key = activeKey;
-    setBusy(true);
-    button.disabled = true;
-    button.textContent = 'Equipping...';
-    try {
-      const response = await fetch(apiPath('/bot/cosmetics'), {
-        method: 'PUT',
-        headers: {'X-Arena-Key': key, 'Content-Type': 'application/json'},
-        body: JSON.stringify({slot: item.slot, cosmetic_id: item.id}),
-      });
-      await readJSON(response);
-      if (!requestGate.isCurrent(version)) return;
-      setStatus(`${item.name} equipped. Spectators will see it on the next state update.`, 'success');
-      await loadInventory();
-    } catch (error) {
-      if (!requestGate.isCurrent(version)) return;
-      setStatus(`Equip failed: ${error.message}`, 'error');
-      button.disabled = false;
-      button.textContent = 'Equip';
-      setBusy(false);
-    }
-  };
-
-  const loadInventory = async () => {
-    const candidate = keyInput.value.trim();
-    if (!candidate) {
-      setStatus('Paste a bot API key to view ownership and equip items.', 'error');
-      return;
-    }
-    const version = requestGate.next();
-    setBusy(true);
-    try {
-      const response = await fetch(apiPath('/bot/cosmetics'), {
-        headers: {'X-Arena-Key': candidate, Accept: 'application/json'},
+      const response = await fetch(apiPath('/cosmetics/catalog'), {
+        headers: {Accept: 'application/json'},
         cache: 'no-store',
       });
       const data = await readJSON(response);
-      if (!requestGate.isCurrent(version)) return;
-      activeKey = candidate;
-      renderCatalog(catalogRoot, Array.isArray(data.items) ? data.items : [], true, equip);
-      setStatus('Inventory loaded. Free starters and owned items can be equipped now.', 'success');
+      renderCatalog(catalogRoot, Array.isArray(data.items) ? data.items : [], data.checkout_enabled === true);
+      if (checkoutState) {
+        checkoutState.textContent = data.checkout_enabled
+          ? 'Checkout enabled'
+          : 'Preview catalog · checkout not yet enabled';
+      }
+      status.textContent = 'Purchases belong to your verified email account. Assign each license to one linked bot at a time in the Bot Dashboard.';
+      status.dataset.state = 'success';
     } catch (error) {
-      if (!requestGate.isCurrent(version)) return;
-      activeKey = '';
-      setStatus(`Could not load bot cosmetics: ${error.message}`, 'error');
-    } finally {
-      if (requestGate.isCurrent(version)) setBusy(false);
+      status.textContent = `Catalog unavailable: ${error.message}`;
+      status.dataset.state = 'error';
     }
   };
 
-  loadButton.addEventListener('click', loadInventory);
-  keyInput.addEventListener('keydown', event => {
-    if (event.key === 'Enter') loadInventory();
-  });
-  const stopListeningForClear = onArenaAPIKeyClear(() => {
-    requestGate.invalidate();
-    activeKey = '';
-    keyInput.value = '';
-    setBusy(false);
-    setStatus('API key cleared from this page.', '');
-    loadPublicCatalog();
-  });
-  if (clearButton) {
-    clearButton.addEventListener('click', () => requestArenaAPIKeyClear());
-  }
-
-  loadPublicCatalog();
-  return {
-    setKey(key, load = true) {
-      keyInput.value = key || '';
-      if (load && key) loadInventory();
-    },
-    reload: loadInventory,
-    clear: requestArenaAPIKeyClear,
-    destroy: stopListeningForClear,
-  };
+  loadCatalog();
+  return {reload: loadCatalog};
 }
