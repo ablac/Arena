@@ -1,7 +1,7 @@
 'use strict';
 
-import { apiPath } from './paths.js?v=20260710a';
-import { onArenaAPIKeyClear } from './credential-events.js?v=20260710a';
+import { apiPath } from './paths.js?v=20260710b';
+import { onArenaAPIKeyClear, requestArenaAPIKeyClear } from './credential-events.js?v=20260710b';
 
 /**
  * API key generation and display.
@@ -63,6 +63,7 @@ function showKey(container, data) {
     <div class="keygen-success">
       <div class="keygen-result-header">
         <span class="keygen-badge">Credential ready</span>
+        <button type="button" class="btn btn-secondary keygen-clear" data-keygen-clear>Clear key</button>
       </div>
       <div class="copy-field keygen-copy-field">
         <input type="text" value="${escapeAttr(data.api_key)}" readonly id="key-display">
@@ -74,6 +75,7 @@ function showKey(container, data) {
       </div>
       <a class="keygen-next-link" href="#onboarding-cosmetics">Choose your bot cosmetics</a>
     </div>`;
+  container.querySelector('[data-keygen-clear]')?.addEventListener('click', () => requestArenaAPIKeyClear());
 }
 
 /** Zero and remove a generated credential from its result container. */

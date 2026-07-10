@@ -63,7 +63,10 @@ jobs:
           node scripts/test-admin-sse-parser.mjs
           node scripts/test-admin-sse-reconnect.mjs
           node scripts/test-dashboard-startup.mjs
+          node scripts/test-dashboard-account-cosmetics.mjs
           node scripts/test-cosmetics-ui.mjs
+          node scripts/test-key-generator.mjs
+          node scripts/test-admin-cosmetics-ui.mjs
           node scripts/test-public-paths.mjs
           node scripts/test-spectator-client.mjs
       - name: Check Python syntax

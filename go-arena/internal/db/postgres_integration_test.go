@@ -308,6 +308,15 @@ func TestPostgresCosmeticEntitlementSerialization(t *testing.T) {
 	if entitlementRows != 1 {
 		t.Fatalf("acknowledged regrant left %d entitlements, want 1", entitlementRows)
 	}
+	var legacyStatus string
+	if err := Pool.QueryRow(ctx, `
+		SELECT status FROM cosmetic_licenses
+		WHERE legacy_bot_id = $1 AND cosmetic_id = $2`, bot.ID, "skin-neon-grid").Scan(&legacyStatus); err != nil {
+		t.Fatalf("load terminal legacy license after regrant: %v", err)
+	}
+	if legacyStatus != "revoked" {
+		t.Fatalf("legacy regrant resurrected terminal license status = %q, want revoked", legacyStatus)
+	}
 }
 
 func waitForBlockedCosmeticStatement(t *testing.T, ctx context.Context) {

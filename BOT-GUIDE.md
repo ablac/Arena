@@ -126,8 +126,8 @@ All HTTP endpoints are also available under the `/arena` prefix (e.g., `/arena/a
 | `PUT` | `/api/v1/bot/config` | Update bot name, avatar, and default loadout |
 | `GET` | `/api/v1/bot/stats` | Lifetime stats: kills, deaths, ELO, streaks, damage |
 | `GET` | `/api/v1/bot/live` | Real-time in-game state (position, HP, effects) |
-| `GET` | `/api/v1/bot/cosmetics` | Owned, locked, and equipped cosmetics |
-| `PUT` | `/api/v1/bot/cosmetics` | Equip an owned cosmetic without changing gameplay stats |
+| `GET` | `/api/v1/bot/cosmetics` | Free plus account-assigned, locked, and equipped cosmetics |
+| `PUT` | `/api/v1/bot/cosmetics` | Equip a free or account-assigned cosmetic without changing gameplay stats |
 | `DELETE` | `/api/v1/keys/revoke` | Permanently revoke your API key |
 
 ### Authentication Methods

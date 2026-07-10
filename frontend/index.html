@@ -8,13 +8,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/arena.css?v=20260707c">
-  <link rel="stylesheet" href="css/sections.css?v=20260710a">
+  <link rel="stylesheet" href="css/sections.css?v=20260710b">
   <script src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/materialsLibrary/babylonjs.materials.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/gui/babylon.gui.min.js"></script>
   <script type="module" src="js/content-blocks.js?v=20260707d"></script>
-  <script type="module" src="js/app.js?v=20260710a"></script>
+  <script type="module" src="js/app.js?v=20260710b"></script>
 </head>
 <body>
   <div class="page-backdrop">
@@ -1531,12 +1531,14 @@ wss://arena.angel-serv.com/ws/spectator
                     </div>
                     <span class="cosmetics-checkout-state" data-cosmetic-checkout>Loading catalog...</span>
                   </div>
-                  <div class="cosmetics-auth">
-                    <input type="password" data-cosmetic-key autocomplete="off" spellcheck="false" aria-label="Bot API key" placeholder="Paste your bot API key">
-                    <button type="button" class="btn btn-gold" data-cosmetic-load>Load my cosmetics</button>
-                    <button type="button" class="btn btn-secondary" data-cosmetic-clear>Clear key</button>
+                  <div class="cosmetics-auth cosmetics-account-cta">
+                    <div>
+                      <strong>Owned by you, not by a disposable key.</strong>
+                      <span>Sign in with the verified email used for the purchase, then link or replace bot API keys without losing your collection.</span>
+                    </div>
+                    <a class="btn btn-gold" href="dashboard/">Open Bot Dashboard</a>
                   </div>
-                  <p class="cosmetics-status" data-cosmetic-status role="status" aria-live="polite">The key stays in this page only and is never saved.</p>
+                  <p class="cosmetics-status" data-cosmetic-status role="status" aria-live="polite">Loading account-owned catalog...</p>
                   <div class="cosmetics-catalog" data-cosmetic-catalog></div>
                 </div>
               </section>
