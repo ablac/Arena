@@ -34,7 +34,7 @@ func (h *AdminHandler) hideChatMessage(w http.ResponseWriter, r *http.Request) {
 		if !found {
 			// The id may still exist in-memory only (database-optional
 			// mode assigns local ids), so fall through to the hub purge.
-			persisted = false
+
 		} else {
 			persisted = true
 		}
