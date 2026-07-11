@@ -69,6 +69,83 @@ func TestActionMessageToActionAcceptsDocumentedPayload(t *testing.T) {
 	}
 }
 
+func TestPrepareActionForBotNormalizesLegacyStaffDualTarget(t *testing.T) {
+	withWSIntegrityConfig(t)
+	position := game.NewVec2(100, 140)
+	message := &ActionMessage{
+		Tick:           17,
+		Action:         "attack",
+		Target:         "opponent-id",
+		TargetPosition: &position,
+	}
+
+	action, err := prepareActionForBot(&game.BotState{Weapon: "staff"}, message)
+	if err != nil {
+		t.Fatalf("legacy staff attack was rejected: %v", err)
+	}
+	if action == nil || action.Type != game.ActionAttack || action.TargetPosition == nil {
+		t.Fatalf("legacy staff attack converted to %+v", action)
+	}
+	if action.TargetID != "" {
+		t.Fatalf("discarded legacy staff target survived as %q", action.TargetID)
+	}
+	if *action.TargetPosition != position {
+		t.Fatalf("staff target position = %v, want %v", *action.TargetPosition, position)
+	}
+	if message.Target != "" {
+		t.Fatalf("legacy staff message retained ambiguous target %q", message.Target)
+	}
+}
+
+func TestPrepareActionForBotKeepsDualTargetPunitiveOutsideLegacyStaffAttack(t *testing.T) {
+	withWSIntegrityConfig(t)
+	tests := []struct {
+		name   string
+		weapon string
+		action string
+	}{
+		{name: "sword attack", weapon: "sword", action: "attack"},
+		{name: "bow attack", weapon: "bow", action: "attack"},
+		{name: "staff grapple", weapon: "staff", action: "grapple"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			position := game.NewVec2(100, 140)
+			message := &ActionMessage{
+				Tick:           17,
+				Action:         tc.action,
+				Target:         "opponent-id",
+				TargetPosition: &position,
+			}
+			if action, err := prepareActionForBot(&game.BotState{Weapon: tc.weapon}, message); err == nil || action != nil {
+				t.Fatalf("ambiguous %s/%s payload accepted as %+v", tc.weapon, tc.action, action)
+			}
+			if message.Target != "opponent-id" {
+				t.Fatalf("non-legacy payload was mutated to target %q", message.Target)
+			}
+		})
+	}
+}
+
+func TestPrepareActionForBotStillValidatesLegacyStaffPosition(t *testing.T) {
+	withWSIntegrityConfig(t)
+	position := game.NewVec2(1e100, 140)
+	message := &ActionMessage{
+		Tick:           17,
+		Action:         "attack",
+		Target:         "untrusted-opponent-id",
+		TargetPosition: &position,
+	}
+
+	if action, err := prepareActionForBot(&game.BotState{Weapon: "staff"}, message); err == nil || action != nil {
+		t.Fatalf("out-of-bounds legacy staff position accepted as %+v", action)
+	}
+	if message.Target != "" {
+		t.Fatalf("legacy target was not discarded before position validation: %q", message.Target)
+	}
+}
+
 func TestParseBotMessageRejectsMalformedVectorShape(t *testing.T) {
 	withWSIntegrityConfig(t)
 	for _, payload := range [][]byte{
