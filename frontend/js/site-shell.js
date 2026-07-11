@@ -140,6 +140,7 @@ function setupCommandDock() {
     document.body.classList.toggle('site-menu-open', open);
     toggle.setAttribute('aria-expanded', String(open));
     if (open) {
+      dock.scrollTop = 0;
       const first = visibleFocusable(dock).find((node) => !node.matches('[data-site-menu-close]'));
       first?.focus({ preventScroll: true });
     } else if (restoreFocus) {

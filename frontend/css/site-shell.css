@@ -754,7 +754,19 @@ body.site-cinema-mode .arena-controls {
   }
 
   .hud-round.is-collapsed {
+    top: calc(var(--shell-safe-top) + var(--shell-header-height) + 6px);
     width: auto;
+    max-width: calc(100% - 240px);
+  }
+
+  .hud-round.is-collapsed .hud-compact-toggle {
+    max-width: 100%;
+  }
+
+  .hud-round.is-collapsed .hud-compact-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .arena-controls {
@@ -814,6 +826,7 @@ body.site-cinema-mode .arena-controls {
     bottom: 0;
     left: 0;
     z-index: 42;
+    grid-template-rows: auto auto minmax(0, 1fr);
     width: 100%;
     height: min(55dvh, 470px);
     min-height: 250px;
@@ -840,6 +853,10 @@ body.site-cinema-mode .arena-controls {
 
   .arena-sidebar-intro {
     display: block;
+  }
+
+  .arena-tab-panel {
+    height: 100%;
   }
 
   .arena-container > canvas#arena-canvas ~ canvas {
@@ -1112,6 +1129,60 @@ body.site-cinema-mode .arena-controls {
     padding-left: calc(var(--shell-safe-left) + 16px);
   }
 
+  .site-command-dock.onboarding-rail-stack,
+  .onboarding-drawer-scroll,
+  .onboarding-flow-shell-scroll {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+
+  .overlay-standings .onboarding-drawer-scroll {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+
+  .overlay-standings .onboarding-flow-standings,
+  .overlay-standings .onboarding-section-boards,
+  .overlay-standings .onboarding-section-boards > .card,
+  .overlay-standings .leaderboard-widget-overlay {
+    height: auto;
+    min-height: 0;
+    flex: none;
+  }
+
+  .overlay-standings .leaderboard-widget-overlay .leaderboard-panels {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    flex: none;
+  }
+
+  .overlay-standings .leaderboard-panel {
+    position: static;
+    display: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .overlay-standings .leaderboard-panel.active {
+    display: flex;
+  }
+
+  .overlay-standings .leaderboard-scroll {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .overlay-standings .leaderboard-scroll-inner {
+    height: auto;
+    max-height: none;
+    overflow-y: visible;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    overscroll-behavior-y: auto;
+  }
+
   .drawer-shell-label {
     padding-right: 52px;
     font-size: clamp(1.55rem, 8vw, 2.2rem);
@@ -1152,6 +1223,10 @@ body.site-cinema-mode .arena-controls {
 }
 
 @media (max-width: 420px) {
+  .hud-round.is-collapsed {
+    max-width: calc(100% - 118px);
+  }
+
   .site-brand > span:last-child {
     max-width: 72px;
   }
