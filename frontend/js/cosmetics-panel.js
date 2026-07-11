@@ -55,16 +55,78 @@ function itemCard(item, checkoutEnabled) {
   return card;
 }
 
-function renderCatalog(root, items, checkoutEnabled) {
+function packCard(pack, checkoutEnabled) {
+  const card = document.createElement('article');
+  card.className = 'cosmetic-pack';
+
+  const summary = document.createElement('div');
+  summary.className = 'cosmetic-pack-summary';
+  const name = document.createElement('strong');
+  name.textContent = pack.name || pack.id || 'Cosmetic Pack';
+  const description = document.createElement('p');
+  description.textContent = pack.description || 'A coordinated set of presentation-only Arena cosmetics.';
+  summary.append(name, description);
+
+  const contents = document.createElement('div');
+  contents.className = 'cosmetic-pack-contents';
+  const items = Array.isArray(pack.items) ? pack.items : [];
+  if (items.length > 0) {
+    for (const item of items) {
+      const label = document.createElement('span');
+      label.textContent = item.name || item.id || 'Cosmetic';
+      contents.appendChild(label);
+    }
+  } else {
+    const count = Array.isArray(pack.item_ids) ? pack.item_ids.length : 0;
+    const label = document.createElement('span');
+    label.textContent = count > 0 ? `${count} cosmetics` : 'Contents being prepared';
+    contents.appendChild(label);
+  }
+
+  const offer = document.createElement('div');
+  offer.className = 'cosmetic-pack-offer';
+  const price = document.createElement('span');
+  price.className = 'cosmetic-pack-price';
+  const saleReady = checkoutEnabled && pack.is_purchasable === true;
+  price.textContent = pack.is_free ? 'Free' : (saleReady ? formatPrice(pack) : `Preview · ${formatPrice(pack)}`);
+  const state = document.createElement('span');
+  state.className = 'cosmetic-state';
+  state.textContent = pack.is_free ? 'Starter pack' : (saleReady ? 'Available in Bot Dashboard' : 'Coming soon');
+  offer.append(price, state);
+
+  card.append(summary, contents, offer);
+  return card;
+}
+
+function renderCatalog(root, catalog, checkoutEnabled) {
   root.replaceChildren();
+  const packs = Array.isArray(catalog.packs) ? catalog.packs : [];
+  const items = Array.isArray(catalog.items) ? catalog.items : [];
+
+  if (packs.length > 0) {
+    const packSection = document.createElement('section');
+    packSection.className = 'cosmetic-slot cosmetic-pack-section';
+    const heading = document.createElement('h4');
+    heading.textContent = 'Curated Packs';
+    const packList = document.createElement('div');
+    packList.className = 'cosmetic-pack-list';
+    for (const pack of packs) {
+      packList.appendChild(packCard(pack, checkoutEnabled));
+    }
+    packSection.append(heading, packList);
+    root.appendChild(packSection);
+  }
+
   for (const [slot, label] of Object.entries(SLOT_LABELS)) {
+    const slotItems = items.filter(candidate => candidate.slot === slot);
+    if (slotItems.length === 0) continue;
     const section = document.createElement('section');
     section.className = 'cosmetic-slot';
     const heading = document.createElement('h4');
     heading.textContent = label;
     const grid = document.createElement('div');
     grid.className = 'cosmetic-items';
-    for (const item of items.filter(candidate => candidate.slot === slot)) {
+    for (const item of slotItems) {
       grid.appendChild(itemCard(item, checkoutEnabled));
     }
     section.append(heading, grid);
@@ -90,7 +152,7 @@ export function initCosmeticsPanel(container) {
         cache: 'no-store',
       });
       const data = await readJSON(response);
-      renderCatalog(catalogRoot, Array.isArray(data.items) ? data.items : [], data.checkout_enabled === true);
+      renderCatalog(catalogRoot, data, data.checkout_enabled === true);
       if (checkoutState) {
         checkoutState.textContent = data.checkout_enabled
           ? 'Checkout enabled'
