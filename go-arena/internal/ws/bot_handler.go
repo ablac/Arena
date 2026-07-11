@@ -37,6 +37,15 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+func botUpgradeRateLimit(ip string) (string, int) {
+	// Standard WebSocket clients authenticate in their first message, so the
+	// HTTP upgrade cannot distinguish them from an anonymous connection. Use
+	// one non-bypassable, bounded per-IP burst bucket for bots behind one NAT;
+	// authenticated sessions still face the stricter per-key cooldown.
+	limit := max(config.C.WSConnectRatePerMin, 40)
+	return "ws:bot:connect:" + ip, limit
+}
+
 // BotHandler returns an http.HandlerFunc that manages the full lifecycle of a
 // bot WebSocket connection: upgrade, authentication, loadout negotiation,
 // engine registration, and the read/write message loops.
@@ -60,17 +69,11 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		}
 
 		// Per-IP WebSocket connection rate limiting (skip for localhost/demo bots).
-		// Authenticated reconnects get a roomier bucket so multiple real users
-		// behind the same NAT do not trip the anonymous connection cap.
+		// One bounded pre-auth bucket supports documented message authentication
+		// without letting clients bypass the limit by changing auth transport.
 		isLocal := ip == "::1" || ip == "127.0.0.1" || ip == "localhost"
 		if config.C.WSConnectRatePerMin > 0 && !isLocal {
-			presentedKey := presentedAPIKey(r)
-			limitKey := "ws:bot:anon:" + ip
-			limit := config.C.WSConnectRatePerMin
-			if presentedKey != "" {
-				limitKey = "ws:bot:auth:" + ip
-				limit = max(limit*5, 12)
-			}
+			limitKey, limit := botUpgradeRateLimit(ip)
 
 			allowed, count, _, err := security.CheckRateLimit(r.Context(), limitKey, limit, 60)
 			if err != nil {
