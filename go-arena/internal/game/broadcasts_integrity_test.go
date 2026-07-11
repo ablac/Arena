@@ -77,3 +77,32 @@ func TestTickDeliveryCoalescesWithoutDisplacingControlMessages(t *testing.T) {
 		t.Fatal("latest tick was not queued")
 	}
 }
+
+func TestRoundEndDiscardsPendingActiveTick(t *testing.T) {
+	bot := &BotState{
+		BotID:    "ending-bot",
+		SendChan: make(chan []byte, 1),
+		TickChan: make(chan []byte, 1),
+	}
+	bot.TickChan <- []byte(`{"type":"tick","tick":99,"your_state":{"is_alive":true}}`)
+
+	SendRoundEnd(bot, RoundEndInfo{RoundNumber: 4}, 5)
+
+	select {
+	case stale := <-bot.TickChan:
+		t.Fatalf("pending active tick survived round_end: %s", stale)
+	default:
+	}
+	select {
+	case payload := <-bot.SendChan:
+		var message map[string]interface{}
+		if err := json.Unmarshal(payload, &message); err != nil {
+			t.Fatalf("decode round_end: %v", err)
+		}
+		if message["type"] != "round_end" {
+			t.Fatalf("control message type=%v, want round_end", message["type"])
+		}
+	default:
+		t.Fatal("round_end was not queued")
+	}
+}

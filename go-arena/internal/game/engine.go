@@ -319,8 +319,10 @@ func (e *GameEngine) tickLobby(c *config.Config) {
 	}
 	e.WaitingBots = make(map[string]*BotState)
 
-	// Count connected bots.
-	connected := len(e.Bots)
+	// Detached active-round sessions are never lobby participants. End-of-round
+	// cleanup removes them, and this connected count keeps a defensive stale
+	// entry from satisfying the next match's minimum-player gate.
+	connected := e.connectedBotCountLocked()
 
 	// Start or continue lobby countdown.
 	if connected >= c.MinBotsToStart && e.Round.LobbyCountdownTicks == 0 {
@@ -778,11 +780,6 @@ func (e *GameEngine) endRound() {
 
 	e.Bounty.OnRoundEnd(e.Bots, winnerID)
 	e.persistBountyBoardAsync()
-	e.Round.Phase = PhaseIntermission
-	e.Round.Modifier = RoundModifierNone
-	e.Round.IntermissionTicks = int(config.C.IntermissionTime * float64(config.C.TickRate))
-	e.Round.TimeRemaining = config.C.IntermissionTime
-	e.Bounty.RewardMultiplier = 1
 	AutoBalanceWeapons(context.Background(), e.Bots, winnerID)
 
 	if db.Pool != nil {
@@ -837,6 +834,23 @@ func (e *GameEngine) endRound() {
 	} else {
 		e.skipLeaderboardRound = 0
 	}
+
+	// A reconnect grace period is meaningful only while its round is active.
+	// Keep detached participants through winner/award/final persistence capture,
+	// then remove their transport placeholders before entering intermission so
+	// they cannot consume capacity or start a phantom next round.
+	for botID, bot := range e.Bots {
+		if !bot.ReconnectPending {
+			continue
+		}
+		delete(e.Bots, botID)
+		e.Grid.Remove(botID)
+	}
+	e.Round.Phase = PhaseIntermission
+	e.Round.Modifier = RoundModifierNone
+	e.Round.IntermissionTicks = int(config.C.IntermissionTime * float64(config.C.TickRate))
+	e.Round.TimeRemaining = config.C.IntermissionTime
+	e.Bounty.RewardMultiplier = 1
 
 	// Pre-generate next round's terrain so bots can GET /api/v1/arena/map during intermission.
 	// Size the next round's map for everyone expected to play it: current
@@ -913,8 +927,9 @@ func (e *GameEngine) AddBot(bot *BotState) bool {
 	}
 
 	// Existing sessions do not consume an additional slot, so capacity is
-	// checked only after the reconnect cases above.
-	if len(e.Bots)+len(e.WaitingBots) >= config.C.MaxBots {
+	// checked only after the reconnect cases above. Detached transports are not
+	// connected admissions and are pruned at the current round boundary.
+	if e.connectedBotCountLocked() >= config.C.MaxBots {
 		return false
 	}
 
@@ -1396,6 +1411,10 @@ func (e *GameEngine) GetActiveMap() (*TerrainGrid, MapShape, GameMode) {
 func (e *GameEngine) ConnectedBotCount() int {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	return e.connectedBotCountLocked()
+}
+
+func (e *GameEngine) connectedBotCountLocked() int {
 	connected := 0
 	for _, bot := range e.Bots {
 		if !bot.ReconnectPending {
