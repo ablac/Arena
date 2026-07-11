@@ -608,6 +608,9 @@ function setupOverlays() {
     const overlay = document.getElementById(overlayId);
     const drawer = overlay?.querySelector('.onboarding-drawer');
     if (!overlay || !drawer) return;
+    const scrollRoot = drawer.querySelector('.onboarding-flow-shell-scroll') ||
+      drawer.querySelector('.onboarding-drawer-scroll') ||
+      drawer;
 
     if (overlay.classList.contains('open')) {
       removeFromStack(overlayId);
@@ -626,15 +629,15 @@ function setupOverlays() {
     }
 
     if (!targetSelector) {
-      drawer.scrollTo({ top: 0, behavior: 'smooth' });
+      scrollRoot.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
     if (targetSelector) {
       const target = document.querySelector(targetSelector);
       if (target) {
         requestAnimationFrame(() => {
-          const targetTop = target.getBoundingClientRect().top - drawer.getBoundingClientRect().top + drawer.scrollTop - 18;
-          drawer.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+          const targetTop = target.getBoundingClientRect().top - scrollRoot.getBoundingClientRect().top + scrollRoot.scrollTop - 18;
+          scrollRoot.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
         });
       }
     }
