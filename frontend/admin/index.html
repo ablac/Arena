@@ -909,6 +909,43 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 #panel-controls .ops-card{padding:14px}
 #panel-controls .builder-layout{grid-template-columns:minmax(0,1fr) 300px}
 #panel-controls .map-workshop{grid-template-columns:minmax(0,1fr) 340px}
+#panel-broadcasts .ops-shell{
+  max-width:1180px;
+  margin:0;
+  gap:14px;
+}
+#panel-broadcasts .broadcast-layout{
+  display:grid;
+  grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr);
+  gap:14px;
+}
+#panel-broadcasts .broadcast-current-card{min-height:190px}
+#panel-broadcasts .broadcast-current{
+  margin-top:14px;
+  padding:14px;
+  border:1px solid rgba(88,166,255,0.16);
+  border-radius:8px;
+  background:rgba(7,11,17,0.76);
+  overflow-wrap:anywhere;
+}
+#panel-broadcasts .broadcast-card-heading{
+  display:flex;
+  align-items:baseline;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:10px;
+}
+#panel-broadcasts .broadcast-card-heading h3{margin-bottom:0}
+#panel-broadcasts .broadcast-history{
+  min-height:220px;
+  max-height:min(55vh,640px);
+  padding:4px 12px;
+  overflow:auto;
+  scrollbar-gutter:stable;
+  border:1px solid rgba(88,166,255,0.16);
+  border-radius:8px;
+  background:rgba(7,11,17,0.76);
+}
 @media(max-width:980px){
   #app.admin-shell{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
   .admin-sidebar{position:relative;max-height:260px}
@@ -918,7 +955,8 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   #panel-controls .ops-hero,
   #panel-controls .ops-grid,
   #panel-controls .builder-layout,
-  #panel-controls .map-workshop{grid-template-columns:1fr}
+  #panel-controls .map-workshop,
+  #panel-broadcasts .broadcast-layout{grid-template-columns:1fr}
 }
 </style>
 <script src="sse-parser.js?v=20260710a"></script>
@@ -997,6 +1035,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
       <div class="tab-group-label" data-group="admin" style="color:var(--orange)">Tune + Publish <span class="arrow">&#9660;</span></div>
       <div class="tab-dropdown">
         <div class="tab-item" data-tab="controls"><span class="tab-dot" style="background:var(--orange)"></span>Game Config</div>
+        <div class="tab-item" data-tab="broadcasts">Site Broadcast</div>
         <div class="tab-item" data-tab="rounds">Round History</div>
         <div class="tab-item" data-tab="leaderboard">Leaderboard</div>
         <div class="tab-item" data-tab="connlog">Connection Log</div>
@@ -1523,6 +1562,44 @@ tr:hover td{background:rgba(88,166,255,0.07)}
       <div class="log-container" id="connLogEntries" style="height:calc(100vh - 160px)"></div>
     </div>
 
+    <!-- Site Broadcast Panel -->
+    <div class="panel" id="panel-broadcasts">
+      <div class="ops-shell broadcast-shell">
+        <div class="broadcast-layout">
+          <section class="ops-card">
+            <h3>Publish Site Notice</h3>
+            <p class="muted">Publish a plain-text notice to every current and newly arriving Arena visitor.</p>
+            <textarea id="broadcastMessage" maxlength="500" rows="5" placeholder="Message shown across the Arena site" style="width:100%;margin-top:10px;resize:vertical"></textarea>
+            <div class="ops-command-row" style="margin-top:8px">
+              <select id="broadcastSeverity" aria-label="Broadcast severity">
+                <option value="info">Info</option>
+                <option value="warning">Warning</option>
+                <option value="critical">Critical</option>
+              </select>
+              <input id="broadcastExpiryMinutes" type="number" min="1" max="10080" placeholder="Expires (minutes)" aria-label="Expiry in minutes; leave blank until cleared" style="width:155px">
+              <button class="btn-success" id="broadcastPublishBtn" onclick="publishBroadcast()">Publish</button>
+              <button class="btn-danger" id="broadcastClearBtn" onclick="clearBroadcast()" disabled>Clear Current</button>
+            </div>
+            <div class="ctrl-result" id="broadcastResult"></div>
+          </section>
+
+          <section class="ops-card broadcast-current-card">
+            <h3>Current Site Notice</h3>
+            <p class="muted">This is the notice visitors receive now. Notices may expire automatically or remain until cleared.</p>
+            <div id="broadcastCurrent" class="muted broadcast-current">Loading current broadcast...</div>
+          </section>
+        </div>
+
+        <section class="ops-card broadcast-history-card">
+          <div class="broadcast-card-heading">
+            <h3>Broadcast History</h3>
+            <span class="muted">Recent publish and clear events</span>
+          </div>
+          <div id="broadcastHistory" class="muted broadcast-history"></div>
+        </section>
+      </div>
+    </div>
+
     <!-- Controls Panel -->
     <div class="panel" id="panel-controls">
       <div class="ops-shell">
@@ -1557,24 +1634,6 @@ tr:hover td{background:rgba(88,166,255,0.07)}
                   <button class="btn-success" id="updateBtn" onclick="startUpdate()" style="display:none">Update to Latest</button>
                 </div>
                 <div class="ctrl-result" id="updateResult"></div>
-              </section>
-              <section class="ops-card">
-                <h3>Site Broadcast</h3>
-                <p class="muted">Publish a plain-text notice to every current and newly arriving Arena visitor.</p>
-                <textarea id="broadcastMessage" maxlength="500" rows="3" placeholder="Message shown across the Arena site" style="width:100%;margin-top:10px;resize:vertical"></textarea>
-                <div class="ops-command-row" style="margin-top:8px">
-                  <select id="broadcastSeverity" aria-label="Broadcast severity">
-                    <option value="info">Info</option>
-                    <option value="warning">Warning</option>
-                    <option value="critical">Critical</option>
-                  </select>
-                  <input id="broadcastExpiryMinutes" type="number" min="1" max="10080" placeholder="Expires (minutes)" aria-label="Expiry in minutes; leave blank until cleared" style="width:155px">
-                  <button class="btn-success" id="broadcastPublishBtn" onclick="publishBroadcast()">Publish</button>
-                  <button class="btn-danger" id="broadcastClearBtn" onclick="clearBroadcast()" disabled>Clear Current</button>
-                </div>
-                <div class="ctrl-result" id="broadcastResult"></div>
-                <div id="broadcastCurrent" class="muted" style="margin-top:8px">Loading current broadcast...</div>
-                <div id="broadcastHistory" class="muted" style="margin-top:8px;max-height:120px;overflow:auto"></div>
               </section>
               <section class="ops-card">
                 <h3>Round Control</h3>
@@ -1845,6 +1904,7 @@ const PANEL_META = {
   admintokens: ['Secure', 'Admin Tokens', 'Issue and revoke dashboard admin credentials.'],
   leaderboard: ['Operate', 'Leaderboard', 'Rank bot performance across selectable periods.'],
   connlog: ['Observe', 'Connection Log', 'Historical connection stream for dashboard review.'],
+  broadcasts: ['Tune + Publish', 'Site Broadcast', 'Publish, clear, and review site-wide visitor notices.'],
   controls: ['Tune', 'Operations Console', 'Configure gameplay, demo bots, maps, and release updates.']
 };
 
@@ -2084,7 +2144,7 @@ function handleSSEEvent(type, data) {
         if (evt.data && evt.data.event === 'damage') {
           handleDamageEvent(evt);
         }
-        if (evt.data && evt.data.event === 'service_status_changed' && currentTab === 'controls') {
+        if (evt.data && evt.data.event === 'service_status_changed' && currentTab === 'broadcasts') {
           loadBroadcasts();
         }
         break;
@@ -2132,6 +2192,7 @@ function switchTab(tabName, sourceItem=null) {
   if (currentTab === 'errors') refreshErrors();
   if (currentTab === 'ratelimits') refreshRateLimits();
   if (currentTab === 'controls') { loadOpsConsole(); }
+  if (currentTab === 'broadcasts') { loadBroadcasts(); }
   if (currentTab === 'rounds') refreshRounds();
   if (currentTab === 'killfeed') renderKillFeedStats();
   if (currentTab === 'balance') refreshBalance();
@@ -3563,8 +3624,7 @@ async function loadOpsConsole() {
     loadDemoBotStudio(),
     loadMapWorkshop(),
     refreshIPBans(),
-    loadCosmeticCatalog(),
-    loadBroadcasts()
+    loadCosmeticCatalog()
   ]);
   renderConfigHistory();
 }
@@ -3591,7 +3651,7 @@ async function loadBroadcasts() {
     }
 
     historyEl.replaceChildren();
-    const history = (data.events || []).filter((event) => event.slot === 'broadcast').slice(0, 8);
+    const history = (data.events || []).filter((event) => event.slot === 'broadcast');
     for (const event of history) {
       const row = document.createElement('div');
       row.style.cssText = 'padding:4px 0;border-top:1px solid var(--border)';
