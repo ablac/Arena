@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"arena-server/internal/config"
@@ -193,6 +194,12 @@ type GameEngine struct {
 	// Both fields are written only by the tick goroutine in startRound.
 	roundDBReady    *roundPersistenceResult
 	roundCreateTail <-chan struct{}
+	// Bounty snapshots are generated from the tick goroutine but persisted in
+	// background goroutines. Serialize writes and discard a queued snapshot when
+	// a newer generation already exists, preventing old state from winning due
+	// to goroutine or database scheduling order.
+	bountyPersistMu         sync.Mutex
+	bountyPersistGeneration atomic.Uint64
 }
 
 // GameEventHook is a callback for emitting game events to the dashboard.
@@ -1381,12 +1388,31 @@ func (e *GameEngine) persistBountyBoardAsync() {
 			IsTarget:     entry.IsTarget,
 		})
 	}
+	generation := e.bountyPersistGeneration.Add(1)
 
 	safeGo(func() {
-		if err := db.ReplaceBountyBoardEntries(context.Background(), rows); err != nil {
+		if err := e.persistBountyBoardSnapshot(
+			context.Background(), generation, rows, db.ReplaceBountyBoardEntries,
+		); err != nil {
 			slog.Error("failed to persist bounty board", "error", err)
 		}
 	})
+}
+
+type bountyBoardSnapshotWriter func(context.Context, []db.BountyBoardEntry) error
+
+func (e *GameEngine) persistBountyBoardSnapshot(
+	ctx context.Context,
+	generation uint64,
+	rows []db.BountyBoardEntry,
+	write bountyBoardSnapshotWriter,
+) error {
+	e.bountyPersistMu.Lock()
+	defer e.bountyPersistMu.Unlock()
+	if generation != e.bountyPersistGeneration.Load() {
+		return nil
+	}
+	return write(ctx, rows)
 }
 
 // --------------------------------------------------------------------------

@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -194,6 +195,286 @@ func TestPostgresFreshSchemaCosmeticsAndLeaderboardResetSmoke(t *testing.T) {
 	}
 	if allTimeRows != 0 || windowRows != 0 {
 		t.Fatalf("leaderboard reset left rows: all_time=%d windows=%d", allTimeRows, windowRows)
+	}
+}
+
+func TestReplaceBountyBoardEntriesSerializesConcurrentSnapshots(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	now := time.Now()
+	bot := &Bot{
+		ID: "bounty-race-bot", APIKeyID: "bounty-race-key", Name: "Bounty Race Bot", AvatarColor: "#123456",
+		DefaultWeapon: "sword", DefaultStats: JSONBStats{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
+		DefaultFallback: "aggressive", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := CreateAPIKeyAndBot(ctx, bot.APIKeyID, "bounty-race-hash", "arena_bounty_race", "127.0.0.1", bot); err != nil {
+		t.Fatalf("CreateAPIKeyAndBot: %v", err)
+	}
+
+	// Hold both empty-table DELETE statements open long enough for their
+	// subsequent INSERTs to overlap. Without a transaction-scoped writer lock,
+	// one replacement loses the primary-key race for the shared bot snapshot.
+	if _, err := Pool.Exec(ctx, `
+		CREATE FUNCTION delay_bounty_board_delete() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			PERFORM pg_sleep(0.25);
+			RETURN NULL;
+		END
+		$$;
+		CREATE TRIGGER delay_bounty_board_delete
+		AFTER DELETE ON bounty_board
+		FOR EACH STATEMENT EXECUTE FUNCTION delay_bounty_board_delete()
+	`); err != nil {
+		t.Fatalf("install bounty persistence overlap trigger: %v", err)
+	}
+
+	entries := []BountyBoardEntry{{
+		BotID: bot.ID, Name: bot.Name, AvatarColor: bot.AvatarColor, Weapon: bot.DefaultWeapon,
+		WinStreak: 3, BountyPoints: 75, Claims: 1, IsTarget: true,
+	}}
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for i := 0; i < cap(results); i++ {
+		go func() {
+			<-start
+			results <- ReplaceBountyBoardEntries(ctx, entries)
+		}()
+	}
+	close(start)
+	for i := 0; i < cap(results); i++ {
+		if err := <-results; err != nil {
+			t.Fatalf("concurrent ReplaceBountyBoardEntries call %d: %v", i+1, err)
+		}
+	}
+
+	var rows int
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM bounty_board WHERE bot_id = $1`, bot.ID).Scan(&rows); err != nil {
+		t.Fatalf("count persisted bounty rows: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("persisted bounty rows = %d, want 1", rows)
+	}
+}
+
+func TestInterruptActiveRoundsReconcilesOnlyPreexistingRounds(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	for i, id := range []string{"interrupted-killer", "interrupted-victim"} {
+		keyID := fmt.Sprintf("interrupted-key-%d", i)
+		bot := &Bot{
+			ID: id, APIKeyID: keyID, Name: id, AvatarColor: "#123456",
+			DefaultWeapon: "sword", DefaultStats: JSONBStats{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
+			DefaultFallback: "aggressive", CreatedAt: now, UpdatedAt: now,
+		}
+		if err := CreateAPIKeyAndBot(ctx, keyID, fmt.Sprintf("interrupted-hash-%d", i), fmt.Sprintf("arena_interrupted_%d", i), "127.0.0.1", bot); err != nil {
+			t.Fatalf("CreateAPIKeyAndBot(%s): %v", id, err)
+		}
+	}
+
+	ended := now.Add(-time.Minute)
+	for _, round := range []*Round{
+		{ID: "stale-active-with-kills", RoundNumber: 102, StartedAt: now.Add(-5 * time.Minute), Status: "active"},
+		{ID: "stale-active-empty", RoundNumber: 7, StartedAt: now.Add(-3 * time.Minute), Status: "active"},
+		{ID: "already-completed", RoundNumber: 101, StartedAt: now.Add(-10 * time.Minute), EndedAt: &ended, Status: "completed"},
+	} {
+		if err := CreateRound(ctx, round); err != nil {
+			t.Fatalf("CreateRound(%s): %v", round.ID, err)
+		}
+	}
+	roundID := "stale-active-with-kills"
+	if err := InsertKillLog(ctx, &KillLog{
+		ID: "interrupted-kill", RoundID: &roundID,
+		KillerID: "interrupted-killer", VictimID: "interrupted-victim",
+		Weapon: "sword", Damage: 25, KillerHP: 50, Tick: 42, CreatedAt: now.Add(-4 * time.Minute),
+	}); err != nil {
+		t.Fatalf("InsertKillLog: %v", err)
+	}
+
+	changed, err := InterruptActiveRounds(ctx)
+	if err != nil {
+		t.Fatalf("InterruptActiveRounds: %v", err)
+	}
+	if changed != 2 {
+		t.Fatalf("interrupted rows = %d, want 2", changed)
+	}
+
+	rows, err := Pool.Query(ctx, `SELECT id, status, ended_at IS NULL FROM rounds ORDER BY id`)
+	if err != nil {
+		t.Fatalf("read reconciled rounds: %v", err)
+	}
+	got := map[string]struct {
+		status      string
+		endedAtNull bool
+	}{}
+	for rows.Next() {
+		var id, status string
+		var endedAtNull bool
+		if err := rows.Scan(&id, &status, &endedAtNull); err != nil {
+			rows.Close()
+			t.Fatalf("scan reconciled round: %v", err)
+		}
+		got[id] = struct {
+			status      string
+			endedAtNull bool
+		}{status: status, endedAtNull: endedAtNull}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatalf("iterate reconciled rounds: %v", err)
+	}
+	rows.Close()
+	if got["stale-active-with-kills"].status != "interrupted" || !got["stale-active-with-kills"].endedAtNull ||
+		got["stale-active-empty"].status != "interrupted" || !got["stale-active-empty"].endedAtNull {
+		t.Fatalf("reconciled active rounds = %+v", got)
+	}
+	if got["already-completed"].status != "completed" || got["already-completed"].endedAtNull {
+		t.Fatalf("completed round changed = %+v", got["already-completed"])
+	}
+	var killRows int
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM kill_log WHERE round_id = $1`, roundID).Scan(&killRows); err != nil {
+		t.Fatalf("count preserved kill logs: %v", err)
+	}
+	if killRows != 1 {
+		t.Fatalf("preserved kill logs = %d, want 1", killRows)
+	}
+
+	changed, err = InterruptActiveRounds(ctx)
+	if err != nil || changed != 0 {
+		t.Fatalf("idempotent InterruptActiveRounds = (%d, %v), want (0, nil)", changed, err)
+	}
+	if err := CreateRound(ctx, &Round{
+		ID: "new-runtime-round", RoundNumber: 1, StartedAt: now, Status: "active",
+	}); err != nil {
+		t.Fatalf("CreateRound(new-runtime-round): %v", err)
+	}
+	var status string
+	if err := Pool.QueryRow(ctx, `SELECT status FROM rounds WHERE id = 'new-runtime-round'`).Scan(&status); err != nil {
+		t.Fatalf("read new runtime round: %v", err)
+	}
+	if status != "active" {
+		t.Fatalf("new runtime round status = %q, want active", status)
+	}
+}
+
+func TestInterruptActiveRoundsWaitsForInFlightRoundCreation(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	creating, err := Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin concurrent round creation: %v", err)
+	}
+	t.Cleanup(func() { _ = creating.Rollback(context.Background()) })
+	if _, err := creating.Exec(ctx, `
+		INSERT INTO rounds (id, round_number, started_at, status)
+		VALUES ('in-flight-round', 1, NOW(), 'active')
+	`); err != nil {
+		t.Fatalf("insert uncommitted round: %v", err)
+	}
+
+	type result struct {
+		changed int64
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		changed, err := InterruptActiveRounds(context.Background())
+		done <- result{changed: changed, err: err}
+	}()
+	select {
+	case got := <-done:
+		t.Fatalf("reconciliation returned before round creation committed: %+v", got)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := creating.Commit(ctx); err != nil {
+		t.Fatalf("commit concurrent round creation: %v", err)
+	}
+	select {
+	case got := <-done:
+		if got.err != nil || got.changed != 1 {
+			t.Fatalf("InterruptActiveRounds after concurrent create = (%d, %v), want (1, nil)", got.changed, got.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("reconciliation remained blocked after round creation committed")
+	}
+	var status string
+	if err := Pool.QueryRow(ctx, `SELECT status FROM rounds WHERE id = 'in-flight-round'`).Scan(&status); err != nil {
+		t.Fatalf("read concurrently created round: %v", err)
+	}
+	if status != "interrupted" {
+		t.Fatalf("concurrently created round status = %q, want interrupted", status)
+	}
+}
+
+func TestRuntimeLeaseEnforcesSingleArenaServer(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+
+	first, err := AcquireRuntimeLease(ctx)
+	if err != nil {
+		t.Fatalf("AcquireRuntimeLease(first): %v", err)
+	}
+	t.Cleanup(func() { _ = first.Close(context.Background()) })
+	if _, err := AcquireRuntimeLease(ctx); !errors.Is(err, ErrRuntimeLeaseHeld) {
+		t.Fatalf("AcquireRuntimeLease(concurrent) error = %v, want ErrRuntimeLeaseHeld", err)
+	}
+	if err := first.Close(ctx); err != nil {
+		t.Fatalf("close first runtime lease: %v", err)
+	}
+
+	replacement, err := AcquireRuntimeLease(ctx)
+	if err != nil {
+		t.Fatalf("AcquireRuntimeLease(after release): %v", err)
+	}
+	if err := replacement.Close(ctx); err != nil {
+		t.Fatalf("close replacement runtime lease: %v", err)
+	}
+}
+
+func TestRuntimeLeaseMonitorReportsSessionLoss(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	lease, err := AcquireRuntimeLease(ctx)
+	if err != nil {
+		t.Fatalf("AcquireRuntimeLease: %v", err)
+	}
+	t.Cleanup(func() { _ = lease.Close(context.Background()) })
+	backendPID := lease.conn.Conn().PgConn().PID()
+
+	monitorCtx, monitorCancel := context.WithCancel(context.Background())
+	defer monitorCancel()
+	monitorDone := make(chan error, 1)
+	go func() { monitorDone <- lease.Monitor(monitorCtx) }()
+	var terminated bool
+	if err := Pool.QueryRow(ctx, `SELECT pg_terminate_backend($1)`, backendPID).Scan(&terminated); err != nil {
+		t.Fatalf("terminate runtime lease backend: %v", err)
+	}
+	if !terminated {
+		t.Fatal("PostgreSQL did not terminate the runtime lease backend")
+	}
+	select {
+	case err := <-monitorDone:
+		if err == nil {
+			t.Fatal("runtime lease monitor returned nil after session loss")
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("runtime lease monitor did not detect session loss")
+	}
+
+	replacement, err := AcquireRuntimeLease(ctx)
+	if err != nil {
+		t.Fatalf("AcquireRuntimeLease after session loss: %v", err)
+	}
+	if err := replacement.Close(ctx); err != nil {
+		t.Fatalf("close replacement runtime lease: %v", err)
 	}
 }
 
