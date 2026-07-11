@@ -15,6 +15,7 @@ type botMessageLimiter struct {
 	timestamps   []time.Time
 	incident     bool
 	dropped      int
+	lastCheck    time.Time
 }
 
 func newBotMessageLimiter(maxPerSecond int) *botMessageLimiter {
@@ -30,6 +31,11 @@ func (l *botMessageLimiter) Check(now time.Time) botMessageRateDecision {
 	if l.maxPerSecond <= 0 {
 		return botMessageRateDecision{Allowed: true}
 	}
+	if !l.lastCheck.IsZero() && now.Sub(l.lastCheck) > time.Second {
+		l.incident = false
+		l.dropped = 0
+	}
+	l.lastCheck = now
 
 	cutoff := now.Add(-time.Second)
 	kept := l.timestamps[:0]
@@ -39,10 +45,6 @@ func (l *botMessageLimiter) Check(now time.Time) botMessageRateDecision {
 		}
 	}
 	l.timestamps = kept
-	if len(l.timestamps) < l.maxPerSecond && l.incident {
-		l.incident = false
-		l.dropped = 0
-	}
 
 	if len(l.timestamps) < l.maxPerSecond {
 		l.timestamps = append(l.timestamps, now)
