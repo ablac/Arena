@@ -41,8 +41,8 @@ func TestResetLeaderboardWith_ClearsAllLeaderboardSourcesInOneStatement(t *testi
 			t.Errorf("reset statement %q does not clear %s", executor.query, table)
 		}
 	}
-	if !strings.Contains(executor.query, "RESTART IDENTITY") {
-		t.Errorf("reset statement %q does not reset per-round row identities", executor.query)
+	if !strings.Contains(executor.query, "CONTINUE IDENTITY") {
+		t.Errorf("reset statement %q does not preserve least-privilege sequence ownership", executor.query)
 	}
 }
 

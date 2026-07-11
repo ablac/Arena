@@ -47,6 +47,29 @@ GIT_COMMIT=$(git rev-parse HEAD) BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
   docker compose build arena-server
 ```
 
+Apply the schema with the database owner before starting or recreating a
+managed production server. The migration command applies the full idempotent
+schema, grants the separately named runtime role DML/table and sequence access,
+sets matching default privileges for future objects, and fails non-zero if any
+step or the post-migration preflight fails:
+
+```bash
+(
+  set -a
+  . ./.env
+  set +a
+  runtime_db_user="$ARENA_DB_USER"
+  export ARENA_RUNTIME_DB_USER="$runtime_db_user"
+  export ARENA_DB_USER="$ARENA_DB_MIGRATOR_USER"
+  if [ -n "${ARENA_DB_MIGRATOR_PASSWORD:-}" ]; then
+    export ARENA_DB_PASSWORD="$ARENA_DB_MIGRATOR_PASSWORD"
+  fi
+  docker compose run --rm --no-deps \
+    -e ARENA_DB_USER -e ARENA_DB_PASSWORD -e ARENA_RUNTIME_DB_USER \
+    arena-server /arena-server migrate
+)
+```
+
 Then start or recreate the server:
 
 ```bash
@@ -91,9 +114,12 @@ Game and map saves are deliberately restart-staged. The simulation has many dire
 
 The Admin Panel's Controls tab has a **Version & Update** card that shows the
 running commit vs. the latest commit on the release branch and, when enabled,
-a one-click **Update to latest** button. It rebuilds and recreates only the
-`arena-server` container at the chosen commit. `arena-db` and `arena-redis` are
-never touched, so game data and stats are preserved.
+a one-click **Update to latest** button. It builds the new `arena-server` image,
+asks the old app to drain, stops that old writer without removing its container,
+runs the new image's migration-only command as the database owner, and only then
+recreates the app. `arena-db` and `arena-redis` are never touched, so game data
+and stats are preserved. A migration failure fails the update closed and starts
+the retained old app container again before clearing the maintenance notice.
 
 It works through a separate `arena-updater` sidecar that holds Docker-socket
 (host-root-equivalent) access so `arena-server` itself never needs it. The
@@ -123,14 +149,43 @@ openssl rand -hex 32          # -> paste as ARENA_UPDATER_SHARED_SECRET
 cat >> .env <<'EOF'
 ARENA_UPDATER_URL=http://arena-updater:8090/update
 ARENA_UPDATER_SHARED_SECRET=<the-hex-secret>
+ARENA_DB_MIGRATIONS_MANAGED=true
+ARENA_DB_MIGRATOR_USER=arena_user  # existing PostgreSQL owner, not arena_app
+# ARENA_DB_MIGRATOR_PASSWORD=      # only when different from ARENA_DB_PASSWORD
 DEPLOY_OWNER=1000:1001        # the deploy dir's owner uid:gid (id -u:id -g)
 EOF
 
-# 2. Build + bring up the server (so it picks up the new env) and the sidecar:
-GIT_COMMIT=$(git rev-parse HEAD) BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-  docker compose --profile updater build arena-server arena-updater
-docker compose --profile updater up -d arena-server arena-updater
+# 2. Build + replace only the updater sidecar:
+docker compose --profile updater build arena-updater
+docker compose --profile updater up -d --no-deps --force-recreate arena-updater
 ```
+
+Do not combine the initial updater recreation with `arena-server` or its
+dependencies. The server should already have received the owner-run migration
+above, while the database and Redis containers must remain untouched. In a
+managed deployment the migrator variables also pin PostgreSQL's bootstrap owner
+and healthcheck identity; `ARENA_DB_USER` remains the separate runtime role.
+
+`ARENA_DB_USER` remains the least-privilege runtime role (for example,
+`arena_app`). Compose passes that identity to the one-shot migration as
+`ARENA_RUNTIME_DB_USER` before switching the connection to
+`ARENA_DB_MIGRATOR_USER`. Normal startup with
+`ARENA_DB_MIGRATIONS_MANAGED=true` performs no DDL, but it does run a read-only
+required-table/column preflight and exits instead of serving against stale or
+inaccessible schema.
+
+Existing updater installations must be rebuilt and recreated once to load this
+migration pipeline; an updater cannot replace its own running JavaScript during
+an in-flight server update:
+
+```bash
+docker compose --profile updater build arena-updater
+docker compose --profile updater up -d --no-deps arena-updater
+```
+
+After that one-time bootstrap, future Admin Panel updates run migrations
+automatically. A missing migrator/runtime role setting is treated as an update
+failure before source sync or app shutdown.
 
 Leaving `ARENA_UPDATER_URL` / `ARENA_UPDATER_SHARED_SECRET` unset (the default)
 keeps the Version card at display-only, with no update button, and the sidecar

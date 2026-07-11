@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -19,11 +20,88 @@ import (
 	"arena-server/internal/game"
 	"arena-server/internal/security"
 	"arena-server/internal/ws"
+
+	"github.com/jackc/pgx/v5"
 )
+
+type commandMode string
+
+const (
+	commandServe   commandMode = "serve"
+	commandMigrate commandMode = "migrate"
+)
+
+var databaseRolePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]{0,62}$`)
+
+type schemaQueryer interface {
+	QueryRow(context.Context, string, ...interface{}) pgx.Row
+}
+
+const managedSchemaPreflightQuery = `
+	WITH required(table_name, column_name) AS (
+		VALUES
+			('api_keys', 'id'),
+			('bots', 'id'),
+			('bot_stats', 'bot_id'),
+			('rounds', 'persisted_order'),
+			('kill_log', 'id'),
+			('rate_limits', 'ip_address'),
+			('weapon_balance', 'revision'),
+			('weapon_balance', 'algorithm_version'),
+			('weapon_balance_history', 'revision'),
+			('weapon_balance_history', 'algorithm_version'),
+			('bounty_board', 'bot_id'),
+			('round_bot_stats', 'round_id'),
+			('round_bot_stats', 'weapon'),
+			('round_bot_stats', 'longest_life_secs'),
+			('round_bot_stats', 'shots_fired'),
+			('round_bot_stats', 'shots_hit'),
+			('demo_bot_keys', 'name'),
+			('admin_tokens', 'id'),
+			('admin_content_blocks', 'key'),
+			('demo_bot_templates', 'name'),
+			('custom_map_templates', 'name'),
+			('admin_runtime_overrides', 'scope'),
+			('service_notice_events', 'id'),
+			('cosmetic_items', 'id'),
+			('cosmetic_entitlements', 'bot_id'),
+			('customer_accounts', 'id'),
+			('account_bot_links', 'account_id'),
+			('cosmetic_licenses', 'id'),
+			('cosmetic_license_assignments', 'license_id'),
+			('bot_cosmetic_loadout', 'license_id'),
+			('bot_cosmetic_loadout', 'account_id')
+	), missing AS (
+		SELECT required.table_name, required.column_name
+		FROM required
+		LEFT JOIN information_schema.columns AS columns
+		  ON columns.table_schema = 'public'
+		 AND columns.table_name = required.table_name
+		 AND columns.column_name = required.column_name
+		WHERE columns.column_name IS NULL
+	)
+	SELECT COALESCE(string_agg(table_name || '.' || column_name, ', ' ORDER BY table_name, column_name), '')
+	FROM missing`
 
 func main() {
 	// Load configuration from environment variables.
 	config.Load()
+	mode, err := parseCommand(os.Args[1:])
+	if err != nil {
+		slog.Error("invalid command", "error", err)
+		os.Exit(2)
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	if mode == commandMigrate {
+		if err := runDatabaseMigrations(ctx); err != nil {
+			slog.Error("database migration failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("database migration completed")
+		return
+	}
 
 	// Connect to the database. By default the DB is required (auth and
 	// persistence depend on it): if it is still unreachable after retries we
@@ -31,8 +109,6 @@ func main() {
 	// start, rather than silently running in a broken degraded mode where
 	// every keyed bot join fails (the 2026-05-29 incident). Set
 	// ARENA_DB_OPTIONAL=true to allow running without a database.
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 	if err := db.Connect(ctx); err != nil {
 		if !config.C.DBOptional {
 			slog.Error("database required but unavailable after retries; exiting for restart", "error", err)
@@ -42,10 +118,20 @@ func main() {
 	}
 	defer db.Close()
 
-	// Ensure the database schema for persistence-backed features.
+	// Local/default deployments retain automatic startup migrations. Managed
+	// production deployments run migrations through the updater under the DB
+	// owner and keep the runtime role DDL-free. Both paths fail closed on a
+	// migration error or a stale schema instead of starting partially broken.
 	if db.Pool != nil {
-		if err := db.EnsureCoreSchema(ctx); err != nil {
-			slog.Warn("failed to ensure database schema", "error", err)
+		if !config.ShouldAutoMigrateDatabase() {
+			slog.Info("database migrations are managed externally; skipping runtime DDL")
+		} else if err := db.EnsureCoreSchema(ctx); err != nil {
+			slog.Error("failed to migrate database schema; refusing to start", "error", err)
+			os.Exit(1)
+		}
+		if err := verifyManagedSchema(ctx, db.Pool); err != nil {
+			slog.Error("database schema preflight failed; refusing to start", "error", err)
+			os.Exit(1)
 		}
 		minElo, maxElo := config.EloBounds()
 		if changed, err := db.NormalizeEloRatings(ctx, minElo, maxElo); err != nil {
@@ -177,6 +263,134 @@ func main() {
 	if ctx.Err() != nil {
 		<-shutdownDone
 	}
+}
+
+func parseCommand(args []string) (commandMode, error) {
+	if len(args) == 0 {
+		return commandServe, nil
+	}
+	if len(args) == 1 && args[0] == string(commandMigrate) {
+		return commandMigrate, nil
+	}
+	return "", fmt.Errorf("usage: arena-server [migrate]")
+}
+
+func runDatabaseMigrations(ctx context.Context) error {
+	if err := db.Connect(ctx); err != nil {
+		return fmt.Errorf("connect as migrator: %w", err)
+	}
+	defer db.Close()
+	if db.Pool == nil {
+		return fmt.Errorf("connect as migrator returned no database pool")
+	}
+	if err := db.EnsureCoreSchema(ctx); err != nil {
+		return fmt.Errorf("apply core schema: %w", err)
+	}
+
+	runtimeUser := config.C.DBRuntimeUser
+	if runtimeUser == "" {
+		// Direct/local migrations normally use one owner/runtime role. The
+		// updater always supplies ARENA_RUNTIME_DB_USER explicitly.
+		runtimeUser = config.C.DBUser
+	}
+	if err := grantRuntimeDatabasePrivileges(ctx, runtimeUser); err != nil {
+		return err
+	}
+	if err := verifyManagedSchema(ctx, db.Pool); err != nil {
+		return fmt.Errorf("post-migration schema preflight: %w", err)
+	}
+	return nil
+}
+
+func verifyManagedSchema(ctx context.Context, queryer schemaQueryer) error {
+	var missing string
+	if err := queryer.QueryRow(ctx, managedSchemaPreflightQuery).Scan(&missing); err != nil {
+		return fmt.Errorf("query required schema: %w", err)
+	}
+	if missing != "" {
+		return fmt.Errorf("required database schema is stale or inaccessible; missing: %s", missing)
+	}
+	return nil
+}
+
+func runtimePrivilegeStatements(runtimeUser string) ([]string, error) {
+	if !databaseRolePattern.MatchString(runtimeUser) {
+		return nil, fmt.Errorf("ARENA_RUNTIME_DB_USER must be a conventional PostgreSQL role name")
+	}
+	role := pgx.Identifier{runtimeUser}.Sanitize()
+	return []string{
+		fmt.Sprintf("GRANT USAGE ON SCHEMA public TO %s", role),
+		fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %s", role),
+		fmt.Sprintf("GRANT TRUNCATE ON TABLE public.bot_stats, public.round_bot_stats TO %s", role),
+		fmt.Sprintf("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %s", role),
+		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s", role),
+		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO %s", role),
+	}, nil
+}
+
+func grantRuntimeDatabasePrivileges(ctx context.Context, runtimeUser string) error {
+	if runtimeUser == config.C.DBUser {
+		// The simple local/default deployment uses one owner/runtime role, which
+		// already owns every object and needs no grants back to itself.
+		return nil
+	}
+	statements, err := runtimePrivilegeStatements(runtimeUser)
+	if err != nil {
+		return err
+	}
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin runtime privilege grant: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var roleExists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`, runtimeUser).Scan(&roleExists); err != nil {
+		return fmt.Errorf("look up runtime database role: %w", err)
+	}
+	if !roleExists {
+		return fmt.Errorf("runtime database role %q does not exist", runtimeUser)
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(ctx, statement); err != nil {
+			return fmt.Errorf("grant runtime database privileges: %w", err)
+		}
+	}
+
+	var missingPrivileges string
+	if err := tx.QueryRow(ctx, `
+		WITH missing AS (
+			SELECT 'table ' || quote_ident(schemaname) || '.' || quote_ident(tablename) AS object_name
+			FROM pg_tables
+			WHERE schemaname = 'public'
+			  AND NOT (
+				has_table_privilege($1, format('%I.%I', schemaname, tablename), 'SELECT') AND
+				has_table_privilege($1, format('%I.%I', schemaname, tablename), 'INSERT') AND
+				has_table_privilege($1, format('%I.%I', schemaname, tablename), 'UPDATE') AND
+				has_table_privilege($1, format('%I.%I', schemaname, tablename), 'DELETE') AND
+				(tablename NOT IN ('bot_stats', 'round_bot_stats') OR
+				 has_table_privilege($1, format('%I.%I', schemaname, tablename), 'TRUNCATE'))
+			  )
+			UNION ALL
+			SELECT 'sequence ' || quote_ident(sequence_schema) || '.' || quote_ident(sequence_name)
+			FROM information_schema.sequences
+			WHERE sequence_schema = 'public'
+			  AND NOT (
+				has_sequence_privilege($1, format('%I.%I', sequence_schema, sequence_name), 'USAGE') AND
+				has_sequence_privilege($1, format('%I.%I', sequence_schema, sequence_name), 'SELECT')
+			  )
+		)
+		SELECT COALESCE(string_agg(object_name, ', ' ORDER BY object_name), '')
+		FROM missing`, runtimeUser).Scan(&missingPrivileges); err != nil {
+		return fmt.Errorf("verify runtime database privileges: %w", err)
+	}
+	if missingPrivileges != "" {
+		return fmt.Errorf("runtime database role %q lacks required privileges on %s", runtimeUser, missingPrivileges)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit runtime database privileges: %w", err)
+	}
+	return nil
 }
 
 // demoBotEnabled returns true if the ARENA_DEMO_BOTS env var enables demo

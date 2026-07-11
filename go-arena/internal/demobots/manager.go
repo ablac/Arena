@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"arena-server/internal/config"
 	"arena-server/internal/db"
 )
 
@@ -74,7 +75,7 @@ func (m *Manager) Start(ctx context.Context) {
 	slog.Info("starting demo bots", "count", len(toStart))
 
 	// Ensure DB table for persisted keys.
-	if db.Pool != nil {
+	if db.Pool != nil && config.ShouldAutoMigrateDatabase() {
 		if err := db.EnsureDemoBotKeysTable(ctx); err != nil {
 			slog.Warn("failed to ensure demo_bot_keys table", "error", err)
 		}

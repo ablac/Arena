@@ -295,6 +295,9 @@ func (b *demoBot) session(ctx context.Context) error {
 		msgType, _ := msg["type"].(string)
 		switch msgType {
 		case "tick":
+			if !shouldActOnTick(msg) {
+				continue
+			}
 			action := PickAction(b.strategy, msg, b.config.Weapon, b.attackRange, b.botID)
 			payload := buildActionPayload(msg["tick"], action)
 			if err := conn.WriteJSON(payload); err != nil {
@@ -346,6 +349,15 @@ func (b *demoBot) session(ctx context.Context) error {
 			// Ignore unknown message types gracefully.
 		}
 	}
+}
+
+func shouldActOnTick(msg map[string]interface{}) bool {
+	state, ok := msg["your_state"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	alive, ok := state["is_alive"].(bool)
+	return ok && alive
 }
 
 // buildActionPayload converts an AI decision to the public bot protocol. Keep

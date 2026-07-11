@@ -1,0 +1,97 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/jackc/pgx/v5"
+)
+
+func TestParseCommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		want    commandMode
+		wantErr bool
+	}{
+		{name: "default starts server", want: commandServe},
+		{name: "migration only", args: []string{"migrate"}, want: commandMigrate},
+		{name: "unknown command", args: []string{"unknown"}, wantErr: true},
+		{name: "migration rejects extra arguments", args: []string{"migrate", "extra"}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseCommand(tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseCommand(%v) error = %v, wantErr %v", tt.args, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("parseCommand(%v) = %q, want %q", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+type schemaRow struct {
+	missing string
+	err     error
+}
+
+func (r schemaRow) Scan(dest ...interface{}) error {
+	if r.err != nil {
+		return r.err
+	}
+	*(dest[0].(*string)) = r.missing
+	return nil
+}
+
+type schemaQueryerStub struct {
+	row pgx.Row
+}
+
+func (s schemaQueryerStub) QueryRow(context.Context, string, ...interface{}) pgx.Row {
+	return s.row
+}
+
+func TestVerifyManagedSchema(t *testing.T) {
+	if err := verifyManagedSchema(context.Background(), schemaQueryerStub{row: schemaRow{}}); err != nil {
+		t.Fatalf("complete schema rejected: %v", err)
+	}
+
+	err := verifyManagedSchema(context.Background(), schemaQueryerStub{row: schemaRow{missing: "rounds.persisted_order, cosmetic_items.id"}})
+	if err == nil || !strings.Contains(err.Error(), "rounds.persisted_order") {
+		t.Fatalf("missing schema error = %v", err)
+	}
+
+	queryErr := errors.New("catalog unavailable")
+	err = verifyManagedSchema(context.Background(), schemaQueryerStub{row: schemaRow{err: queryErr}})
+	if !errors.Is(err, queryErr) {
+		t.Fatalf("query error = %v, want wrapped %v", err, queryErr)
+	}
+}
+
+func TestRuntimePrivilegeStatementsAreScopedAndRoleValidated(t *testing.T) {
+	statements, err := runtimePrivilegeStatements("arena_app")
+	if err != nil {
+		t.Fatalf("runtimePrivilegeStatements: %v", err)
+	}
+	joined := strings.Join(statements, "\n")
+	for _, required := range []string{
+		`GRANT USAGE ON SCHEMA public TO "arena_app"`,
+		`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "arena_app"`,
+		`GRANT TRUNCATE ON TABLE public.bot_stats, public.round_bot_stats TO "arena_app"`,
+		`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "arena_app"`,
+		`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "arena_app"`,
+		`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO "arena_app"`,
+	} {
+		if !strings.Contains(joined, required) {
+			t.Errorf("privilege statements missing %q:\n%s", required, joined)
+		}
+	}
+	if _, err := runtimePrivilegeStatements(`arena_app"; DROP SCHEMA public; --`); err == nil {
+		t.Fatal("unsafe role name was accepted")
+	}
+}
