@@ -33,6 +33,38 @@ assert.match(revoke, /if \(button\.disabled\) return;/, 'double clicks must not 
 
 const switchTab = html.slice(html.indexOf('function switchTab'), html.indexOf('// Direct tab clicks'));
 assert.match(switchTab, /currentTab === 'cosmetics'[\s\S]*loadCosmeticsAdmin\(\)/, 'opening the cosmetics tab must load its catalog state');
+assert.match(switchTab, /setAttribute\('aria-current', 'page'\)/, 'the active admin destination must be announced to assistive technology');
+
+const tabSetupSource = html.slice(html.indexOf('function setupAdminTab'), html.indexOf('// Direct tab clicks'));
+assert.match(tabSetupSource, /setAttribute\('role', 'button'\)/, 'admin destinations need interactive semantics');
+assert.match(tabSetupSource, /setAttribute\('tabindex', '0'\)/, 'admin destinations need keyboard focus');
+assert.match(tabSetupSource, /event\.key !== 'Enter' && event\.key !== ' '/, 'admin destinations need Enter and Space activation');
+assert.match(html, /\.tab-direct:focus-visible,\.tab-item:focus-visible/, 'keyboard focus needs a visible nav treatment');
+
+const tabAttributes = new Map();
+const tabListeners = new Map();
+const tabActivations = [];
+const fakeTab = {
+  dataset:{tab:'cosmetics'},
+  setAttribute(name, value) { tabAttributes.set(name, value); },
+  addEventListener(name, listener) { tabListeners.set(name, listener); },
+};
+const tabContext = {switchTab:(name, item) => tabActivations.push({name, item})};
+runInNewContext(tabSetupSource, tabContext);
+tabContext.setupAdminTab(fakeTab, true);
+assert.equal(tabAttributes.get('role'), 'button');
+assert.equal(tabAttributes.get('tabindex'), '0');
+assert.equal(tabAttributes.get('aria-controls'), 'panel-cosmetics');
+let prevented = 0;
+let stopped = 0;
+tabListeners.get('keydown')({key:'Escape', preventDefault:() => { prevented += 1; }, stopPropagation:() => { stopped += 1; }});
+assert.equal(tabActivations.length, 0, 'unrelated keys must not activate a destination');
+for (const key of ['Enter', ' ']) {
+  tabListeners.get('keydown')({key, preventDefault:() => { prevented += 1; }, stopPropagation:() => { stopped += 1; }});
+}
+assert.deepEqual(tabActivations.map(entry => entry.name), ['cosmetics', 'cosmetics']);
+assert.equal(prevented, 2, 'Enter and Space should prevent their default behavior');
+assert.equal(stopped, 2, 'dropdown keyboard activation should not bubble into group toggles');
 
 const catalogAdmin = html.slice(html.indexOf('async function loadCosmeticsAdmin'), html.indexOf('async function loadCosmeticCatalog()'));
 assert.match(catalogAdmin, /api\('\/cosmetics\/catalog'\)/, 'admin catalog must include inactive records from its protected route');
