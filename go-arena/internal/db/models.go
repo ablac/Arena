@@ -115,6 +115,19 @@ type KillLog struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ChatMessage represents a row in the chat_messages table (developer lobby
+// chat). Handle is the spoof-resistant display handle derived from the
+// customer account, not the raw OIDC display name.
+type ChatMessage struct {
+	ID        int64     `json:"id"`
+	AccountID *string   `json:"account_id,omitempty"`
+	Handle    string    `json:"handle"`
+	Body      string    `json:"body"`
+	IP        string    `json:"-"`
+	CreatedAt time.Time `json:"created_at"`
+	Hidden    bool      `json:"-"`
+}
+
 // Round represents a row in the rounds table.
 type Round struct {
 	ID               string     `json:"id"`

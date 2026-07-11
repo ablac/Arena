@@ -257,6 +257,11 @@ func EnsureCoreSchema(ctx context.Context) error {
 	if err := EnsureCosmeticsSchema(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema cosmetics: %w", err)
 	}
+	// Chat depends on customer_accounts, created by the cosmetics schema
+	// above, so it must stay after that call.
+	if err := EnsureChatSchema(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema chat: %w", err)
+	}
 
 	return nil
 }

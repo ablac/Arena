@@ -27,6 +27,7 @@ import (
 	"arena-server/internal/demobots"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
+	"arena-server/internal/ws"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -37,6 +38,9 @@ type AdminHandler struct {
 	DemoManager   *demobots.Manager
 	ServiceStatus *ServiceStatusService
 	Shutdown      func()
+	// ChatHub, when set, lets chat moderation purge hidden messages from
+	// the live ring and connected clients, not just the database.
+	ChatHub       *ws.ChatHub
 	startTime     time.Time
 	// resetLeaderboardData is injectable so the destructive endpoint can be
 	// contract-tested without connecting to a production-like database.
@@ -255,6 +259,10 @@ func (h *AdminHandler) Routes(r chi.Router) {
 	r.Post("/bots/{id}/teleport", h.teleportBot)
 	r.Post("/bots/{id}/heal", h.healBot)
 	r.Get("/bots", h.listBots)
+
+	// Chat moderation.
+	r.Post("/chat/messages/{id}/hide", h.hideChatMessage)
+	r.Post("/chat/ban", h.setChatBan)
 
 	// Game control.
 	r.Post("/game/pause", h.gamePause)

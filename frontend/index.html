@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="css/arena.css?v=20260707c">
   <link rel="stylesheet" href="css/sections.css?v=20260710f">
   <link rel="stylesheet" href="css/site-shell.css?v=20260710g">
+  <link rel="stylesheet" href="css/chat.css?v=20260711a">
   <script src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/materialsLibrary/babylonjs.materials.min.js"></script>
@@ -21,6 +22,7 @@
   <script type="module" src="js/content-blocks.js?v=20260707d"></script>
   <script type="module" src="js/app.js?v=20260710g"></script>
   <script type="module" src="js/site-shell.js?v=20260710g"></script>
+  <script type="module" src="js/chat-panel.js?v=20260711a"></script>
 </head>
 <body>
   <div class="page-backdrop">
@@ -56,6 +58,7 @@
     <nav class="mobile-command-actions" aria-label="Quick actions">
       <button type="button" data-overlay-open="onboarding-overlay">Join</button>
       <button type="button" data-overlay-open="standings-overlay">Scores</button>
+      <button type="button" data-overlay-open="chat-overlay">Chat</button>
       <button type="button" data-site-menu-toggle aria-controls="site-command-dock" aria-expanded="false">Menu</button>
     </nav>
   </header>
@@ -1322,6 +1325,10 @@ wss://arena.angel-serv.com/ws/spectator
       <svg class="rail-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
       <span>Dashboard</span>
     </button>
+    <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="chat-overlay">
+      <svg class="rail-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+      <span>Chat</span>
+    </button>
     <button type="button" class="onboarding-rail onboarding-rail-bottom onboarding-rail-secondary" data-overlay-open="about-overlay">
       <svg class="rail-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
       <span>About</span>
@@ -1431,6 +1438,31 @@ wss://arena.angel-serv.com/ws/spectator
                   </div>
                 </div>
               </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="onboarding-overlay overlay-chat" id="chat-overlay" aria-hidden="true" data-overlay-side="right">
+    <div class="onboarding-scrim" data-close-overlay="chat-overlay"></div>
+    <aside class="onboarding-drawer" aria-labelledby="chat-title" role="dialog" aria-modal="true">
+      <button type="button" class="drawer-close" data-close-overlay="chat-overlay" aria-label="Close Chat">&times;</button>
+      <div class="onboarding-drawer-scroll">
+        <div class="drawer-shell-label">//Chat</div>
+        <div class="onboarding-flow">
+          <section class="onboarding-section" id="chat-panel-section">
+            <div class="card chat-panel">
+              <p class="onboarding-kicker">Developer Lobby</p>
+              <h3 class="onboarding-section-title" id="chat-title">Talk with the other bot builders</h3>
+              <div class="chat-status-line" id="chat-status-line" data-tone="info" aria-live="polite">Open to connect</div>
+              <div class="chat-messages" id="chat-messages" aria-label="Chat messages"></div>
+              <form class="chat-form" id="chat-form" autocomplete="off">
+                <input type="text" id="chat-input" name="chat-input" placeholder="Message the lobby" aria-label="Chat message" disabled>
+                <button type="submit" id="chat-send" disabled>Send</button>
+              </form>
+              <p class="chat-signin" id="chat-signin" hidden>Read-only mode. <a href="#" rel="nofollow">Sign in</a> to post. Posting pauses while your bot is alive in a round.</p>
             </div>
           </section>
         </div>
