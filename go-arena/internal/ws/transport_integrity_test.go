@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -16,6 +17,116 @@ import (
 )
 
 const testBotFrameLimit = 192
+
+func TestBotReaderKeepsLegacyStaffDualTargetSessionUnlocked(t *testing.T) {
+	withWSIntegrityConfig(t)
+	tracker := installActionStrikeTestTracker(t)
+	engine := game.NewGameEngine()
+	engine.Round.Phase = game.PhaseActive
+	engine.TickCount = 100
+
+	cfg := config.C
+	cfg.HeartbeatInterval = 1
+	cfg.WSMaxMessagesPerSec = 25
+	readyCh := make(chan *game.BotState, 1)
+	resultCh := make(chan *game.BotState, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			resultCh <- nil
+			return
+		}
+		defer conn.Close()
+		bot := &game.BotState{
+			BotID: "legacy-staff", APIKeyID: "legacy-staff-key", Name: "Legacy Staff",
+			Weapon: "staff", IsAlive: true, HP: 100, MaxHP: 100,
+			Conn: conn, SendChan: make(chan []byte, 8),
+		}
+		engine.Bots[bot.BotID] = bot
+		readyCh <- bot
+		ctx, cancel := context.WithCancel(context.Background())
+		botReader(ctx, cancel, conn, bot, engine, &cfg)
+		resultCh <- bot
+	}))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial legacy staff harness: %v", err)
+	}
+	bot := <-readyCh
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := conn.WriteJSON(map[string]interface{}{
+			"type": "action", "tick": 100, "action": "attack",
+			"target": "opponent-id", "target_position": [2]float64{100, 140},
+		}); err != nil {
+			_ = conn.Close()
+			t.Fatalf("write legacy staff action %d: %v", attempt+1, err)
+		}
+	}
+	responseCodes := make([]string, 0, 2)
+	for response := 0; response < 2; response++ {
+		select {
+		case payload := <-bot.SendChan:
+			var message struct {
+				Code string `json:"code"`
+			}
+			if err := json.Unmarshal(payload, &message); err != nil {
+				_ = conn.Close()
+				t.Fatalf("decode duplicate response %d: %v", response+1, err)
+			}
+			responseCodes = append(responseCodes, message.Code)
+		case <-time.After(time.Second):
+			_ = conn.Close()
+			t.Fatalf("legacy staff reader did not process response %d", response+1)
+		}
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, _, err := conn.ReadMessage(); err == nil {
+		_ = conn.Close()
+		t.Fatal("legacy staff socket produced an unexpected frame")
+	} else if netErr, ok := err.(interface{ Timeout() bool }); !ok || !netErr.Timeout() {
+		_ = conn.Close()
+		t.Fatalf("legacy staff socket was policy-closed after compatibility actions: %v", err)
+	}
+	for response, code := range responseCodes {
+		if code != "DUPLICATE_ACTION_TICK" {
+			_ = conn.Close()
+			t.Fatalf("legacy staff response %d code = %q, want DUPLICATE_ACTION_TICK", response+1, code)
+		}
+	}
+	if bot.PendingAction == nil || bot.PendingAction.TargetPosition == nil || bot.PendingAction.TargetID != "" {
+		_ = conn.Close()
+		t.Fatalf("legacy staff action reached engine as %+v", bot.PendingAction)
+	}
+	if entry := tracker.entries[bot.APIKeyID]; entry != nil {
+		_ = conn.Close()
+		t.Fatalf("legacy staff compatibility action created protocol strikes: %+v", entry)
+	}
+	if remaining, locked := tracker.IsLocked(bot.APIKeyID); locked || remaining != 0 {
+		_ = conn.Close()
+		t.Fatalf("legacy staff key lock state = remaining %v locked %v", remaining, locked)
+	}
+	_ = conn.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+		time.Now().Add(time.Second),
+	)
+	_ = conn.Close()
+
+	var completedBot *game.BotState
+	select {
+	case completedBot = <-resultCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("legacy staff reader did not finish")
+	}
+	if completedBot == nil {
+		t.Fatal("legacy staff harness failed to upgrade")
+	}
+	if completedBot != bot {
+		t.Fatalf("legacy staff reader completed a different session: got %p want %p", completedBot, bot)
+	}
+}
 
 func TestBotHandlerLimitsOversizedAuthenticationFrameBeforeAuth(t *testing.T) {
 	previousLimit := config.C.WSMessageMaxBytes
