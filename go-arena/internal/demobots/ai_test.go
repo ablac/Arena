@@ -2,6 +2,7 @@ package demobots
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"testing"
 
@@ -838,6 +839,35 @@ func TestReadyTeleporterAvoidanceCoversBoostedMultiCellMove(t *testing.T) {
 		if intChebyshev(pos, pad) <= 1 {
 			t.Fatalf("boosted move crossed ready pad trigger at step %d: pos=%v action=%+v", step+1, pos, got)
 		}
+	}
+}
+
+func TestReadyTeleporterFootprintAllowsOutwardEgress(t *testing.T) {
+	cacheTeleportTestMap(t, []interface{}{
+		map[string]interface{}{"type": "teleport_pad", "id": "a", "linked_pad_id": "b", "position": []interface{}{float64(8), float64(10)}, "is_ready": true},
+		map[string]interface{}{"type": "teleport_pad", "id": "b", "linked_pad_id": "a", "position": []interface{}{float64(18), float64(18)}, "is_ready": true},
+	}, nil)
+	pad := [2]int{8, 10}
+
+	for _, start := range [][2]float64{{8, 10}, {7, 10}} {
+		t.Run(fmt.Sprintf("start_%d_%d", int(start[0]), int(start[1])), func(t *testing.T) {
+			msg := teleportTick(start, 100, 5.5,
+				map[string]interface{}{
+					"type": "teleport_pad", "id": "a", "linked_pad_id": "b",
+					"position": []interface{}{float64(8), float64(10)}, "is_ready": true,
+				},
+			)
+
+			got := PickAction("aggressive", msg, "sword", 1, "me")
+			if got.Action != "move" || got.Direction == nil {
+				t.Fatalf("action from ready pad footprint = %+v, want an outward move", got)
+			}
+			from := [2]int{int(start[0]), int(start[1])}
+			next := [2]int{from[0] + int(got.Direction[0]), from[1] + int(got.Direction[1])}
+			if intChebyshev(next, pad) <= intChebyshev(from, pad) {
+				t.Fatalf("ready-pad egress moved %v -> %v toward pad %v", from, next, pad)
+			}
+		})
 	}
 }
 
