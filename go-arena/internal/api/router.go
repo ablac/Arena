@@ -217,9 +217,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
 			admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
 			adminHandler.Routes(admin)
-			admin.Post("/cosmetics/grants", cosmeticsHandler.Grant)
-			admin.Delete("/cosmetics/grants", cosmeticsHandler.Revoke)
-			admin.Delete("/cosmetics/licenses/{license_id}", cosmeticsHandler.Revoke)
+			registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
 
 			// Dashboard API endpoints.
 			admin.Route("/dashboard", func(dash chi.Router) {
@@ -295,9 +293,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
 				admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
 				adminHandler.Routes(admin)
-				admin.Post("/cosmetics/grants", cosmeticsHandler.Grant)
-				admin.Delete("/cosmetics/grants", cosmeticsHandler.Revoke)
-				admin.Delete("/cosmetics/licenses/{license_id}", cosmeticsHandler.Revoke)
+				registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
 
 				admin.Route("/dashboard", func(dash chi.Router) {
 					dashboardHandler.DashboardRoutes(dash)
