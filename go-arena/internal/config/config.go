@@ -2,8 +2,14 @@ package config
 
 import (
 	"log/slog"
+	"math"
 
 	"github.com/kelseyhightower/envconfig"
+)
+
+const (
+	DefaultShoveRangeTiles     = 1.0
+	DefaultShoveKnockbackTiles = 2.0
 )
 
 type Config struct {
@@ -129,8 +135,8 @@ type Config struct {
 	GrappleAbilityStunTicks    int     `envconfig:"ARENA_GRAPPLE_STUN_TICKS" default:"3"`
 
 	// Shove
-	ShoveRange     float64 `envconfig:"ARENA_SHOVE_RANGE" default:"2.0"`
-	ShoveKnockback float64 `envconfig:"ARENA_SHOVE_KNOCKBACK" default:"15.0"`
+	ShoveRange     float64 `envconfig:"ARENA_SHOVE_RANGE" default:"1.0"`
+	ShoveKnockback float64 `envconfig:"ARENA_SHOVE_KNOCKBACK" default:"2.0"`
 	ShoveStunTicks int     `envconfig:"ARENA_SHOVE_STUN_TICKS" default:"2"`
 	ShoveCooldown  float64 `envconfig:"ARENA_SHOVE_COOLDOWN" default:"1.5"`
 
@@ -321,24 +327,25 @@ type Config struct {
 	GravityWellPullForce     float64 `envconfig:"ARENA_GRAVITY_WELL_PULL_FORCE" default:"0.5"`
 
 	// Automatic weapon balancing
-	WeaponAutoBalanceEnabled          bool    `envconfig:"ARENA_WEAPON_AUTO_BALANCE_ENABLED" default:"true"`
-	WeaponAutoBalanceStartStep        float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_START_STEP" default:"0.05"`
-	WeaponAutoBalanceMinStep          float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_STEP" default:"0.005"`
-	WeaponAutoBalanceDecay            float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_DECAY" default:"0.94"`
-	WeaponAutoBalanceDeadzoneStart    float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_DEADZONE_START" default:"0.02"`
-	WeaponAutoBalanceDeadzoneMin      float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_DEADZONE_MIN" default:"0.003"`
-	WeaponAutoBalanceMinDamageScale   float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_DAMAGE_SCALE" default:"0.80"`
-	WeaponAutoBalanceMaxDamageScale   float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MAX_DAMAGE_SCALE" default:"1.30"`
-	WeaponAutoBalanceMinCooldownScale float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_COOLDOWN_SCALE" default:"0.85"`
-	WeaponAutoBalanceMaxCooldownScale float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MAX_COOLDOWN_SCALE" default:"1.20"`
-	WeaponAutoBalanceDamageWeight     float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_DAMAGE_WEIGHT" default:"0.65"`
-	WeaponAutoBalanceCooldownWeight   float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_COOLDOWN_WEIGHT" default:"0.45"`
-	WeaponAutoBalanceMinRounds        int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_ROUNDS" default:"6"`
-	WeaponAutoBalanceMinBotSamples    int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_BOT_SAMPLES" default:"18"`
-	WeaponAutoBalanceMinDistinctBots  int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_DISTINCT_BOTS" default:"2"`
-	WeaponAutoBalanceMinActions       int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_ACTIONS" default:"5"`
-	WeaponAutoBalanceConfidenceZ      float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_CONFIDENCE_Z" default:"1.96"`
-	WeaponAutoBalanceMinEffect        float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_EFFECT" default:"0.05"`
+	WeaponAutoBalanceEnabled           bool    `envconfig:"ARENA_WEAPON_AUTO_BALANCE_ENABLED" default:"true"`
+	WeaponAutoBalanceStartStep         float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_START_STEP" default:"0.05"`
+	WeaponAutoBalanceMinStep           float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_STEP" default:"0.005"`
+	WeaponAutoBalanceDecay             float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_DECAY" default:"0.94"`
+	WeaponAutoBalanceDeadzoneStart     float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_DEADZONE_START" default:"0.02"`
+	WeaponAutoBalanceDeadzoneMin       float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_DEADZONE_MIN" default:"0.003"`
+	WeaponAutoBalanceMinDamageScale    float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_DAMAGE_SCALE" default:"0.70"`
+	WeaponAutoBalanceMaxDamageScale    float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MAX_DAMAGE_SCALE" default:"1.40"`
+	WeaponAutoBalanceMinCooldownScale  float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_COOLDOWN_SCALE" default:"0.75"`
+	WeaponAutoBalanceMaxCooldownScale  float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MAX_COOLDOWN_SCALE" default:"1.35"`
+	WeaponAutoBalanceDamageWeight      float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_DAMAGE_WEIGHT" default:"0.65"`
+	WeaponAutoBalanceCooldownWeight    float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_COOLDOWN_WEIGHT" default:"0.45"`
+	WeaponAutoBalanceMinRounds         int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_ROUNDS" default:"6"`
+	WeaponAutoBalanceMinBotSamples     int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_BOT_SAMPLES" default:"18"`
+	WeaponAutoBalanceMinDistinctBots   int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_DISTINCT_BOTS" default:"2"`
+	WeaponAutoBalanceMinActions        int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_ACTIONS" default:"5"`
+	WeaponAutoBalanceConfidenceZ       float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_CONFIDENCE_Z" default:"1.96"`
+	WeaponAutoBalanceMinEffect         float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_EFFECT" default:"0.05"`
+	WeaponAutoBalanceMaxEvidenceRounds int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MAX_EVIDENCE_ROUNDS" default:"48"`
 
 	// OIDC / SSO (opt-in)
 	OIDCEnabled      bool   `envconfig:"ARENA_OIDC_ENABLED" default:"false"`
@@ -366,7 +373,100 @@ const (
 	DefaultEloStarting = 1000
 	DefaultEloMin      = 100
 	DefaultEloMax      = 3000
+
+	DefaultWeaponAutoBalanceMinDamageScale    = 0.70
+	DefaultWeaponAutoBalanceMaxDamageScale    = 1.40
+	DefaultWeaponAutoBalanceMinCooldownScale  = 0.75
+	DefaultWeaponAutoBalanceMaxCooldownScale  = 1.35
+	DefaultWeaponAutoBalanceMaxEvidenceRounds = 48
+	DefaultWeaponAutoBalanceMinStep           = 0.005
+	DefaultWeaponAutoBalanceStartStep         = 0.05
+
+	absoluteWeaponAutoBalanceMinScale       = 0.50
+	absoluteWeaponAutoBalanceMaxScale       = 2.00
+	absoluteWeaponAutoBalanceMaxRoundWindow = 240
 )
+
+// WeaponAutoBalanceStepBounds returns the validated controller sensitivity.
+// Keeping this in config lets both startup migration and the runtime controller
+// agree on what a fresh algorithm epoch means.
+func WeaponAutoBalanceStepBounds() (float64, float64) {
+	minStep := C.WeaponAutoBalanceMinStep
+	if minStep != minStep || minStep <= 0 || minStep > 0.05 {
+		minStep = DefaultWeaponAutoBalanceMinStep
+	}
+	startStep := C.WeaponAutoBalanceStartStep
+	if startStep != startStep || startStep <= 0 || startStep > 0.10 {
+		startStep = DefaultWeaponAutoBalanceStartStep
+	}
+	if startStep < minStep {
+		startStep = minStep
+	}
+	return minStep, startStep
+}
+
+func resolveWeaponAutoBalanceSettings(
+	minDamage, maxDamage, minCooldown, maxCooldown float64,
+	maxEvidenceRounds int,
+) (float64, float64, float64, float64, int) {
+	validRails := func(minV, maxV float64) bool {
+		return minV >= absoluteWeaponAutoBalanceMinScale &&
+			maxV <= absoluteWeaponAutoBalanceMaxScale &&
+			minV <= 1 && maxV >= 1 && minV < maxV
+	}
+	if !validRails(minDamage, maxDamage) {
+		minDamage = DefaultWeaponAutoBalanceMinDamageScale
+		maxDamage = DefaultWeaponAutoBalanceMaxDamageScale
+	}
+	if !validRails(minCooldown, maxCooldown) {
+		minCooldown = DefaultWeaponAutoBalanceMinCooldownScale
+		maxCooldown = DefaultWeaponAutoBalanceMaxCooldownScale
+	}
+	if maxEvidenceRounds < 2 || maxEvidenceRounds > absoluteWeaponAutoBalanceMaxRoundWindow {
+		maxEvidenceRounds = DefaultWeaponAutoBalanceMaxEvidenceRounds
+	}
+	return minDamage, maxDamage, minCooldown, maxCooldown, maxEvidenceRounds
+}
+
+// WeaponAutoBalanceDamageBounds returns defensively validated runtime rails.
+func WeaponAutoBalanceDamageBounds() (float64, float64) {
+	minDamage, maxDamage, _, _, _ := resolveWeaponAutoBalanceSettings(
+		C.WeaponAutoBalanceMinDamageScale,
+		C.WeaponAutoBalanceMaxDamageScale,
+		C.WeaponAutoBalanceMinCooldownScale,
+		C.WeaponAutoBalanceMaxCooldownScale,
+		C.WeaponAutoBalanceMaxEvidenceRounds,
+	)
+	return minDamage, maxDamage
+}
+
+// WeaponAutoBalanceCooldownBounds returns defensively validated runtime rails.
+func WeaponAutoBalanceCooldownBounds() (float64, float64) {
+	_, _, minCooldown, maxCooldown, _ := resolveWeaponAutoBalanceSettings(
+		C.WeaponAutoBalanceMinDamageScale,
+		C.WeaponAutoBalanceMaxDamageScale,
+		C.WeaponAutoBalanceMinCooldownScale,
+		C.WeaponAutoBalanceMaxCooldownScale,
+		C.WeaponAutoBalanceMaxEvidenceRounds,
+	)
+	return minCooldown, maxCooldown
+}
+
+// WeaponAutoBalanceEvidenceLimit bounds how long an inconclusive batch may
+// accumulate while never undercutting the configured minimum evidence window.
+func WeaponAutoBalanceEvidenceLimit(minRounds int) int {
+	_, _, _, _, limit := resolveWeaponAutoBalanceSettings(
+		C.WeaponAutoBalanceMinDamageScale,
+		C.WeaponAutoBalanceMaxDamageScale,
+		C.WeaponAutoBalanceMinCooldownScale,
+		C.WeaponAutoBalanceMaxCooldownScale,
+		C.WeaponAutoBalanceMaxEvidenceRounds,
+	)
+	if limit < minRounds {
+		return minRounds
+	}
+	return limit
+}
 
 func resolveEloSettings(minElo, maxElo, startingElo int) (int, int, int) {
 	if minElo <= 0 || maxElo <= minElo {
@@ -382,6 +482,20 @@ func resolveEloSettings(minElo, maxElo, startingElo int) (int, int, int) {
 		startingElo = maxElo
 	}
 	return minElo, maxElo, startingElo
+}
+
+func resolveShoveSettings(rangeTiles, knockbackTiles float64) (float64, float64) {
+	if math.IsNaN(rangeTiles) || math.IsInf(rangeTiles, 0) || rangeTiles < 1 {
+		rangeTiles = DefaultShoveRangeTiles
+	} else {
+		rangeTiles = math.Round(rangeTiles)
+	}
+	if math.IsNaN(knockbackTiles) || math.IsInf(knockbackTiles, 0) || knockbackTiles < 1 {
+		knockbackTiles = DefaultShoveKnockbackTiles
+	} else {
+		knockbackTiles = math.Round(knockbackTiles)
+	}
+	return rangeTiles, knockbackTiles
 }
 
 // EloBounds returns the one validated rating interval used by the runtime
@@ -426,6 +540,35 @@ func Load() {
 			"effective_min", C.EloMin,
 			"effective_max", C.EloMax,
 			"effective_starting", C.EloStarting,
+		)
+	}
+	rawShoveRange, rawShoveKnockback := C.ShoveRange, C.ShoveKnockback
+	C.ShoveRange, C.ShoveKnockback = resolveShoveSettings(rawShoveRange, rawShoveKnockback)
+	if C.ShoveRange != rawShoveRange || C.ShoveKnockback != rawShoveKnockback {
+		slog.Warn("normalized shove configuration to whole grid tiles",
+			"configured_range", rawShoveRange,
+			"configured_knockback", rawShoveKnockback,
+			"effective_range", C.ShoveRange,
+			"effective_knockback", C.ShoveKnockback,
+		)
+	}
+	rawMinDamage, rawMaxDamage := C.WeaponAutoBalanceMinDamageScale, C.WeaponAutoBalanceMaxDamageScale
+	rawMinCooldown, rawMaxCooldown := C.WeaponAutoBalanceMinCooldownScale, C.WeaponAutoBalanceMaxCooldownScale
+	rawMaxEvidenceRounds := C.WeaponAutoBalanceMaxEvidenceRounds
+	C.WeaponAutoBalanceMinDamageScale,
+		C.WeaponAutoBalanceMaxDamageScale,
+		C.WeaponAutoBalanceMinCooldownScale,
+		C.WeaponAutoBalanceMaxCooldownScale,
+		C.WeaponAutoBalanceMaxEvidenceRounds = resolveWeaponAutoBalanceSettings(
+		rawMinDamage, rawMaxDamage, rawMinCooldown, rawMaxCooldown, rawMaxEvidenceRounds,
+	)
+	if C.WeaponAutoBalanceMinDamageScale != rawMinDamage || C.WeaponAutoBalanceMaxDamageScale != rawMaxDamage ||
+		C.WeaponAutoBalanceMinCooldownScale != rawMinCooldown || C.WeaponAutoBalanceMaxCooldownScale != rawMaxCooldown ||
+		C.WeaponAutoBalanceMaxEvidenceRounds != rawMaxEvidenceRounds {
+		slog.Warn("normalized invalid weapon auto-balance configuration",
+			"damage_rails", []float64{C.WeaponAutoBalanceMinDamageScale, C.WeaponAutoBalanceMaxDamageScale},
+			"cooldown_rails", []float64{C.WeaponAutoBalanceMinCooldownScale, C.WeaponAutoBalanceMaxCooldownScale},
+			"max_evidence_rounds", C.WeaponAutoBalanceMaxEvidenceRounds,
 		)
 	}
 	slog.Info("config loaded",

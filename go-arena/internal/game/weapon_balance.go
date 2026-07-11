@@ -18,6 +18,7 @@ type WeaponBalanceState struct {
 	CooldownScale   float64
 	AdjustmentScale float64
 	RoundsTracked   int
+	Revision        int64
 	UpdatedAt       time.Time
 }
 
@@ -29,8 +30,8 @@ type weaponRoundPerformance struct {
 	totalLifeSecs      float64
 	totalShotsFired    float64
 	totalShotsHit      float64
-	botIDs             []string
-	engagedOpponentIDs []string
+	botIDs             map[string]struct{}
+	engagedOpponentIDs map[string]struct{}
 }
 
 func (p *weaponRoundPerformance) avgDamage() float64 {
@@ -135,6 +136,14 @@ func (s runningBalanceStat) directionOutside(deadzone, confidenceZ float64) int 
 	return 0
 }
 
+// equivalentWithin is deliberately stricter than directionOutside returning
+// zero. It requires the entire confidence interval to fit inside the practical
+// deadzone, so noisy evidence cannot masquerade as convergence.
+func (s runningBalanceStat) equivalentWithin(deadzone, confidenceZ float64) bool {
+	margin := confidenceZ * s.standardError()
+	return s.mean-margin >= -deadzone && s.mean+margin <= deadzone
+}
+
 func (s runningBalanceStat) conservativeMagnitude(confidenceZ float64) float64 {
 	return math.Max(0, math.Abs(s.mean)-confidenceZ*s.standardError())
 }
@@ -161,12 +170,12 @@ func (e *weaponBalanceEvidence) add(entry, opponents *weaponRoundPerformance, sc
 	e.rounds++
 	e.botSamples += entry.bots
 	e.opponentSamples += opponents.bots
-	for _, id := range entry.botIDs {
+	for id := range entry.botIDs {
 		if id != "" {
 			e.distinctWeaponBots[id] = struct{}{}
 		}
 	}
-	for _, id := range entry.engagedOpponentIDs {
+	for id := range entry.engagedOpponentIDs {
 		if id != "" {
 			e.distinctOpponentBots[id] = struct{}{}
 		}
@@ -278,27 +287,24 @@ func normalizeWeaponBalanceState(state WeaponBalanceState) WeaponBalanceState {
 	if !finitePositive(state.CooldownScale) {
 		state.CooldownScale = 1.0
 	}
+	minDamageScale, maxDamageScale := damageScaleBounds()
+	minCooldownScale, maxCooldownScale := cooldownScaleBounds()
+	state.DamageScale = clampFloat(state.DamageScale, minDamageScale, maxDamageScale)
+	state.CooldownScale = clampFloat(state.CooldownScale, minCooldownScale, maxCooldownScale)
 	minStep, startStep := weaponBalanceStepBounds()
 	if !finitePositive(state.AdjustmentScale) {
 		state.AdjustmentScale = startStep
 	} else {
 		state.AdjustmentScale = clampFloat(state.AdjustmentScale, minStep, startStep)
 	}
+	if state.Revision < 0 {
+		state.Revision = 0
+	}
 	return state
 }
 
 func weaponBalanceStepBounds() (float64, float64) {
-	minStep := config.C.WeaponAutoBalanceMinStep
-	if !finitePositive(minStep) {
-		minStep = 0.005
-	}
-	minStep = math.Min(minStep, 0.05)
-	startStep := config.C.WeaponAutoBalanceStartStep
-	if !finitePositive(startStep) {
-		startStep = 0.05
-	}
-	startStep = clampFloat(startStep, minStep, 0.10)
-	return minStep, startStep
+	return config.WeaponAutoBalanceStepBounds()
 }
 
 func effectiveWeaponConfigLocked(name string) WeaponConfig {
@@ -312,7 +318,9 @@ func effectiveWeaponConfigLocked(name string) WeaponConfig {
 		weaponBalance[name] = state
 	}
 
-	wc.Damage = maxInt(1, int(math.Round(float64(wc.Damage)*state.DamageScale)))
+	wc.DamageScale = state.DamageScale
+	wc.DamageExact = math.Max(1, float64(wc.Damage)*state.DamageScale)
+	wc.Damage = maxInt(1, int(math.Round(wc.DamageExact)))
 	wc.Cooldown = math.Max(0.1, wc.Cooldown*state.CooldownScale)
 	wc.Range = float64(wc.GridRange) * config.C.PathfindingCellSize
 	return wc
@@ -339,27 +347,33 @@ func currentDeadzone(state WeaponBalanceState) float64 {
 }
 
 func damageScaleBounds() (float64, float64) {
-	minV := config.C.WeaponAutoBalanceMinDamageScale
-	maxV := config.C.WeaponAutoBalanceMaxDamageScale
-	if !finitePositive(minV) {
-		minV = 0.8
-	}
-	if !finitePositive(maxV) || maxV <= minV {
-		maxV = 1.3
-	}
-	return minV, maxV
+	return config.WeaponAutoBalanceDamageBounds()
 }
 
 func cooldownScaleBounds() (float64, float64) {
-	minV := config.C.WeaponAutoBalanceMinCooldownScale
-	maxV := config.C.WeaponAutoBalanceMaxCooldownScale
-	if !finitePositive(minV) {
-		minV = 0.85
+	return config.WeaponAutoBalanceCooldownBounds()
+}
+
+const maxWeaponBalanceAxisChange = 0.02
+
+func balanceAdjustmentMagnitude(step, conservativeEffect, minStep float64) float64 {
+	if !finitePositive(conservativeEffect) {
+		return minStep
 	}
-	if !finitePositive(maxV) || maxV <= minV {
-		maxV = 1.2
+	raw := step * math.Min(1, conservativeEffect)
+	return math.Max(minStep, raw)
+}
+
+func applyRelativeScaleChange(current, relativeChange, minRelativeChange, minScale, maxScale float64) float64 {
+	if relativeChange == 0 || math.IsNaN(relativeChange) || math.IsInf(relativeChange, 0) {
+		return clampFloat(current, minScale, maxScale)
 	}
-	return minV, maxV
+	if !finitePositive(minRelativeChange) {
+		minRelativeChange = 0
+	}
+	magnitude := clampFloat(math.Abs(relativeChange), math.Min(minRelativeChange, maxWeaponBalanceAxisChange), maxWeaponBalanceAxisChange)
+	relativeChange = math.Copysign(magnitude, relativeChange)
+	return clampFloat(current*(1+relativeChange), minScale, maxScale)
 }
 
 func balanceEvidenceThresholds() (minRounds, minBotSamples, minDistinctBots, minActions int) {
@@ -464,11 +478,17 @@ func addBotPerformance(entry, total *weaponRoundPerformance, bot *BotState, iden
 		target.totalShotsHit += adjustedHits
 	}
 	if identity != "" {
-		entry.botIDs = append(entry.botIDs, identity)
+		if entry.botIDs == nil {
+			entry.botIDs = make(map[string]struct{})
+		}
+		entry.botIDs[identity] = struct{}{}
 	}
 	for opponentID := range bot.RoundWeaponOpponentIDs {
 		if opponentID != "" && opponentID != identity {
-			entry.engagedOpponentIDs = append(entry.engagedOpponentIDs, opponentID)
+			if entry.engagedOpponentIDs == nil {
+				entry.engagedOpponentIDs = make(map[string]struct{})
+			}
+			entry.engagedOpponentIDs[opponentID] = struct{}{}
 		}
 	}
 }
@@ -502,6 +522,7 @@ func persistWeaponBalanceSnapshot(ctx context.Context, state WeaponBalanceState,
 		CooldownScale:   state.CooldownScale,
 		AdjustmentScale: state.AdjustmentScale,
 		RoundsTracked:   state.RoundsTracked,
+		Revision:        state.Revision,
 		UpdatedAt:       state.UpdatedAt,
 	}
 	if err := db.UpsertWeaponBalance(ctx, record); err != nil {
@@ -518,6 +539,7 @@ func persistWeaponBalanceSnapshot(ctx context.Context, state WeaponBalanceState,
 		DiffPct:         diffRatio * 100,
 		DamageDelta:     damageDelta,
 		CooldownDelta:   cooldownDelta,
+		Revision:        state.Revision,
 		CreatedAt:       state.UpdatedAt,
 	}
 	if err := db.InsertWeaponBalanceHistory(ctx, history); err != nil {
@@ -589,6 +611,18 @@ func GetWeaponConfig(name string) WeaponConfig {
 	return WeaponConfigs["sword"]
 }
 
+func weaponBalanceStateFromRecord(row db.WeaponBalance) WeaponBalanceState {
+	return normalizeWeaponBalanceState(WeaponBalanceState{
+		Weapon:          row.Weapon,
+		DamageScale:     row.DamageScale,
+		CooldownScale:   row.CooldownScale,
+		AdjustmentScale: row.AdjustmentScale,
+		RoundsTracked:   row.RoundsTracked,
+		Revision:        row.Revision,
+		UpdatedAt:       row.UpdatedAt,
+	})
+}
+
 func LoadWeaponBalance(ctx context.Context) error {
 	weaponBalanceMu.Lock()
 	weaponEvidence = make(map[string]*weaponBalanceEvidence, len(baseWeaponConfigs))
@@ -613,14 +647,7 @@ func LoadWeaponBalance(ctx context.Context) error {
 		if _, ok := baseWeaponConfigs[row.Weapon]; !ok {
 			continue
 		}
-		weaponBalance[row.Weapon] = normalizeWeaponBalanceState(WeaponBalanceState{
-			Weapon:          row.Weapon,
-			DamageScale:     row.DamageScale,
-			CooldownScale:   row.CooldownScale,
-			AdjustmentScale: row.AdjustmentScale,
-			RoundsTracked:   row.RoundsTracked,
-			UpdatedAt:       row.UpdatedAt,
-		})
+		weaponBalance[row.Weapon] = weaponBalanceStateFromRecord(row)
 	}
 	refreshAllWeaponConfigsLocked()
 	return nil
@@ -632,13 +659,7 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, _ string
 	}
 
 	minRounds, minBotSamples, minDistinctBots, minActions := balanceEvidenceThresholds()
-	weaponBalanceMu.RLock()
-	knownWeapons := make(map[string]struct{}, len(baseWeaponConfigs))
-	for weapon := range baseWeaponConfigs {
-		knownWeapons[weapon] = struct{}{}
-	}
-	weaponBalanceMu.RUnlock()
-
+	maxEvidenceRounds := config.WeaponAutoBalanceEvidenceLimit(minRounds)
 	type eligibleBot struct {
 		identity string
 		bot      *BotState
@@ -646,11 +667,12 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, _ string
 	eligible := make([]eligibleBot, 0, len(bots))
 	meanElo := 0.0
 	ratedBots := 0
+	weaponBalanceMu.RLock()
 	for mapID, bot := range bots {
 		if !validWeaponBalanceSample(bot, minActions) {
 			continue
 		}
-		if _, known := knownWeapons[bot.Weapon]; !known {
+		if _, known := baseWeaponConfigs[bot.Weapon]; !known {
 			continue
 		}
 		identity := bot.BotID
@@ -663,6 +685,7 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, _ string
 			ratedBots++
 		}
 	}
+	weaponBalanceMu.RUnlock()
 	if ratedBots > 0 {
 		meanElo /= float64(ratedBots)
 	}
@@ -746,7 +769,11 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, _ string
 		comparisonMean, diffRatio  float64
 		damageDelta, cooldownDelta float64
 	}
-	pending := make([]pendingSnapshot, 0, len(weapons))
+	persistSnapshots := db.Pool != nil
+	var pending []pendingSnapshot
+	if persistSnapshots {
+		pending = make([]pendingSnapshot, 0, len(weapons))
+	}
 
 	weaponBalanceMu.Lock()
 	if weaponEvidence == nil {
@@ -768,6 +795,7 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, _ string
 		}
 		evidence.add(signal.entry, signal.opponents, signal.scoreDiff, signal.damagePressure, signal.cooldownPressure)
 		state.RoundsTracked++
+		state.Revision++
 		state.UpdatedAt = now
 
 		if evidenceReady(evidence, minRounds, minBotSamples, minDistinctBots) {
@@ -786,21 +814,27 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, _ string
 				adjustCooldown = false
 			}
 
+			resolvedEvidence := false
 			if adjustDamage || adjustCooldown {
-				magnitude := state.AdjustmentScale * math.Min(1, evidence.scoreDiff.conservativeMagnitude(confidenceZ))
+				magnitude := balanceAdjustmentMagnitude(
+					state.AdjustmentScale,
+					evidence.scoreDiff.conservativeMagnitude(confidenceZ),
+					minStep,
+				)
 				damageAxisScale := axisMagnitudeScale(evidence.damagePressure.mean, axisDeadzone)
 				cooldownAxisScale := axisMagnitudeScale(evidence.cooldownPressure.mean, axisDeadzone)
 				if adjustDamage && scoreDirection > 0 {
-					state.DamageScale = clampFloat(state.DamageScale*(1-magnitude*damageWeight*damageAxisScale), minDamageScale, maxDamageScale)
+					state.DamageScale = applyRelativeScaleChange(state.DamageScale, -magnitude*damageWeight*damageAxisScale, minStep, minDamageScale, maxDamageScale)
 				} else if adjustDamage {
-					state.DamageScale = clampFloat(state.DamageScale*(1+magnitude*damageWeight*damageAxisScale), minDamageScale, maxDamageScale)
+					state.DamageScale = applyRelativeScaleChange(state.DamageScale, magnitude*damageWeight*damageAxisScale, minStep, minDamageScale, maxDamageScale)
 				}
 				if adjustCooldown && scoreDirection > 0 {
-					state.CooldownScale = clampFloat(state.CooldownScale*(1+magnitude*cooldownWeight*cooldownAxisScale), minCooldownScale, maxCooldownScale)
+					state.CooldownScale = applyRelativeScaleChange(state.CooldownScale, magnitude*cooldownWeight*cooldownAxisScale, minStep, minCooldownScale, maxCooldownScale)
 				} else if adjustCooldown {
-					state.CooldownScale = clampFloat(state.CooldownScale*(1-magnitude*cooldownWeight*cooldownAxisScale), minCooldownScale, maxCooldownScale)
+					state.CooldownScale = applyRelativeScaleChange(state.CooldownScale, -magnitude*cooldownWeight*cooldownAxisScale, minStep, minCooldownScale, maxCooldownScale)
 				}
 				state.AdjustmentScale = clampFloat(state.AdjustmentScale*1.03, minStep, startStep)
+				resolvedEvidence = true
 				slog.Info("weapon auto-balance adjusted",
 					"weapon", weapon,
 					"evidence_rounds", evidence.rounds,
@@ -814,34 +848,48 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, _ string
 					"adjust_damage", adjustDamage,
 					"adjust_cooldown", adjustCooldown,
 				)
-			} else if scoreDirection == 0 {
-				// Only a statistically steady batch is convergence evidence.
+			} else if scoreDirection == 0 && evidence.scoreDiff.equivalentWithin(deadzone, confidenceZ) {
+				// Decay responsiveness only after equivalence is affirmatively
+				// demonstrated, never merely because a noisy interval overlaps zero.
 				state.AdjustmentScale = math.Max(minStep, state.AdjustmentScale*decay)
-			} else {
+				resolvedEvidence = true
+			} else if evidence.rounds >= maxEvidenceRounds {
+				// A bounded evidence window prevents one cohort from accumulating
+				// unlimited historical weight. Expiry is neutral: it does not decay
+				// the next correction step.
+				resolvedEvidence = true
 				slog.Debug("weapon auto-balance rejected confounded batch",
 					"weapon", weapon,
+					"evidence_rounds", evidence.rounds,
 					"score_direction", scoreDirection,
 					"damage_direction", damageDirection,
 					"cooldown_direction", cooldownDirection,
 					"hit_rate_parity", round1(hitRateParity),
 				)
 			}
-			evidence.reset()
-		} else if evidence.rounds >= minRounds*3 {
+			if resolvedEvidence {
+				evidence.reset()
+			}
+		} else if evidence.rounds >= maxEvidenceRounds {
 			// Do not let one identity stockpile unlimited historical weight.
 			evidence.reset()
 		}
 
 		weaponBalance[weapon] = state
 		WeaponConfigs[weapon] = effectiveWeaponConfigLocked(weapon)
-		pending = append(pending, pendingSnapshot{
-			state: state, entry: signal.entry,
-			comparisonMean: signal.opponents.avgScore(), diffRatio: signal.scoreDiff,
-			damageDelta:   state.DamageScale - previousDamageScale,
-			cooldownDelta: state.CooldownScale - previousCooldownScale,
-		})
+		if persistSnapshots {
+			pending = append(pending, pendingSnapshot{
+				state: state, entry: signal.entry,
+				comparisonMean: signal.opponents.avgScore(), diffRatio: signal.scoreDiff,
+				damageDelta:   state.DamageScale - previousDamageScale,
+				cooldownDelta: state.CooldownScale - previousCooldownScale,
+			})
+		}
 	}
 	weaponBalanceMu.Unlock()
+	if !persistSnapshots {
+		return
+	}
 
 	// Database latency must never hold weaponBalanceMu: GetWeaponConfig is on
 	// the combat path, and this routine performs two writes per sampled weapon.

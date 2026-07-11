@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"reflect"
 	"testing"
 )
 
@@ -31,5 +32,23 @@ func TestAuthQueries_NilPool_ReturnErrorNotPanic(t *testing.T) {
 	}
 	if _, err := GetAllAdminTokenHashes(ctx); err == nil {
 		t.Error("GetAllAdminTokenHashes: expected an error when Pool is nil, got nil")
+	}
+}
+
+func TestMergeCanonicalWeaponKillStats(t *testing.T) {
+	raw := []WeaponKillStats{
+		{Weapon: "staff", Kills: 3, Kills24h: 2, Kills1h: 1, FinisherDamage: 30},
+		{Weapon: "staff_burn", Kills: 4, Kills24h: 3, Kills1h: 2, FinisherDamage: 40},
+		{Weapon: "grapple_slam", Kills: 2, Kills24h: 1, FinisherDamage: 20},
+		{Weapon: "bow", Kills: 1, Kills24h: 1, Kills1h: 1, FinisherDamage: 10},
+	}
+	want := []WeaponKillStats{
+		{Weapon: "bow", Kills: 1, Kills24h: 1, Kills1h: 1, FinisherDamage: 10},
+		{Weapon: "grapple", Kills: 2, Kills24h: 1, FinisherDamage: 20},
+		{Weapon: "staff", Kills: 7, Kills24h: 5, Kills1h: 3, FinisherDamage: 70},
+	}
+
+	if got := mergeCanonicalWeaponKillStats(raw); !reflect.DeepEqual(got, want) {
+		t.Fatalf("canonical kill stats = %#v, want %#v", got, want)
 	}
 }

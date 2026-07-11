@@ -16,7 +16,9 @@ type tickState struct {
 	Team              int
 	Mode              string
 	SuddenDeath       bool
+	SuddenDeathStall  bool
 	Position          [2]float64
+	Speed             float64
 	HP                float64
 	MaxHP             float64
 	WeaponReady       bool
@@ -149,10 +151,12 @@ type hint struct {
 
 // botTerrain caches the map_init terrain grid for AI decisions.
 type botTerrain struct {
-	Width    int
-	Height   int
-	CellSize float64
-	Cells    [][]byte // [col][row] matching server layout
+	Width       int
+	Height      int
+	CellSize    float64
+	Cells       [][]byte // [col][row] matching server layout
+	Teleporters map[string]entity
+	HazardZones []entity
 }
 
 var (
@@ -259,8 +263,64 @@ func parseTerrain(msg map[string]interface{}) {
 		}
 	}
 
+	teleporters := make(map[string]entity)
+	if rawPads, ok := msg["teleport_pads"].([]interface{}); ok {
+		for _, raw := range rawPads {
+			pad, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			ent := entity{Type: "teleport_pad", Position: parsePos(pad["position"]), Ready: true}
+			if v, ok := pad["id"].(string); ok {
+				ent.ID = v
+			}
+			if v, ok := pad["linked_pad_id"].(string); ok {
+				ent.LinkedID = v
+			}
+			if v, ok := pad["color"].(string); ok {
+				ent.Color = v
+			}
+			if v, ok := pad["is_ready"].(bool); ok {
+				ent.Ready = v
+			}
+			if v, ok := pad["cooldown_remaining_ticks"].(float64); ok {
+				ent.Cooldown = int(v)
+			}
+			if ent.ID != "" {
+				teleporters[ent.ID] = ent
+			}
+		}
+	}
+
+	var hazardZones []entity
+	if rawZones, ok := msg["hazard_zones"].([]interface{}); ok {
+		for _, raw := range rawZones {
+			zone, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			ent := entity{Type: "hazard_zone", Position: parsePos(zone["position"])}
+			if v, ok := zone["id"].(string); ok {
+				ent.ID = v
+			}
+			if v, ok := zone["width"].(float64); ok {
+				ent.Width = int(v)
+			}
+			if v, ok := zone["height"].(float64); ok {
+				ent.Height = int(v)
+			}
+			if v, ok := zone["radius"].(float64); ok {
+				ent.Radius = v
+			}
+			hazardZones = append(hazardZones, ent)
+		}
+	}
+
 	terrainMu.Lock()
-	cachedTerrain = &botTerrain{Width: width, Height: height, CellSize: cs, Cells: cells}
+	cachedTerrain = &botTerrain{
+		Width: width, Height: height, CellSize: cs, Cells: cells,
+		Teleporters: teleporters, HazardZones: hazardZones,
+	}
 	terrainMu.Unlock()
 }
 
@@ -296,35 +356,104 @@ func (t *botTerrain) isMoveBlocked(cx, cy, dx, dy int) bool {
 
 // === Danger Set ===
 
-// dangerSet is the per-tick set of grid cells the bot should not step into:
-// burn fields, active hazard zones, gravity well pull areas, armed enemy
-// mines, and sudden-death void tiles. Instances are pooled (demo bots run
-// concurrently, so package-level scratch would race) and rebuilt each
-// PickAction without allocation growth.
+// dangerSet is the per-tick set of lethal cells plus active teleporter trigger
+// footprints the bot should not enter accidentally. Instances are pooled
+// (demo bots run concurrently, so package-level scratch would race) and rebuilt
+// each PickAction without allocation growth.
 type dangerSet struct {
-	cells map[[2]int]struct{}
+	cells     map[[2]int]struct{}
+	padCells  map[[2]int]struct{}
+	allowPad  [2]int
+	allowDist int
+	hasAllow  bool
 }
 
 var dangerPool = sync.Pool{New: func() interface{} { return &dangerSet{} }}
 
 func (d *dangerSet) reset() {
+	d.hasAllow = false
+	d.allowDist = 0
 	if d.cells == nil {
 		d.cells = make(map[[2]int]struct{}, 64)
-		return
+	} else {
+		clear(d.cells)
 	}
-	clear(d.cells)
+	if d.padCells == nil {
+		d.padCells = make(map[[2]int]struct{}, 24)
+	} else {
+		clear(d.padCells)
+	}
 }
 
 func (d *dangerSet) empty() bool {
-	return d == nil || len(d.cells) == 0
+	return d == nil || (len(d.cells) == 0 && len(d.padCells) == 0)
 }
 
 func (d *dangerSet) has(col, row int) bool {
-	if d == nil || len(d.cells) == 0 {
+	if d == nil {
 		return false
 	}
-	_, ok := d.cells[[2]int{col, row}]
-	return ok
+	cell := [2]int{col, row}
+	if _, lethal := d.cells[cell]; lethal {
+		return true
+	}
+	return d.hasPad(col, row)
+}
+
+func (d *dangerSet) hasPad(col, row int) bool {
+	if d == nil {
+		return false
+	}
+	cell := [2]int{col, row}
+	if _, blocked := d.padCells[cell]; !blocked {
+		return false
+	}
+	return !d.hasAllow || intChebyshev(cell, d.allowPad) > d.allowDist
+}
+
+func (d *dangerSet) hasLethal(col, row int) bool {
+	if d == nil {
+		return false
+	}
+	_, lethal := d.cells[[2]int{col, row}]
+	return lethal
+}
+
+// blocksExceptPad keeps lethal danger and every other ready pad blocked while
+// opening only the selected source pad's soft avoidance footprint. Candidate
+// evaluation uses this instead of mutating the tick's shared danger set.
+func (d *dangerSet) blocksExceptPad(col, row int, pad [2]int, allowRadius int) bool {
+	if d == nil {
+		return false
+	}
+	cell := [2]int{col, row}
+	if _, lethal := d.cells[cell]; lethal {
+		return true
+	}
+	if _, blocked := d.padCells[cell]; !blocked {
+		return false
+	}
+	return intChebyshev(cell, pad) > allowRadius
+}
+
+func (d *dangerSet) addPad(center [2]float64, radius int) {
+	cc, cr := int(math.Round(center[0])), int(math.Round(center[1]))
+	for col := cc - radius; col <= cc+radius; col++ {
+		for row := cr - radius; row <= cr+radius; row++ {
+			d.padCells[[2]int{col, row}] = struct{}{}
+		}
+	}
+}
+
+// allowPadNear opens only the selected teleporter's soft avoidance footprint.
+// Lethal cells remain blocked even when they overlap the selected pad.
+func (d *dangerSet) allowPadNear(center [2]float64, radius int) {
+	if d == nil {
+		return
+	}
+	d.allowPad = [2]int{int(math.Round(center[0])), int(math.Round(center[1]))}
+	d.allowDist = radius
+	d.hasAllow = true
 }
 
 func (d *dangerSet) add(col, row int) {
@@ -394,6 +523,37 @@ func buildDangerSet(d *dangerSet, ts *tickState, botID string) {
 	for _, vt := range ts.VoidTiles {
 		d.add(vt[0], vt[1])
 	}
+
+	// The server can move a boosted bot more than one cell for a single action.
+	// Expand the pad footprint by that extra travel so a direction that is safe
+	// for its first cell cannot cross an active trigger later in the same tick.
+	avoidRadius := teleporterAvoidanceRadius(*ts)
+	for i := range ts.Teleporters {
+		if isReadyTeleporter(ts.Teleporters[i]) {
+			d.addPad(ts.Teleporters[i].Position, avoidRadius)
+		}
+	}
+}
+
+func maxMoveCellsPerTick(ts tickState) int {
+	referencePoints := float64(config.C.StatBudget) / 4
+	referenceSpeed := config.C.StatSpeedBase + referencePoints*config.C.StatSpeedPerPoint
+	if referenceSpeed <= 0 || ts.Speed <= 0 {
+		return 1
+	}
+	cells := int(math.Ceil(0.5 * ts.Speed / referenceSpeed))
+	if cells < 1 {
+		return 1
+	}
+	return cells
+}
+
+func teleporterAvoidanceRadius(ts tickState) int {
+	radius := config.C.TeleportCollectRadius + maxMoveCellsPerTick(ts) - 1
+	if radius < 0 {
+		return 0
+	}
+	return radius
 }
 
 // === BFS Pathfinding ===
@@ -401,6 +561,7 @@ func buildDangerSet(d *dangerSet, ts *tickState, botID string) {
 type bfsNode struct {
 	col, row         int
 	firstDC, firstDR int
+	distance         int
 }
 
 // bfsScratch is reusable BFS working memory. The old implementation
@@ -449,12 +610,17 @@ func (s *bfsScratch) visit(c, r int) bool {
 
 // bfsStep finds the first grid step direction from (sc,sr) toward (gc,gr),
 // navigating walls and avoiding danger cells (hazards, void tiles, mines).
-// If no safe step exists at all, it retries once ignoring danger so bots
-// never freeze when fully surrounded. Returns [2]int{dx, dy} in {-1,0,1}.
+// If no safe step exists at all, it retries once ignoring lethal danger so
+// bots never freeze when fully surrounded, while still preserving teleporter
+// avoidance. Returns [2]int{dx, dy} in {-1,0,1}.
 func bfsStep(sc, sr, gc, gr int, danger *dangerSet) [2]int {
 	step, ok := bfsStepConstrained(sc, sr, gc, gr, danger)
 	if !ok && !danger.empty() {
-		step, _ = bfsStepConstrained(sc, sr, gc, gr, nil)
+		// Preserve teleporter avoidance in the last-resort route. Lethal danger
+		// may be ignored when otherwise fully enclosed (the historical escape
+		// behavior), but an ordinary navigation decision must never silently
+		// become an accidental teleport.
+		step, _ = bfsStepConstrainedMode(sc, sr, gc, gr, danger, true)
 	}
 	return step
 }
@@ -463,6 +629,10 @@ func bfsStep(sc, sr, gc, gr int, danger *dangerSet) [2]int {
 // The boolean result reports whether any step (including the heuristic
 // fallbacks) was found under the constraints.
 func bfsStepConstrained(sc, sr, gc, gr int, danger *dangerSet) ([2]int, bool) {
+	return bfsStepConstrainedMode(sc, sr, gc, gr, danger, false)
+}
+
+func bfsStepConstrainedMode(sc, sr, gc, gr int, danger *dangerSet, ignoreLethal bool) ([2]int, bool) {
 	if sc == gc && sr == gr {
 		return [2]int{0, 0}, true
 	}
@@ -477,6 +647,9 @@ func bfsStepConstrained(sc, sr, gc, gr int, danger *dangerSet) ([2]int, bool) {
 			return true
 		}
 		nc, nr := cx+dx, cy+dy
+		if ignoreLethal {
+			return danger.hasPad(nc, nr)
+		}
 		return danger.has(nc, nr)
 	}
 
@@ -496,7 +669,7 @@ func bfsStepConstrained(sc, sr, gc, gr int, danger *dangerSet) ([2]int, bool) {
 			}
 			nc, nr := sc+dc, sr+dr
 			if s.visit(nc, nr) {
-				s.queue = append(s.queue, bfsNode{nc, nr, dc, dr})
+				s.queue = append(s.queue, bfsNode{col: nc, row: nr, firstDC: dc, firstDR: dr, distance: 1})
 			}
 		}
 	}
@@ -533,7 +706,10 @@ func bfsStepConstrained(sc, sr, gc, gr int, danger *dangerSet) ([2]int, bool) {
 					continue
 				}
 				if s.visit(n.col+dc, n.row+dr) {
-					s.queue = append(s.queue, bfsNode{n.col + dc, n.row + dr, n.firstDC, n.firstDR})
+					s.queue = append(s.queue, bfsNode{
+						col: n.col + dc, row: n.row + dr,
+						firstDC: n.firstDC, firstDR: n.firstDR, distance: n.distance + 1,
+					})
 				}
 			}
 		}
@@ -563,6 +739,54 @@ func bfsStepConstrained(sc, sr, gc, gr int, danger *dangerSet) ([2]int, bool) {
 		}
 	}
 	return [2]int{0, 0}, false
+}
+
+// tacticalTravelDistance returns a measured shortest-path distance when a
+// nearby target is separated by carved terrain. The search is deliberately
+// bounded: targets with a clear grid line or outside local decision range use
+// the cheap Chebyshev distance, while room walls, island channels, and donut
+// cores within fog receive an actual route cost without adding an unbounded
+// second full-map BFS to every decision.
+func tacticalTravelDistance(src, dst [2]float64) float64 {
+	direct := chebyshev(src, dst)
+	t := getTerrain()
+	if t == nil || direct == 0 || direct > 12 {
+		return direct
+	}
+	start := [2]int{int(math.Round(src[0])), int(math.Round(src[1]))}
+	goal := [2]int{int(math.Round(dst[0])), int(math.Round(dst[1]))}
+	if t.isBlocked(goal[0], goal[1]) {
+		return math.Inf(1)
+	}
+	if !t.gridLineBlocked(start, goal) {
+		return direct
+	}
+
+	const nodeLimit = 768
+	s := bfsPool.Get().(*bfsScratch)
+	defer bfsPool.Put(s)
+	s.reset(t.Width, t.Height)
+	s.visit(start[0], start[1])
+	s.queue = append(s.queue, bfsNode{col: start[0], row: start[1]})
+
+	for i := 0; i < len(s.queue) && i < nodeLimit; i++ {
+		n := s.queue[i]
+		if n.col == goal[0] && n.row == goal[1] {
+			return float64(n.distance)
+		}
+		for dc := -1; dc <= 1; dc++ {
+			for dr := -1; dr <= 1; dr++ {
+				if dc == 0 && dr == 0 || t.isMoveBlocked(n.col, n.row, dc, dr) {
+					continue
+				}
+				nc, nr := n.col+dc, n.row+dr
+				if s.visit(nc, nr) {
+					s.queue = append(s.queue, bfsNode{col: nc, row: nr, distance: n.distance + 1})
+				}
+			}
+		}
+	}
+	return math.Inf(1)
 }
 
 func intSign(v int) int {
@@ -961,6 +1185,9 @@ func parseTick(msg map[string]interface{}) tickState {
 	if v, ok := msg["sudden_death"].(bool); ok {
 		ts.SuddenDeath = v
 	}
+	if v, ok := msg["sudden_death_stall"].(bool); ok {
+		ts.SuddenDeathStall = v
+	}
 	if v, ok := msg["bounty_target"].(string); ok {
 		ts.BountyTargetID = v
 	}
@@ -1010,6 +1237,9 @@ func parseTick(msg map[string]interface{}) tickState {
 	}
 	if ys, ok := msg["your_state"].(map[string]interface{}); ok {
 		ts.Position = parsePos(ys["position"])
+		if v, ok := ys["speed"].(float64); ok {
+			ts.Speed = v
+		}
 		if v, ok := ys["team"].(float64); ok {
 			ts.Team = int(v)
 		}
@@ -1359,7 +1589,7 @@ func closest(pos [2]float64, enemies []entity) (*entity, float64) {
 	var b *entity
 	bd := math.Inf(1)
 	for i := range enemies {
-		d := chebyshev(pos, enemies[i].Position)
+		d := tacticalTravelDistance(pos, enemies[i].Position)
 		if d < bd {
 			bd = d
 			b = &enemies[i]
@@ -1375,7 +1605,7 @@ func closestVisible(pos [2]float64, enemies []entity) (*entity, float64) {
 		if !enemies[i].HasLOS {
 			continue
 		}
-		d := chebyshev(pos, enemies[i].Position)
+		d := tacticalTravelDistance(pos, enemies[i].Position)
 		if d < bd {
 			bd = d
 			b = &enemies[i]
@@ -1770,7 +2000,7 @@ func weakest(pos [2]float64, enemies []entity) (*entity, float64) {
 	if best == nil {
 		return nil, 0
 	}
-	return best, chebyshev(pos, best.Position)
+	return best, tacticalTravelDistance(pos, best.Position)
 }
 
 // isMelee returns true if the weapon is short range.
@@ -1791,7 +2021,7 @@ func nearestHealthPickup(pos [2]float64, pickups, hazards []entity, hazardImmune
 		if pickupBlockedByActiveHazard(pickups[i].Position, hazards, hazardImmune) {
 			continue
 		}
-		d := chebyshev(pos, pickups[i].Position)
+		d := tacticalTravelDistance(pos, pickups[i].Position)
 		if d < bestD {
 			bestD = d
 			best = &pickups[i]
@@ -1808,7 +2038,7 @@ func nearestPickup(pos [2]float64, pickups, hazards []entity, hazardImmune bool)
 		if pickupBlockedByActiveHazard(pickups[i].Position, hazards, hazardImmune) {
 			continue
 		}
-		d := chebyshev(pos, pickups[i].Position)
+		d := tacticalTravelDistance(pos, pickups[i].Position)
 		if d < bestD {
 			bestD = d
 			best = &pickups[i]
@@ -1828,7 +2058,7 @@ func nearestPickupOfType(pos [2]float64, pickups, hazards []entity, hazardImmune
 		if pickupBlockedByActiveHazard(pickups[i].Position, hazards, hazardImmune) {
 			continue
 		}
-		d := chebyshev(pos, pickups[i].Position)
+		d := tacticalTravelDistance(pos, pickups[i].Position)
 		if d < bestD {
 			bestD = d
 			best = &pickups[i]
@@ -1841,7 +2071,7 @@ func nearestCapturePad(pos [2]float64, pads []entity) (*entity, float64) {
 	var best *entity
 	bestD := math.Inf(1)
 	for i := range pads {
-		d := chebyshev(pos, pads[i].Position)
+		d := tacticalTravelDistance(pos, pads[i].Position)
 		if d < bestD {
 			bestD = d
 			best = &pads[i]
@@ -2480,16 +2710,31 @@ func tryUniversalGrapple(ts tickState, weapon string, wrange float64) *actionRes
 	return &a
 }
 
+func anchorGrappleDestinationSafe(target [2]float64, pads map[string]entity) bool {
+	collectRadius := config.C.TeleportCollectRadius
+	if collectRadius < 0 {
+		collectRadius = 0
+	}
+	for _, pad := range pads {
+		if isReadyTeleporter(pad) && chebyshev(target, pad.Position) <= float64(collectRadius) {
+			return false
+		}
+	}
+	return true
+}
+
 func tryAnchorGrapple(ts tickState, strategy string, near *entity, nearD, wrange float64) *actionResult {
 	if ts.GrappleCharges <= 0 || ts.GrappleCooldown > 0 {
 		return nil
 	}
 	const grappleRange = 12.0 // matches config GrappleAbilityRangeTiles (ARENA_GRAPPLE_RANGE_TILES, default 12)
+	pads := teleporterByID(ts.Teleporters)
 
 	hpRatio := ts.HP / math.Max(ts.MaxHP, 1)
 	if !ts.InZone {
 		dist := chebyshev(ts.Position, ts.ZoneTargetCenter)
-		if dist >= 5 && dist <= grappleRange && (near == nil || nearD > 3) {
+		if dist >= 5 && dist <= grappleRange && (near == nil || nearD > 3) &&
+			anchorGrappleDestinationSafe(ts.ZoneTargetCenter, pads) {
 			a := grapplePos(ts.ZoneTargetCenter)
 			return &a
 		}
@@ -2500,7 +2745,7 @@ func tryAnchorGrapple(ts tickState, strategy string, near *entity, nearD, wrange
 			ts.Position[0] + (ts.Position[0]-near.Position[0])*4,
 			ts.Position[1] + (ts.Position[1]-near.Position[1])*4,
 		}
-		if chebyshev(ts.Position, away) <= grappleRange {
+		if chebyshev(ts.Position, away) <= grappleRange && anchorGrappleDestinationSafe(away, pads) {
 			a := grapplePos(away)
 			return &a
 		}
@@ -2512,7 +2757,7 @@ func tryAnchorGrapple(ts tickState, strategy string, near *entity, nearD, wrange
 			near.Position[0] + offset[0]*2,
 			near.Position[1] + offset[1]*2,
 		}
-		if chebyshev(ts.Position, anchor) <= grappleRange {
+		if chebyshev(ts.Position, anchor) <= grappleRange && anchorGrappleDestinationSafe(anchor, pads) {
 			a := grapplePos(anchor)
 			return &a
 		}
@@ -2521,7 +2766,15 @@ func tryAnchorGrapple(ts tickState, strategy string, near *entity, nearD, wrange
 }
 
 func teleporterByID(teleporters []entity) map[string]entity {
-	pads := make(map[string]entity, len(teleporters))
+	pads := make(map[string]entity, len(teleporters)+6)
+	if terrain := getTerrain(); terrain != nil {
+		for id, tp := range terrain.Teleporters {
+			pads[id] = tp
+		}
+	}
+	// Live nearby entities override the static map snapshot, especially for
+	// readiness. The linked exit may remain outside fog and come only from the
+	// map cache.
 	for _, tp := range teleporters {
 		if tp.ID != "" {
 			pads[tp.ID] = tp
@@ -2531,7 +2784,132 @@ func teleporterByID(teleporters []entity) map[string]entity {
 }
 
 func isReadyTeleporter(tp entity) bool {
-	return tp.Ready || tp.Cooldown <= 0
+	return tp.Ready
+}
+
+func preferredGridDirections(from, target [2]int) [8][2]int {
+	all := [8][2]int{{-1, -1}, {-1, 0}, {-1, 1}, {0, -1}, {0, 1}, {1, -1}, {1, 0}, {1, 1}}
+	var ordered [8][2]int
+	count := 0
+	add := func(dir [2]int) {
+		if dir == [2]int{} {
+			return
+		}
+		for i := 0; i < count; i++ {
+			if ordered[i] == dir {
+				return
+			}
+		}
+		ordered[count] = dir
+		count++
+	}
+
+	dx, dy := intSign(target[0]-from[0]), intSign(target[1]-from[1])
+	add([2]int{dx, dy})
+	add([2]int{dx, 0})
+	add([2]int{0, dy})
+	for _, dir := range all {
+		add(dir)
+	}
+	return ordered
+}
+
+func teleporterFirstMoveIsSafe(ts tickState, padCell [2]int, allowRadius int, dir [2]int) bool {
+	terrain := getTerrain()
+	if terrain == nil {
+		return false
+	}
+	col, row := int(math.Round(ts.Position[0])), int(math.Round(ts.Position[1]))
+	moved := false
+	for step := 0; step < maxMoveCellsPerTick(ts); step++ {
+		if terrain.isMoveBlocked(col, row, dir[0], dir[1]) {
+			break
+		}
+		col += dir[0]
+		row += dir[1]
+		moved = true
+		if ts.Danger.blocksExceptPad(col, row, padCell, allowRadius) {
+			return false
+		}
+	}
+	return moved
+}
+
+// teleporterSourceApproach finds a short, genuinely traversable route into a
+// source pad's trigger footprint. Unlike tactical target ranking, this search
+// respects live lethal danger. It opens only the selected pad's soft avoidance
+// cells, never lethal cells, and validates the full first boosted move.
+func teleporterSourceApproach(ts tickState, pad entity) (actionResult, float64, bool) {
+	terrain := getTerrain()
+	if terrain == nil {
+		return actionResult{}, 0, false
+	}
+	start := [2]int{int(math.Round(ts.Position[0])), int(math.Round(ts.Position[1]))}
+	padCell := [2]int{int(math.Round(pad.Position[0])), int(math.Round(pad.Position[1]))}
+	if terrain.isBlocked(start[0], start[1]) || terrain.isBlocked(padCell[0], padCell[1]) {
+		return actionResult{}, 0, false
+	}
+	collectRadius := config.C.TeleportCollectRadius
+	if collectRadius < 0 {
+		collectRadius = 0
+	}
+	allowRadius := teleporterAvoidanceRadius(ts)
+	goal := func(col, row int) bool {
+		return intChebyshev([2]int{col, row}, padCell) <= collectRadius &&
+			!ts.Danger.blocksExceptPad(col, row, padCell, allowRadius)
+	}
+	if goal(start[0], start[1]) {
+		return idle(), 0, true
+	}
+
+	const maxApproachDistance = 3
+	scratch := bfsPool.Get().(*bfsScratch)
+	defer bfsPool.Put(scratch)
+	scratch.reset(terrain.Width, terrain.Height)
+	scratch.visit(start[0], start[1])
+
+	for _, dir := range preferredGridDirections(start, padCell) {
+		if terrain.isMoveBlocked(start[0], start[1], dir[0], dir[1]) ||
+			ts.Danger.blocksExceptPad(start[0]+dir[0], start[1]+dir[1], padCell, allowRadius) ||
+			!teleporterFirstMoveIsSafe(ts, padCell, allowRadius, dir) {
+			continue
+		}
+		col, row := start[0]+dir[0], start[1]+dir[1]
+		if !scratch.visit(col, row) {
+			continue
+		}
+		node := bfsNode{col: col, row: row, firstDC: dir[0], firstDR: dir[1], distance: 1}
+		if goal(col, row) {
+			a := moveDir([2]float64{float64(dir[0]), float64(dir[1])})
+			return a, 1, true
+		}
+		scratch.queue = append(scratch.queue, node)
+	}
+
+	for head := 0; head < len(scratch.queue); head++ {
+		node := scratch.queue[head]
+		if node.distance >= maxApproachDistance {
+			continue
+		}
+		for _, dir := range preferredGridDirections([2]int{node.col, node.row}, padCell) {
+			if terrain.isMoveBlocked(node.col, node.row, dir[0], dir[1]) {
+				continue
+			}
+			col, row := node.col+dir[0], node.row+dir[1]
+			if ts.Danger.blocksExceptPad(col, row, padCell, allowRadius) || !scratch.visit(col, row) {
+				continue
+			}
+			distance := node.distance + 1
+			if goal(col, row) {
+				a := moveDir([2]float64{float64(node.firstDC), float64(node.firstDR)})
+				return a, float64(distance), true
+			}
+			scratch.queue = append(scratch.queue, bfsNode{
+				col: col, row: row, firstDC: node.firstDC, firstDR: node.firstDR, distance: distance,
+			})
+		}
+	}
+	return actionResult{}, 0, false
 }
 
 func strategicMineTile(pos [2]float64, zoneCenter [2]float64) bool {
@@ -2551,189 +2929,136 @@ func strategicMineTile(pos [2]float64, zoneCenter [2]float64) bool {
 	return open <= 2 || chebyshev(pos, zoneCenter) <= 4
 }
 
-// tryTeleporterEngage uses a nearby teleporter when its linked exit would put
-// the bot materially closer to the current target or the shrinking zone.
-func tryTeleporterEngage(ts tickState, target *entity, wrange float64) *actionResult {
-	if target == nil || len(ts.Teleporters) < 2 {
-		return nil
+func knownStaticHazardAt(pos [2]float64) bool {
+	terrain := getTerrain()
+	if terrain == nil {
+		return false
 	}
-	if ts.RoundTick < 45 && !ts.TeleportSurge {
-		return nil
-	}
-
-	pads := teleporterByID(ts.Teleporters)
-	currentDist := chebyshev(ts.Position, target.Position)
-	pressure := enemiesWithinRange(ts.Position, ts.Enemies, 5)
-	highValue := target.Type == "bounty_target" ||
-		target.Weapon == "bow" ||
-		target.Weapon == "staff" ||
-		(target.MaxHP > 0 && target.HP <= target.MaxHP*0.45)
-	if !highValue && pressure == 0 && currentDist <= wrange+6 {
-		return nil
-	}
-
-	bestScore := -math.Inf(1)
-	var bestPad *entity
-
-	for i := range ts.Teleporters {
-		tp := &ts.Teleporters[i]
-		dToPad := chebyshev(ts.Position, tp.Position)
-		maxPadDist := 3.0
-		if ts.TeleportSurge {
-			maxPadDist = 5
-		}
-		if dToPad > maxPadDist || tp.LinkedID == "" || !isReadyTeleporter(*tp) {
+	for _, h := range terrain.HazardZones {
+		if h.Width > 0 || h.Height > 0 {
+			halfW, halfH := h.Width/2, h.Height/2
+			if math.Abs(pos[0]-h.Position[0]) <= float64(halfW) && math.Abs(pos[1]-h.Position[1]) <= float64(halfH) {
+				return true
+			}
 			continue
 		}
-		linked, ok := pads[tp.LinkedID]
-		if !ok || !isReadyTeleporter(linked) {
-			continue
+		radius := h.Radius
+		if radius <= 0 {
+			radius = 2
 		}
-		exitDist := chebyshev(linked.Position, target.Position)
-		if exitDist >= currentDist-4 {
-			continue
-		}
-
-		score := (currentDist-exitDist)*6 - dToPad*2
-		if exitDist <= wrange+1 {
-			score += 18
-		}
-		if chebyshev(linked.Position, ts.ZoneCenter) <= ts.ZoneRadius {
-			score += 8
-		}
-		if highValue {
-			score += 10
-		}
-		if pressure >= 2 {
-			score += 6
-		}
-		if ts.TeleportSurge {
-			score += 8
-		}
-		if score > bestScore {
-			bestScore = score
-			bestPad = tp
+		if chebyshev(pos, h.Position) <= radius {
+			return true
 		}
 	}
-
-	minScore := 20.0
-	if ts.TeleportSurge {
-		minScore = 14
-	}
-	if bestPad == nil || bestScore < minScore {
-		return nil
-	}
-	a := moveTo(ts.Position, bestPad.Position, ts.Danger)
-	return &a
+	return false
 }
 
-// === Teleporter Escape ===
-
-// tryTeleporterEscape checks if the bot should escape via teleporter.
-func tryTeleporterEscape(ts tickState) *actionResult {
-	if ts.HP/ts.MaxHP > 0.35 {
-		return nil
-	}
-	// Only if no health packs nearby
-	_, hpD := nearestHealthPickup(ts.Position, ts.Pickups, ts.HazardZones, ts.HasHazardKey)
-	if hpD <= 3 {
-		return nil
-	}
-	// Check for teleporter within 2 tiles
-	for _, tp := range ts.Teleporters {
-		if !isReadyTeleporter(tp) {
+func nearestEnemyDistanceFrom(pos [2]float64, enemies []entity) float64 {
+	best := math.Inf(1)
+	for i := range enemies {
+		if !enemies[i].IsAlive {
 			continue
 		}
-		escapeReach := 6.0
-		if ts.TeleportSurge {
-			escapeReach = 8
-		}
-		if chebyshev(ts.Position, tp.Position) <= escapeReach {
-			a := moveTo(ts.Position, tp.Position, ts.Danger)
-			return &a
+		if d := chebyshev(pos, enemies[i].Position); d < best {
+			best = d
 		}
 	}
-	return nil
+	return best
 }
 
-// tryTeleporterPressureEscape uses any nearby teleporter when the bot is under
-// melee pressure or outnumbered, even if the linked exit is not currently visible.
+func teleportExitIsSafe(ts tickState, exit entity, currentEnemyDistance float64) bool {
+	terrain := getTerrain()
+	if terrain == nil {
+		return false
+	}
+	exitCell := [2]int{int(math.Round(exit.Position[0])), int(math.Round(exit.Position[1]))}
+	if terrain.isBlocked(exitCell[0], exitCell[1]) || knownStaticHazardAt(exit.Position) {
+		return false
+	}
+	// Treat all currently-known dynamic danger as unsafe too. Far exits cannot
+	// expose every mine/burn field through fog, so the static map check above is
+	// intentionally conservative about pulsing hazard zones.
+	if inHazardZone(exit.Position, ts.HazardZones) {
+		return false
+	}
+	if ts.Danger != nil && ts.Danger.hasLethal(exitCell[0], exitCell[1]) {
+		return false
+	}
+	if chebyshev(exit.Position, ts.ZoneCenter) > math.Max(0, ts.ZoneRadius-1) {
+		return false
+	}
+	exitEnemyDistance := nearestEnemyDistanceFrom(exit.Position, ts.Enemies)
+	if !math.IsInf(currentEnemyDistance, 1) && exitEnemyDistance < currentEnemyDistance-1 {
+		return false
+	}
+	return true
+}
+
+// tryTeleporterPressureEscape spends a teleporter charge only for an imminent
+// survival problem and only when the linked exit is known and demonstrably
+// safer. Normal engagement and convenience shortcuts deliberately avoid pads.
 func tryTeleporterPressureEscape(ts tickState, strategy string, near *entity, nearD float64) *actionResult {
-	if near == nil || len(ts.Teleporters) == 0 {
+	_ = strategy
+	if len(ts.Teleporters) == 0 {
 		return nil
 	}
 
 	hpRatio := ts.HP / math.Max(ts.MaxHP, 1)
-	pressure := enemiesWithinRange(ts.Position, ts.Enemies, 4)
-	urgent := hpRatio < 0.7 || pressure >= 2 || (strategy == "kite" && nearD <= 2)
-	if !urgent {
+	closePressure := enemiesWithinRange(ts.Position, ts.Enemies, 3)
+	criticalCombat := near != nil && ((hpRatio <= 0.25 && nearD <= 3) || (hpRatio <= 0.40 && closePressure >= 2))
+	criticalZone := !ts.InZone && ts.ZoneDist <= -2
+	if !criticalCombat && !criticalZone {
 		return nil
 	}
-
-	for _, tp := range ts.Teleporters {
-		if !isReadyTeleporter(tp) {
-			continue
-		}
-		escapeReach := 8.0
-		if ts.TeleportSurge {
-			escapeReach = 10
-		}
-		if chebyshev(ts.Position, tp.Position) <= escapeReach {
-			a := moveTo(ts.Position, tp.Position, ts.Danger)
-			return &a
-		}
-	}
-	return nil
-}
-
-// tryTeleporterZoneShortcut uses a linked teleporter pair to cut distance back
-// into the safe zone or toward the next shrink target.
-func tryTeleporterZoneShortcut(ts tickState) *actionResult {
-	if ts.InZone || len(ts.Teleporters) < 2 {
+	if hp, hpD := nearestHealthPickup(ts.Position, ts.Pickups, ts.HazardZones, ts.HasHazardKey); hp != nil && hpD <= 3 {
 		return nil
 	}
 
 	pads := teleporterByID(ts.Teleporters)
-	currentDist := chebyshev(ts.Position, ts.ZoneTargetCenter)
+	currentEnemyDistance := nearestEnemyDistanceFrom(ts.Position, ts.Enemies)
+	currentZoneDistance := chebyshev(ts.Position, ts.ZoneTargetCenter)
 	bestScore := -math.Inf(1)
-	var bestPad *entity
+	var bestAction actionResult
+	found := false
 
 	for i := range ts.Teleporters {
 		tp := &ts.Teleporters[i]
-		dToPad := chebyshev(ts.Position, tp.Position)
-		maxPadDist := 8.0
-		if ts.TeleportSurge {
-			maxPadDist = 10
+		if !isReadyTeleporter(*tp) || tp.LinkedID == "" {
+			continue
 		}
-		if dToPad > maxPadDist || tp.LinkedID == "" || !isReadyTeleporter(*tp) {
+		approach, dToPad, reachable := teleporterSourceApproach(ts, *tp)
+		if !reachable {
 			continue
 		}
 		linked, ok := pads[tp.LinkedID]
-		if !ok || !isReadyTeleporter(linked) {
+		if !ok || !teleportExitIsSafe(ts, linked, currentEnemyDistance) {
 			continue
 		}
-		exitDist := chebyshev(linked.Position, ts.ZoneTargetCenter)
-		if exitDist >= currentDist-2 {
+
+		exitEnemyDistance := nearestEnemyDistanceFrom(linked.Position, ts.Enemies)
+		exitZoneDistance := chebyshev(linked.Position, ts.ZoneTargetCenter)
+		combatImprovement := 0.0
+		if !math.IsInf(currentEnemyDistance, 1) {
+			combatImprovement = exitEnemyDistance - currentEnemyDistance
+		}
+		zoneImprovement := currentZoneDistance - exitZoneDistance
+		if criticalCombat && combatImprovement < 2 {
 			continue
 		}
-		score := (currentDist-exitDist)*5 - dToPad
-		if chebyshev(linked.Position, ts.ZoneCenter) <= ts.ZoneRadius {
-			score += 10
+		if criticalZone && zoneImprovement < 2 {
+			continue
 		}
-		if ts.TeleportSurge {
-			score += 6
-		}
+		score := combatImprovement*4 + zoneImprovement - dToPad
 		if score > bestScore {
 			bestScore = score
-			bestPad = tp
+			bestAction = approach
+			found = true
 		}
 	}
-
-	if bestPad == nil {
+	if !found {
 		return nil
 	}
-	a := moveTo(ts.Position, bestPad.Position, ts.Danger)
-	return &a
+	return &bestAction
 }
 
 // tryPlaceMineAdvanced places mines more proactively in hot lanes and while
@@ -2850,7 +3175,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	// === DANGER: leave the shortest safe way immediately. This covers active
 	// hazards, enemy gravity wells, armed mines, and a void tile underfoot.
 	cell := [2]int{int(math.Round(pos[0])), int(math.Round(pos[1]))}
-	if ts.Danger.has(cell[0], cell[1]) {
+	if ts.Danger.hasLethal(cell[0], cell[1]) {
 		return escapeDanger(ts, canDodge)
 	}
 
@@ -2862,6 +3187,25 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		if hp, hpD := nearestHealthPickup(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey); hp != nil && hpD <= 1 && hp.ID != "" {
 			return useItem(hp.ID)
 		}
+	}
+
+	// During the sudden-death stall penalty, passive play damages everyone and
+	// only renewed combat stops the ramp. Healthy demo bots therefore force
+	// contact instead of hiding; critically wounded bots keep survival logic.
+	if ts.SuddenDeathStall && hpRatio >= 0.3 {
+		if near != nil {
+			if canAtk && near.HasLOS && nearD <= wrange {
+				return finalizeWeaponAction(ts, weapon, wrange, atk(near, weapon))
+			}
+			return finalizeWeaponAction(ts, weapon, wrange, chaseApproach(ts, near, wrange, weapon))
+		}
+		for _, hint := range ts.Hints {
+			if hint.HintType == "bot" {
+				target := [2]float64{pos[0] + hint.Direction[0]*hint.Distance, pos[1] + hint.Direction[1]*hint.Distance}
+				return moveTo(pos, target, ts.Danger)
+			}
+		}
+		return moveTo(pos, ts.ZoneCenter, ts.Danger)
 	}
 
 	// === CTF OBJECTIVE PLAY: carry, chase carriers, return, steal ===
@@ -2979,14 +3323,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		return *ga
 	}
 
-	// === TELEPORTER ENGAGE: take a nearby pad if the linked exit improves the fight ===
-	if near != nil && nearD > wrange+1 {
-		if tp := tryTeleporterEngage(ts, near, wrange); tp != nil {
-			return *tp
-		}
-	}
-
-	// === TELEPORTER ESCAPE: bail through a nearby pad when heavily pressured ===
+	// === TELEPORTER ESCAPE: spend the charge only for verified critical safety ===
 	if tp := tryTeleporterPressureEscape(ts, strategy, near, nearD); tp != nil {
 		return *tp
 	}
@@ -3032,10 +3369,6 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		fleeThreshold = 0.20
 	}
 	if strategy != "berserker" && strategy != "territorial" && hpRatio < fleeThreshold && near != nil && nearD <= 2 {
-		// Try teleporter escape
-		if tp := tryTeleporterEscape(ts); tp != nil {
-			return *tp
-		}
 		// Grab adjacent health pickup if available
 		hp, hpD := nearestHealthPickup(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey)
 		if hp != nil && hpD <= 1 {
@@ -3068,11 +3401,6 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		}
 	}
 
-	// === ZONE SHORTCUT: use linked teleporters to cut back into the safe zone ===
-	if tp := tryTeleporterZoneShortcut(ts); tp != nil {
-		return *tp
-	}
-
 	// === ZONE SAFETY: Move into safe zone, but attack on the way ===
 	if !ts.InZone {
 		// Zone edge tactics: shove enemies OUT of zone
@@ -3101,11 +3429,23 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 
 	// === PROACTIVE ZONE DRIFT: reposition ahead of the shrink when the zone
 	// edge is close (or the round is late and we're far from the next zone)
-	// and no enemy is within fighting distance.
+	// and no enemy is within fighting distance. If carved terrain blocks the
+	// direct route, start sooner so rings, rooms, islands, and caves do not
+	// strand the bot behind a long detour during the shrink.
 	if near == nil || nearD > wrange+2 {
 		distToZoneTarget := chebyshev(pos, ts.ZoneTargetCenter)
-		lateRound := ts.RoundTick > 1200
-		if ts.ZoneDist < 4 || (lateRound && distToZoneTarget > ts.ZoneTargetRadius) {
+		driftMargin := 4.0
+		lateTick := 1200
+		if terrain := getTerrain(); terrain != nil {
+			start := [2]int{int(math.Round(pos[0])), int(math.Round(pos[1]))}
+			goal := [2]int{int(math.Round(ts.ZoneTargetCenter[0])), int(math.Round(ts.ZoneTargetCenter[1]))}
+			if terrain.gridLineBlocked(start, goal) {
+				driftMargin = 7
+				lateTick = 900
+			}
+		}
+		lateRound := ts.RoundTick > lateTick
+		if ts.ZoneDist < driftMargin || (lateRound && distToZoneTarget > ts.ZoneTargetRadius) {
 			if a := moveTo(pos, ts.ZoneTargetCenter, ts.Danger); a.Action != "idle" {
 				return a
 			}

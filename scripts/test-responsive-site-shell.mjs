@@ -6,6 +6,7 @@ const css = readFileSync(new URL('../frontend/css/site-shell.css', import.meta.u
 const sectionsCss = readFileSync(new URL('../frontend/css/sections.css', import.meta.url), 'utf8');
 const js = readFileSync(new URL('../frontend/js/site-shell.js', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../frontend/js/app.js', import.meta.url), 'utf8');
+const llms = readFileSync(new URL('../frontend/llms.txt', import.meta.url), 'utf8');
 
 const matches = (source, pattern) => Array.from(source.matchAll(pattern));
 const ids = matches(html, /\sid="([^"]+)"/g).map((match) => match[1]);
@@ -33,7 +34,7 @@ for (const id of [
 assert.equal(matches(html, /id="arena-canvas"/g).length, 1, 'the shell must own exactly one persistent arena canvas');
 
 assert.match(html, /css\/site-shell\.css\?v=/, 'responsive shell stylesheet must be loaded');
-assert.match(html, /js\/service-status\.js/, 'public service-status client must be loaded');
+assert.match(`${app}\n${js}`, /['"]\.\/service-status\.js['"]/, 'public service-status client must be imported exactly once per module URL');
 assert.match(html, /js\/site-shell\.js\?v=/, 'responsive shell controller must be loaded');
 assert.match(html, /name="viewport"\s+content="width=device-width, initial-scale=1\.0, viewport-fit=cover"/, 'layout must be viewport and safe-area driven');
 assert.doesNotMatch(html, /mobile-suggest|href="m\/"/, 'the main site must not hand phones to a separate page');
@@ -115,6 +116,37 @@ assert.match(
 assert.match(js, /stopImmediatePropagation\(\)/, 'cinema control must supersede the legacy mobile redirect');
 assert.match(js, /site-cinema-mode/, 'cinema control must toggle shell chrome only');
 assert.match(js, /requestArenaResize/, 'layout transitions must resize the existing renderer');
+assert.match(
+  css,
+  /\.arena-sidebar[^{]*\{[^}]*view-transition-name:\s*arena-telemetry-panel/,
+  'desktop telemetry must expose a named view-transition surface for a smooth size morph',
+);
+assert.match(
+  css,
+  /::view-transition-group\(arena-telemetry-panel\)[^{]*\{[^}]*animation-duration:\s*0\.18s[^}]*animation-timing-function:\s*cubic-bezier\(0\.23,\s*1,\s*0\.32,\s*1\)/,
+  'telemetry morph must use the same short responsive motion register as the Spectator HUD',
+);
+assert.match(
+  js,
+  /document\.startViewTransition/,
+  'telemetry collapse must animate geometry through View Transitions when supported',
+);
+assert.match(js, /let intendedCollapsed\s*=\s*shell\.classList\.contains/, 'rapid telemetry input must track logical intent synchronously');
+assert.match(js, /const generation\s*=\s*\+\+collapseGeneration/, 'telemetry transitions must version deferred state callbacks');
+assert.match(js, /if \(generation !== collapseGeneration\) return/, 'stale native View Transition callbacks must not overwrite newer input');
+assert.match(js, /setCollapsed\(!intendedCollapsed\)/, 'each rapid click must invert logical intent instead of stale DOM state');
+assert.match(js, /nativeTransitionSettling[\s\S]*nativeMorphCooldownUntil\s*=\s*now\s*\+\s*MORPH_DURATION_MS[\s\S]*applyState\(\)/, 'rapid native-transition input must commit synchronously during the compositor settle window');
+assert.match(
+  js,
+  /matchMedia\('\(prefers-reduced-motion:\s*reduce\)'\)\.matches/,
+  'telemetry collapse must respect reduced motion',
+);
+assert.match(
+  js,
+  /cloneNode\(true\)[\s\S]*ghost\.animate\(/,
+  'telemetry collapse must retain a compositor-only FLIP fallback when View Transitions are unavailable',
+);
+assert.match(js, /cubic-bezier\(0\.23,\s*1,\s*0\.32,\s*1\)/, 'telemetry morph must use the committed responsive ease-out curve');
 assert.doesNotMatch(js, /new\s+ArenaEngine|replaceChild|removeChild|location\.(?:href|assign)|\/m\//, 'shell controller must never recreate or redirect the arena');
 assert.match(js, /event\.key\s*!==\s*'Escape'/, 'sheets must support Escape');
 assert.match(js, /event\.key\s*!==\s*'Tab'/, 'modal drawers must trap keyboard focus');
@@ -130,6 +162,18 @@ assert.match(app, /scrollRoot\.scrollTo\(\{ top:\s*0, behavior:\s*'smooth' \}\)/
 
 assert.match(html, /id="siteBroadcast"[\s\S]*data-service-status-root[\s\S]*data-service-status[\s\S]*data-service-status-dismiss/, 'public broadcast host contract must be present');
 assert.match(html, /id="siteBroadcast"[\s\S]*role="status"[\s\S]*aria-live="polite"/, 'public notices must be announced accessibly');
+assert.match(html, /delay applies to ordered[\s\S]*arena_state[\s\S]*lobby_state[\s\S]*heartbeat[\s\S]*service_status/, 'spectator docs must distinguish delayed gameplay state from immediate controls');
+assert.match(llms, /Range is 12 grid tiles with a 4s cooldown[\s\S]*requires line of sight[\s\S]*Supply exactly one of `target` or `target_position`/, 'AI guidance must match universal grapple enforcement');
+assert.match(llms, /Only lit pads with `is_ready: true` activate[\s\S]*locks the pair for 3s[\s\S]*5s cooldown on both linked pads/, 'AI guidance must explain teleporter readiness and both cooldown layers');
+assert.match(llms, /Targeted `attack`, `shove`, and `grapple`[\s\S]*current fog-of-war view[\s\S]*public bounty target/, 'AI guidance must explain server-side target visibility enforcement');
+assert.match(llms, /features_pending: true[\s\S]*`game_mode` is omitted[\s\S]*round-feature arrays are empty[\s\S]*until `round_start`/, 'AI guidance must distinguish pre-generated terrain from unresolved round features');
+assert.match(llms, /Landmines[\s\S]*1-tile blast radius[\s\S]*Gravity Wells[\s\S]*within 3 tiles/, 'AI guidance must match mine and gravity-well radii');
+assert.match(llms, /Hazard Zones[\s\S]*3 HP\/tick[\s\S]*Sudden Death[\s\S]*999 damage/, 'AI guidance must match hazard and void damage');
+assert.match(html, /balanced speed allocation averages half a cell per tick/, 'movement docs must explain speed-scaled grid pacing');
+assert.match(html, /Target visibility:[\s\S]*target-ID[\s\S]*current fog-of-war view[\s\S]*public bounty target/, 'primary action docs must explain target visibility enforcement');
+assert.match(html, /grapple[\s\S]*exactly one aim mode[\s\S]*Sending both is rejected/, 'primary grapple docs must explain exclusive aim modes');
+assert.match(llms, /These are base values[\s\S]*\/api\/v1\/weapon-stats/, 'AI weapon guidance must distinguish base values from adaptive live values');
+assert.match(html, /Safe zone initial radius[\s\S]*Covers the map \(~71 tiles on the square arena\)/, 'site docs must reflect the circumscribed initial zone');
 
 const keith = html.indexOf('>Keith S<');
 const andrew = html.indexOf('>Andrew<');

@@ -184,6 +184,23 @@ func BuildTeleportPadView(pad TeleportPad, tickCount int, useGridPos bool) map[s
 	return view
 }
 
+// BuildTeleportPadViewForBot adds the observer's personal reuse cooldown to
+// the global pad lock. Spectator and REST views continue to use
+// BuildTeleportPadView because their readiness is not tied to one bot.
+func BuildTeleportPadViewForBot(pad TeleportPad, tickCount int, useGridPos bool, bot *BotState) map[string]interface{} {
+	view := BuildTeleportPadView(pad, tickCount, useGridPos)
+	if bot == nil || bot.TeleportCooldowns == nil {
+		return view
+	}
+	remaining, _ := view["cooldown_remaining_ticks"].(int)
+	if expiry := bot.TeleportCooldowns[pad.ID]; expiry > tickCount && expiry-tickCount > remaining {
+		remaining = expiry - tickCount
+	}
+	view["is_ready"] = remaining == 0
+	view["cooldown_remaining_ticks"] = remaining
+	return view
+}
+
 // ShufflePads randomizes pad slice order (for deterministic iteration avoidance).
 func init() {
 	_ = rand.Int // ensure rand is used

@@ -1,7 +1,9 @@
 package game
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"math"
 	"time"
 
@@ -46,21 +48,31 @@ func (v Vec2) MarshalJSON() ([]byte, error) {
 }
 
 func (v *Vec2) UnmarshalJSON(data []byte) error {
-	var arr [2]float64
-	if err := json.Unmarshal(data, &arr); err != nil {
-		// Try object form {"x":..,"y":..}
-		var obj struct {
-			X float64 `json:"x"`
-			Y float64 `json:"y"`
+	var values []float64
+	if err := json.Unmarshal(data, &values); err == nil {
+		if len(values) != 2 {
+			return fmt.Errorf("vector array must contain exactly 2 numbers")
 		}
-		if err2 := json.Unmarshal(data, &obj); err2 != nil {
-			return err
-		}
-		v[0] = obj.X
-		v[1] = obj.Y
+		*v = Vec2{values[0], values[1]}
 		return nil
 	}
-	*v = arr
+
+	// Object form is retained for SDK compatibility, but both coordinates are
+	// required and unknown fields are rejected so malformed payloads cannot
+	// silently turn into the valid-looking origin [0, 0].
+	var obj struct {
+		X *float64 `json:"x"`
+		Y *float64 `json:"y"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&obj); err != nil {
+		return fmt.Errorf("invalid vector: %w", err)
+	}
+	if obj.X == nil || obj.Y == nil {
+		return fmt.Errorf("vector object requires x and y")
+	}
+	*v = Vec2{*obj.X, *obj.Y}
 	return nil
 }
 
@@ -149,12 +161,13 @@ type Obstacle struct {
 
 // StaffImpact represents a delayed area-of-effect attack.
 type StaffImpact struct {
-	OwnerID    string
-	Position   Vec2
-	Radius     float64
-	Damage     float64
-	TicksLeft  int
-	AttackMult float64
+	OwnerID     string
+	Position    Vec2
+	Radius      float64
+	Damage      float64
+	DamageScale float64
+	TicksLeft   int
+	AttackMult  float64
 }
 
 // BurnField is a lingering damage zone left behind by a staff detonation.
@@ -164,9 +177,11 @@ type BurnField struct {
 	Position     Vec2
 	Radius       float64
 	Damage       float64
+	AttackMult   float64
 	TicksLeft    int
 	TickInterval int
 	PulseTick    int
+	HitRecorded  bool
 }
 
 // HitRecord tracks a hit received this tick (for feedback).
@@ -217,6 +232,16 @@ type BotState struct {
 	FallbackBehavior string
 	PendingAction    *Action
 	LastActionTick   int
+	// Client action ticks are monotonic sequence numbers supplied by the bot.
+	// Tracking them separately from LastActionTick prevents replayed messages
+	// and same-tick last-write-wins overrides without weakening AFK tracking.
+	LastClientActionTick int
+	HasClientActionTick  bool
+	// Network submissions are also limited to the first accepted action in
+	// each authoritative server tick. Client ticks alone cannot enforce this:
+	// two increasing but delayed client ticks may arrive during one server tick.
+	LastAcceptedServerTick int
+	HasAcceptedServerTick  bool
 
 	// Stats allocation
 	Stats map[string]int // {hp, speed, attack, defense}
@@ -330,6 +355,37 @@ type BotState struct {
 	// WebSocket (nil for AI-only bots)
 	Conn     *websocket.Conn
 	SendChan chan []byte
+}
+
+// rejectControlledAction applies the shared stun/freeze/dodge gate used by
+// action processors. blockWhileInvulnerable is true for offensive actions;
+// self-directed anchor grapples deliberately remain valid during dodge frames.
+func rejectControlledAction(bot *BotState, action string, blockWhileInvulnerable bool) bool {
+	if bot == nil {
+		return true
+	}
+	message := ""
+	switch {
+	case bot.Frozen:
+		message = "frozen"
+	case bot.StunTicks > 0:
+		message = "stunned"
+	case blockWhileInvulnerable && bot.InvulnTicks > 0:
+		message = "cannot use offensive actions while dodging"
+	default:
+		return false
+	}
+	target := ""
+	if bot.PendingAction != nil {
+		target = bot.PendingAction.TargetID
+	}
+	bot.LastActionResult = &ActionResult{
+		Action:  action,
+		Success: false,
+		Target:  target,
+		Message: message,
+	}
+	return true
 }
 
 // RoundPhase tracks the current phase of the game.
@@ -499,7 +555,7 @@ func ComputeDerivedStats(stats map[string]int, weapon string) DerivedStats {
 		DefenseReduction: float64(def) * c.StatDefensePerPoint,
 		AttackRange:      float64(wc.GridRange),
 		CooldownSeconds:  wc.Cooldown,
-		WeaponDamage:     float64(wc.Damage),
+		WeaponDamage:     weaponDamage(&wc),
 	}
 }
 

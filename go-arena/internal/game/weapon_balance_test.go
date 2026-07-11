@@ -3,9 +3,13 @@ package game
 import (
 	"context"
 	"math"
+	"sort"
+	"strconv"
 	"testing"
+	"time"
 
 	"arena-server/internal/config"
+	"arena-server/internal/db"
 )
 
 func setupWeaponBalanceTest(t *testing.T) {
@@ -92,8 +96,8 @@ func TestAutoBalanceWaitsForEvidenceBatch(t *testing.T) {
 	if state.DamageScale != 1 || state.CooldownScale != 1 {
 		t.Fatalf("partial evidence batch changed weapon: damage=%.4f cooldown=%.4f", state.DamageScale, state.CooldownScale)
 	}
-	if state.RoundsTracked != 3 {
-		t.Fatalf("tracked rounds = %d, want 3", state.RoundsTracked)
+	if state.RoundsTracked != 3 || state.Revision != 3 {
+		t.Fatalf("tracked rounds/revision = %d/%d, want 3/3", state.RoundsTracked, state.Revision)
 	}
 }
 
@@ -180,6 +184,77 @@ func TestAutoBalanceRejectsAlternatingNoise(t *testing.T) {
 		if state.DamageScale != 1 || state.CooldownScale != 1 {
 			t.Errorf("alternating noise moved %s: damage=%.4f cooldown=%.4f", weapon, state.DamageScale, state.CooldownScale)
 		}
+	}
+}
+
+func TestAutoBalanceRetainsInconclusiveEvidenceWithoutDecay(t *testing.T) {
+	setupWeaponBalanceTest(t)
+	initial, _ := GetWeaponBalanceState("sword")
+
+	// The batch has a zero mean but a wide confidence interval. That is
+	// inconclusive, not proof that the weapon is equivalent to its peers.
+	for i := 0; i < 4; i++ {
+		if i%2 == 0 {
+			AutoBalanceWeapons(context.Background(), balanceTestBots(8, 0), "sword-a")
+		} else {
+			AutoBalanceWeapons(context.Background(), balanceTestBots(0, 8), "bow-d")
+		}
+	}
+
+	state, _ := GetWeaponBalanceState("sword")
+	if state.AdjustmentScale != initial.AdjustmentScale {
+		t.Fatalf("inconclusive evidence changed adjustment step: %.4f -> %.4f", initial.AdjustmentScale, state.AdjustmentScale)
+	}
+	weaponBalanceMu.RLock()
+	retainedRounds := weaponEvidence["sword"].rounds
+	weaponBalanceMu.RUnlock()
+	if retainedRounds != 4 {
+		t.Fatalf("inconclusive evidence retained %d rounds, want 4", retainedRounds)
+	}
+}
+
+func TestAutoBalancePersistentNoisyAdvantageEventuallyAdjusts(t *testing.T) {
+	setupWeaponBalanceTest(t)
+	config.C.WeaponAutoBalanceMaxEvidenceRounds = 48
+
+	// Every four-round slice is too noisy for a 95% confidence decision, but
+	// the long-running signal is consistently three strong rounds to one weak.
+	for i := 0; i < 48; i++ {
+		if i%4 == 3 {
+			AutoBalanceWeapons(context.Background(), balanceTestBots(0, 8), "bow-d")
+		} else {
+			AutoBalanceWeapons(context.Background(), balanceTestBots(8, 0), "sword-a")
+		}
+	}
+
+	state, _ := GetWeaponBalanceState("sword")
+	if state.DamageScale >= 1 && state.CooldownScale <= 1 {
+		t.Fatalf("persistent noisy advantage never adjusted: damage=%.4f cooldown=%.4f", state.DamageScale, state.CooldownScale)
+	}
+}
+
+func TestAutoBalanceInconclusiveEvidenceExpiresWithoutDecay(t *testing.T) {
+	setupWeaponBalanceTest(t)
+	config.C.WeaponAutoBalanceMaxEvidenceRounds = 8
+	initial, _ := GetWeaponBalanceState("sword")
+
+	for i := 0; i < 8; i++ {
+		if i%2 == 0 {
+			AutoBalanceWeapons(context.Background(), balanceTestBots(8, 0), "sword-a")
+		} else {
+			AutoBalanceWeapons(context.Background(), balanceTestBots(0, 8), "bow-d")
+		}
+	}
+
+	state, _ := GetWeaponBalanceState("sword")
+	if state.AdjustmentScale != initial.AdjustmentScale {
+		t.Fatalf("expired inconclusive evidence changed adjustment step: %.4f -> %.4f", initial.AdjustmentScale, state.AdjustmentScale)
+	}
+	weaponBalanceMu.RLock()
+	retainedRounds := weaponEvidence["sword"].rounds
+	weaponBalanceMu.RUnlock()
+	if retainedRounds != 0 {
+		t.Fatalf("expired inconclusive evidence retained %d rounds, want 0", retainedRounds)
 	}
 }
 
@@ -327,6 +402,54 @@ func TestAutoBalanceLoadDiscardsPartialEvidence(t *testing.T) {
 	}
 }
 
+func TestNormalizeWeaponBalanceStateClampsPersistedScales(t *testing.T) {
+	setupWeaponBalanceTest(t)
+	config.C.WeaponAutoBalanceMinDamageScale = 0.70
+	config.C.WeaponAutoBalanceMaxDamageScale = 1.40
+	config.C.WeaponAutoBalanceMinCooldownScale = 0.75
+	config.C.WeaponAutoBalanceMaxCooldownScale = 1.35
+
+	weaponBalanceMu.Lock()
+	weaponBalance["staff"] = WeaponBalanceState{
+		Weapon:          "staff",
+		DamageScale:     0.10,
+		CooldownScale:   3.00,
+		AdjustmentScale: 0.05,
+	}
+	weaponBalanceMu.Unlock()
+
+	state, _ := GetWeaponBalanceState("staff")
+	if state.DamageScale != 0.70 || state.CooldownScale != 1.35 {
+		t.Fatalf("persisted scales normalized to %.2f/%.2f, want 0.70/1.35", state.DamageScale, state.CooldownScale)
+	}
+}
+
+func TestWeaponBalanceStateFromRecordPreservesMigratedScalesAndClampsExtremes(t *testing.T) {
+	setupWeaponBalanceTest(t)
+	config.C.WeaponAutoBalanceMinDamageScale = 0.70
+	config.C.WeaponAutoBalanceMaxDamageScale = 1.40
+	config.C.WeaponAutoBalanceMinCooldownScale = 0.75
+	config.C.WeaponAutoBalanceMaxCooldownScale = 1.35
+	updatedAt := time.Now()
+
+	staff := weaponBalanceStateFromRecord(db.WeaponBalance{
+		Weapon: "staff", DamageScale: 0.97, CooldownScale: 1.19,
+		AdjustmentScale: 0.04, RoundsTracked: 0, Revision: 9, UpdatedAt: updatedAt,
+	})
+	if staff.DamageScale != 0.97 || staff.CooldownScale != 1.19 || staff.AdjustmentScale != 0.04 ||
+		staff.RoundsTracked != 0 || staff.Revision != 9 || !staff.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("loaded Staff = %+v, want preserved 0.97/1.19 scales and revision 9", staff)
+	}
+
+	extreme := weaponBalanceStateFromRecord(db.WeaponBalance{
+		Weapon: "sword", DamageScale: 0.10, CooldownScale: 3.0,
+		AdjustmentScale: 0.04,
+	})
+	if extreme.DamageScale != 0.70 || extreme.CooldownScale != 1.35 {
+		t.Fatalf("loaded extreme state = %.2f/%.2f, want clamped 0.70/1.35", extreme.DamageScale, extreme.CooldownScale)
+	}
+}
+
 func TestRunningBalanceStatRequiresConfidenceInterval(t *testing.T) {
 	var noisy runningBalanceStat
 	for _, value := range []float64{0.4, -0.4, 0.4, -0.4} {
@@ -342,6 +465,45 @@ func TestRunningBalanceStatRequiresConfidenceInterval(t *testing.T) {
 	}
 	if got := consistent.directionOutside(0.05, 1.96); got != 1 {
 		t.Fatalf("consistent evidence direction = %d, want 1", got)
+	}
+}
+
+func TestRunningBalanceStatDistinguishesEquivalenceFromInconclusive(t *testing.T) {
+	var equivalent runningBalanceStat
+	for _, value := range []float64{0.01, -0.01, 0.01, -0.01} {
+		equivalent.add(value)
+	}
+	if !equivalent.equivalentWithin(0.05, 1.96) {
+		t.Fatal("tight interval inside deadzone was not classified equivalent")
+	}
+
+	var inconclusive runningBalanceStat
+	for _, value := range []float64{0.4, -0.4, 0.4, -0.4} {
+		inconclusive.add(value)
+	}
+	if inconclusive.equivalentWithin(0.05, 1.96) {
+		t.Fatal("wide interval overlapping deadzone was classified equivalent")
+	}
+}
+
+func TestBalanceAdjustmentMagnitudeHasFloor(t *testing.T) {
+	if got := balanceAdjustmentMagnitude(0.005, 0.01, 0.005); got != 0.005 {
+		t.Fatalf("adjustment magnitude = %.6f, want floor 0.005", got)
+	}
+}
+
+func TestApplyRelativeScaleChangeCapsEachAxisAtTwoPercent(t *testing.T) {
+	if got := applyRelativeScaleChange(1, 0.50, 0.005, 0.70, 1.40); math.Abs(got-1.02) > 1e-9 {
+		t.Fatalf("positive capped scale = %.4f, want 1.02", got)
+	}
+	if got := applyRelativeScaleChange(1, -0.50, 0.005, 0.70, 1.40); math.Abs(got-0.98) > 1e-9 {
+		t.Fatalf("negative capped scale = %.4f, want 0.98", got)
+	}
+	if got := applyRelativeScaleChange(1, 0.0001, 0.005, 0.70, 1.40); math.Abs(got-1.005) > 1e-9 {
+		t.Fatalf("positive floored scale = %.4f, want 1.005", got)
+	}
+	if got := applyRelativeScaleChange(1, -0.0001, 0.005, 0.70, 1.40); math.Abs(got-0.995) > 1e-9 {
+		t.Fatalf("negative floored scale = %.4f, want 0.995", got)
 	}
 }
 
@@ -371,5 +533,73 @@ func TestEloCorrectionPreservesHitRateInvariant(t *testing.T) {
 	}
 	if got, want := entry.totalShotsHit/entry.totalShotsFired, 2.0; math.Abs(got-want) > 1e-9 {
 		t.Fatalf("shots fired/hit were not adjusted consistently: ratio=%.4f want %.4f", got, want)
+	}
+}
+
+func BenchmarkAutoBalanceWeapons128Bots(b *testing.B) {
+	previousConfig := config.C
+	previousMode := ActiveModeRules
+	b.Cleanup(func() {
+		config.C = previousConfig
+		ActiveModeRules = previousMode
+	})
+
+	config.C.WeaponAutoBalanceEnabled = true
+	config.C.WeaponAutoBalanceStartStep = 0.05
+	config.C.WeaponAutoBalanceMinStep = 0.005
+	config.C.WeaponAutoBalanceDecay = 0.94
+	config.C.WeaponAutoBalanceDeadzoneStart = 0.02
+	config.C.WeaponAutoBalanceDeadzoneMin = 0.003
+	config.C.WeaponAutoBalanceMinDamageScale = 0.70
+	config.C.WeaponAutoBalanceMaxDamageScale = 1.40
+	config.C.WeaponAutoBalanceMinCooldownScale = 0.75
+	config.C.WeaponAutoBalanceMaxCooldownScale = 1.35
+	config.C.WeaponAutoBalanceDamageWeight = 0.65
+	config.C.WeaponAutoBalanceCooldownWeight = 0.45
+	config.C.WeaponAutoBalanceMinRounds = 6
+	config.C.WeaponAutoBalanceMinBotSamples = 18
+	config.C.WeaponAutoBalanceMinDistinctBots = 2
+	config.C.WeaponAutoBalanceMinActions = 5
+	config.C.WeaponAutoBalanceConfidenceZ = 1.96
+	config.C.WeaponAutoBalanceMinEffect = 0.05
+	config.C.WeaponAutoBalanceMaxEvidenceRounds = 48
+	ActiveModeRules = ModeRulesFor(ModeFFA)
+	if err := LoadWeaponBalance(context.Background()); err != nil {
+		b.Fatalf("LoadWeaponBalance: %v", err)
+	}
+
+	weaponBalanceMu.RLock()
+	weapons := make([]string, 0, len(baseWeaponConfigs))
+	for weapon := range baseWeaponConfigs {
+		weapons = append(weapons, weapon)
+	}
+	weaponBalanceMu.RUnlock()
+	sort.Strings(weapons)
+
+	bots := make(map[string]*BotState, 128)
+	for i := 0; i < 128; i++ {
+		weapon := weapons[i%len(weapons)]
+		id := weapon + "-benchmark-" + strconv.Itoa(i)
+		kills := i % 6
+		bots[id] = &BotState{
+			BotID:                  id,
+			Weapon:                 weapon,
+			Elo:                    900 + i%201,
+			RoundKills:             kills,
+			RoundWeaponKills:       kills,
+			BestKillStreak:         kills,
+			RoundDamageDealt:       float64(120 + i%80),
+			RoundWeaponDamageDealt: float64(120 + i%80),
+			RoundLongestLife:       300 + i%120,
+			RoundShotsFired:        20 + i%15,
+			RoundShotsHit:          8 + i%12,
+		}
+	}
+	assignBalanceEngagements(bots)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		AutoBalanceWeapons(context.Background(), bots, "staff-benchmark-0")
 	}
 }

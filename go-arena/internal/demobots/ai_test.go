@@ -1,7 +1,10 @@
 package demobots
 
 import (
+	"math"
 	"testing"
+
+	"arena-server/internal/config"
 )
 
 // setTerrain installs a synthetic open terrain grid (with optional wall rows)
@@ -664,5 +667,464 @@ func TestPickActionWaitsForSafeSpearBrace(t *testing.T) {
 	got := PickAction("aggressive", msg, "spear", 2, "me")
 	if got.Action != "idle" {
 		t.Fatalf("safe spear setup action = %+v, want idle to build brace", got)
+	}
+}
+
+func cacheTeleportTestMap(t *testing.T, pads []interface{}, hazards []interface{}) {
+	t.Helper()
+	oldBudget := config.C.StatBudget
+	oldSpeedBase := config.C.StatSpeedBase
+	oldSpeedPerPoint := config.C.StatSpeedPerPoint
+	oldCollectRadius := config.C.TeleportCollectRadius
+	config.C.StatBudget = 20
+	config.C.StatSpeedBase = 3
+	config.C.StatSpeedPerPoint = 0.5
+	config.C.TeleportCollectRadius = 1
+	t.Cleanup(func() {
+		config.C.StatBudget = oldBudget
+		config.C.StatSpeedBase = oldSpeedBase
+		config.C.StatSpeedPerPoint = oldSpeedPerPoint
+		config.C.TeleportCollectRadius = oldCollectRadius
+	})
+	rows := make([]interface{}, 24)
+	for y := range rows {
+		row := make([]byte, 24)
+		for x := range row {
+			row[x] = '.'
+		}
+		rows[y] = string(row)
+	}
+	parseTerrain(map[string]interface{}{
+		"width":         float64(24),
+		"height":        float64(24),
+		"cell_size":     float64(20),
+		"terrain":       rows,
+		"teleport_pads": pads,
+		"hazard_zones":  hazards,
+	})
+	t.Cleanup(clearTerrain)
+}
+
+func teleportTick(position [2]float64, hp, speed float64, entities ...map[string]interface{}) map[string]interface{} {
+	nearby := make([]interface{}, len(entities))
+	for i := range entities {
+		nearby[i] = entities[i]
+	}
+	return map[string]interface{}{
+		"type":       "tick",
+		"tick":       float64(500),
+		"round_tick": float64(500),
+		"your_state": map[string]interface{}{
+			"position":              []interface{}{position[0], position[1]},
+			"hp":                    hp,
+			"max_hp":                float64(100),
+			"speed":                 speed,
+			"weapon_ready":          false,
+			"dodge_cooldown":        float64(20),
+			"in_safe_zone":          true,
+			"distance_to_zone_edge": float64(8),
+			"zone_center":           []interface{}{float64(12), float64(12)},
+			"zone_radius":           float64(12),
+			"zone_target_center":    []interface{}{float64(12), float64(12)},
+			"zone_target_radius":    float64(5),
+		},
+		"nearby_entities": nearby,
+	}
+}
+
+func TestParseTerrainCachesTeleportLinksAndStaticHazards(t *testing.T) {
+	cacheTeleportTestMap(t, []interface{}{
+		map[string]interface{}{
+			"type": "teleport_pad", "id": "a", "linked_pad_id": "b",
+			"position": []interface{}{float64(8), float64(10)}, "is_ready": true,
+		},
+		map[string]interface{}{
+			"type": "teleport_pad", "id": "b", "linked_pad_id": "a",
+			"position": []interface{}{float64(18), float64(16)}, "is_ready": true,
+		},
+	}, []interface{}{
+		map[string]interface{}{
+			"type": "hazard_zone", "id": "hz", "position": []interface{}{float64(18), float64(16)},
+			"width": float64(3), "height": float64(3),
+		},
+	})
+
+	terrain := getTerrain()
+	if terrain == nil || len(terrain.Teleporters) != 2 {
+		t.Fatalf("cached teleporters = %#v, want two linked pads", terrain)
+	}
+	if got := terrain.Teleporters["a"]; got.LinkedID != "b" || got.Position != [2]float64{8, 10} {
+		t.Fatalf("cached pad a = %+v", got)
+	}
+	if len(terrain.HazardZones) != 1 || terrain.HazardZones[0].Position != [2]float64{18, 16} {
+		t.Fatalf("cached static hazards = %+v", terrain.HazardZones)
+	}
+}
+
+func TestExplicitlyUnreadyTeleporterNeverCountsAsReady(t *testing.T) {
+	setTerrain(t, 20, 20, nil)
+	ts := parseTick(teleportTick([2]float64{5, 5}, 100, 5.5,
+		map[string]interface{}{
+			"type": "teleport_pad", "id": "a", "linked_pad_id": "b",
+			"position": []interface{}{float64(7), float64(5)},
+			"is_ready": false, "cooldown_remaining_ticks": float64(0),
+		},
+	))
+	if len(ts.Teleporters) != 1 {
+		t.Fatalf("teleporters = %+v", ts.Teleporters)
+	}
+	if isReadyTeleporter(ts.Teleporters[0]) {
+		t.Fatal("explicit is_ready=false pad counted as ready")
+	}
+}
+
+func TestReadyTeleporterAvoidanceCoversBoostedMultiCellMove(t *testing.T) {
+	cacheTeleportTestMap(t, []interface{}{
+		map[string]interface{}{"type": "teleport_pad", "id": "a", "linked_pad_id": "b", "position": []interface{}{float64(8), float64(10)}, "is_ready": true},
+		map[string]interface{}{"type": "teleport_pad", "id": "b", "linked_pad_id": "a", "position": []interface{}{float64(18), float64(18)}, "is_ready": true},
+	}, nil)
+	msg := teleportTick([2]float64{4, 10}, 100, 16,
+		map[string]interface{}{
+			"type": "bot", "id": "enemy", "position": []interface{}{float64(11), float64(10)},
+			"hp": float64(100), "max_hp": float64(100), "weapon": "sword", "is_alive": true, "has_los": true,
+		},
+		map[string]interface{}{
+			"type": "teleport_pad", "id": "a", "linked_pad_id": "b",
+			"position": []interface{}{float64(8), float64(10)}, "is_ready": true,
+		},
+	)
+
+	got := PickAction("aggressive", msg, "sword", 1, "me")
+	if got.Action != "move" || got.Direction == nil {
+		t.Fatalf("action = %+v, want a routed move", got)
+	}
+	pos := [2]int{4, 10}
+	pad := [2]int{8, 10}
+	for step := 0; step < 2; step++ { // speed 16 can execute two cells in one server tick
+		pos[0] += int(got.Direction[0])
+		pos[1] += int(got.Direction[1])
+		if intChebyshev(pos, pad) <= 1 {
+			t.Fatalf("boosted move crossed ready pad trigger at step %d: pos=%v action=%+v", step+1, pos, got)
+		}
+	}
+}
+
+func TestUnreadyTeleporterDoesNotCreateRoutingDetour(t *testing.T) {
+	setTerrain(t, 20, 20, nil)
+	msg := teleportTick([2]float64{4, 10}, 100, 5.5,
+		map[string]interface{}{
+			"type": "bot", "id": "enemy", "position": []interface{}{float64(10), float64(10)},
+			"hp": float64(100), "max_hp": float64(100), "weapon": "sword", "is_alive": true, "has_los": true,
+		},
+		map[string]interface{}{
+			"type": "teleport_pad", "id": "a", "linked_pad_id": "b",
+			"position": []interface{}{float64(7), float64(10)},
+			"is_ready": false, "cooldown_remaining_ticks": float64(12),
+		},
+	)
+	ts := parseTick(msg)
+	danger := dangerPool.Get().(*dangerSet)
+	defer dangerPool.Put(danger)
+	buildDangerSet(danger, &ts, "me")
+	if danger.hasPad(7, 10) {
+		t.Fatal("unready pad was added to the ordinary-routing avoidance set")
+	}
+}
+
+func TestTeleporterPressureEscapeRequiresCriticalRisk(t *testing.T) {
+	cacheTeleportTestMap(t, []interface{}{
+		map[string]interface{}{"type": "teleport_pad", "id": "a", "linked_pad_id": "b", "position": []interface{}{float64(8), float64(10)}, "is_ready": true},
+		map[string]interface{}{"type": "teleport_pad", "id": "b", "linked_pad_id": "a", "position": []interface{}{float64(18), float64(18)}, "is_ready": true},
+	}, nil)
+	danger := dangerPool.Get().(*dangerSet)
+	defer dangerPool.Put(danger)
+	danger.reset()
+	ts := tickState{
+		Position: [2]float64{6, 10}, HP: 60, MaxHP: 100, InZone: true,
+		ZoneCenter: [2]float64{12, 12}, ZoneRadius: 12, Speed: 5.5, Danger: danger,
+		Enemies:     []entity{{ID: "enemy", Type: "bot", Position: [2]float64{4, 10}, IsAlive: true}},
+		Teleporters: []entity{{ID: "a", Type: "teleport_pad", LinkedID: "b", Position: [2]float64{8, 10}, Ready: true}},
+	}
+	if got := tryTeleporterPressureEscape(ts, "kite", &ts.Enemies[0], 2); got != nil {
+		t.Fatalf("moderate pressure triggered teleporter escape: %+v", *got)
+	}
+}
+
+func TestCriticalTeleporterEscapeRejectsUnsafeKnownExit(t *testing.T) {
+	cacheTeleportTestMap(t, []interface{}{
+		map[string]interface{}{"type": "teleport_pad", "id": "a", "linked_pad_id": "b", "position": []interface{}{float64(8), float64(10)}, "is_ready": true},
+		map[string]interface{}{"type": "teleport_pad", "id": "b", "linked_pad_id": "a", "position": []interface{}{float64(4), float64(10)}, "is_ready": true},
+	}, []interface{}{
+		map[string]interface{}{"type": "hazard_zone", "id": "hz", "position": []interface{}{float64(4), float64(10)}, "width": float64(3), "height": float64(3)},
+	})
+	msg := teleportTick([2]float64{6, 10}, 20, 5.5,
+		map[string]interface{}{
+			"type": "bot", "id": "enemy", "position": []interface{}{float64(3), float64(10)},
+			"hp": float64(100), "max_hp": float64(100), "weapon": "sword", "is_alive": true, "has_los": true, "can_attack": true,
+		},
+		map[string]interface{}{
+			"type": "teleport_pad", "id": "a", "linked_pad_id": "b",
+			"position": []interface{}{float64(8), float64(10)}, "is_ready": true,
+		},
+	)
+	got := PickAction("kite", msg, "bow", 5, "me")
+	if got.Action == "move" && got.Direction != nil && got.Direction[0] > 0 {
+		t.Fatalf("critical bot moved toward pad with hazardous/enemy-adjacent exit: %+v", got)
+	}
+}
+
+func TestCriticalTeleporterEscapeUsesSafeLinkedExitOutsideFog(t *testing.T) {
+	cacheTeleportTestMap(t, []interface{}{
+		map[string]interface{}{"type": "teleport_pad", "id": "a", "linked_pad_id": "b", "position": []interface{}{float64(8), float64(10)}, "is_ready": true},
+		map[string]interface{}{"type": "teleport_pad", "id": "b", "linked_pad_id": "a", "position": []interface{}{float64(18), float64(18)}, "is_ready": true},
+	}, nil)
+	// The live tick contains only the source pad. Its linked exit is ten-plus
+	// tiles away and therefore must come from the full map cache, not fog data.
+	msg := teleportTick([2]float64{6, 10}, 20, 5.5,
+		map[string]interface{}{
+			"type": "bot", "id": "enemy", "position": []interface{}{float64(3), float64(10)},
+			"hp": float64(100), "max_hp": float64(100), "weapon": "sword", "is_alive": true, "has_los": true, "can_attack": true,
+		},
+		map[string]interface{}{
+			"type": "teleport_pad", "id": "a", "linked_pad_id": "b",
+			"position": []interface{}{float64(8), float64(10)}, "is_ready": true,
+		},
+	)
+	got := PickAction("kite", msg, "bow", 5, "me")
+	if got.Action != "move" || got.Direction == nil || got.Direction[0] <= 0 {
+		t.Fatalf("critical bot did not move toward safe known teleporter: %+v", got)
+	}
+}
+
+func TestDeliberateTeleportNeverUnblocksLethalPadCell(t *testing.T) {
+	cacheTeleportTestMap(t, []interface{}{
+		map[string]interface{}{"type": "teleport_pad", "id": "a", "linked_pad_id": "b", "position": []interface{}{float64(8), float64(10)}, "is_ready": true},
+		map[string]interface{}{"type": "teleport_pad", "id": "b", "linked_pad_id": "a", "position": []interface{}{float64(18), float64(18)}, "is_ready": true},
+	}, nil)
+	msg := teleportTick([2]float64{6, 10}, 20, 5.5,
+		map[string]interface{}{
+			"type": "bot", "id": "enemy", "position": []interface{}{float64(3), float64(10)},
+			"hp": float64(100), "max_hp": float64(100), "weapon": "sword", "is_alive": true, "has_los": true, "can_attack": true,
+		},
+		map[string]interface{}{
+			"type": "teleport_pad", "id": "a", "linked_pad_id": "b",
+			"position": []interface{}{float64(8), float64(10)}, "is_ready": true,
+		},
+		map[string]interface{}{
+			"type": "landmine", "id": "mine", "owner_id": "enemy",
+			"position": []interface{}{float64(8), float64(10)}, "armed": true,
+		},
+	)
+	got := PickAction("kite", msg, "bow", 5, "me")
+	if got.Action == "move" && got.Direction != nil && got.Direction[0] > 0 && got.Direction[1] == 0 {
+		t.Fatalf("teleporter exemption routed directly through lethal mine: %+v", got)
+	}
+}
+
+func TestTeleporterEscapeSkipsLethalSourceForSafeAlternative(t *testing.T) {
+	cacheTeleportTestMap(t, []interface{}{
+		map[string]interface{}{"type": "teleport_pad", "id": "unsafe", "linked_pad_id": "unsafe-exit", "position": []interface{}{float64(8), float64(10)}, "is_ready": true},
+		map[string]interface{}{"type": "teleport_pad", "id": "unsafe-exit", "linked_pad_id": "unsafe", "position": []interface{}{float64(18), float64(18)}, "is_ready": true},
+		map[string]interface{}{"type": "teleport_pad", "id": "safe", "linked_pad_id": "safe-exit", "position": []interface{}{float64(6), float64(8)}, "is_ready": true},
+		map[string]interface{}{"type": "teleport_pad", "id": "safe-exit", "linked_pad_id": "safe", "position": []interface{}{float64(18), float64(17)}, "is_ready": true},
+	}, nil)
+	msg := teleportTick([2]float64{6, 10}, 20, 5.5,
+		map[string]interface{}{
+			"type": "bot", "id": "enemy", "position": []interface{}{float64(3), float64(10)},
+			"hp": float64(100), "max_hp": float64(100), "weapon": "sword", "is_alive": true, "has_los": true, "can_attack": true,
+		},
+		map[string]interface{}{
+			"type": "teleport_pad", "id": "unsafe", "linked_pad_id": "unsafe-exit",
+			"position": []interface{}{float64(8), float64(10)}, "is_ready": true,
+		},
+		map[string]interface{}{
+			"type": "teleport_pad", "id": "safe", "linked_pad_id": "safe-exit",
+			"position": []interface{}{float64(6), float64(8)}, "is_ready": true,
+		},
+		map[string]interface{}{
+			"type": "landmine", "id": "mine", "owner_id": "enemy",
+			"position": []interface{}{float64(8), float64(10)}, "armed": true,
+		},
+	)
+	ts := parseTick(msg)
+	danger := dangerPool.Get().(*dangerSet)
+	defer dangerPool.Put(danger)
+	buildDangerSet(danger, &ts, "me")
+	ts.Danger = danger
+
+	got := tryTeleporterPressureEscape(ts, "kite", &ts.Enemies[0], 3)
+	if got == nil || got.Action != "move" || got.Direction == nil || *got.Direction != [2]float64{0, -1} {
+		t.Fatalf("escape with unsafe first source = %+v, want north toward the safe alternative", got)
+	}
+}
+
+func TestTeleporterEscapeRejectsDangerBlockedApproach(t *testing.T) {
+	cacheTeleportTestMap(t, []interface{}{
+		map[string]interface{}{"type": "teleport_pad", "id": "source", "linked_pad_id": "exit", "position": []interface{}{float64(8), float64(10)}, "is_ready": true},
+		map[string]interface{}{"type": "teleport_pad", "id": "exit", "linked_pad_id": "source", "position": []interface{}{float64(18), float64(18)}, "is_ready": true},
+	}, nil)
+	msg := teleportTick([2]float64{5, 10}, 20, 5.5,
+		map[string]interface{}{
+			"type": "bot", "id": "enemy", "position": []interface{}{float64(3), float64(10)},
+			"hp": float64(100), "max_hp": float64(100), "weapon": "sword", "is_alive": true, "has_los": true, "can_attack": true,
+		},
+		map[string]interface{}{
+			"type": "teleport_pad", "id": "source", "linked_pad_id": "exit",
+			"position": []interface{}{float64(8), float64(10)}, "is_ready": true,
+		},
+		map[string]interface{}{
+			"type": "hazard_zone", "id": "barrier", "position": []interface{}{float64(6), float64(10)},
+			"width": float64(1), "height": float64(24), "active": true,
+		},
+	)
+	ts := parseTick(msg)
+	danger := dangerPool.Get().(*dangerSet)
+	defer dangerPool.Put(danger)
+	buildDangerSet(danger, &ts, "me")
+	ts.Danger = danger
+
+	if got := tryTeleporterPressureEscape(ts, "kite", &ts.Enemies[0], 2); got != nil {
+		t.Fatalf("danger-blocked source produced an escape action instead of falling through: %+v", *got)
+	}
+}
+
+func TestLethalTeleporterSourceFallsThroughToLaterSurvivalAction(t *testing.T) {
+	cacheTeleportTestMap(t, []interface{}{
+		map[string]interface{}{"type": "teleport_pad", "id": "source", "linked_pad_id": "exit", "position": []interface{}{float64(8), float64(10)}, "is_ready": true},
+		map[string]interface{}{"type": "teleport_pad", "id": "exit", "linked_pad_id": "source", "position": []interface{}{float64(18), float64(18)}, "is_ready": true},
+	}, nil)
+	msg := teleportTick([2]float64{6, 10}, 20, 5.5,
+		map[string]interface{}{
+			"type": "bot", "id": "enemy", "position": []interface{}{float64(4), float64(10)},
+			"hp": float64(100), "max_hp": float64(100), "weapon": "sword", "is_alive": true, "has_los": true, "can_attack": true,
+		},
+		map[string]interface{}{
+			"type": "teleport_pad", "id": "source", "linked_pad_id": "exit",
+			"position": []interface{}{float64(8), float64(10)}, "is_ready": true,
+		},
+		map[string]interface{}{
+			"type": "landmine", "id": "mine", "owner_id": "enemy",
+			"position": []interface{}{float64(8), float64(10)}, "armed": true,
+		},
+	)
+
+	got := PickAction("kite", msg, "bow", 5, "me")
+	if got.Action != "place_mine" {
+		t.Fatalf("action after rejecting lethal teleporter source = %+v, want later survival mine logic", got)
+	}
+}
+
+func TestZoneAnchorGrappleAvoidsCachedReadyPad(t *testing.T) {
+	cacheTeleportTestMap(t, []interface{}{
+		map[string]interface{}{"type": "teleport_pad", "id": "zone-pad", "linked_pad_id": "zone-exit", "position": []interface{}{float64(16), float64(10)}, "is_ready": true},
+	}, nil)
+	ts := tickState{
+		Position: [2]float64{10, 10}, HP: 100, MaxHP: 100, InZone: false,
+		ZoneTargetCenter: [2]float64{16, 10}, GrappleCharges: 1,
+	}
+	if got := tryAnchorGrapple(ts, "defensive", nil, math.Inf(1), 1); got != nil {
+		t.Fatalf("zone anchor targeted cached ready pad: %+v", *got)
+	}
+}
+
+func TestRetreatAnchorGrappleAvoidsLiveReadyPad(t *testing.T) {
+	cacheTeleportTestMap(t, nil, nil)
+	near := entity{ID: "enemy", Position: [2]float64{12, 10}, IsAlive: true}
+	ts := tickState{
+		Position: [2]float64{10, 10}, HP: 40, MaxHP: 100, InZone: true,
+		GrappleCharges: 1,
+		Teleporters:    []entity{{ID: "retreat-pad", Position: [2]float64{2, 10}, Ready: true}},
+	}
+	if got := tryAnchorGrapple(ts, "defensive", &near, 2, 1); got != nil {
+		t.Fatalf("retreat anchor targeted live ready pad: %+v", *got)
+	}
+}
+
+func TestKiteAnchorGrappleAvoidsCachedReadyPad(t *testing.T) {
+	cacheTeleportTestMap(t, []interface{}{
+		map[string]interface{}{"type": "teleport_pad", "id": "kite-pad", "linked_pad_id": "kite-exit", "position": []interface{}{float64(17), float64(10)}, "is_ready": true},
+	}, nil)
+	near := entity{ID: "enemy", Position: [2]float64{15, 10}, IsAlive: true}
+	ts := tickState{
+		Position: [2]float64{10, 10}, HP: 100, MaxHP: 100, InZone: true,
+		GrappleCharges: 1,
+	}
+	if got := tryAnchorGrapple(ts, "kite", &near, 5, 1); got != nil {
+		t.Fatalf("kite anchor targeted cached ready pad: %+v", *got)
+	}
+}
+
+func TestNearestPickupUsesMeasuredRouteAroundMapWalls(t *testing.T) {
+	walls := make([][2]int, 0, 9)
+	for y := 0; y <= 8; y++ {
+		walls = append(walls, [2]int{5, y})
+	}
+	setTerrain(t, 20, 20, walls)
+	pickups := []entity{
+		{ID: "walled", Type: "pickup", Position: [2]float64{7, 3}, SubType: "health_pack"},
+		{ID: "reachable", Type: "pickup", Position: [2]float64{3, 8}, SubType: "health_pack"},
+	}
+	got, distance := nearestPickup([2]float64{3, 3}, pickups, nil, false)
+	if got == nil || got.ID != "reachable" {
+		t.Fatalf("nearest pickup = %+v at %.1f, want measured reachable route", got, distance)
+	}
+	if distance != 5 {
+		t.Fatalf("reachable pickup distance = %.1f, want measured distance 5", distance)
+	}
+}
+
+func TestSuddenDeathStallForcesHealthyBotToEngage(t *testing.T) {
+	setTerrain(t, 30, 30, nil)
+	msg := map[string]interface{}{
+		"type":               "tick",
+		"tick":               float64(3100),
+		"sudden_death":       true,
+		"sudden_death_stall": true,
+		"your_state": map[string]interface{}{
+			"position": []interface{}{float64(5), float64(5)},
+			"hp":       float64(90), "max_hp": float64(100),
+			"weapon_ready": true, "dodge_cooldown": float64(0),
+		},
+		"nearby_entities": []interface{}{
+			map[string]interface{}{
+				"type": "bot", "id": "enemy", "position": []interface{}{float64(15), float64(5)},
+				"hp": float64(100), "max_hp": float64(100), "weapon": "sword",
+				"is_alive": true, "has_los": true,
+			},
+		},
+	}
+
+	for _, strategy := range []string{"defensive", "territorial", "kite"} {
+		got := PickAction(strategy, msg, "sword", 1, "me")
+		if got.Action != "move" && got.Action != "move_to" {
+			t.Errorf("%s under stall chose %+v, want movement toward combat", strategy, got)
+		}
+	}
+}
+
+func TestCarvedRouteStartsZoneDriftEarlier(t *testing.T) {
+	walls := make([][2]int, 0, 12)
+	for y := 2; y <= 13; y++ {
+		walls = append(walls, [2]int{10, y})
+	}
+	setTerrain(t, 30, 30, walls)
+	msg := map[string]interface{}{
+		"type":       "tick",
+		"round_tick": float64(1000),
+		"your_state": map[string]interface{}{
+			"position": []interface{}{float64(6), float64(8)},
+			"hp":       float64(100), "max_hp": float64(100),
+			"weapon_ready": false, "dodge_cooldown": float64(0),
+			"in_safe_zone": true, "distance_to_zone_edge": float64(10),
+		},
+		"safe_zone": map[string]interface{}{
+			"center": []interface{}{float64(6), float64(8)}, "radius": float64(20),
+			"target_center": []interface{}{float64(16), float64(8)}, "target_radius": float64(3),
+		},
+	}
+
+	got := PickAction("defensive", msg, "sword", 1, "me")
+	if got.Action != "move" && got.Action != "move_to" {
+		t.Fatalf("detour-aware zone drift chose %+v, want early movement", got)
 	}
 }

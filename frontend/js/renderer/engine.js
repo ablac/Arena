@@ -13,7 +13,7 @@ import { PickupRenderer } from './pickups.js?v=20260521m';
 import { EffectRenderer } from './effects.js?v=20260710f';
 import { TrailRenderer } from './trails.js?v=20260707c';
 import { ProjectileRenderer } from './projectiles.js?v=20260521l';
-import { GameplayRenderer } from './gameplay.js?v=20260710f';
+import { GameplayRenderer } from './gameplay.js?v=20260710g';
 import { getState, isEnabled, onSettingsChange } from '../settings.js';
 
 // Bot positions are smoothed via exponential lerp each frame,

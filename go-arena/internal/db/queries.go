@@ -3,12 +3,17 @@ package db
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"arena-server/internal/config"
 
 	"github.com/jackc/pgx/v5"
 )
+
+// weaponBalanceAlgorithmVersion prevents statistically incompatible state
+// from an older balancing loop from silently seeding the current controller.
+const weaponBalanceAlgorithmVersion = 2
 
 // EnsureCoreSchema creates or repairs the database tables required by the
 // runtime. It is intentionally idempotent so a fresh Postgres volume can be
@@ -69,6 +74,7 @@ func EnsureCoreSchema(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_bot_stats_elo ON bot_stats (elo DESC)`,
 		`CREATE TABLE IF NOT EXISTS rounds (
 			id TEXT PRIMARY KEY,
+			persisted_order BIGSERIAL NOT NULL,
 			round_number INT NOT NULL,
 			started_at TIMESTAMPTZ NOT NULL,
 			ended_at TIMESTAMPTZ,
@@ -88,6 +94,12 @@ func EnsureCoreSchema(ctx context.Context) error {
 			END IF;
 		END
 		$$`,
+		`ALTER TABLE rounds
+			ADD COLUMN IF NOT EXISTS persisted_order BIGSERIAL`,
+		`UPDATE rounds SET persisted_order = DEFAULT WHERE persisted_order IS NULL`,
+		`ALTER TABLE rounds ALTER COLUMN persisted_order SET NOT NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_rounds_persisted_order
+			ON rounds (persisted_order)`,
 		`CREATE INDEX IF NOT EXISTS idx_rounds_round_number ON rounds (round_number DESC)`,
 		`CREATE TABLE IF NOT EXISTS kill_log (
 			id TEXT PRIMARY KEY,
@@ -109,15 +121,28 @@ func EnsureCoreSchema(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_rate_limits_window_start
 			ON rate_limits (window_start DESC)`,
-		`CREATE TABLE IF NOT EXISTS weapon_balance (
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS weapon_balance (
 			weapon TEXT PRIMARY KEY,
 			damage_scale DOUBLE PRECISION NOT NULL DEFAULT 1.0,
 			cooldown_scale DOUBLE PRECISION NOT NULL DEFAULT 1.0,
 			adjustment_scale DOUBLE PRECISION NOT NULL DEFAULT 0.05,
 			rounds_tracked INT NOT NULL DEFAULT 0,
+			revision BIGINT NOT NULL DEFAULT 0,
+			algorithm_version INT NOT NULL DEFAULT %d,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)`,
-		`CREATE TABLE IF NOT EXISTS weapon_balance_history (
+		)`, weaponBalanceAlgorithmVersion),
+		// Existing rows predate versioned controller state. Mark them as legacy
+		// while making all newly inserted rows default to the current version.
+		`ALTER TABLE weapon_balance
+			ADD COLUMN IF NOT EXISTS algorithm_version INT NOT NULL DEFAULT 1`,
+		`ALTER TABLE weapon_balance
+			ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0`,
+		`UPDATE weapon_balance SET revision = 0 WHERE revision IS NULL`,
+		`ALTER TABLE weapon_balance ALTER COLUMN revision SET DEFAULT 0`,
+		`ALTER TABLE weapon_balance ALTER COLUMN revision SET NOT NULL`,
+		fmt.Sprintf(`ALTER TABLE weapon_balance
+			ALTER COLUMN algorithm_version SET DEFAULT %d`, weaponBalanceAlgorithmVersion),
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS weapon_balance_history (
 			id BIGSERIAL PRIMARY KEY,
 			weapon TEXT NOT NULL,
 			rounds_tracked INT NOT NULL DEFAULT 0,
@@ -129,10 +154,23 @@ func EnsureCoreSchema(ctx context.Context) error {
 			diff_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
 			damage_delta DOUBLE PRECISION NOT NULL DEFAULT 0,
 			cooldown_delta DOUBLE PRECISION NOT NULL DEFAULT 0,
+			revision BIGINT NOT NULL DEFAULT 0,
+			algorithm_version INT NOT NULL DEFAULT %d,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)`,
+		)`, weaponBalanceAlgorithmVersion),
+		`ALTER TABLE weapon_balance_history
+			ADD COLUMN IF NOT EXISTS algorithm_version INT NOT NULL DEFAULT 1`,
+		`ALTER TABLE weapon_balance_history
+			ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0`,
+		`UPDATE weapon_balance_history SET revision = 0 WHERE revision IS NULL`,
+		`ALTER TABLE weapon_balance_history ALTER COLUMN revision SET DEFAULT 0`,
+		`ALTER TABLE weapon_balance_history ALTER COLUMN revision SET NOT NULL`,
+		fmt.Sprintf(`ALTER TABLE weapon_balance_history
+			ALTER COLUMN algorithm_version SET DEFAULT %d`, weaponBalanceAlgorithmVersion),
 		`CREATE INDEX IF NOT EXISTS idx_weapon_balance_history_weapon_created
 			ON weapon_balance_history (weapon, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_weapon_balance_history_weapon_revision
+			ON weapon_balance_history (weapon, revision DESC, id DESC)`,
 		`CREATE TABLE IF NOT EXISTS bounty_board (
 			bot_id TEXT PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE,
 			name TEXT NOT NULL DEFAULT '',
@@ -150,6 +188,48 @@ func EnsureCoreSchema(ctx context.Context) error {
 		if _, err := tx.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("EnsureCoreSchema exec: %w", err)
 		}
+	}
+
+	// A new controller epoch invalidates accumulated evidence and sensitivity,
+	// not the effective live balance players already experienced. Promote every
+	// older row generically, preserving its damage/cooldown corrections inside
+	// the current safety rails while starting fresh counters and adjustment step.
+	minDamage, maxDamage := config.WeaponAutoBalanceDamageBounds()
+	minCooldown, maxCooldown := config.WeaponAutoBalanceCooldownBounds()
+	_, startStep := config.WeaponAutoBalanceStepBounds()
+	if _, err := tx.Exec(ctx, `
+		UPDATE weapon_balance
+		SET damage_scale = LEAST($3, GREATEST($2, damage_scale)),
+			cooldown_scale = LEAST($5, GREATEST($4, cooldown_scale)),
+			adjustment_scale = $6,
+			rounds_tracked = 0,
+			revision = 0,
+			algorithm_version = $1,
+			updated_at = NOW()
+		WHERE algorithm_version < $1`,
+		weaponBalanceAlgorithmVersion,
+		minDamage, maxDamage,
+		minCooldown, maxCooldown,
+		startStep,
+	); err != nil {
+		return fmt.Errorf("EnsureCoreSchema migrate weapon balance epoch: %w", err)
+	}
+	// Revisions were introduced after algorithm v2 was already deployable.
+	// Seed any existing v2 rows from their monotonic round counter so their
+	// first post-migration snapshot cannot be mistaken for an older write.
+	if _, err := tx.Exec(ctx, `
+		UPDATE weapon_balance
+		SET revision = GREATEST(revision, rounds_tracked::BIGINT)
+		WHERE algorithm_version = $1
+		  AND revision < rounds_tracked::BIGINT`, weaponBalanceAlgorithmVersion); err != nil {
+		return fmt.Errorf("EnsureCoreSchema seed weapon balance revisions: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE weapon_balance_history
+		SET revision = GREATEST(revision, rounds_tracked::BIGINT)
+		WHERE algorithm_version = $1
+		  AND revision < rounds_tracked::BIGINT`, weaponBalanceAlgorithmVersion); err != nil {
+		return fmt.Errorf("EnsureCoreSchema seed weapon balance history revisions: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -190,6 +270,7 @@ func EnsureRoundBotStatsTable(ctx context.Context) error {
 	_, err := Pool.Exec(ctx,
 		`CREATE TABLE IF NOT EXISTS round_bot_stats (
 			id SERIAL PRIMARY KEY,
+			round_id TEXT REFERENCES rounds(id) ON DELETE SET NULL,
 			round_number INT NOT NULL,
 			bot_id TEXT NOT NULL,
 			bot_name TEXT NOT NULL DEFAULT '',
@@ -210,34 +291,80 @@ func EnsureRoundBotStatsTable(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	Pool.Exec(ctx, `ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS weapon TEXT NOT NULL DEFAULT ''`)
-	Pool.Exec(ctx, `ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS longest_life_secs INT NOT NULL DEFAULT 0`)
-	Pool.Exec(ctx, `ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS shots_fired INT NOT NULL DEFAULT 0`)
-	Pool.Exec(ctx, `ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS shots_hit INT NOT NULL DEFAULT 0`)
-	Pool.Exec(ctx, `UPDATE round_bot_stats AS r
-		SET weapon = b.default_weapon
-		FROM bots AS b
-		WHERE r.weapon = ''
-		  AND r.bot_id = b.id
-		  AND b.default_weapon <> ''`)
-	// Index for time-based queries
-	Pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_rbs_created ON round_bot_stats (created_at)`)
-	Pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_rbs_bot ON round_bot_stats (bot_id)`)
-	Pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_rbs_weapon ON round_bot_stats (weapon)`)
-	Pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_rbs_round_number ON round_bot_stats (round_number DESC)`)
+	statements := []string{
+		`ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS round_id TEXT`,
+		`ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS weapon TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS longest_life_secs INT NOT NULL DEFAULT 0`,
+		`ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS shots_fired INT NOT NULL DEFAULT 0`,
+		`ALTER TABLE round_bot_stats ADD COLUMN IF NOT EXISTS shots_hit INT NOT NULL DEFAULT 0`,
+		`UPDATE round_bot_stats AS r
+			SET weapon = b.default_weapon
+			FROM bots AS b
+			WHERE r.weapon = ''
+			  AND r.bot_id = b.id
+			  AND b.default_weapon <> ''`,
+		// Old rows did not carry the engine's UUID. A local round number is a
+		// durable identity only while it is unique, so duplicate numbers from
+		// separate server runs remain deliberately unmapped. Guessing by clocks
+		// can silently attach telemetry to the wrong match after skew or rollback.
+		`UPDATE round_bot_stats AS stats
+			SET round_id = unique_round.id
+			FROM (
+				SELECT round_number, MIN(id) AS id
+				FROM rounds
+				GROUP BY round_number
+				HAVING COUNT(*) = 1
+			) AS unique_round
+			WHERE (stats.round_id IS NULL OR stats.round_id = '')
+			  AND unique_round.round_number = stats.round_number`,
+		// Interim builds could write an arbitrary non-empty round_id before the
+		// relationship was enforced. Null those rows so the nullable FK can be
+		// added and validated without misrepresenting their identity.
+		`UPDATE round_bot_stats AS stats
+			SET round_id = NULL
+			WHERE stats.round_id IS NOT NULL
+			  AND NOT EXISTS (SELECT 1 FROM rounds WHERE rounds.id = stats.round_id)`,
+		`DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_constraint
+				WHERE conrelid = 'round_bot_stats'::regclass
+				  AND conname = 'round_bot_stats_round_id_fkey'
+			) THEN
+				ALTER TABLE round_bot_stats
+					ADD CONSTRAINT round_bot_stats_round_id_fkey
+					FOREIGN KEY (round_id) REFERENCES rounds(id) ON DELETE SET NULL NOT VALID;
+			END IF;
+		END
+		$$`,
+		`ALTER TABLE round_bot_stats VALIDATE CONSTRAINT round_bot_stats_round_id_fkey`,
+		`CREATE INDEX IF NOT EXISTS idx_rbs_created ON round_bot_stats (created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_rbs_bot ON round_bot_stats (bot_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_rbs_weapon ON round_bot_stats (weapon)`,
+		`CREATE INDEX IF NOT EXISTS idx_rbs_round_id ON round_bot_stats (round_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_rbs_round_number ON round_bot_stats (round_number DESC)`,
+	}
+	for _, stmt := range statements {
+		if _, err := Pool.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("EnsureRoundBotStatsTable: %w", err)
+		}
+	}
 	return nil
 }
 
-func InsertRoundBotStats(ctx context.Context, roundNumber int, botID, botName, weapon string,
+func InsertRoundBotStats(ctx context.Context, roundID string, roundNumber int, botID, botName, weapon string,
 	kills, deaths int, dmgDealt, dmgTaken int64, longestLife, shotsFired, shotsHit, pickups int, distance float64, elo int, won bool) error {
 	if Pool == nil {
 		return ErrNoDatabase
 	}
+	if roundID == "" {
+		return fmt.Errorf("InsertRoundBotStats: round identity is required")
+	}
 	elo = config.ClampElo(elo)
 	_, err := Pool.Exec(ctx,
-		`INSERT INTO round_bot_stats (round_number, bot_id, bot_name, weapon, kills, deaths, damage_dealt, damage_taken, longest_life_secs, shots_fired, shots_hit, pickups, distance, elo, won)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-		roundNumber, botID, botName, weapon, kills, deaths, dmgDealt, dmgTaken, longestLife, shotsFired, shotsHit, pickups, distance, elo, won)
+		`INSERT INTO round_bot_stats (round_id, round_number, bot_id, bot_name, weapon, kills, deaths, damage_dealt, damage_taken, longest_life_secs, shots_fired, shots_hit, pickups, distance, elo, won)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+		roundID, roundNumber, botID, botName, weapon, kills, deaths, dmgDealt, dmgTaken, longestLife, shotsFired, shotsHit, pickups, distance, elo, won)
 	return err
 }
 
@@ -288,57 +415,60 @@ func ListRecentWeaponPerformance(ctx context.Context, roundLimit int) ([]WeaponR
 	}
 	rows, err := Pool.Query(ctx, `
 		WITH recent_rounds AS (
-			SELECT DISTINCT DATE_TRUNC('second', created_at) AS round_at
-			FROM round_bot_stats
-			ORDER BY round_at DESC
+			SELECT stats.round_id, rounds.persisted_order
+			FROM round_bot_stats AS stats
+			JOIN rounds ON rounds.id = stats.round_id
+			WHERE stats.round_id IS NOT NULL AND stats.round_id <> ''
+			GROUP BY stats.round_id, rounds.persisted_order
+			ORDER BY rounds.persisted_order DESC
 			LIMIT $1
 		)
 		SELECT
-			weapon,
+			stats.weapon,
 			COUNT(*)::INT AS bots,
-			SUM(CASE WHEN won THEN 1 ELSE 0 END)::INT AS wins,
-			COUNT(DISTINCT DATE_TRUNC('second', created_at))::INT AS rounds,
+			SUM(CASE WHEN stats.won THEN 1 ELSE 0 END)::INT AS wins,
+			COUNT(DISTINCT stats.round_id)::INT AS rounds,
 			AVG(
-				(kills * 30)::DOUBLE PRECISION +
-				(damage_dealt * 0.12)::DOUBLE PRECISION +
-				(longest_life_secs * 0.35)::DOUBLE PRECISION +
-				(CASE WHEN won THEN 60 ELSE 0 END)::DOUBLE PRECISION
+				(stats.kills * 30)::DOUBLE PRECISION +
+				(stats.damage_dealt * 0.12)::DOUBLE PRECISION +
+				(stats.longest_life_secs * 0.35)::DOUBLE PRECISION +
+				(CASE WHEN stats.won THEN 60 ELSE 0 END)::DOUBLE PRECISION
 			) AS avg_score,
-			AVG(kills)::DOUBLE PRECISION AS avg_kills,
-			AVG(damage_dealt)::DOUBLE PRECISION AS avg_damage,
-			AVG(longest_life_secs)::DOUBLE PRECISION AS avg_life_secs,
-			COALESCE(SUM(shots_fired), 0)::INT AS shots_fired,
-			COALESCE(SUM(shots_hit), 0)::INT AS shots_hit,
+			AVG(stats.kills)::DOUBLE PRECISION AS avg_kills,
+			AVG(stats.damage_dealt)::DOUBLE PRECISION AS avg_damage,
+			AVG(stats.longest_life_secs)::DOUBLE PRECISION AS avg_life_secs,
+			COALESCE(SUM(stats.shots_fired), 0)::INT AS shots_fired,
+			COALESCE(SUM(stats.shots_hit), 0)::INT AS shots_hit,
 			CASE
-				WHEN COALESCE(SUM(shots_fired), 0) > 0
-				THEN COALESCE(SUM(shots_hit), 0)::DOUBLE PRECISION / SUM(shots_fired)
+				WHEN COALESCE(SUM(stats.shots_fired), 0) > 0
+				THEN COALESCE(SUM(stats.shots_hit), 0)::DOUBLE PRECISION / SUM(stats.shots_fired)
 				ELSE 0
 			END AS hit_rate,
 			CASE
-				WHEN COALESCE(SUM(shots_fired), 0) > 0
-				THEN COALESCE(SUM(damage_dealt), 0)::DOUBLE PRECISION / SUM(shots_fired)
+				WHEN COALESCE(SUM(stats.shots_fired), 0) > 0
+				THEN COALESCE(SUM(stats.damage_dealt), 0)::DOUBLE PRECISION / SUM(stats.shots_fired)
 				ELSE 0
 			END AS damage_per_shot,
 			CASE
-				WHEN COALESCE(SUM(shots_hit), 0) > 0
-				THEN COALESCE(SUM(damage_dealt), 0)::DOUBLE PRECISION / SUM(shots_hit)
+				WHEN COALESCE(SUM(stats.shots_hit), 0) > 0
+				THEN COALESCE(SUM(stats.damage_dealt), 0)::DOUBLE PRECISION / SUM(stats.shots_hit)
 				ELSE 0
 			END AS damage_per_hit,
 			CASE
-				WHEN COALESCE(SUM(longest_life_secs), 0) > 0
-				THEN COALESCE(SUM(shots_fired), 0)::DOUBLE PRECISION / SUM(longest_life_secs)
+				WHEN COALESCE(SUM(stats.longest_life_secs), 0) > 0
+				THEN COALESCE(SUM(stats.shots_fired), 0)::DOUBLE PRECISION / SUM(stats.longest_life_secs)
 				ELSE 0
 			END AS shots_per_life,
 			CASE
-				WHEN COALESCE(SUM(shots_hit), 0) > 0
-				THEN COALESCE(SUM(kills), 0)::DOUBLE PRECISION / SUM(shots_hit)
+				WHEN COALESCE(SUM(stats.shots_hit), 0) > 0
+				THEN COALESCE(SUM(stats.kills), 0)::DOUBLE PRECISION / SUM(stats.shots_hit)
 				ELSE 0
 			END AS kills_per_hit
-		FROM round_bot_stats
-		WHERE DATE_TRUNC('second', created_at) IN (SELECT round_at FROM recent_rounds)
-		  AND weapon <> ''
-		GROUP BY weapon
-		ORDER BY weapon
+		FROM round_bot_stats AS stats
+		JOIN recent_rounds ON recent_rounds.round_id = stats.round_id
+		WHERE stats.weapon <> ''
+		GROUP BY stats.weapon
+		ORDER BY stats.weapon
 	`, roundLimit)
 	if err != nil {
 		return nil, fmt.Errorf("ListRecentWeaponPerformance: %w", err)
@@ -382,10 +512,11 @@ func InsertWeaponBalanceHistory(ctx context.Context, item *WeaponBalanceHistory)
 	}
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO weapon_balance_history
-			(weapon, rounds_tracked, damage_scale, cooldown_scale, adjustment_scale, avg_score, mean_score, diff_pct, damage_delta, cooldown_delta, created_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+			(weapon, rounds_tracked, damage_scale, cooldown_scale, adjustment_scale, avg_score, mean_score, diff_pct, damage_delta, cooldown_delta, revision, algorithm_version, created_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		item.Weapon, item.RoundsTracked, item.DamageScale, item.CooldownScale, item.AdjustmentScale,
-		item.AvgScore, item.MeanScore, item.DiffPct, item.DamageDelta, item.CooldownDelta, item.CreatedAt,
+		item.AvgScore, item.MeanScore, item.DiffPct, item.DamageDelta, item.CooldownDelta,
+		item.Revision, weaponBalanceAlgorithmVersion, item.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("InsertWeaponBalanceHistory: %w", err)
@@ -402,17 +533,18 @@ func ListWeaponBalanceHistory(ctx context.Context, perWeapon int) ([]WeaponBalan
 		WITH ranked AS (
 			SELECT
 				weapon, rounds_tracked, damage_scale, cooldown_scale, adjustment_scale,
-				avg_score, mean_score, diff_pct, damage_delta, cooldown_delta, created_at,
-				ROW_NUMBER() OVER (PARTITION BY weapon ORDER BY created_at DESC, rounds_tracked DESC) AS rn
+				avg_score, mean_score, diff_pct, damage_delta, cooldown_delta, revision, created_at,
+				ROW_NUMBER() OVER (PARTITION BY weapon ORDER BY revision DESC, id DESC) AS rn
 			FROM weapon_balance_history
+			WHERE algorithm_version = $2
 		)
 		SELECT
 			weapon, rounds_tracked, damage_scale, cooldown_scale, adjustment_scale,
-			avg_score, mean_score, diff_pct, damage_delta, cooldown_delta, created_at
+			avg_score, mean_score, diff_pct, damage_delta, cooldown_delta, revision, created_at
 		FROM ranked
 		WHERE rn <= $1
-		ORDER BY weapon, created_at ASC, rounds_tracked ASC
-	`, perWeapon)
+		ORDER BY weapon, revision ASC
+	`, perWeapon, weaponBalanceAlgorithmVersion)
 	if err != nil {
 		return nil, fmt.Errorf("ListWeaponBalanceHistory: %w", err)
 	}
@@ -423,7 +555,7 @@ func ListWeaponBalanceHistory(ctx context.Context, perWeapon int) ([]WeaponBalan
 		var item WeaponBalanceHistory
 		if err := rows.Scan(
 			&item.Weapon, &item.RoundsTracked, &item.DamageScale, &item.CooldownScale, &item.AdjustmentScale,
-			&item.AvgScore, &item.MeanScore, &item.DiffPct, &item.DamageDelta, &item.CooldownDelta, &item.CreatedAt,
+			&item.AvgScore, &item.MeanScore, &item.DiffPct, &item.DamageDelta, &item.CooldownDelta, &item.Revision, &item.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("ListWeaponBalanceHistory scan: %w", err)
 		}
@@ -1059,8 +1191,10 @@ func ListWeaponBalances(ctx context.Context) ([]WeaponBalance, error) {
 		return nil, ErrNoDatabase
 	}
 	rows, err := Pool.Query(ctx,
-		`SELECT weapon, damage_scale, cooldown_scale, adjustment_scale, rounds_tracked, updated_at
-		 FROM weapon_balance ORDER BY weapon`)
+		`SELECT weapon, damage_scale, cooldown_scale, adjustment_scale, rounds_tracked, revision, updated_at
+		 FROM weapon_balance
+		 WHERE algorithm_version = $1
+		 ORDER BY weapon`, weaponBalanceAlgorithmVersion)
 	if err != nil {
 		return nil, fmt.Errorf("ListWeaponBalances: %w", err)
 	}
@@ -1071,7 +1205,7 @@ func ListWeaponBalances(ctx context.Context) ([]WeaponBalance, error) {
 		var wb WeaponBalance
 		if err := rows.Scan(
 			&wb.Weapon, &wb.DamageScale, &wb.CooldownScale,
-			&wb.AdjustmentScale, &wb.RoundsTracked, &wb.UpdatedAt,
+			&wb.AdjustmentScale, &wb.RoundsTracked, &wb.Revision, &wb.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("ListWeaponBalances scan: %w", err)
 		}
@@ -1090,20 +1224,60 @@ func UpsertWeaponBalance(ctx context.Context, wb *WeaponBalance) error {
 	}
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO weapon_balance
-			(weapon, damage_scale, cooldown_scale, adjustment_scale, rounds_tracked, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+			(weapon, damage_scale, cooldown_scale, adjustment_scale, rounds_tracked, revision, updated_at, algorithm_version)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 ON CONFLICT (weapon) DO UPDATE SET
 			damage_scale = EXCLUDED.damage_scale,
 			cooldown_scale = EXCLUDED.cooldown_scale,
 			adjustment_scale = EXCLUDED.adjustment_scale,
 			rounds_tracked = EXCLUDED.rounds_tracked,
-			updated_at = EXCLUDED.updated_at`,
-		wb.Weapon, wb.DamageScale, wb.CooldownScale, wb.AdjustmentScale, wb.RoundsTracked, wb.UpdatedAt,
+			revision = EXCLUDED.revision,
+			updated_at = EXCLUDED.updated_at,
+			algorithm_version = EXCLUDED.algorithm_version
+		 WHERE weapon_balance.algorithm_version < EXCLUDED.algorithm_version
+		    OR (weapon_balance.algorithm_version = EXCLUDED.algorithm_version
+		        AND weapon_balance.revision < EXCLUDED.revision)`,
+		wb.Weapon, wb.DamageScale, wb.CooldownScale, wb.AdjustmentScale, wb.RoundsTracked, wb.Revision, wb.UpdatedAt,
+		weaponBalanceAlgorithmVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("UpsertWeaponBalance: %w", err)
 	}
 	return nil
+}
+
+func canonicalWeaponSource(source string) string {
+	switch source {
+	case "staff_burn":
+		return "staff"
+	case "grapple_slam":
+		return "grapple"
+	default:
+		return source
+	}
+}
+
+func mergeCanonicalWeaponKillStats(raw []WeaponKillStats) []WeaponKillStats {
+	if len(raw) == 0 {
+		return nil
+	}
+	byWeapon := make(map[string]WeaponKillStats, len(raw))
+	for _, item := range raw {
+		weapon := canonicalWeaponSource(item.Weapon)
+		merged := byWeapon[weapon]
+		merged.Weapon = weapon
+		merged.Kills += item.Kills
+		merged.Kills24h += item.Kills24h
+		merged.Kills1h += item.Kills1h
+		merged.FinisherDamage += item.FinisherDamage
+		byWeapon[weapon] = merged
+	}
+	stats := make([]WeaponKillStats, 0, len(byWeapon))
+	for _, item := range byWeapon {
+		stats = append(stats, item)
+	}
+	sort.Slice(stats, func(i, j int) bool { return stats[i].Weapon < stats[j].Weapon })
+	return stats
 }
 
 // ListWeaponKillStats returns per-weapon kill totals from the kill log.
@@ -1127,7 +1301,7 @@ func ListWeaponKillStats(ctx context.Context) ([]WeaponKillStats, error) {
 	}
 	defer rows.Close()
 
-	var stats []WeaponKillStats
+	var raw []WeaponKillStats
 	for rows.Next() {
 		var item WeaponKillStats
 		if err := rows.Scan(
@@ -1139,12 +1313,12 @@ func ListWeaponKillStats(ctx context.Context) ([]WeaponKillStats, error) {
 		); err != nil {
 			return nil, fmt.Errorf("ListWeaponKillStats scan: %w", err)
 		}
-		stats = append(stats, item)
+		raw = append(raw, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("ListWeaponKillStats rows: %w", err)
 	}
-	return stats, nil
+	return mergeCanonicalWeaponKillStats(raw), nil
 }
 
 // ---------- leaderboard ----------

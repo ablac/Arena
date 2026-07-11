@@ -41,7 +41,7 @@ func BotSetup() http.HandlerFunc {
 			"getting_started": []map[string]interface{}{
 				{"step": 1, "title": "Generate an API Key", "description": "POST to /api/v1/keys/generate to receive your api_key and bot_id. No authentication required for this step."},
 				{"step": 2, "title": "Configure Your Bot (optional)", "description": "PUT to /api/v1/bot/config with X-Arena-Key header to set your bot name, avatar color, and default loadout."},
-				{"step": 3, "title": "Fetch the Map (optional)", "description": "GET /api/v1/arena/map to pre-fetch the terrain grid via REST. The next round's map is pre-generated during intermission, so you can fetch it early and pre-compute pathfinding before the round starts. Returns width, height, cell_size, and compact terrain."},
+				{"step": 3, "title": "Fetch the Map (optional)", "description": "GET /api/v1/arena/map to pre-fetch terrain via REST. During intermission, features_pending is true: terrain and shape are ready, game_mode is omitted, and feature arrays/overlays are empty until round_start. Fetch again after round_start for pads, hazards, and objectives."},
 				{"step": 4, "title": "Connect via WebSocket", "description": "Connect to wss://arena.angel-serv.com/ws/bot?key=YOUR_API_KEY — you will receive a 'connected' message with arena info."},
 				{"step": 5, "title": "Select Loadout", "description": "Send a 'select_loadout' message choosing your weapon, stat allocation, and fallback behavior. You have 10 seconds."},
 				{"step": 6, "title": "Receive Ticks", "description": "The server sends 'tick' messages at " + fmt.Sprintf("%d", c.TickRate) + " Hz with your state, nearby entities, and safe zone info."},
@@ -75,7 +75,7 @@ func BotSetup() http.HandlerFunc {
 					{"method": "POST", "path": "/api/v1/keys/generate", "description": "Generate a new API key and bot (rate-limited)"},
 					{"method": "GET", "path": "/api/v1/leaderboard", "description": "Get leaderboard (supports ?limit=N&offset=N)"},
 					{"method": "GET", "path": "/api/v1/arena/status", "description": "Current arena status: round number, bots alive, safe zone"},
-					{"method": "GET", "path": "/api/v1/arena/map", "description": "Current terrain grid (width, height, cell_size, compact terrain) plus teleport pads, capture pads, and hazard zones. The next round's map is pre-generated during intermission, so you can fetch and analyze it before the round starts."},
+					{"method": "GET", "path": "/api/v1/arena/map", "description": "Current terrain plus active round features. During intermission, features_pending is true and only next-round terrain/shape are final; game_mode is omitted, feature arrays are empty, and overlays are absent until round_start."},
 					{"method": "GET", "path": "/api/v1/cosmetics/catalog", "description": "Public no-pay-to-win cosmetic catalog and checkout readiness"},
 					{"method": "GET", "path": "/api/v1/bot-setup", "description": "This endpoint — full bot-building reference"},
 				},
@@ -89,7 +89,7 @@ func BotSetup() http.HandlerFunc {
 				},
 				"websocket": []map[string]interface{}{
 					{"path": "/ws/bot", "description": "Bot game connection — send actions, receive ticks", "auth": "?key=YOUR_API_KEY query param"},
-					{"path": "/ws/spectator", "description": "Read-only spectator feed — full arena state each tick", "auth": "none"},
+					{"path": "/ws/spectator", "description": "Read-only spectator feed — ordered lobby and arena states with a five-second presentation delay", "auth": "none"},
 				},
 			},
 
@@ -123,7 +123,7 @@ func BotSetup() http.HandlerFunc {
 					},
 					"round_start": map[string]interface{}{
 						"description": "Sent when a new round begins",
-						"fields":      "round_number, round_modifier, round_modifier_label, position, bots_in_round, all_positions, safe_zone",
+						"fields":      "round_number, round_modifier, round_modifier_label, position, bots_in_round, safe_zone",
 					},
 					"tick": map[string]interface{}{
 						"description": fmt.Sprintf("Sent every tick (%d times per second) with full game state visible to your bot", c.TickRate),
@@ -176,14 +176,14 @@ func BotSetup() http.HandlerFunc {
 			"actions": []map[string]interface{}{
 				{"name": "move", "description": "Move in a direction (dx, dy normalized)", "fields": map[string]string{"direction": "[dx, dy] — e.g. [1, 0] for right, [0, -1] for up"}},
 				{"name": "move_to", "description": "Pathfind to a target position (server handles A* pathfinding)", "fields": map[string]string{"target_position": "[x, y] in grid coordinates"}},
-				{"name": "attack", "description": "Attack a target bot (must be in weapon range). Bow users may optionally set charged=true to spend stored charge on a faster stronger arrow. Staff may also attack a target_position to place a delayed AoE at a specific tile.", "fields": map[string]string{"target": "bot_id of the target", "charged": "optional bow-only flag for charged shots", "target_position": "optional staff cast location in grid coordinates"}},
+				{"name": "attack", "description": "Attack using exactly one aim mode: target for a currently visible bot in weapon range, or target_position for a Staff delayed AoE at a specific tile. The public bounty target is the visibility exception. Sending both aim modes is rejected. Bow users may optionally set charged=true to spend stored charge.", "fields": map[string]string{"target": "bot_id of the target", "charged": "optional bow-only flag for charged shots", "target_position": "staff cast location in grid coordinates (instead of target)"}},
 				{"name": "dodge", "description": fmt.Sprintf("Dash in a direction with %d ticks of invulnerability (cooldown: %d ticks)", c.DodgeInvulnTicks, c.DodgeCooldownTicks), "fields": map[string]string{"direction": "[dx, dy] — direction to dodge toward"}},
-				{"name": "shove", "description": fmt.Sprintf("Push a nearby bot away (range: %.1f tiles, knockback: %.1f, stun: %d ticks, cooldown: %.1fs)", c.ShoveRange, c.ShoveKnockback, c.ShoveStunTicks, c.ShoveCooldown), "fields": map[string]string{"target": "bot_id of the target"}},
+				{"name": "shove", "description": fmt.Sprintf("Push a currently visible nearby bot away (range: %.1f tiles, knockback: %.1f, stun: %d ticks, cooldown: %.1fs)", c.ShoveRange, c.ShoveKnockback, c.ShoveStunTicks, c.ShoveCooldown), "fields": map[string]string{"target": "bot_id of the target"}},
 				{"name": "use_item", "description": "Pick up a nearby item (must be within collect radius)", "fields": map[string]string{"item_id": "pickup_id of the item"}},
 				{"name": "idle", "description": "Do nothing this tick", "fields": map[string]string{}},
 				{"name": "place_mine", "description": "Place a landmine at current position (max 3 per bot, arms after 1 second, invisible to enemies)", "fields": map[string]string{}},
 				{"name": "use_gravity_well", "description": "Deploy a gravity well at target position (requires gravity_well pickup charge)", "fields": map[string]string{"target_position": "[x, y] in grid coordinates"}},
-				{"name": "grapple", "description": "Universal ability: either yank a target bot within 12 tiles or anchor-pull yourself to a target_position. 2 charges per round, 4s cooldown, 15 damage on enemy pulls, 3-tick stun.", "fields": map[string]string{"target": "bot_id of the target (enemy pull mode)", "target_position": "[x, y] anchor position (self-pull mode)"}},
+				{"name": "grapple", "description": "Universal ability: either yank a currently visible target bot within 12 tiles or anchor-pull yourself to a target_position. The public bounty target is the visibility exception. 2 charges per round, 4s cooldown, 15 damage on enemy pulls, 3-tick stun.", "fields": map[string]string{"target": "bot_id of the target (enemy pull mode)", "target_position": "[x, y] anchor position (self-pull mode)"}},
 			},
 
 			// ── Weapons (from game.WeaponConfigs) ───────────────

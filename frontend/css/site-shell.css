@@ -299,6 +299,38 @@ summary {
   background: rgba(4, 10, 17, 0.82);
   box-shadow: 0 20px 58px rgba(0, 0, 0, 0.34);
   backdrop-filter: blur(18px);
+  view-transition-name: arena-telemetry-panel;
+}
+
+/* The sidebar changes between intrinsic pill and fixed panel dimensions, so
+   ordinary width/height transitions jump at `auto`. A named View Transition
+   snapshots both layouts and lets the compositor morph their geometry while
+   crossfading the same content, matching the Spectator HUD's compact motion. */
+::view-transition-group(arena-telemetry-panel),
+::view-transition-old(arena-telemetry-panel),
+::view-transition-new(arena-telemetry-panel) {
+  animation-duration: 0.18s;
+  animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+::view-transition-old(arena-telemetry-panel),
+::view-transition-new(arena-telemetry-panel) {
+  mix-blend-mode: normal;
+}
+
+/* Do not snapshot/crossfade the WebGL arena itself for a small HUD change. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(arena-telemetry-panel),
+  ::view-transition-old(arena-telemetry-panel),
+  ::view-transition-new(arena-telemetry-panel) {
+    animation-duration: 0.01ms;
+  }
 }
 
 .arena-sidebar-intro p:last-child {
