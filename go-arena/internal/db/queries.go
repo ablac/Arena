@@ -257,10 +257,13 @@ func EnsureCoreSchema(ctx context.Context) error {
 	if err := EnsureCosmeticsSchema(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema cosmetics: %w", err)
 	}
-	// Chat depends on customer_accounts, created by the cosmetics schema
-	// above, so it must stay after that call.
-	if err := EnsureChatSchema(ctx); err != nil {
-		return fmt.Errorf("EnsureCoreSchema chat: %w", err)
+	// Chat is off by default and must not touch the schema (a new table plus
+	// an ALTER on customer_accounts) unless enabled. It depends on
+	// customer_accounts from the cosmetics schema above, so it stays last.
+	if config.C.ChatEnabled {
+		if err := EnsureChatSchema(ctx); err != nil {
+			return fmt.Errorf("EnsureCoreSchema chat: %w", err)
+		}
 	}
 
 	return nil

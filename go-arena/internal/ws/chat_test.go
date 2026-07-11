@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,12 +21,14 @@ import (
 // fakeChatStore is an in-memory ChatStore. Chat tests must not require a
 // live database.
 type fakeChatStore struct {
-	mu        sync.Mutex
-	messages  []db.ChatMessage
-	nextID    int64
-	banUntil  map[string]*time.Time
-	linkedIDs map[string][]string
-	insertErr error
+	mu          sync.Mutex
+	messages    []db.ChatMessage
+	nextID      int64
+	banUntil    map[string]*time.Time
+	linkedIDs   map[string][]string
+	insertErr   error
+	insertPanic bool
+	linkedErr   error
 }
 
 func newFakeChatStore() *fakeChatStore {
@@ -47,6 +50,9 @@ func (s *fakeChatStore) RecentMessages(ctx context.Context, limit int) ([]db.Cha
 func (s *fakeChatStore) Insert(ctx context.Context, m *db.ChatMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.insertPanic {
+		panic("fake store insert panic")
+	}
 	if s.insertErr != nil {
 		return s.insertErr
 	}
@@ -65,6 +71,9 @@ func (s *fakeChatStore) ChatBanUntil(ctx context.Context, accountID string) (*ti
 func (s *fakeChatStore) LinkedBotIDs(ctx context.Context, accountID string) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.linkedErr != nil {
+		return nil, s.linkedErr
+	}
 	return s.linkedIDs[accountID], nil
 }
 
@@ -234,8 +243,8 @@ func TestChatPostBroadcastsAndBackfills(t *testing.T) {
 		t.Fatalf("signed-in chat_status: can_post = %v, want true", status["can_post"])
 	}
 	handle, _ := status["handle"].(string)
-	if handle != "Lucas#acct" {
-		t.Fatalf("handle = %q, want Lucas#acct (name + account discriminator)", handle)
+	if !strings.HasPrefix(handle, "Lucas#") || len(handle) != len("Lucas#")+8 {
+		t.Fatalf("handle = %q, want Lucas# + 8-hex discriminator", handle)
 	}
 	readChatMessage(t, poster, "chat_history")
 
@@ -347,6 +356,105 @@ func TestChatAliveLockBlocksPosting(t *testing.T) {
 	env.setRoundActive(false)
 	postChat(t, conn, "rematch?")
 	readChatMessage(t, conn, "chat_message")
+}
+
+func TestChatAliveLockRequiresLinkedBot(t *testing.T) {
+	withChatConfig(t)
+	env := newChatTestEnv(t)
+	env.setRoundActive(true) // acct-1 has NO linked bots
+
+	conn := env.dial(t, identityHeaders("acct-1", "Dev"))
+	readChatMessage(t, conn, "chat_status")
+	readChatMessage(t, conn, "chat_history")
+
+	// An unlinked account must not be able to dodge the alive-lock by never
+	// linking; during a live round it cannot post at all.
+	postChat(t, conn, "sneaky coordination")
+	errMsg := readChatMessage(t, conn, "chat_error")
+	if errMsg["code"] != "LINK_REQUIRED" {
+		t.Fatalf("unlinked account mid-round: code = %v, want LINK_REQUIRED", errMsg["code"])
+	}
+
+	// Between rounds, an unlinked account can still chat.
+	env.setRoundActive(false)
+	postChat(t, conn, "gg all")
+	readChatMessage(t, conn, "chat_message")
+}
+
+func TestChatAliveLockFailsClosedOnDBError(t *testing.T) {
+	withChatConfig(t)
+	env := newChatTestEnv(t)
+	env.setRoundActive(true)
+	env.store.linkedErr = errors.New("connection reset")
+
+	conn := env.dial(t, identityHeaders("acct-1", "Dev"))
+	readChatMessage(t, conn, "chat_status")
+	readChatMessage(t, conn, "chat_history")
+
+	// A lookup failure must not let a possibly-live bot's owner post; fail
+	// closed rather than open.
+	postChat(t, conn, "post during outage")
+	errMsg := readChatMessage(t, conn, "chat_error")
+	if errMsg["code"] != "POST_FAILED" {
+		t.Fatalf("alive-lock lookup error: code = %v, want POST_FAILED", errMsg["code"])
+	}
+}
+
+func TestChatRateLimitIsPerAccountAcrossSockets(t *testing.T) {
+	withChatConfig(t)
+	config.C.ChatPostsPerMin = 2
+	env := newChatTestEnv(t)
+
+	// Two sockets, same account: the budget must be shared (the Redis limiter
+	// is absent in tests, so this exercises the in-memory per-account window).
+	a := env.dial(t, identityHeaders("acct-1", "Dev"))
+	readChatMessage(t, a, "chat_status")
+	readChatMessage(t, a, "chat_history")
+	b := env.dial(t, identityHeaders("acct-1", "Dev"))
+	readChatMessage(t, b, "chat_status")
+	readChatMessage(t, b, "chat_history")
+
+	postChat(t, a, "one")
+	readChatMessage(t, a, "chat_message")
+	postChat(t, b, "two")
+	readChatMessage(t, b, "chat_message")
+	// Third post on either socket exceeds the shared per-account window.
+	postChat(t, b, "three")
+	errMsg := readChatMessage(t, b, "chat_error")
+	if errMsg["code"] != "RATE_LIMITED" {
+		t.Fatalf("third post across sockets: code = %v, want RATE_LIMITED", errMsg["code"])
+	}
+}
+
+func TestChatPanicInPostDoesNotLeakSlot(t *testing.T) {
+	withChatConfig(t)
+	env := newChatTestEnv(t)
+	env.store.insertPanic = true
+
+	conn := env.dial(t, identityHeaders("acct-1", "Dev"))
+	readChatMessage(t, conn, "chat_status")
+	readChatMessage(t, conn, "chat_history")
+	if got := env.hub.ClientCount(); got != 1 {
+		t.Fatalf("client count before panic = %d, want 1", got)
+	}
+
+	// The post panics inside store.Insert; the recover closes the connection.
+	postChat(t, conn, "boom")
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			break
+		}
+	}
+
+	// The slot must be reclaimed even though the handler panicked.
+	deadline := time.Now().Add(2 * time.Second)
+	for env.hub.ClientCount() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := env.hub.ClientCount(); got != 0 {
+		t.Fatalf("client count after panic = %d, want 0 (slot leaked)", got)
+	}
 }
 
 func TestChatBanBlocksPosting(t *testing.T) {
@@ -471,6 +579,12 @@ func TestSanitizeChatBody(t *testing.T) {
 		{"at limit", "abcde", 5, "abcde", true},
 		{"unicode counted in runes", "héllo wörld", 11, "héllo wörld", true},
 		{"invalid utf8", string([]byte{0xff, 0xfe}), 60, "", false},
+		// Format (Cf) characters are constructed from code points so the
+		// source file stays free of invisible characters.
+		{"zero-width space stripped", "a" + string(rune(0x200B)) + "b", 60, "ab", true},
+		{"bidi override stripped", "a" + string(rune(0x202E)) + "b", 60, "ab", true},
+		{"zero-width only is empty", string(rune(0x200B)) + string(rune(0xFEFF)), 60, "", false},
+		{"soft hyphen stripped", "co" + string(rune(0x00AD)) + "op", 60, "coop", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -501,6 +615,7 @@ func TestChatSameOrigin(t *testing.T) {
 		{"same origin explicit port", mk("arena.example.com:80", "http://arena.example.com"), true},
 		{"cross origin", mk("arena.example.com", "https://evil.example"), false},
 		{"subdomain is cross origin", mk("arena.example.com", "http://sub.arena.example.com"), false},
+		{"cross scheme same host", mk("arena.example.com", "https://arena.example.com"), false},
 		{"garbage origin", mk("arena.example.com", "::not a url::"), false},
 	}
 	for _, tc := range cases {

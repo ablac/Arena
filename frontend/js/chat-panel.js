@@ -187,7 +187,11 @@ function initChatPanel(cfg) {
   if (!overlay || !listEl || !formEl || !inputEl || !sendBtn || !statusEl || !signinEl) return;
 
   document.body.classList.add('chat-enabled');
-  inputEl.maxLength = cfg.max_body_len > 0 ? cfg.max_body_len : 280;
+  const bodyLimit = cfg.max_body_len > 0 ? cfg.max_body_len : 280;
+  // maxlength counts UTF-16 code units, but the server counts code points, so
+  // an emoji-heavy message could be truncated below the real limit. Use a
+  // loose 2x backstop here and enforce the true code-point limit on submit.
+  inputEl.maxLength = bodyLimit * 2;
 
   let canPost = false;
   let connected = false;
@@ -319,6 +323,11 @@ function initChatPanel(cfg) {
     event.preventDefault();
     const body = inputEl.value.trim();
     if (!body) return;
+    // Count code points, matching the server's rune limit.
+    if ([...body].length > bodyLimit) {
+      appendNotice('Message is too long (max ' + bodyLimit + ' characters).');
+      return;
+    }
     if (socket.send({ type: 'chat_post', body })) {
       inputEl.value = '';
     }
@@ -338,6 +347,7 @@ function initChatPanel(cfg) {
   const observer = new MutationObserver(() => {
     if (!started && overlay.classList.contains('open')) {
       started = true;
+      observer.disconnect();
       setStatus('Connecting...', 'warn');
       socket.connect();
     }

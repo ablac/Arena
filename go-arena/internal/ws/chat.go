@@ -2,10 +2,13 @@ package ws
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -125,8 +128,6 @@ type chatClient struct {
 	identity *ChatIdentity
 	handle   string
 	ip       string
-	// postTimes is only touched by the connection's reader goroutine.
-	postTimes []time.Time
 }
 
 // ChatHub owns every chat connection and the recent-message ring. It is the
@@ -141,6 +142,13 @@ type ChatHub struct {
 	store       ChatStore
 	isBotAlive  func(botID string) bool
 	roundActive func() bool
+
+	// postWindows is the per-account sliding window used to throttle posts
+	// when Redis is unavailable (security.CheckRateLimit fails open). Keyed
+	// by account so opening extra sockets does not multiply a poster's
+	// budget. Guarded by mu; empty entries are pruned so it stays bounded to
+	// accounts active in the last minute.
+	postWindows map[string][]time.Time
 
 	// memID hands out ids when the database is absent (dev mode) so hide
 	// and dedup still work within the process lifetime.
@@ -169,12 +177,43 @@ func NewChatHub(engine *game.GameEngine) *ChatHub {
 func newChatHub(store ChatStore, isBotAlive func(string) bool, roundActive func() bool) *ChatHub {
 	h := &ChatHub{
 		clients:     make(map[*chatClient]struct{}),
+		postWindows: make(map[string][]time.Time),
 		store:       store,
 		isBotAlive:  isBotAlive,
 		roundActive: roundActive,
 	}
 	h.memID.Store(time.Now().UnixMilli())
 	return h
+}
+
+// checkPostWindow reports whether the account is under the per-minute post
+// cap in the in-memory fallback window (used when Redis is down). It prunes
+// stale timestamps but does NOT record a new one; recordPostWindow does that
+// only after every other check passes. Callers hold no lock; this takes mu.
+func (h *ChatHub) checkPostWindow(accountID string, limit int, now time.Time) bool {
+	cutoff := now.Add(-time.Minute)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	times := h.postWindows[accountID]
+	kept := times[:0]
+	for _, t := range times {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) == 0 {
+		delete(h.postWindows, accountID)
+	} else {
+		h.postWindows[accountID] = kept
+	}
+	return len(kept) < limit
+}
+
+// recordPostWindow appends a successful post timestamp to the account window.
+func (h *ChatHub) recordPostWindow(accountID string, now time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.postWindows[accountID] = append(h.postWindows[accountID], now)
 }
 
 // WarmHistory seeds the in-memory ring from the database at startup. A
@@ -267,23 +306,15 @@ func (h *ChatHub) post(ctx context.Context, c *chatClient, rawBody string) *chat
 		return &chatPostError{"INVALID_BODY", fmt.Sprintf("message must be 1-%d characters", config.C.ChatMaxBodyLen)}
 	}
 
-	// In-memory per-connection window first: it holds even when Redis is
-	// down (security.CheckRateLimit fails open).
 	now := time.Now()
-	cutoff := now.Add(-time.Minute)
-	kept := c.postTimes[:0]
-	for _, t := range c.postTimes {
-		if t.After(cutoff) {
-			kept = append(kept, t)
-		}
-	}
-	c.postTimes = kept
-	if len(c.postTimes) >= config.C.ChatPostsPerMin {
+
+	// Per-account fallback window: holds across a poster's sockets even when
+	// Redis is down (security.CheckRateLimit fails open).
+	if !h.checkPostWindow(c.identity.AccountID, config.C.ChatPostsPerMin, now) {
 		return &chatPostError{"RATE_LIMITED", "slow down: too many messages"}
 	}
 
-	// Cross-connection limit (Redis), keyed by account so a poster cannot
-	// dodge the window by opening more sockets.
+	// Cross-instance limit (Redis), keyed by the same account.
 	if allowed, _, _, err := security.CheckRateLimit(ctx, "chat:post:"+c.identity.AccountID, config.C.ChatPostsPerMin, 60); err == nil && !allowed {
 		return &chatPostError{"RATE_LIMITED", "slow down: too many messages"}
 	}
@@ -292,16 +323,28 @@ func (h *ChatHub) post(ctx context.Context, c *chatClient, rawBody string) *chat
 		return &chatPostError{"CHAT_BANNED", "you are muted in chat until " + until.UTC().Format(time.RFC3339)}
 	}
 
-	// The integrity lock: no posting while one of your bots is alive in an
-	// active round. See the config comment for the rationale.
+	// The integrity lock. During an active round a poster must have at least
+	// one linked bot AND none of them may be alive. Requiring linkage is what
+	// makes the lock meaningful: an unlinked account could otherwise dodge it
+	// forever by simply never linking its bot, so "do not link" cannot be a
+	// cheat. The lookup fails CLOSED on a real DB error (a live bot must not
+	// slip through on an outage); ErrNoDatabase (dev mode, no linkage data)
+	// is the one intentional pass-through.
 	if config.C.ChatAliveLock && h.roundActive != nil && h.roundActive() {
 		botIDs, err := h.store.LinkedBotIDs(ctx, c.identity.AccountID)
-		if err != nil && !errors.Is(err, db.ErrNoDatabase) {
+		switch {
+		case errors.Is(err, db.ErrNoDatabase):
+			// Dev mode: no linkage table, lock cannot apply.
+		case err != nil:
 			slog.Error("chat alive-lock lookup failed", "error", err)
-		}
-		for _, id := range botIDs {
-			if h.isBotAlive != nil && h.isBotAlive(id) {
-				return &chatPostError{"BOT_ALIVE_LOCK", "chat unlocks when your bot is out of the round"}
+			return &chatPostError{"POST_FAILED", "message could not be verified, try again"}
+		case len(botIDs) == 0:
+			return &chatPostError{"LINK_REQUIRED", "link a bot to your account to chat during a live round"}
+		default:
+			for _, id := range botIDs {
+				if h.isBotAlive != nil && h.isBotAlive(id) {
+					return &chatPostError{"BOT_ALIVE_LOCK", "chat unlocks when your bot is out of the round"}
+				}
 			}
 		}
 	}
@@ -322,7 +365,7 @@ func (h *ChatHub) post(ctx context.Context, c *chatClient, rawBody string) *chat
 		}
 	}
 
-	c.postTimes = append(c.postTimes, now)
+	h.recordPostWindow(c.identity.AccountID, now)
 
 	payload, _ := json.Marshal(chatBroadcastMessage{
 		Type:    "chat_message",
@@ -372,8 +415,10 @@ func sanitizeChatBody(raw string, maxRunes int) (string, bool) {
 		switch {
 		case r == '\n' || r == '\r' || r == '\t':
 			b.WriteRune(' ')
-		case unicode.IsControl(r):
-			// drop
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			// Drop control (Cc) and format (Cf) runes. Cf covers zero-width
+			// characters (U+200B..D, U+FEFF), the soft hyphen, and the bidi
+			// overrides used to spoof handles and hide message content.
 		default:
 			b.WriteRune(r)
 		}
@@ -389,18 +434,18 @@ func sanitizeChatBody(raw string, maxRunes int) (string, bool) {
 }
 
 // chatHandle derives the spoof-resistant display handle: the sanitized
-// account display name plus a stable discriminator from the account id, so
-// "ADMIN" the user renames themselves to can never collide with a system
-// label or another user.
+// account display name plus a stable discriminator hashed from the account
+// id. The name is user-settable at the IdP, so the discriminator is what
+// distinguishes two people who both call themselves "ADMIN"; hashing the
+// full id (rather than truncating it) avoids leaking the raw id prefix, and
+// 8 hex chars (32 bits) makes a targeted same-name collision impractical.
 func chatHandle(identity *ChatIdentity) string {
 	name, _ := sanitizeChatBody(identity.Name, 24)
 	if name == "" {
 		name = "dev"
 	}
-	disc := identity.AccountID
-	if len(disc) > 4 {
-		disc = disc[:4]
-	}
+	sum := sha256.Sum256([]byte(identity.AccountID))
+	disc := hex.EncodeToString(sum[:])[:8]
 	return name + "#" + disc
 }
 
@@ -415,7 +460,13 @@ func chatSameOrigin(r *http.Request) bool {
 		return true
 	}
 	u, err := url.Parse(origin)
-	if err != nil {
+	if err != nil || u.Host == "" {
+		return false
+	}
+	// Scheme must match too: an http page and an https page on the same host
+	// are different origins, and honoring a cookie across that boundary would
+	// weaken the CSWSH protection.
+	if !strings.EqualFold(u.Scheme, requestScheme(r)) {
 		return false
 	}
 	return strings.EqualFold(stripDefaultPort(u.Host, u.Scheme), stripDefaultPort(r.Host, requestScheme(r)))
@@ -470,10 +521,14 @@ func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*htt
 			return
 		}
 
-		// Per-IP connect budget, same shape as the bot WS endpoint.
-		if allowed, _, _, err := security.CheckRateLimit(r.Context(), "ws:chat:ip:"+clientIP, cfg.WSConnectRatePerMin, 60); err == nil && !allowed {
-			http.Error(w, "too many connections, try again shortly", http.StatusTooManyRequests)
-			return
+		// Per-IP connect budget, same shape and gating as the bot WS
+		// endpoint: a limit of 0 disables it, and loopback (local dev, tests)
+		// is exempt.
+		if cfg.WSConnectRatePerMin > 0 && !isLoopbackIP(clientIP) {
+			if allowed, _, _, err := security.CheckRateLimit(r.Context(), "ws:chat:ip:"+clientIP, cfg.WSConnectRatePerMin, 60); err == nil && !allowed {
+				http.Error(w, "too many connections, try again shortly", http.StatusTooManyRequests)
+				return
+			}
 		}
 
 		// Resolve identity BEFORE upgrading, and only on same-origin
@@ -508,17 +563,12 @@ func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*htt
 			client.handle = chatHandle(identity)
 		}
 
-		if !hub.register(client, cfg.ChatMaxClients) {
-			_ = conn.WriteControl(
-				websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "chat is full"),
-				time.Now().Add(chatWriteTimeout),
-			)
-			return
-		}
-
-		// Initial state goes through the send channel (buffered well past
-		// two messages) so every write flows through the single writer.
+		// Enqueue the initial status + history BEFORE registering. While the
+		// client is not yet in the hub map the handler is the channel's only
+		// producer, so these two sends into the 32-slot buffer provably
+		// cannot block. Registering first would let a concurrent broadcast
+		// fill the buffer and wedge these blocking sends on a channel whose
+		// writer has not started.
 		status := chatStatusMessage{Type: "chat_status", CanPost: identity != nil}
 		if identity != nil {
 			status.Handle = client.handle
@@ -529,16 +579,34 @@ func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*htt
 		client.send <- statusPayload
 		client.send <- hub.historyPayload()
 
+		if !hub.register(client, cfg.ChatMaxClients) {
+			_ = conn.WriteControl(
+				websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "chat is full"),
+				time.Now().Add(chatWriteTimeout),
+			)
+			return
+		}
+		// Cleanup on the deferred path so a panic in the reader pipeline still
+		// unregisters the client and closes its send channel. remove is
+		// idempotent; defers run LIFO so cancel fires before remove, matching
+		// the intended shutdown order.
 		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		defer func() {
+			cancel()
+			hub.remove(client)
+		}()
 
 		go chatWriter(ctx, client)
 
 		chatReader(r.Context(), hub, client)
-
-		cancel()
-		hub.remove(client)
 	}
+}
+
+// isLoopbackIP reports whether ip is a loopback address (127.0.0.1, ::1).
+func isLoopbackIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.IsLoopback()
 }
 
 // chatReader parses incoming frames on the handler goroutine. Its return is
