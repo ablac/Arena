@@ -1,10 +1,12 @@
 package demobots
 
 import (
+	"encoding/json"
 	"math"
 	"testing"
 
 	"arena-server/internal/config"
+	"arena-server/internal/ws"
 )
 
 // setTerrain installs a synthetic open terrain grid (with optional wall rows)
@@ -37,6 +39,36 @@ func clearTerrain() {
 	terrainMu.Lock()
 	cachedTerrain = nil
 	terrainMu.Unlock()
+}
+
+func TestStaffAttackPayloadMatchesPublicProtocol(t *testing.T) {
+	oldWidth, oldHeight := config.C.ArenaWidth, config.C.ArenaHeight
+	config.C.ArenaWidth, config.C.ArenaHeight = 2000, 2000
+	t.Cleanup(func() {
+		config.C.ArenaWidth, config.C.ArenaHeight = oldWidth, oldHeight
+	})
+
+	target := entity{ID: "enemy", Position: [2]float64{12, 8}}
+	payload := buildActionPayload(float64(17), atk(&target, "staff"))
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal Staff action: %v", err)
+	}
+
+	msgType, parsed, err := ws.ParseBotMessage(raw)
+	if err != nil {
+		t.Fatalf("parse Staff action %s: %v", raw, err)
+	}
+	if msgType != "action" {
+		t.Fatalf("message type = %q, want action", msgType)
+	}
+	actionMessage, ok := parsed.(*ws.ActionMessage)
+	if !ok {
+		t.Fatalf("parsed message = %T, want *ws.ActionMessage", parsed)
+	}
+	if got := ws.ActionMessageToAction(actionMessage); got == nil {
+		t.Fatalf("demo Staff action violates the public protocol: %s", raw)
+	}
 }
 
 func TestParseTickTeamsEntitiesAndModeFields(t *testing.T) {
@@ -1037,6 +1069,53 @@ func TestRetreatAnchorGrappleAvoidsLiveReadyPad(t *testing.T) {
 	}
 	if got := tryAnchorGrapple(ts, "defensive", &near, 2, 1); got != nil {
 		t.Fatalf("retreat anchor targeted live ready pad: %+v", *got)
+	}
+}
+
+func TestRetreatAnchorGrappleNearArenaEdgeMatchesPublicProtocol(t *testing.T) {
+	setTerrain(t, 30, 30, nil)
+	oldWidth, oldHeight := config.C.ArenaWidth, config.C.ArenaHeight
+	config.C.ArenaWidth, config.C.ArenaHeight = 2000, 2000
+	t.Cleanup(func() {
+		config.C.ArenaWidth, config.C.ArenaHeight = oldWidth, oldHeight
+	})
+
+	for _, tc := range []struct {
+		name     string
+		position [2]float64
+		enemy    [2]float64
+	}{
+		{name: "lower edge", position: [2]float64{1, 1}, enemy: [2]float64{2, 1}},
+		{name: "upper edge", position: [2]float64{28, 28}, enemy: [2]float64{27, 28}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			near := entity{ID: "enemy", Position: tc.enemy, IsAlive: true}
+			ts := tickState{
+				Position: tc.position, HP: 40, MaxHP: 100, InZone: true,
+				GrappleCharges: 1,
+			}
+			got := tryAnchorGrapple(ts, "kite", &near, 1, 5)
+			if got == nil || got.TargetPosition == nil {
+				t.Fatal("low-HP edge escape produced no anchor grapple")
+			}
+			if got.TargetPosition[0] < 0 || got.TargetPosition[1] < 0 ||
+				got.TargetPosition[0] > 29 || got.TargetPosition[1] > 29 {
+				t.Fatalf("edge grapple escaped terrain bounds: %v", *got.TargetPosition)
+			}
+
+			payload := buildActionPayload(float64(18), *got)
+			raw, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatalf("marshal edge grapple: %v", err)
+			}
+			_, parsed, err := ws.ParseBotMessage(raw)
+			if err != nil {
+				t.Fatalf("parse edge grapple %s: %v", raw, err)
+			}
+			if action := ws.ActionMessageToAction(parsed.(*ws.ActionMessage)); action == nil {
+				t.Fatalf("edge grapple violates the public protocol: %s", raw)
+			}
+		})
 	}
 }
 

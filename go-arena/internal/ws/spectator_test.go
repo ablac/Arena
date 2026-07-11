@@ -266,3 +266,44 @@ func TestSpectatorReaderRejectsApplicationMessages(t *testing.T) {
 		t.Fatal("spectator reader accepted an application message")
 	}
 }
+
+func TestSpectatorReaderAllowsLegacyBrowserPing(t *testing.T) {
+	readerDone := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := spectatorUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		spectatorReader(conn)
+		close(readerDone)
+	}))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial spectator reader: %v", err)
+	}
+	defer conn.Close()
+
+	// Deployed browser bundles send this legacy application heartbeat every
+	// 15 seconds. It must remain a no-op while all command-shaped spectator
+	// messages continue to close the receive-only stream.
+	if err := conn.WriteMessage(websocket.TextMessage, []byte("ping")); err != nil {
+		t.Fatalf("write legacy browser ping: %v", err)
+	}
+	select {
+	case <-readerDone:
+		t.Fatal("legacy browser ping closed the spectator stream")
+	case <-time.After(75 * time.Millisecond):
+	}
+
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"action"}`)); err != nil {
+		t.Fatalf("write unexpected spectator message: %v", err)
+	}
+	select {
+	case <-readerDone:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("spectator reader accepted a command-shaped application message")
+	}
+}

@@ -930,12 +930,11 @@ func moveTo(src, dst [2]float64, danger *dangerSet) actionResult {
 }
 
 func atk(t *entity, weapon string) actionResult {
-	a := actionResult{Action: "attack", Target: t.ID}
 	if weapon == "staff" {
 		pos := t.Position
-		a.TargetPosition = &pos
+		return actionResult{Action: "attack", TargetPosition: &pos}
 	}
-	return a
+	return actionResult{Action: "attack", Target: t.ID}
 }
 
 // atkPos attacks a position (for staff AoE targeting cluster centers).
@@ -2723,6 +2722,20 @@ func anchorGrappleDestinationSafe(target [2]float64, pads map[string]entity) boo
 	return true
 }
 
+func clampAnchorToTerrain(target [2]float64) [2]float64 {
+	// Anchor grapples use grid coordinates. Emergency escape vectors can point
+	// beyond an edge, but the public action protocol intentionally rejects
+	// negative coordinates. Clamp to the known map so the escape stays valid
+	// and still moves as far away from the threat as the arena permits.
+	target[0] = math.Max(0, target[0])
+	target[1] = math.Max(0, target[1])
+	if terrain := getTerrain(); terrain != nil {
+		target[0] = math.Min(target[0], float64(max(0, terrain.Width-1)))
+		target[1] = math.Min(target[1], float64(max(0, terrain.Height-1)))
+	}
+	return target
+}
+
 func tryAnchorGrapple(ts tickState, strategy string, near *entity, nearD, wrange float64) *actionResult {
 	if ts.GrappleCharges <= 0 || ts.GrappleCooldown > 0 {
 		return nil
@@ -2741,10 +2754,10 @@ func tryAnchorGrapple(ts tickState, strategy string, near *entity, nearD, wrange
 	}
 
 	if near != nil && hpRatio < 0.45 {
-		away := [2]float64{
+		away := clampAnchorToTerrain([2]float64{
 			ts.Position[0] + (ts.Position[0]-near.Position[0])*4,
 			ts.Position[1] + (ts.Position[1]-near.Position[1])*4,
-		}
+		})
 		if chebyshev(ts.Position, away) <= grappleRange && anchorGrappleDestinationSafe(away, pads) {
 			a := grapplePos(away)
 			return &a
@@ -2753,10 +2766,10 @@ func tryAnchorGrapple(ts tickState, strategy string, near *entity, nearD, wrange
 
 	if strategy == "kite" && near != nil && nearD > wrange+2 && nearD <= grappleRange {
 		offset := gridDirAway(near.Position, ts.Position)
-		anchor := [2]float64{
+		anchor := clampAnchorToTerrain([2]float64{
 			near.Position[0] + offset[0]*2,
 			near.Position[1] + offset[1]*2,
-		}
+		})
 		if chebyshev(ts.Position, anchor) <= grappleRange && anchorGrappleDestinationSafe(anchor, pads) {
 			a := grapplePos(anchor)
 			return &a
