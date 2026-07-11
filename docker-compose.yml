@@ -12,8 +12,12 @@ services:
     container_name: arena-db
     environment:
       POSTGRES_DB: ${ARENA_DB_NAME:-arena}
-      POSTGRES_USER: ${ARENA_DB_USER:-arena_user}
-      POSTGRES_PASSWORD: ${ARENA_DB_PASSWORD:-changeme_arena_2026}
+      # In managed deployments the runtime app role is deliberately not the
+      # database owner. Keep PostgreSQL bootstrap/health tied to the release
+      # migrator identity so rendering Compose cannot silently switch it to the
+      # least-privilege ARENA_DB_USER.
+      POSTGRES_USER: ${ARENA_DB_MIGRATOR_USER:-${ARENA_DB_USER:-arena_user}}
+      POSTGRES_PASSWORD: ${ARENA_DB_MIGRATOR_PASSWORD:-${ARENA_DB_PASSWORD:-changeme_arena_2026}}
     ports:
       - "127.0.0.1:${ARENA_DB_HOST_PORT:-5433}:5432"
     volumes:
@@ -21,7 +25,7 @@ services:
     networks:
       arena_net:
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${ARENA_DB_USER:-arena_user} -d ${ARENA_DB_NAME:-arena}"]
+      test: ["CMD-SHELL", "pg_isready -U ${ARENA_DB_MIGRATOR_USER:-${ARENA_DB_USER:-arena_user}} -d ${ARENA_DB_NAME:-arena}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -61,6 +65,10 @@ services:
         condition: service_healthy
     env_file:
       - .env
+    environment:
+      # Production sets this true after the owner-run migration path is wired.
+      # The runtime then performs a read-only schema preflight and never DDL.
+      ARENA_DB_MIGRATIONS_MANAGED: ${ARENA_DB_MIGRATIONS_MANAGED:-false}
     networks:
       arena_net:
 
@@ -94,6 +102,15 @@ services:
       GITHUB_OWNER: ablac
       GITHUB_REPO: Arena
       ARENA_INTERNAL_STATUS_URL: http://arena-server:8000/internal/updater/status
+      # Owner/migrator role used only by the one-shot `/arena-server migrate`
+      # container. The password is optional when it intentionally matches the
+      # service's ARENA_DB_PASSWORD; set the dedicated value when they differ.
+      ARENA_DB_MIGRATOR_USER: ${ARENA_DB_MIGRATOR_USER:-}
+      ARENA_DB_MIGRATOR_PASSWORD: ${ARENA_DB_MIGRATOR_PASSWORD:-}
+      # Preserve the least-privilege app identity before the migration command
+      # overrides ARENA_DB_USER with the owner role. It receives DML/table and
+      # sequence grants, never DDL ownership.
+      ARENA_RUNTIME_DB_USER: ${ARENA_DB_USER:-arena_user}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${PWD}:${PWD}

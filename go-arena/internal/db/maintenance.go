@@ -7,7 +7,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-const resetLeaderboardSQL = `TRUNCATE TABLE bot_stats, round_bot_stats RESTART IDENTITY`
+// Keep the generated row identity monotonic. PostgreSQL requires sequence
+// ownership for RESTART IDENTITY even when the caller has table TRUNCATE and
+// sequence USAGE; the managed runtime role deliberately does not own schema
+// objects. Leaderboards never expose or depend on round_bot_stats.id.
+const resetLeaderboardSQL = `TRUNCATE TABLE bot_stats, round_bot_stats CONTINUE IDENTITY`
 
 type commandExecutor interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)

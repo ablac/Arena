@@ -76,6 +76,153 @@ export function buildComposeBaseArgs(input) {
 }
 
 /**
+ * Build the one-shot migration command used between stopping the old app and
+ * recreating it from the freshly built image. Credentials are passed through
+ * the compose process environment and referenced by name (`-e KEY`), never
+ * embedded in argv where process listings and updater logs could expose them.
+ *
+ * The migrator password is optional for deployments where the runtime and
+ * owner roles intentionally share the same password: omitting it leaves the
+ * service's ARENA_DB_PASSWORD from `.env` intact while only switching roles.
+ * The runtime role is always carried separately so the migration command can
+ * grant DML/table and sequence access after owner-run DDL.
+ *
+ * @param {{
+ *   composeBaseArgs?: string[],
+ *   service?: string,
+ *   migratorUser?: string,
+ *   migratorPassword?: string,
+ *   runtimeUser?: string,
+ *   containerName?: string
+ * }} input
+ * @returns {{args: string[], env: Record<string, string>}}
+ */
+export function buildMigrationInvocation(input) {
+  const service = typeof input.service === "string" ? input.service.trim() : "";
+  const migratorUser = typeof input.migratorUser === "string" ? input.migratorUser : "";
+  const migratorPassword = typeof input.migratorPassword === "string" ? input.migratorPassword : "";
+  const runtimeUser = typeof input.runtimeUser === "string" ? input.runtimeUser : "";
+  const containerName = typeof input.containerName === "string" ? input.containerName.trim() : "";
+  if (service === "") {
+    throw new Error("COMPOSE_SERVICE is not configured");
+  }
+  if (migratorUser === "") {
+    throw new Error("ARENA_DB_MIGRATOR_USER is not configured");
+  }
+  if (runtimeUser === "") {
+    throw new Error("ARENA_RUNTIME_DB_USER is not configured");
+  }
+  if (containerName === "") {
+    throw new Error("migration container name is not configured");
+  }
+
+  const forwardedKeys = ["ARENA_DB_USER"];
+  const env = { ARENA_DB_USER: migratorUser };
+  if (migratorPassword !== "") {
+    forwardedKeys.push("ARENA_DB_PASSWORD");
+    env.ARENA_DB_PASSWORD = migratorPassword;
+  }
+  forwardedKeys.push("ARENA_RUNTIME_DB_USER");
+  env.ARENA_RUNTIME_DB_USER = runtimeUser;
+
+  return {
+    args: [
+      "compose",
+      ...(Array.isArray(input.composeBaseArgs) ? input.composeBaseArgs : []),
+      "run",
+      "--no-deps",
+      "--name",
+      containerName,
+      ...forwardedKeys.flatMap((key) => ["-e", key]),
+      service,
+      "/arena-server",
+      "migrate"
+    ],
+    env
+  };
+}
+
+/**
+ * Force-stop and remove a named one-shot migration container. Killing a timed
+ * out `docker compose run` CLI does not stop its container, so recovery may
+ * restart the old database writer only after this cleanup succeeds. The
+ * container is intentionally retained until its exit state is inspected;
+ * exact absence is the only cleanup error that is safe to ignore after a
+ * separately confirmed result.
+ *
+ * @param {{
+ *   execFile: (file: string, args: string[], options: object) => Promise<unknown>,
+ *   containerName: string,
+ *   options?: object
+ * }} input
+ * @returns {Promise<"removed" | "absent">}
+ */
+export async function forceRemoveMigrationContainer(input) {
+  try {
+    await input.execFile("docker", ["rm", "-f", input.containerName], input.options ?? {});
+    return "removed";
+  } catch (error) {
+    if (isMissingDockerContainerError(error)) {
+      return "absent";
+    }
+    throw error;
+  }
+}
+
+/**
+ * Resolve an error from the attached Compose CLI without guessing whether the
+ * migration itself failed. The named container is intentionally retained by
+ * `compose run`: an exited-zero container proves the migration completed and
+ * lets the update continue, while a running/nonzero container is force-stopped
+ * before the old writer may recover. An absent container means Compose failed
+ * before creating it. Any unclassifiable Docker error is propagated so the old
+ * writer remains stopped.
+ *
+ * @param {{
+ *   execFile: (file: string, args: string[], options: object) => Promise<unknown>,
+ *   containerName: string,
+ *   options?: object
+ * }} input
+ * @returns {Promise<{migrationSucceeded: boolean, state: string}>}
+ */
+export async function reconcileMigrationContainerAfterRunError(input) {
+  let result;
+  try {
+    result = await input.execFile(
+      "docker",
+      ["inspect", "--format", "{{.State.Status}}\t{{.State.ExitCode}}", input.containerName],
+      input.options ?? {}
+    );
+  } catch (error) {
+    if (isMissingDockerContainerError(error)) {
+      return { migrationSucceeded: false, state: "absent" };
+    }
+    throw error;
+  }
+
+  const output = String(result?.stdout ?? "").trim();
+  const [status = "", exitCodeText = ""] = output.split("\t");
+  const exitCode = Number.parseInt(exitCodeText, 10);
+  if (status === "" || !Number.isInteger(exitCode)) {
+    throw new Error(`could not parse migration container state: ${output || "empty inspect output"}`);
+  }
+
+  await forceRemoveMigrationContainer(input);
+  return {
+    migrationSucceeded: status === "exited" && exitCode === 0,
+    state: `${status}:${exitCode}`
+  };
+}
+
+function isMissingDockerContainerError(error) {
+  const details = [error?.message, error?.stderr, error?.stdout]
+    .filter((value) => typeof value === "string")
+    .join("\n")
+    .toLowerCase();
+  return details.includes("no such container") || details.includes("no such object");
+}
+
+/**
  * Parse the tab-separated `docker inspect --format` output the sidecar uses to
  * read a container's compose labels, into a normalized context object. Split
  * out so the parsing is unit-testable independently of running `docker`.

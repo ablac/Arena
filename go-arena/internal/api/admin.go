@@ -86,11 +86,13 @@ func NewAdminHandler(engine *game.GameEngine, demoManager *demobots.Manager) *Ad
 	// Initialize DB table and load token hashes.
 	ctx := context.Background()
 	if db.Pool != nil {
-		if err := db.EnsureAdminTokensTable(ctx); err != nil {
-			slog.Warn("failed to ensure admin_tokens table", "error", err)
-		}
-		if err := db.EnsureAdminRegistryTables(ctx); err != nil {
-			slog.Warn("failed to ensure admin registry tables", "error", err)
+		if config.ShouldAutoMigrateDatabase() {
+			if err := db.EnsureAdminTokensTable(ctx); err != nil {
+				slog.Warn("failed to ensure admin_tokens table", "error", err)
+			}
+			if err := db.EnsureAdminRegistryTables(ctx); err != nil {
+				slog.Warn("failed to ensure admin registry tables", "error", err)
+			}
 		}
 		if values, err := db.LoadAdminOverrides(ctx, db.AdminOverrideScopeGameConfig); err != nil {
 			slog.Warn("failed to load admin game overrides for pending-state display", "error", err)

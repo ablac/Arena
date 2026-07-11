@@ -2,6 +2,29 @@ package config
 
 import "testing"
 
+func TestLoadReadsManagedMigrationRoles(t *testing.T) {
+	previous := C
+	t.Cleanup(func() { C = previous })
+	t.Setenv("ARENA_DB_MIGRATIONS_MANAGED", "true")
+	t.Setenv("ARENA_RUNTIME_DB_USER", "arena_app")
+
+	Load()
+	if !C.DBMigrationsManaged {
+		t.Fatal("ARENA_DB_MIGRATIONS_MANAGED=true was not loaded")
+	}
+	if C.DBRuntimeUser != "arena_app" {
+		t.Fatalf("ARENA_RUNTIME_DB_USER = %q, want arena_app", C.DBRuntimeUser)
+	}
+	if ShouldAutoMigrateDatabase() {
+		t.Fatal("managed runtime must not attempt schema DDL")
+	}
+
+	C.DBMigrationsManaged = false
+	if !ShouldAutoMigrateDatabase() {
+		t.Fatal("single-role local runtime should retain automatic migrations")
+	}
+}
+
 func TestResolveShoveSettingsUsesWholePositiveGridTiles(t *testing.T) {
 	tests := []struct {
 		name                     string
