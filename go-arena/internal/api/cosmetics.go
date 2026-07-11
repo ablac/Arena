@@ -16,7 +16,15 @@ import (
 )
 
 type cosmeticsStore interface {
-	ListCatalog(context.Context) ([]db.CosmeticItem, error)
+	PublicCatalog(context.Context) (*db.CosmeticCatalog, error)
+	AdminCatalog(context.Context) (*db.CosmeticCatalog, error)
+	UpsertCategory(context.Context, db.CosmeticCategory, string) (*db.CosmeticCategory, error)
+	DeleteCategory(context.Context, string, string) (bool, error)
+	UpsertItem(context.Context, db.CosmeticItem, string) (*db.CosmeticItem, error)
+	DeleteItem(context.Context, string, string) (bool, error)
+	UpsertPack(context.Context, db.CosmeticPack, string) (*db.CosmeticPack, error)
+	DeletePack(context.Context, string, string) (bool, error)
+	ListAudit(context.Context, int) ([]db.CosmeticCatalogAudit, error)
 	ListForBot(context.Context, string) ([]db.BotCosmeticItem, error)
 	Equipped(context.Context, string) (map[string]string, error)
 	Equip(context.Context, string, string, string) (*db.CosmeticItem, error)
@@ -31,11 +39,36 @@ type cosmeticsStore interface {
 
 type databaseCosmeticsStore struct{}
 
-func (databaseCosmeticsStore) ListCatalog(ctx context.Context) ([]db.CosmeticItem, error) {
+func (databaseCosmeticsStore) PublicCatalog(ctx context.Context) (*db.CosmeticCatalog, error) {
 	if db.Pool == nil {
-		return db.DefaultCosmeticCatalog(), nil
+		catalog := db.DefaultCosmeticCatalogData()
+		return &catalog, nil
 	}
-	return db.ListCosmeticCatalog(ctx)
+	return db.GetPublicCosmeticCatalog(ctx)
+}
+func (databaseCosmeticsStore) AdminCatalog(ctx context.Context) (*db.CosmeticCatalog, error) {
+	return db.GetAdminCosmeticCatalog(ctx)
+}
+func (databaseCosmeticsStore) UpsertCategory(ctx context.Context, category db.CosmeticCategory, actor string) (*db.CosmeticCategory, error) {
+	return db.UpsertCosmeticCategory(ctx, category, actor)
+}
+func (databaseCosmeticsStore) DeleteCategory(ctx context.Context, categoryID, actor string) (bool, error) {
+	return db.DeleteCosmeticCategory(ctx, categoryID, actor)
+}
+func (databaseCosmeticsStore) UpsertItem(ctx context.Context, item db.CosmeticItem, actor string) (*db.CosmeticItem, error) {
+	return db.UpsertCosmeticCatalogItem(ctx, item, actor)
+}
+func (databaseCosmeticsStore) DeleteItem(ctx context.Context, itemID, actor string) (bool, error) {
+	return db.DeleteCosmeticCatalogItem(ctx, itemID, actor)
+}
+func (databaseCosmeticsStore) UpsertPack(ctx context.Context, pack db.CosmeticPack, actor string) (*db.CosmeticPack, error) {
+	return db.UpsertCosmeticPack(ctx, pack, actor)
+}
+func (databaseCosmeticsStore) DeletePack(ctx context.Context, packID, actor string) (bool, error) {
+	return db.DeleteCosmeticPack(ctx, packID, actor)
+}
+func (databaseCosmeticsStore) ListAudit(ctx context.Context, limit int) ([]db.CosmeticCatalogAudit, error) {
+	return db.ListCosmeticCatalogAudit(ctx, limit)
 }
 func (databaseCosmeticsStore) ListForBot(ctx context.Context, botID string) ([]db.BotCosmeticItem, error) {
 	return db.ListBotCosmetics(ctx, botID)
@@ -86,21 +119,26 @@ func newCosmeticsHandlerWithStore(store cosmeticsStore, engine *game.GameEngine)
 }
 
 func (h *CosmeticsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
-	items, err := h.store.ListCatalog(r.Context())
+	catalog, err := h.store.PublicCatalog(r.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "cosmetics catalog is unavailable")
 		return
 	}
-	hasPurchasableItem := false
-	for _, item := range items {
-		hasPurchasableItem = hasPurchasableItem || item.IsPurchasable
+	hasPurchasableEntry := false
+	for _, item := range catalog.Items {
+		hasPurchasableEntry = hasPurchasableEntry || item.IsPurchasable
+	}
+	for _, pack := range catalog.Packs {
+		hasPurchasableEntry = hasPurchasableEntry || pack.IsPurchasable
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"items": items,
+		"categories": catalog.Categories,
+		"packs":      catalog.Packs,
+		"items":      catalog.Items,
 		// A catalog sale flag is not enough to make payments safe. This remains
 		// false until a verified checkout/webhook provider is wired into the
 		// handler, even if an operator stages purchasable catalog entries.
-		"checkout_enabled": h.checkoutEnabled && hasPurchasableItem,
+		"checkout_enabled": h.checkoutEnabled && hasPurchasableEntry,
 	})
 }
 
