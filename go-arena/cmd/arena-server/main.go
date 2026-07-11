@@ -117,6 +117,27 @@ func main() {
 		slog.Warn("database not available, running without persistence (ARENA_DB_OPTIONAL=true)", "error", err)
 	}
 	defer db.Close()
+	if db.Pool != nil {
+		runtimeLease, err := db.AcquireRuntimeLease(ctx)
+		if err != nil {
+			slog.Error("failed to acquire the database runtime lease; refusing to start", "error", err)
+			os.Exit(1)
+		}
+		defer func() {
+			closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer closeCancel()
+			if err := runtimeLease.Close(closeCtx); err != nil {
+				slog.Warn("failed to release database runtime lease cleanly", "error", err)
+			}
+		}()
+		slog.Info("acquired database runtime lease")
+		go func() {
+			if err := runtimeLease.Monitor(ctx); err != nil {
+				slog.Error("database runtime lease lost; shutting down", "error", err)
+				cancel()
+			}
+		}()
+	}
 
 	// Local/default deployments retain automatic startup migrations. Managed
 	// production deployments run migrations through the updater under the DB
@@ -132,6 +153,15 @@ func main() {
 		if err := verifyManagedSchema(ctx, db.Pool); err != nil {
 			slog.Error("database schema preflight failed; refusing to start", "error", err)
 			os.Exit(1)
+		}
+		// No game engine exists yet, so any active row belongs to a previous
+		// process that stopped before it could publish a natural round result.
+		// Reconcile before this runtime is capable of creating its first round.
+		if changed, err := db.InterruptActiveRounds(ctx); err != nil {
+			slog.Error("failed to reconcile interrupted rounds; refusing to start", "error", err)
+			os.Exit(1)
+		} else if changed > 0 {
+			slog.Info("reconciled interrupted rounds", "changed_rows", changed)
 		}
 		minElo, maxElo := config.EloBounds()
 		if changed, err := db.NormalizeEloRatings(ctx, minElo, maxElo); err != nil {

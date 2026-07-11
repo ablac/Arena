@@ -1183,6 +1183,36 @@ func UpdateRound(ctx context.Context, round *Round) error {
 	return nil
 }
 
+// InterruptActiveRounds marks rounds left active by an earlier server process
+// as interrupted. Startup calls this before the new engine can create a round,
+// so every matching row is necessarily an orphan from a previous runtime.
+// The exact stop time is unknowable after a crash or forced restart; preserve
+// ended_at and all partial telemetry instead of fabricating a completed result.
+func InterruptActiveRounds(ctx context.Context) (int64, error) {
+	if Pool == nil {
+		return 0, ErrNoDatabase
+	}
+	tx, err := Pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("InterruptActiveRounds begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	// Wait for any already-running INSERT to finish before choosing the complete
+	// set of orphaned rows. Normal readers remain available. The process-wide
+	// runtime lease prevents a second updated server from starting new inserts.
+	if _, err := tx.Exec(ctx, `LOCK TABLE rounds IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return 0, fmt.Errorf("InterruptActiveRounds lock: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `UPDATE rounds SET status = 'interrupted' WHERE status = 'active'`)
+	if err != nil {
+		return 0, fmt.Errorf("InterruptActiveRounds: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("InterruptActiveRounds commit: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ---------- weapon_balance ----------
 
 // ListWeaponBalances returns every persisted weapon balance row.
@@ -1445,6 +1475,13 @@ func ReplaceBountyBoardEntries(ctx context.Context, entries []BountyBoardEntry) 
 		return fmt.Errorf("ReplaceBountyBoardEntries begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	// The replacement is a multi-statement snapshot write. Serialize it across
+	// every server process while still allowing ordinary SELECT readers; two
+	// empty-table DELETEs followed by the same INSERT otherwise race on the
+	// bounty_board primary key.
+	if _, err := tx.Exec(ctx, `LOCK TABLE bounty_board IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return fmt.Errorf("ReplaceBountyBoardEntries lock: %w", err)
+	}
 
 	if _, err := tx.Exec(ctx, `DELETE FROM bounty_board`); err != nil {
 		return fmt.Errorf("ReplaceBountyBoardEntries clear: %w", err)
