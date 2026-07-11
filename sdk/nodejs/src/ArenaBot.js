@@ -95,12 +95,12 @@ export default class ArenaBot {
   /** Attack a target by ID. For staff, pass targetPosition [col, row] for area attack. */
   attack(targetId, targetPosition) {
     const a = { action: 'attack', target: targetId };
-    if (targetPosition) a.direction = [targetPosition[0], targetPosition[1]];
+    if (targetPosition) a.target_position = [targetPosition[0], targetPosition[1]];
     return a;
   }
   /** Staff area attack at a position [col, row]. */
   staffAttack(targetPosition) {
-    return { action: 'attack', direction: [targetPosition[0], targetPosition[1]] };
+    return { action: 'attack', target_position: [targetPosition[0], targetPosition[1]] };
   }
   /** Shove a target — knocks them back far with a short stun, no damage. */
   shove(targetId) { return { action: 'shove', target: targetId }; }

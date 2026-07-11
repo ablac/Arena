@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -24,6 +25,13 @@ const (
 	// game is paused and no arena states are being broadcast.
 	spectatorHeartbeatInterval = 10 * time.Second
 	spectatorWriteTimeout      = 10 * time.Second
+	// Public spectators intentionally trail live gameplay so a competing bot
+	// cannot use the full-state rendering feed as a real-time radar. Control
+	// messages and service-status updates remain immediate.
+	spectatorStateDelay = 5 * time.Second
+	// At the normal 10 Hz broadcast rate this holds more than twice the
+	// delayed window while keeping a stalled connection's memory bounded.
+	maxDelayedSpectatorMessages = 128
 )
 
 // spectatorUpgrader is the shared WebSocket upgrader for spectator connections.
@@ -107,9 +115,9 @@ func SpectatorHandler(engine *game.GameEngine) http.HandlerFunc {
 	}
 }
 
-// spectatorReader reads and discards messages from the spectator WebSocket.
-// Its only purpose is to keep the connection alive and detect when the
-// spectator disconnects.
+// spectatorReader detects when the spectator disconnects. The public stream
+// is receive-only; application data from a spectator closes the connection
+// instead of providing a second, undocumented command channel.
 func spectatorReader(conn *websocket.Conn) {
 	// Set a generous read limit -- spectators should not send large messages.
 	conn.SetReadLimit(512)
@@ -132,8 +140,8 @@ func spectatorReader(conn *websocket.Conn) {
 			}
 			return
 		}
-		// Any message from the client also resets the read deadline.
-		conn.SetReadDeadline(time.Now().Add(spectatorPongTimeout))
+		slog.Warn("spectator sent unexpected application data; closing receive-only stream")
+		return
 	}
 }
 
@@ -145,10 +153,26 @@ func spectatorWriter(ctx context.Context, spec *game.SpectatorConn, isPaused fun
 }
 
 func spectatorWriterWithIntervals(ctx context.Context, spec *game.SpectatorConn, isPaused func() bool, pingInterval, heartbeatInterval time.Duration) {
+	spectatorWriterWithTimings(ctx, spec, isPaused, pingInterval, heartbeatInterval, spectatorStateDelay)
+}
+
+type delayedSpectatorMessage struct {
+	payload   []byte
+	releaseAt time.Time
+}
+
+func spectatorWriterWithTimings(ctx context.Context, spec *game.SpectatorConn, isPaused func() bool, pingInterval, heartbeatInterval, stateDelay time.Duration) {
 	pingTicker := time.NewTicker(pingInterval)
 	heartbeatTicker := time.NewTicker(heartbeatInterval)
+	delayTimer := time.NewTimer(time.Hour)
+	if !delayTimer.Stop() {
+		<-delayTimer.C
+	}
+	var delayReady <-chan time.Time
+	delayed := make([]delayedSpectatorMessage, 0, 64)
 	defer pingTicker.Stop()
 	defer heartbeatTicker.Stop()
+	defer delayTimer.Stop()
 	defer spec.Conn.Close()
 
 	for {
@@ -177,6 +201,23 @@ func spectatorWriterWithIntervals(ctx context.Context, spec *game.SpectatorConn,
 				return
 			}
 
+		case now := <-delayReady:
+			for len(delayed) > 0 && !delayed[0].releaseAt.After(now) {
+				if err := writeSpectatorMessage(spec.Conn, websocket.TextMessage, delayed[0].payload); err != nil {
+					slog.Warn("spectator delayed-state write error", "error", err)
+					return
+				}
+				delayed[0].payload = nil
+				delayed = delayed[1:]
+			}
+			if len(delayed) == 0 {
+				delayed = delayed[:0]
+				delayReady = nil
+			} else {
+				delayTimer.Reset(time.Until(delayed[0].releaseAt))
+				delayReady = delayTimer.C
+			}
+
 		case msg, ok := <-spec.SendChan:
 			if !ok {
 				// Channel closed.
@@ -187,12 +228,37 @@ func spectatorWriterWithIntervals(ctx context.Context, spec *game.SpectatorConn,
 				return
 			}
 
+			if stateDelay > 0 && isDelayedSpectatorState(msg) {
+				if len(delayed) >= maxDelayedSpectatorMessages {
+					// Preserve the oldest/keyframe messages and shed only excess
+					// newest frames until the writer catches up.
+					continue
+				}
+				delayed = append(delayed, delayedSpectatorMessage{
+					payload:   msg,
+					releaseAt: time.Now().Add(stateDelay),
+				})
+				if len(delayed) == 1 {
+					delayTimer.Reset(stateDelay)
+					delayReady = delayTimer.C
+				}
+				continue
+			}
+
 			if err := writeSpectatorMessage(spec.Conn, websocket.TextMessage, msg); err != nil {
 				slog.Warn("spectator write error", "error", err)
 				return
 			}
 		}
 	}
+}
+
+func isDelayedSpectatorState(payload []byte) bool {
+	// SpectatorState is marshaled from a struct whose Type field is first, so
+	// keep its hot-path check at the prefix. Lobby state is marshaled from a map,
+	// where encoding/json sorts keys and may place type later in the payload.
+	return bytes.HasPrefix(payload, []byte(`{"type":"arena_state"`)) ||
+		bytes.Contains(payload, []byte(`"type":"lobby_state"`))
 }
 
 type spectatorHeartbeat struct {

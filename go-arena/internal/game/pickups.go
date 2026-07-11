@@ -160,7 +160,9 @@ func applyPickupEffect(bot *BotState, pickup Pickup) {
 	case PickupShieldBubble:
 		bot.ShieldAbsorb += pickup.Value
 	case PickupGravityWell:
-		bot.GravityWellCharge++
+		// The charge is intentionally binary. Re-collecting refreshes availability
+		// but cannot stockpile wells for a burst or carry extra uses into a round.
+		bot.GravityWellCharge = 1
 	case PickupCooldownShard:
 		bot.ActiveEffects = removeEffectByName(bot.ActiveEffects, "cooldown_shard")
 		bot.ActiveEffects = append(bot.ActiveEffects, Effect{

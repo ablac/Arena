@@ -13,20 +13,13 @@ import (
 // and staff impacts as needed.
 func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles *[]Projectile, staffImpacts *[]StaffImpact, arenaEvents *[]ArenaEvent, grid *SpatialGrid, tickCount int, dt float64) {
 	for _, bot := range bots {
-		if !bot.IsAlive || bot.PendingAction == nil || bot.Frozen {
+		if !bot.IsAlive || bot.PendingAction == nil {
 			continue
 		}
 		if bot.PendingAction.Type != ActionAttack {
 			continue
 		}
-
-		// Block attacking during invulnerability (dodge exploit fix).
-		if bot.InvulnTicks > 0 {
-			bot.LastActionResult = &ActionResult{
-				Action:  "attack",
-				Success: false,
-				Message: "cannot attack while dodging",
-			}
+		if rejectControlledAction(bot, "attack", true) {
 			continue
 		}
 
@@ -45,6 +38,14 @@ func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles 
 		}
 
 		targetID := action.TargetID
+		if wc.Special == "area" && targetID != "" && action.TargetPosition != nil {
+			bot.LastActionResult = &ActionResult{
+				Action:  "attack",
+				Success: false,
+				Message: "attack requires exactly one target",
+			}
+			continue
+		}
 		var target *BotState
 		if wc.Special != "area" || targetID != "" {
 			// Validate target for direct-target weapons and targeted staff casts.
@@ -72,6 +73,15 @@ func ProcessCombat(bots map[string]*BotState, obstacles []Obstacle, projectiles 
 					Action:  "attack",
 					Success: false,
 					Message: "cannot attack self",
+				}
+				continue
+			}
+			if !ActiveModeRules.CanDamage(bot, target) {
+				bot.LastActionResult = &ActionResult{
+					Action:  "attack",
+					Success: false,
+					Target:  targetID,
+					Message: "friendly fire is disabled",
 				}
 				continue
 			}
@@ -104,7 +114,7 @@ func setFacingToward(bot *BotState, target Vec2) {
 }
 
 func markDisrupted(bot *BotState, ticks int) {
-	if bot == nil {
+	if bot == nil || bot.InvulnTicks > 0 {
 		return
 	}
 	if ticks <= 0 {
@@ -223,7 +233,7 @@ func processProjectileAttack(bot, target *BotState, action *Action, wc *WeaponCo
 	}
 	chargeTicks := 0
 	chargeIntensity := 1.0
-	damageBase := float64(wc.Damage)
+	damageBase := weaponDamage(wc)
 	cooldown := wc.Cooldown
 	if wc.Name == "bow" {
 		chargeTicks = bowChargeTicks(bot)
@@ -406,12 +416,13 @@ func processStaffAttack(bot, target *BotState, action *Action, wc *WeaponConfig,
 	}
 
 	impact := StaffImpact{
-		OwnerID:    bot.BotID,
-		Position:   targetPos,
-		Radius:     float64(wc.GridParam), // grid tiles for detonation radius
-		Damage:     float64(wc.Damage),
-		TicksLeft:  config.C.StaffDelayTicks,
-		AttackMult: effectiveAttackMultiplier(bot),
+		OwnerID:     bot.BotID,
+		Position:    targetPos,
+		Radius:      float64(wc.GridParam), // grid tiles for detonation radius
+		Damage:      weaponDamage(wc),
+		DamageScale: weaponDamageScale(wc),
+		TicksLeft:   config.C.StaffDelayTicks,
+		AttackMult:  effectiveAttackMultiplier(bot),
 	}
 	*staffImpacts = append(*staffImpacts, impact)
 
@@ -452,7 +463,7 @@ func processMeleeAttack(bot, target *BotState, wc *WeaponConfig, bots map[string
 	}
 
 	// Calculate and apply damage.
-	rawBaseDamage := float64(wc.Damage)
+	rawBaseDamage := weaponDamage(wc)
 	backstabbed := false
 	bashed := false
 	braced := false
@@ -537,11 +548,17 @@ func processCleave(bot, primaryTarget *BotState, wc *WeaponConfig, bots map[stri
 		if !ok || !other.IsAlive {
 			continue
 		}
+		if !ActiveModeRules.CanDamage(bot, other) {
+			continue
+		}
 		if !IsInRange(bot.Position, other.Position, cleaveGridRange) {
 			continue
 		}
+		if CombatLineBlocked(bot.Position, other.Position, obstacles) {
+			continue
+		}
 
-		cleaveDmg := CalculateDamage(float64(wc.Damage), effectiveAttackMultiplier(bot), other.DefenseReduction) * 0.5
+		cleaveDmg := CalculateDamage(weaponDamage(wc), effectiveAttackMultiplier(bot), other.DefenseReduction) * 0.5
 		ApplyDamage(other, bot, cleaveDmg, wc.Name, tickCount)
 		ApplyAttributedGridKnockback(other, bot, bot.Position, 1, obstacles, wc.Name, tickCount)
 		cleaveCount++
@@ -550,6 +567,9 @@ func processCleave(bot, primaryTarget *BotState, wc *WeaponConfig, bots map[stri
 
 // processShieldBash applies a short stun and refreshes the disrupt window.
 func processShieldBash(target *BotState) {
+	if target == nil || target.InvulnTicks > 0 {
+		return
+	}
 	target.StunTicks = config.C.StunDurationTicks
 	markDisrupted(target, config.C.ShieldDisruptWindowTicks)
 }
@@ -588,7 +608,7 @@ func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []O
 	initialDist := GridDistance(posToGrid(bot.Position), posToGrid(target.Position))
 
 	// Deal damage
-	rawDmg := CalculateDamage(float64(wc.Damage), effectiveAttackMultiplier(bot), target.DefenseReduction)
+	rawDmg := CalculateDamage(weaponDamage(wc), effectiveAttackMultiplier(bot), target.DefenseReduction)
 	dealt := ApplyDamage(target, bot, rawDmg, wc.Name, tickCount)
 	totalDealt := dealt
 
@@ -626,16 +646,18 @@ func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []O
 		*arenaEvents = append(*arenaEvents, buildGrappleEvent(bot.BotID, target.BotID, from, target.Position, bot.Position, false, tickCount))
 	}
 
-	bot.CooldownRemaining = wc.Cooldown
+	bot.CooldownRemaining = wc.Cooldown * effectCooldownMultiplier(bot)
 	bot.RoundShotsFired++
 	if dealt > 0 {
 		bot.RoundShotsHit++
 	}
 	setFacingToward(bot, target.Position)
 
-	slammed := initialDist >= maxInt(1, config.C.GrappleSlamMinRange) && isNearImpactSurface(target.Position, obstacles)
+	slammed := target.InvulnTicks <= 0 &&
+		initialDist >= maxInt(1, config.C.GrappleSlamMinRange) &&
+		isNearImpactSurface(target.Position, obstacles)
 	if slammed {
-		bonusBase := float64(wc.Damage) * math.Max(0, config.C.GrappleSlamBonusMultiplier-1)
+		bonusBase := weaponDamage(wc) * math.Max(0, config.C.GrappleSlamBonusMultiplier-1)
 		if bonusBase > 0 {
 			bonusDmg := CalculateDamage(bonusBase, effectiveAttackMultiplier(bot), target.DefenseReduction)
 			totalDealt += ApplyDamage(target, bot, bonusDmg, "grapple_slam", tickCount)
@@ -665,7 +687,7 @@ func processGrappleAttack(bot, target *BotState, wc *WeaponConfig, obstacles []O
 }
 
 // ProcessStaffImpacts ticks down staff impacts and applies damage when they detonate.
-func ProcessStaffImpacts(staffImpacts *[]StaffImpact, burnFields *[]BurnField, bots map[string]*BotState, tickCount int) []ArenaEvent {
+func ProcessStaffImpacts(staffImpacts *[]StaffImpact, burnFields *[]BurnField, bots map[string]*BotState, antiTeam *AntiTeamTracker, tickCount int) []ArenaEvent {
 	active := (*staffImpacts)[:0]
 	var events []ArenaEvent
 
@@ -675,6 +697,8 @@ func ProcessStaffImpacts(staffImpacts *[]StaffImpact, burnFields *[]BurnField, b
 
 		if impact.TicksLeft <= 0 {
 			events = append(events, buildStaffDetonationEvent(*impact, tickCount))
+			attacker := bots[impact.OwnerID]
+			castHit := false
 			// Detonate: damage all bots within grid radius except the owner.
 			impactGridRadius := int(impact.Radius) // Radius stores grid tiles
 			for _, bot := range bots {
@@ -686,16 +710,22 @@ func ProcessStaffImpacts(staffImpacts *[]StaffImpact, burnFields *[]BurnField, b
 					continue
 				}
 
-				// Look up the attacker for stat tracking.
-				attacker, ok := bots[impact.OwnerID]
-				if !ok {
+				if attacker == nil {
 					continue
 				}
 
 				dmg := CalculateDamage(impact.Damage, impact.AttackMult, bot.DefenseReduction)
 				if dealt := ApplyDamage(bot, attacker, dmg, "staff", tickCount); dealt > 0 {
-					attacker.RoundShotsHit++
+					castHit = true
+					if antiTeam != nil {
+						antiTeam.RecordAttack(attacker.BotID, bot.BotID)
+					}
 				}
+			}
+			if castHit && attacker != nil {
+				// Accuracy is cast-based, like cleave and grapple: one successful
+				// cast is one hit regardless of how many targets the AOE affected.
+				attacker.RoundShotsHit++
 			}
 			burnTicks := config.C.StaffBurnFieldTicks
 			if burnTicks > 0 && burnFields != nil {
@@ -703,14 +733,20 @@ func ProcessStaffImpacts(staffImpacts *[]StaffImpact, burnFields *[]BurnField, b
 				if radius <= 0 {
 					radius = 1
 				}
+				damageScale := impact.DamageScale
+				if !finitePositive(damageScale) {
+					damageScale = 1
+				}
 				field := BurnField{
 					ID:           fmt.Sprintf("burn:%s:%d:%0.0f:%0.0f", impact.OwnerID, tickCount, impact.Position.X(), impact.Position.Y()),
 					OwnerID:      impact.OwnerID,
 					Position:     impact.Position,
 					Radius:       radius,
-					Damage:       config.C.StaffBurnFieldDamage,
+					Damage:       config.C.StaffBurnFieldDamage * damageScale,
+					AttackMult:   impact.AttackMult,
 					TicksLeft:    burnTicks,
 					TickInterval: maxInt(1, config.C.StaffBurnFieldTickInterval),
+					HitRecorded:  castHit,
 				}
 				*burnFields = append(*burnFields, field)
 				events = append(events, buildBurnFieldSpawnEvent(field, tickCount))
@@ -725,7 +761,7 @@ func ProcessStaffImpacts(staffImpacts *[]StaffImpact, burnFields *[]BurnField, b
 	return events
 }
 
-func ProcessBurnFields(burnFields *[]BurnField, bots map[string]*BotState, tickCount int) {
+func ProcessBurnFields(burnFields *[]BurnField, bots map[string]*BotState, antiTeam *AntiTeamTracker, tickCount int) {
 	if burnFields == nil {
 		return
 	}
@@ -741,6 +777,10 @@ func ProcessBurnFields(burnFields *[]BurnField, bots map[string]*BotState, tickC
 		if field.Damage > 0 && field.TickInterval > 0 && field.PulseTick%field.TickInterval == 0 {
 			attacker := bots[field.OwnerID]
 			if attacker != nil {
+				attackMult := field.AttackMult
+				if !finitePositive(attackMult) {
+					attackMult = 1
+				}
 				for _, bot := range bots {
 					if !bot.IsAlive || bot.BotID == field.OwnerID {
 						continue
@@ -751,7 +791,19 @@ func ProcessBurnFields(burnFields *[]BurnField, bots map[string]*BotState, tickC
 					if _, enteredRange := firstMovementPositionInRange(bot, field.Position, int(field.Radius)); !enteredRange {
 						continue
 					}
-					ApplyDamage(bot, attacker, field.Damage, "staff_burn", tickCount)
+					dmg := CalculateDamage(field.Damage, attackMult, bot.DefenseReduction)
+					if dealt := ApplyDamage(bot, attacker, dmg, "staff_burn", tickCount); dealt > 0 {
+						if antiTeam != nil {
+							antiTeam.RecordAttack(attacker.BotID, bot.BotID)
+						}
+						if !field.HitRecorded {
+							// A lingering field can turn a missed detonation into one
+							// successful cast, but subsequent targets/ticks are effects,
+							// not independent accuracy actions.
+							attacker.RoundShotsHit++
+							field.HitRecorded = true
+						}
+					}
 				}
 			}
 		}
@@ -807,12 +859,7 @@ func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle, tickCount in
 		if bot.PendingAction.Type != ActionShove {
 			continue
 		}
-		if bot.StunTicks > 0 || bot.Frozen {
-			bot.LastActionResult = &ActionResult{
-				Action:  "shove",
-				Success: false,
-				Message: "stunned",
-			}
+		if rejectControlledAction(bot, "shove", true) {
 			continue
 		}
 
@@ -826,6 +873,24 @@ func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle, tickCount in
 			}
 			continue
 		}
+		if target == bot {
+			bot.LastActionResult = &ActionResult{
+				Action:  "shove",
+				Success: false,
+				Target:  targetID,
+				Message: "cannot shove self",
+			}
+			continue
+		}
+		if !ActiveModeRules.CanDamage(bot, target) {
+			bot.LastActionResult = &ActionResult{
+				Action:  "shove",
+				Success: false,
+				Target:  targetID,
+				Message: "friendly fire is disabled",
+			}
+			continue
+		}
 		if bot.ShoveCooldown > 0 {
 			bot.LastActionResult = &ActionResult{
 				Action:  "shove",
@@ -835,8 +900,10 @@ func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle, tickCount in
 			continue
 		}
 
-		// Range check (grid-based: must be adjacent, 1 tile).
-		if !IsInRange(bot.Position, target.Position, 1) {
+		// Range and knockback are discrete grid-tile settings. Round custom
+		// fractional values to the nearest tile and keep both effects usable.
+		shoveRangeTiles := max(1, int(math.Round(config.C.ShoveRange)))
+		if !IsInRange(bot.Position, target.Position, shoveRangeTiles) {
 			bot.LastActionResult = &ActionResult{
 				Action:  "shove",
 				Success: false,
@@ -857,8 +924,8 @@ func ProcessShoves(bots map[string]*BotState, obstacles []Obstacle, tickCount in
 			continue
 		}
 
-		// Apply knockback (2 grid tiles for shove).
-		ApplyAttributedGridKnockback(target, bot, bot.Position, 2, obstacles, "shove_wall_slam", tickCount)
+		shoveKnockbackTiles := max(1, int(math.Round(config.C.ShoveKnockback)))
+		ApplyAttributedGridKnockback(target, bot, bot.Position, shoveKnockbackTiles, obstacles, "shove_wall_slam", tickCount)
 
 		// Apply stun.
 		if config.C.ShoveStunTicks > target.StunTicks {

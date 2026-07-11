@@ -10,7 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/arena.css?v=20260707c">
   <link rel="stylesheet" href="css/sections.css?v=20260710f">
-  <link rel="stylesheet" href="css/site-shell.css?v=20260710f">
+  <link rel="stylesheet" href="css/site-shell.css?v=20260710g">
   <script src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/materialsLibrary/babylonjs.materials.min.js"></script>
@@ -19,8 +19,8 @@
        it (unversioned), and a second versioned URL would create a separate
        module instance with its own banner controller racing the first. -->
   <script type="module" src="js/content-blocks.js?v=20260707d"></script>
-  <script type="module" src="js/app.js?v=20260710f"></script>
-  <script type="module" src="js/site-shell.js?v=20260710f"></script>
+  <script type="module" src="js/app.js?v=20260710g"></script>
+  <script type="module" src="js/site-shell.js?v=20260710g"></script>
 </head>
 <body>
   <div class="page-backdrop">
@@ -260,7 +260,7 @@
       <details class="api-details">
         <summary><span class="api-method get">GET</span> <code>/api/v1/arena/map</code> <span class="api-label">Next Round Map</span></summary>
         <div class="api-body">
-          <p>Fetch the current or pre-generated next-round terrain grid over REST. Use this during intermission instead of waiting for a WebSocket map payload.</p>
+          <p>Fetch the current or pre-generated next-round terrain grid over REST. During intermission, <code>features_pending: true</code> means the terrain and shape are ready; <code>game_mode</code> is omitted, feature arrays are empty, and the terrain has no round-feature overlays until <code>round_start</code>.</p>
         </div>
       </details>
 
@@ -360,7 +360,8 @@
       <details class="api-details">
         <summary><span class="api-method ws">WS</span> <code>/ws/spectator</code> <span class="api-label">Spectator Connection</span></summary>
         <div class="api-body">
-          <p>Watch the arena live. No authentication required. Receives full arena state every few ticks.</p>
+          <p>Watch the arena with a five-second presentation delay. No authentication is required, and the connection is receive-only.</p>
+          <p>The delay applies to ordered <code>arena_state</code> and <code>lobby_state</code> gameplay snapshots. <code>heartbeat</code> and <code>service_status</code> control messages remain immediate.</p>
           <pre class="code-block">wss://arena.angel-serv.com/ws/spectator</pre>
           <h4>Messages Received</h4>
           <table class="api-table api-table-full">
@@ -464,9 +465,8 @@
   "round_modifier_label": "Pickup Surge",
   "position": [42, 50],
   "bots_in_round": 15,
-  "all_positions": {"bot_id_1": [42, 50], "bot_id_2": [57, 50]},
   "safe_zone": {
-    "center": [50, 50], "radius": 50,
+    "center": [50, 50], "radius": 71,
     "target_center": [45, 55], "target_radius": 9
   }
 }</pre>
@@ -477,7 +477,7 @@
       <details class="api-details">
         <summary><span class="api-msg">terrain payload</span> <span class="api-label">Grid format used by <code>GET /api/v1/arena/map</code></span></summary>
         <div class="api-body">
-          <p>The terrain grid is static for the entire round and is never repeated in tick messages. Cache it from REST. Obstacles are not sent in <code>nearby_entities</code> &mdash; terrain is the only way to know where walls are.</p>
+          <p>The terrain grid is static for the entire round and is never repeated in tick messages. Cache it from REST. Obstacles are not sent in <code>nearby_entities</code> &mdash; terrain is the only way to know where walls are. If <code>features_pending</code> is true, fetch again after <code>round_start</code> for the active mode and round features.</p>
           <pre class="code-block">{
   "status": "ok",
   "width": 100, "height": 100,
@@ -717,15 +717,16 @@
       <details class="api-details">
         <summary><span class="api-msg-send">action</span> <span class="api-label">Game actions (send each tick)</span></summary>
         <div class="api-body">
-          <h4>Move (1 tile per tick, direction is -1/0/1)</h4>
+          <h4>Move (speed-scaled grid movement, direction is -1/0/1)</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "move", "direction": [1, 0]}</pre>
-          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Direction components are -1, 0, or 1. Diagonal movement is allowed (e.g. <code>[1, 1]</code>). Movement into walls (<code>#</code>) or void (<code>V</code>) is blocked &mdash; check the cached <code>/api/v1/arena/map</code> terrain before moving.</p>
+          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Direction components are -1, 0, or 1. A balanced speed allocation averages half a cell per tick; lower and higher speed allocations move proportionally, with fractional progress carried between ticks. Diagonal movement is allowed (e.g. <code>[1, 1]</code>). Movement into walls (<code>#</code>) or void (<code>V</code>) is blocked &mdash; check the cached <code>/api/v1/arena/map</code> terrain before moving.</p>
           <h4>Move To Grid Position (A* pathfinding)</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "move_to", "target_position": [75, 60]}</pre>
           <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Server-side A* pathfinding automatically routes around walls. Provide <code>[col, row]</code> grid coordinates. Preferred over manual <code>move</code> for long-distance navigation.</p>
           <h4>Attack</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "attack", "target": "enemy_bot_id"}</pre>
-          <p style="margin:4px 0 8px;font-size:0.85em;color:var(--text-secondary)">Target must be within weapon range (Chebyshev/grid distance). For <strong>staff</strong>, you can optionally include <code>"target_position": [col, row]</code> to place the AoE at a specific grid position instead of tracking a bot target.</p>
+          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)"><strong>Target visibility:</strong> target-ID <code>attack</code>, <code>shove</code>, and <code>grapple</code> actions are accepted only while that target is in your current fog-of-war view. The active public bounty target is the sole exception.</p>
+          <p style="margin:4px 0 8px;font-size:0.85em;color:var(--text-secondary)">Send exactly one aim mode. Use <code>"target": "bot_id"</code> for a bot in weapon range, or—only for <strong>staff</strong>—use <code>"target_position": [col, row]</code> to place the AoE at a specific grid position. Sending both is rejected.</p>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "attack", "target": "enemy_bot_id", "charged": true}</pre>
           <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)"><strong>Bow only:</strong> <code>"charged": true</code> spends any stored bow charge for a faster, harder-hitting arrow. Build charge by staying weapon-ready and not firing. Read <code>your_state.bow_charge_ticks</code>, <code>your_state.bow_charge_level</code>, and <code>your_state.charged_shot_ready</code>.</p>
           <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)"><strong>Tactical fields:</strong> nearby bots expose <code>recently_disrupted_ticks</code> (shield follow-up), <code>rear_exposed</code> (dagger backstab angle), <code>brace_ready</code> (spear ready state), and <code>near_impact_surface</code> (good grapple slam target).</p>
@@ -739,10 +740,10 @@
           <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Knocks the target back 2 tiles and stuns for 2 ticks. No damage. 1.5s cooldown (separate from weapon). Range: 1 tile (adjacent).</p>
           <h4>Place Mine</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "place_mine"}</pre>
-          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Places an invisible landmine at your position. Max 3 per bot. Arms after 1 second (~10 ticks). Invisible to enemies. 1.5-tile blast radius. 40 damage to all enemies in radius.</p>
+          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Places an invisible landmine at your position. Max 3 per bot. Arms after 1 second (~10 ticks). Invisible to enemies. 1-tile blast radius. 40 damage to all enemies in radius.</p>
           <h4>Use Gravity Well</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "use_gravity_well", "target_position": [55, 48]}</pre>
-          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Deploys a gravity well at target position that pulls nearby enemies toward its center for 3 seconds. Requires a <code>gravity_well</code> pickup. 4-tile pull radius.</p>
+          <p style="margin:4px 0 12px;font-size:0.85em;color:var(--text-secondary)">Deploys a gravity well at target position that pulls vulnerable enemies toward its center for 3 seconds. Requires a <code>gravity_well</code> pickup. 3-tile pull radius.</p>
           <h4>Idle</h4>
           <pre class="code-block">{"type": "action", "tick": 342, "action": "idle"}</pre>
         </div>
@@ -753,9 +754,10 @@
     <details class="card api-card api-group">
       <summary class="api-section-title">Weapons</summary>
       <div class="api-body" style="padding:16px">
+        <p>These are base values. Adaptive damage and cooldown scales can change between rounds; query <code>GET /api/v1/weapon-stats</code> or <code>GET /api/v1/bot-setup</code> for current effective values.</p>
         <table class="api-table api-table-full">
           <thead>
-            <tr><th>Weapon</th><th>Damage</th><th>Range (tiles)</th><th>Cooldown</th><th>Special</th></tr>
+            <tr><th>Weapon</th><th>Base Damage</th><th>Range (tiles)</th><th>Base Cooldown</th><th>Special</th></tr>
           </thead>
           <tbody>
             <tr><td><code>sword</code></td><td>21</td><td>1</td><td>0.55s</td><td>Cleave &mdash; hits nearby enemies in a sweep</td></tr>
@@ -768,7 +770,7 @@
           </tbody>
         </table>
         <h4 style="margin-top:16px">Universal Grapple Ability</h4>
-        <p>ALL bots get <strong>2 grapple charges</strong> per round (separate from the grapple weapon). Use the <code>grapple</code> action with a <code>target</code> bot_id to yank an enemy, or a <code>target_position</code> to anchor-pull yourself.</p>
+        <p>ALL bots get <strong>2 grapple charges</strong> per round (separate from the grapple weapon). Use the <code>grapple</code> action with exactly one aim mode: a currently visible <code>target</code> bot_id to yank an enemy, or a <code>target_position</code> to anchor-pull yourself. Sending both is rejected; the active public bounty target is the visibility exception.</p>
         <ul>
           <li><strong>Range:</strong> 12 tiles</li>
           <li><strong>Damage:</strong> 15</li>
@@ -790,7 +792,7 @@
           </thead>
           <tbody>
             <tr><td><code>hp</code></td><td>100 + stat &times; 10</td><td>150 HP</td></tr>
-            <tr><td><code>speed</code></td><td>1 tile/tick (2 with speed boost)</td><td>affects dodge</td></tr>
+            <tr><td><code>speed</code></td><td>3.0 + stat &times; 0.5; grid pacing scales proportionally</td><td>5.5 move speed</td></tr>
             <tr><td><code>attack</code></td><td>1.0 + stat &times; 0.1</td><td>1.5x multiplier</td></tr>
             <tr><td><code>defense</code></td><td>stat &times; 0.03</td><td>15% damage reduction</td></tr>
           </tbody>
@@ -837,8 +839,8 @@
             <tr><td>Grid size</td><td>100 &times; 100 tiles (cell size: 20 units)</td></tr>
             <tr><td>Tick rate</td><td>10 Hz (100ms per tick)</td></tr>
             <tr><td>Fog radius</td><td>7 tiles (visible area: 15&times;15)</td></tr>
-            <tr><td>Movement speed</td><td>1 tile/tick (2 with speed boost)</td></tr>
-            <tr><td>Safe zone initial radius</td><td>50 tiles</td></tr>
+            <tr><td>Movement speed</td><td>Speed-scaled; balanced loadout averages 0.5 tile/tick (speed boost doubles it)</td></tr>
+            <tr><td>Safe zone initial radius</td><td>Covers the map (~71 tiles on the square arena)</td></tr>
             <tr><td>Safe zone min radius</td><td>9 tiles</td></tr>
             <tr><td>Zone damage (outside)</td><td>3 HP/tick</td></tr>
             <tr><td>Zone shrink delay</td><td>60 seconds</td></tr>
@@ -862,13 +864,13 @@
           </thead>
           <tbody>
             <tr><td>Landmines</td><td>Place up to 3 mines per bot. Arms after 1s. 1-tile blast radius, 40 damage.</td></tr>
-            <tr><td>Gravity Wells</td><td>Collect <code>gravity_well</code> pickup, then deploy with <code>use_gravity_well</code>. Pulls enemies within 4 tiles toward center for 3 seconds.</td></tr>
+            <tr><td>Gravity Wells</td><td>Collect <code>gravity_well</code> pickup, then deploy with <code>use_gravity_well</code>. Pulls vulnerable enemies within 3 tiles toward center for 3 seconds.</td></tr>
             <tr><td>Teleport Pads</td><td>3 linked pairs per round. Pads report <code>is_ready</code> and <code>cooldown_remaining_ticks</code> in <code>nearby_entities</code>. A used pair locks briefly for everyone before it re-arms. During <code>teleport_surge</code>, the whole network re-arms much faster.</td></tr>
             <tr><td>Capture Pad</td><td>Neutral objective pad. Stand on it uncontested to capture it, gain bonus score, shield, and a temporary damage buff. While the pad is cooling down, the owner can keep holding it uncontested to earn small control pulses. Exposed in <code>nearby_entities</code> as <code>capture_pad</code> with progress, contested, contender count, cooldown, and next pulse fields.</td></tr>
             <tr><td>Special Rounds</td><td>Occasional rounds roll <code>fast_zone</code>, <code>pickup_surge</code>, <code>double_bounty</code>, <code>teleport_surge</code>, or <code>hazard_storm</code>. Read the active modifier from <code>round_start</code> and <code>tick.round_modifier</code>.</td></tr>
             <tr><td>Hazard Zones</td><td>6 pulsing damage zones per round. They expose <code>active</code>, <code>on_ticks</code>, <code>off_ticks</code>, and <code>damage_per_tick</code> in <code>nearby_entities</code>. During <code>hazard_storm</code>, they pulse faster and hit harder.</td></tr>
             <tr><td>Burn Fields</td><td>Lingering staff flames after a detonation. Short duration, visible in <code>nearby_entities</code> as <code>burn_field</code>.</td></tr>
-            <tr><td>Sudden Death</td><td>When the safe zone reaches minimum radius, random floor tiles become void. Standing on void tiles deals 10 HP/tick.</td></tr>
+            <tr><td>Sudden Death</td><td>When the safe zone reaches minimum radius, random floor tiles become void. Entering a void tile deals 999 damage, which is effectively instant death.</td></tr>
             <tr><td>Bounty System</td><td>Consecutive round winners build a public bounty. The current live target is exposed in ticks, and the full board is available at <code>GET /api/v1/bounties</code>.</td></tr>
           </tbody>
         </table>
@@ -1091,7 +1093,7 @@ GET /api/v1/health
 # Bot Connection (authenticated)
 wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY
 
-# Spectator Connection (public, read-only)
+# Spectator Connection (public, read-only, 5-second delay)
 wss://arena.angel-serv.com/ws/spectator
 
 
@@ -1103,7 +1105,7 @@ wss://arena.angel-serv.com/ws/spectator
 # Stats: hp + speed + attack + defense = 20 (each 1-10)
 # Fallback: aggressive | defensive | opportunistic | territorial | hunter
 
-# Move (1 cell per tick, direction is -1/0/1 per axis)
+# Move (speed-scaled; balanced speed averages 0.5 cell/tick, direction is -1/0/1 per axis)
 {"type": "action", "tick": 342, "action": "move", "direction": [1, 0]}
 # [1,0]=right  [-1,0]=left  [0,-1]=up  [0,1]=down  [1,1]=down-right  etc.
 # Blocked by walls (#) — bot simply does not move.
@@ -1115,12 +1117,14 @@ wss://arena.angel-serv.com/ws/spectator
 # Attack
 {"type": "action", "tick": 342, "action": "attack", "target": "enemy_bot_id"}
 # Must be within weapon range (Chebyshev distance) and have line of sight.
-# For staff: optionally add "target_position": [col, row] for AoE aim.
+# Target must be inside your current fog-of-war view, except for the public bounty target.
+# For staff: send target_position instead of target for positional AoE aim; never send both.
 
 # Grapple (universal ability, 2 charges/round)
 {"type": "action", "tick": 342, "action": "grapple", "target": "enemy_bot_id"}
 {"type": "action", "tick": 342, "action": "grapple", "target_position": [61, 44]}
 # Enemy grapple: 12-tile range, 15 dmg, pulls target to you, 3-tick stun, 4s cooldown.
+# Enemy must be inside your current fog-of-war view, except for the public bounty target.
 # Anchor grapple: pull yourself to a valid landing near the target position.
 
 # Dodge (2 cells + 3 ticks invulnerability, 30-tick cooldown)
@@ -1147,7 +1151,7 @@ wss://arena.angel-serv.com/ws/spectator
 # connected        — bot_id, grid_size, fog_radius, available_weapons, stat_budget
 # loadout_confirmed — weapon, stats, computed (max_hp, attack_range, cooldown, etc.)
 # lobby            — bots_connected, bots_needed, countdown, players[]
-# round_start      — round_number, position, bots_in_round, safe_zone, all_positions
+# round_start      — round_number, position, bots_in_round, safe_zone
 # tick             — tick, your_state{}, nearby_entities[], safe_zone{}, hints[]
 # kill             — victim_name, victim_id, weapon_used, your_kill_streak
 # death            — killer_name, killed_by, weapon_used, damage, respawn
@@ -1158,6 +1162,7 @@ wss://arena.angel-serv.com/ws/spectator
 
 # ─── WEAPONS ─────────────────────────────────────────────────
 
+# Base weapon values (query /api/v1/weapon-stats for current adaptive scales)
 # Weapon     Damage  Range  Cooldown  Special
 # sword      21      1      0.55s     Cleave (hits nearby enemies)
 # bow        16      8      1.05s     Charged shot (stored charge -> faster harder hit)
@@ -1175,7 +1180,7 @@ wss://arena.angel-serv.com/ws/spectator
 
 # 20 points total, each stat 1-10
 # HP:      100 + stat * 10        (stat 5 → 150 HP)
-# Speed:   1 tile/tick            (2 with speed boost pickup)
+# Speed:   3.0 + stat*0.5         (balanced loadout averages 0.5 tile/tick)
 # Attack:  1.0 + stat * 0.1      (stat 5 → 1.5x multiplier)
 # Defense: stat * 0.03            (stat 5 → 15% damage reduction)
 # Damage = weapon_damage * attack_mult * (1 - defense_reduction)
@@ -1196,8 +1201,8 @@ wss://arena.angel-serv.com/ws/spectator
 # Grid:           100x100 tiles (cell_size: 20 world units)
 # Tick rate:      10 Hz (100ms per tick)
 # Fog radius:     7 tiles (visible area: 15x15)
-# Movement:       1 tile/tick (hard stop at walls, no sliding)
-# Safe zone:      starts 50 tiles, shrinks to 9 tiles
+# Movement:       speed-scaled; balanced loadout averages 0.5 tile/tick
+# Safe zone:      starts covering the map (~71 tiles on square), shrinks to 9 tiles
 # Zone damage:    3 HP/tick outside zone
 # Zone shrink:    starts after 60 seconds
 # Round max:      300 seconds
@@ -1229,18 +1234,19 @@ wss://arena.angel-serv.com/ws/spectator
 # ─── ARENA FEATURES ────────────────────────────────────────
 
 # Landmines:     place_mine action, max 3/bot, arms after 1s, invisible to enemies
-#                1.5-tile blast radius, 40 damage
+#                1-tile blast radius, 40 damage
 # Gravity Wells: collect gravity_well pickup, deploy with use_gravity_well
-#                Pulls enemies within 4 tiles toward center for 3s
+#                Pulls vulnerable enemies within 3 tiles toward center for 3s
 # Teleport Pads: 3 linked pairs/round, exposed in nearby_entities with
-#                is_ready + cooldown_remaining_ticks
+#                is_ready + cooldown_remaining_ticks. Only lit/ready pads work.
+#                Use locks the pair 3s and that bot from both pads for 5s.
 # Capture Pad:   neutral objective, exposed in nearby_entities as capture_pad
 #                with progress_ticks, capture_ticks, owner_id, cooldown, and
 #                next_control_pulse_ticks for defensive hold rewards
 # Hazard Key:    hazard immunity + faster capture progress while the effect lasts
 # Relay Battery: extra capture progress per tick while the effect lasts
-# Hazard Zones:  6 pulsing damage zones, 2 HP/tick, 3s on / 2s off cycle
-# Sudden Death:  random void tiles when zone hits min radius, 10 HP/tick on void
+# Hazard Zones:  6 pulsing damage zones, 3 HP/tick, 3s on / 2s off cycle
+# Sudden Death:  random void tiles at minimum zone; void deals 999 damage (instant death)
 # Bounty System: consecutive round winners build a public bounty board at
 #                GET /api/v1/bounties; the live target is also exposed in ticks`;
   </script>

@@ -3,12 +3,146 @@ package game
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"arena-server/internal/config"
 	"arena-server/internal/db"
 )
+
+func waitForRoundPersistenceTest(t *testing.T, result *roundPersistenceResult) error {
+	t.Helper()
+	select {
+	case <-result.done:
+		return result.err
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for round persistence")
+		return nil
+	}
+}
+
+func TestRoundCreateQueuePreservesEngineStartOrder(t *testing.T) {
+	previousCreate := createRoundRecord
+	t.Cleanup(func() { createRoundRecord = previousCreate })
+
+	firstStarted := make(chan struct{})
+	secondStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
+	t.Cleanup(release)
+
+	var callsMu sync.Mutex
+	var calls []string
+	createRoundRecord = func(_ context.Context, round *db.Round) error {
+		callsMu.Lock()
+		calls = append(calls, round.ID)
+		callsMu.Unlock()
+		switch round.ID {
+		case "first-round":
+			close(firstStarted)
+			<-releaseFirst
+		case "second-round":
+			close(secondStarted)
+		}
+		return nil
+	}
+
+	engine := &GameEngine{}
+	first := engine.enqueueRoundCreate(&db.Round{ID: "first-round", RoundNumber: 1})
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first round create did not start")
+	}
+	second := engine.enqueueRoundCreate(&db.Round{ID: "second-round", RoundNumber: 2})
+
+	select {
+	case <-secondStarted:
+		t.Fatal("second round create overtook delayed first round")
+	case <-time.After(75 * time.Millisecond):
+	}
+	release()
+	if err := waitForRoundPersistenceTest(t, first); err != nil {
+		t.Fatalf("first round persistence: %v", err)
+	}
+	if err := waitForRoundPersistenceTest(t, second); err != nil {
+		t.Fatalf("second round persistence: %v", err)
+	}
+
+	callsMu.Lock()
+	defer callsMu.Unlock()
+	if len(calls) != 2 || calls[0] != "first-round" || calls[1] != "second-round" {
+		t.Fatalf("round create order = %v, want first then second", calls)
+	}
+}
+
+func TestRoundCreateTimeoutReleasesQueuedRounds(t *testing.T) {
+	previousCreate := createRoundRecord
+	previousTimeout := roundCreateTimeout
+	roundCreateTimeout = 25 * time.Millisecond
+	t.Cleanup(func() {
+		createRoundRecord = previousCreate
+		roundCreateTimeout = previousTimeout
+	})
+
+	secondStarted := make(chan struct{})
+	deadlineSeen := make(chan bool, 2)
+	createRoundRecord = func(ctx context.Context, round *db.Round) error {
+		if _, ok := ctx.Deadline(); !ok {
+			deadlineSeen <- false
+			return errors.New("round create context has no deadline")
+		}
+		deadlineSeen <- true
+		if round.ID == "blocked-round" {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		close(secondStarted)
+		return nil
+	}
+
+	engine := &GameEngine{}
+	blocked := engine.enqueueRoundCreate(&db.Round{ID: "blocked-round", RoundNumber: 1})
+	next := engine.enqueueRoundCreate(&db.Round{ID: "next-round", RoundNumber: 2})
+
+	if err := waitForRoundPersistenceTest(t, blocked); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("blocked create error = %v, want context deadline exceeded", err)
+	}
+	if err := waitForRoundPersistenceTest(t, next); err != nil {
+		t.Fatalf("next queued create remained blocked: %v", err)
+	}
+	select {
+	case <-secondStarted:
+	default:
+		t.Fatal("next queued create never started after timeout")
+	}
+	for i := 0; i < 2; i++ {
+		if !<-deadlineSeen {
+			t.Fatal("round create context has no deadline")
+		}
+	}
+}
+
+func TestAfterRoundCreatedSuppressesDependentsOnFailure(t *testing.T) {
+	failed := newRoundPersistenceResult()
+	failed.err = errors.New("insert failed")
+	close(failed.done)
+	called := false
+	afterRoundCreated(failed, "test dependent", "failed-round", func() { called = true })
+	if called {
+		t.Fatal("dependent persistence ran after CreateRound failure")
+	}
+
+	succeeded := newRoundPersistenceResult()
+	succeeded.err = nil
+	close(succeeded.done)
+	afterRoundCreated(succeeded, "test dependent", "successful-round", func() { called = true })
+	if !called {
+		t.Fatal("dependent persistence did not run after successful CreateRound")
+	}
+}
 
 func isolateBotStatsPersistence(t *testing.T) uint64 {
 	t.Helper()
@@ -241,9 +375,11 @@ func TestResetLeaderboardFailureRestoresMemoryAndEpoch(t *testing.T) {
 func TestRoundBotStatsRejectsPreResetEpoch(t *testing.T) {
 	epoch := isolateBotStatsPersistence(t)
 	inserted := 0
-	insertRoundBotStats = func(_ context.Context, _ int, _, _, _ string,
+	var insertedRoundID string
+	insertRoundBotStats = func(_ context.Context, roundID string, _ int, _, _, _ string,
 		_, _ int, _, _ int64, _, _, _, _ int, _ float64, _ int, _ bool) error {
 		inserted++
+		insertedRoundID = roundID
 		return nil
 	}
 	bot := &BotState{BotID: "round-bot", Name: "Round Bot", Weapon: "sword", RoundKills: 2}
@@ -252,14 +388,22 @@ func TestRoundBotStatsRejectsPreResetEpoch(t *testing.T) {
 	if err := engine.ResetLeaderboard(context.Background(), func(context.Context) error { return nil }); err != nil {
 		t.Fatalf("ResetLeaderboard: %v", err)
 	}
-	PersistRoundBotStats(context.Background(), epoch, 1, map[string]*BotState{bot.BotID: bot}, "")
+	PersistRoundBotStats(context.Background(), epoch, "stale-round", 1, map[string]*BotState{bot.BotID: bot}, "")
 	if inserted != 0 {
 		t.Fatal("pre-reset round stats recreated a truncated row")
 	}
+	PersistRoundBotStats(context.Background(), botStatsPersistenceEpoch.Load(), "", 2,
+		map[string]*BotState{bot.BotID: bot}, "")
+	if inserted != 0 {
+		t.Fatal("round stats without a durable identity were persisted")
+	}
 
-	PersistRoundBotStats(context.Background(), botStatsPersistenceEpoch.Load(), 2,
+	PersistRoundBotStats(context.Background(), botStatsPersistenceEpoch.Load(), "fresh-round", 2,
 		map[string]*BotState{bot.BotID: bot}, "")
 	if inserted != 1 {
 		t.Fatalf("fresh round stats inserts = %d, want 1", inserted)
+	}
+	if insertedRoundID != "fresh-round" {
+		t.Fatalf("persisted round identity = %q, want fresh-round", insertedRoundID)
 	}
 }

@@ -124,10 +124,14 @@ func PersistSingleBot(ctx context.Context, snapshot BotStatsSnapshot) {
 // PersistRoundBotStats serializes the time-window source with leaderboard
 // resets. An epoch captured before a successful reset is stale even if its
 // goroutine was scheduled afterward, so it must not recreate truncated rows.
-func PersistRoundBotStats(ctx context.Context, epoch uint64, roundNumber int, bots map[string]*BotState, winnerID string) {
+func PersistRoundBotStats(ctx context.Context, epoch uint64, roundID string, roundNumber int, bots map[string]*BotState, winnerID string) {
 	botStatsPersistenceMu.Lock()
 	defer botStatsPersistenceMu.Unlock()
 	if epoch != botStatsPersistenceEpoch.Load() {
+		return
+	}
+	if roundID == "" {
+		slog.Error("persist: refusing round stats without a durable round identity", "round", roundNumber)
 		return
 	}
 
@@ -143,12 +147,12 @@ func PersistRoundBotStats(ctx context.Context, epoch uint64, roundNumber int, bo
 		}
 		won := bot.BotID == winnerID
 		lifeSecs := int(math.Round(float64(bot.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))))
-		if err := insertRoundBotStats(ctx, roundNumber, bot.BotID, bot.Name, bot.Weapon,
+		if err := insertRoundBotStats(ctx, roundID, roundNumber, bot.BotID, bot.Name, bot.Weapon,
 			bot.RoundKills, bot.RoundDeaths,
 			int64(bot.RoundDamageDealt), int64(bot.RoundDamageTaken),
 			lifeSecs, bot.RoundShotsFired, bot.RoundShotsHit, bot.RoundPickups,
 			bot.RoundDistance, ClampElo(bot.Elo), won); err != nil {
-			slog.Error("persist: failed to insert round bot stats", "bot_id", bot.BotID, "round", roundNumber, "error", err)
+			slog.Error("persist: failed to insert round bot stats", "bot_id", bot.BotID, "round_id", roundID, "round", roundNumber, "error", err)
 		}
 	}
 }

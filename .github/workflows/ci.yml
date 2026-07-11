@@ -56,7 +56,7 @@ jobs:
       - name: Install SDK test dependencies
         run: |
           npm ci --prefix sdk/nodejs --ignore-scripts
-          python -m pip install --disable-pip-version-check -e sdk/python
+          python -m pip install --disable-pip-version-check -e "sdk/python[dev]"
       - name: Validate JSON manifests
         shell: bash
         run: |
@@ -79,11 +79,16 @@ jobs:
           node scripts/test-spectator-client.mjs
           node scripts/test-swordsman-material-lifecycle.mjs
           node scripts/test-responsive-site-shell.mjs
+          node scripts/test-teleporter-readiness.mjs
           node scripts/test-service-status-ui.mjs
           node scripts/test-sdk-service-status.mjs
       - name: Check Python syntax
         run: |
           python -m compileall sdk/python/arena_sdk sdk/python/examples bots
           python scripts/test_sdk_service_status.py
+      - name: Test SDK action helpers
+        run: |
+          node --test sdk/nodejs/test/*.test.js
+          python -m pytest sdk/python/tests
       - name: Check whitespace
         run: git diff --check

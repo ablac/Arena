@@ -177,6 +177,9 @@ func ApplyHitKnockback(target *BotState, attackerPos Vec2, knockbackDist float64
 }
 
 func applyHitKnockback(target *BotState, attackerPos Vec2, knockbackDist float64, obstacles []Obstacle, attacker *BotState, source string, tickCount int) {
+	if target == nil || (attacker != nil && !ActiveModeRules.CanDamage(attacker, target)) {
+		return
+	}
 	// Invulnerable (dodging) bots are immune to displacement and the wall-slam
 	// damage it can cause, matching the shove and projectile rules.
 	if target.InvulnTicks > 0 {
@@ -225,7 +228,8 @@ func applyHitKnockback(target *BotState, attackerPos Vec2, knockbackDist float64
 
 func applyWallSlamDamage(target, attacker *BotState, source string, tickCount int) {
 	damage := config.C.KnockbackWallDamage * SuddenDeathDamageMultiplier()
-	if target == nil || damage <= 0 || target.InvulnTicks > 0 {
+	if target == nil || damage <= 0 || target.InvulnTicks > 0 ||
+		(attacker != nil && !ActiveModeRules.CanDamage(attacker, target)) {
 		return
 	}
 	target.HP -= damage
@@ -255,6 +259,9 @@ func ApplyAttributedGridKnockback(target, attacker *BotState, attackerPos Vec2, 
 }
 
 func applyGridKnockback(target *BotState, attackerPos Vec2, gridTiles int, obstacles []Obstacle, attacker *BotState, source string, tickCount int) {
+	if target == nil || (attacker != nil && !ActiveModeRules.CanDamage(attacker, target)) {
+		return
+	}
 	// Same invulnerability rule as applyHitKnockback (which also covers the
 	// ActiveTerrain == nil fallback below).
 	if target.InvulnTicks > 0 {
