@@ -350,11 +350,14 @@ type BotState struct {
 	LastActionResult *ActionResult
 
 	// Connection tracking
-	ConnectedAt time.Time
+	ConnectedAt        time.Time
+	ReconnectPending   bool
+	DisconnectedAtTick int
 
 	// WebSocket (nil for AI-only bots)
 	Conn     *websocket.Conn
 	SendChan chan []byte
+	TickChan chan []byte
 }
 
 // rejectControlledAction applies the shared stun/freeze/dodge gate used by

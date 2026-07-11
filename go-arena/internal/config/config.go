@@ -190,6 +190,7 @@ type Config struct {
 	HeartbeatInterval          float64 `envconfig:"ARENA_HEARTBEAT_INTERVAL" default:"30"`
 	WSConnectRatePerMin        int     `envconfig:"ARENA_WS_CONNECT_RATE_PER_MIN" default:"3"`
 	LoadoutTimeoutSecs         float64 `envconfig:"ARENA_LOADOUT_TIMEOUT_SECS" default:"10"`
+	WSReconnectGraceSecs       float64 `envconfig:"ARENA_WS_RECONNECT_GRACE_SECS" default:"10"`
 	SpectatorBroadcastInterval int     `envconfig:"ARENA_SPECTATOR_BROADCAST_INTERVAL" default:"1"`
 	AFKTimeoutTicks            int     `envconfig:"ARENA_AFK_TIMEOUT_TICKS" default:"30"`
 

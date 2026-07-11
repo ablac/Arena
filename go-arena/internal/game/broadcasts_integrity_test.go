@@ -46,3 +46,34 @@ func TestSendRoundStartDoesNotRevealOpponentPositions(t *testing.T) {
 		t.Fatal("timed out waiting for round_start")
 	}
 }
+
+func TestTickDeliveryCoalescesWithoutDisplacingControlMessages(t *testing.T) {
+	bot := &BotState{
+		BotID:    "slow-bot",
+		SendChan: make(chan []byte, 1),
+		TickChan: make(chan []byte, 1),
+	}
+	control := []byte(`{"type":"round_start"}`)
+	bot.SendChan <- control
+	arena := NewArenaMap()
+	yourState := map[string]interface{}{"is_alive": true}
+
+	SendTickUpdate(bot, yourState, nil, 10, arena, nil, 8)
+	SendTickUpdate(bot, yourState, nil, 11, arena, nil, 8)
+
+	if got := <-bot.SendChan; string(got) != string(control) {
+		t.Fatalf("control queue was displaced by tick: %s", got)
+	}
+	select {
+	case payload := <-bot.TickChan:
+		var message map[string]interface{}
+		if err := json.Unmarshal(payload, &message); err != nil {
+			t.Fatalf("decode latest tick: %v", err)
+		}
+		if got := int(message["tick"].(float64)); got != 11 {
+			t.Fatalf("coalesced tick=%d, want latest 11", got)
+		}
+	default:
+		t.Fatal("latest tick was not queued")
+	}
+}

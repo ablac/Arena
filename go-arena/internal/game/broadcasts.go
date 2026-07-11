@@ -81,7 +81,18 @@ func SendTickUpdate(bot *BotState, yourState map[string]interface{}, nearbyEntit
 			msg[k] = v
 		}
 	}
-	SendToBot(bot, msg)
+	if bot.TickChan == nil {
+		// Compatibility for tests and non-network callers that construct a
+		// BotState without the production transport split.
+		SendToBot(bot, msg)
+		return
+	}
+	data, err := marshalJSON(msg)
+	if err != nil {
+		slog.Error("failed to marshal bot tick", "bot_id", bot.BotID, "error", err)
+		return
+	}
+	safeReplaceLatest(bot.TickChan, data)
 }
 
 // SendDeathMessage notifies a bot that it has died.
@@ -264,6 +275,26 @@ func BroadcastToSpectators(spectators []*SpectatorConn, data []byte) {
 // the channel has been closed (e.g. spectator disconnected).
 func safeSend(ch chan []byte, data []byte) {
 	defer func() { recover() }()
+	select {
+	case ch <- data:
+	default:
+	}
+}
+
+// safeReplaceLatest keeps at most one replaceable state snapshot. Lifecycle
+// and control messages use SendChan, so a slow client never trades a death or
+// round transition for a backlog of obsolete ticks.
+func safeReplaceLatest(ch chan []byte, data []byte) {
+	defer func() { recover() }()
+	select {
+	case ch <- data:
+		return
+	default:
+	}
+	select {
+	case <-ch:
+	default:
+	}
 	select {
 	case ch <- data:
 	default:

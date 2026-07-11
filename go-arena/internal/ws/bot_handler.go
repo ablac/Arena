@@ -46,6 +46,16 @@ func botUpgradeRateLimit(ip string) (string, int) {
 	return "ws:bot:connect:" + ip, limit
 }
 
+func botKeyConnectRateLimit(botID, apiKeyID string, resume bool) (key string, limit, windowSecs int) {
+	if resume {
+		// Recovery traffic has its own small burst bucket, so the initial
+		// admission does not make the first one-second SDK retry fail. The bound
+		// still stops a broken or malicious client from thrashing sessions.
+		return "ws:bot:resume:" + botID + ":" + apiKeyID, 3, 5
+	}
+	return "ws:bot:key:" + apiKeyID, 1, 5
+}
+
 // BotHandler returns an http.HandlerFunc that manages the full lifecycle of a
 // bot WebSocket connection: upgrade, authentication, loadout negotiation,
 // engine registration, and the read/write message loops.
@@ -168,16 +178,17 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			return
 		}
 
-		// Per-API-key reconnect cooldown (5 second minimum between connections, skip for localhost).
+		// Per-key admission/recovery limiting (skip for localhost demo bots).
 		if config.C.WSConnectRatePerMin > 0 && !isLocal {
-			keyRateKey := "ws:bot:key:" + botRecord.APIKeyID
-			allowed, _, _, err := security.CheckRateLimit(r.Context(), keyRateKey, 1, 5)
+			resume := engine.HasBotSessionForKey(botRecord.ID, botRecord.APIKeyID)
+			keyRateKey, limit, windowSecs := botKeyConnectRateLimit(botRecord.ID, botRecord.APIKeyID, resume)
+			allowed, _, _, err := security.CheckRateLimit(r.Context(), keyRateKey, limit, windowSecs)
 			if err != nil {
 				slog.Warn("key rate limit check error, allowing", "error", err)
 			} else if !allowed {
 				slog.Warn("bot reconnecting too fast", "bot", botRecord.Name, "key_id", botRecord.APIKeyID)
 				sendWSErrorStructured(conn, "reconnecting too fast, wait a few seconds", "RECONNECT_TOO_FAST", map[string]interface{}{
-					"retry_after": 5,
+					"retry_after": windowSecs,
 				})
 				if EventHook != nil {
 					EventHook("reconnect_rate_limited", botRecord.Name, botRecord.ID, ip, botRecord.APIKeyID, "reconnecting too fast")
@@ -232,6 +243,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			ConnectedAt:      time.Now(),
 			Conn:             conn,
 			SendChan:         make(chan []byte, 64),
+			TickChan:         make(chan []byte, 1),
 			ActiveEffects:    []game.Effect{},
 			HitsReceived:     []game.HitRecord{},
 		}
@@ -331,7 +343,11 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			botWriter(runCtx, conn, bot.SendChan)
+			botWriter(runCtx, conn, bot.SendChan, bot.TickChan)
+			// A write or ping failure must wake the reader immediately; otherwise
+			// the engine can retain a frozen half-open session until heartbeat expiry.
+			cancel()
+			_ = conn.Close()
 		}()
 
 		// Reader loop (runs on this goroutine)
@@ -340,12 +356,22 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// ----------------------------------------------------------------
 		// 8. Cleanup on disconnect
 		// ----------------------------------------------------------------
+		sendChan := bot.SendChan
+		tickChan := bot.TickChan
 		cancel()
-		engine.RemoveBot(bot.BotID, bot)
-		close(bot.SendChan)
+		preserved := engine.DetachBotSession(bot.BotID, bot)
+		if !preserved {
+			engine.RemoveBot(bot.BotID, bot)
+		}
+		if sendChan != nil {
+			close(sendChan)
+		}
+		if tickChan != nil {
+			close(tickChan)
+		}
 
 		wg.Wait()
-		slog.Info("bot disconnected", "bot", bot.Name, "bot_id", bot.BotID)
+		slog.Info("bot disconnected", "bot", bot.Name, "bot_id", bot.BotID, "reconnect_preserved", preserved)
 		if EventHook != nil {
 			EventHook("disconnected", bot.Name, bot.BotID, ip, bot.APIKeyID, "")
 		}
@@ -493,10 +519,7 @@ func applyDerivedStats(bot *game.BotState) {
 func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, bot *game.BotState, engine *game.GameEngine, cfg *config.Config) {
 	defer cancel()
 
-	// Rate limiting state: sliding window of message timestamps.
-	var msgTimestamps []time.Time
-	maxPerSec := cfg.WSMaxMessagesPerSec
-	rateLimitIncident := false
+	messageLimiter := newBotMessageLimiter(cfg.WSMaxMessagesPerSec)
 
 	// Set initial read deadline for heartbeat detection.
 	heartbeatTimeout := time.Duration(cfg.HeartbeatInterval*float64(time.Second)) * 2
@@ -526,34 +549,27 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 		// Reset read deadline on any received message.
 		conn.SetReadDeadline(time.Now().Add(heartbeatTimeout))
 
-		// Rate limiting: prune old timestamps and check rate.
-		now := time.Now()
-		cutoff := now.Add(-time.Second)
-		filtered := msgTimestamps[:0]
-		for _, t := range msgTimestamps {
-			if t.After(cutoff) {
-				filtered = append(filtered, t)
+		decision := messageLimiter.Check(time.Now())
+		if !decision.Allowed {
+			details := map[string]interface{}{
+				"current_count": decision.CurrentCount,
+				"dropped_count": decision.DroppedCount,
+				"limit":         cfg.WSMaxMessagesPerSec,
+				"window":        "1s",
 			}
-		}
-		msgTimestamps = filtered
-
-		if maxPerSec > 0 && len(msgTimestamps) >= maxPerSec {
-			slog.Warn("rate limited bot", "bot", bot.Name, "msgs_per_sec", len(msgTimestamps))
-			if !rateLimitIncident {
-				rateLimitIncident = true
-				if rejectBotViolation(engine, bot, "Rate limited: too many messages per second", "WS_RATE_LIMITED", map[string]interface{}{
-					"current_count": len(msgTimestamps),
-					"limit":         maxPerSec,
-					"window":        "1s",
-				}) {
+			if decision.Notify {
+				slog.Warn("transient bot message burst", "bot", bot.Name, "msgs_per_sec", decision.CurrentCount)
+				game.SendStructuredError(bot, "Rate limited: too many messages per second", "WS_RATE_LIMITED", details)
+			}
+			if decision.Punish {
+				slog.Warn("sustained bot message flood", "bot", bot.Name, "dropped", decision.DroppedCount)
+				if rejectBotViolation(engine, bot, "Sustained message flood", "WS_RATE_LIMITED", details) {
 					closeForProtocolViolation(conn)
 					return
 				}
 			}
 			continue
 		}
-		rateLimitIncident = false
-		msgTimestamps = append(msgTimestamps, now)
 
 		// Parse the message.
 		msgType, msg, err := ParseBotMessage(data)
@@ -754,12 +770,39 @@ func closeForProtocolViolation(conn *websocket.Conn) {
 // botWriter drains the bot's SendChan and writes each message to the
 // WebSocket connection. It returns when the context is cancelled or the
 // send channel is closed.
-func botWriter(ctx context.Context, conn *websocket.Conn, sendChan <-chan []byte) {
+func botWriter(ctx context.Context, conn *websocket.Conn, sendChan, tickChan <-chan []byte) {
 	// Ping every 20 seconds to keep the connection alive through proxies.
 	pingTicker := time.NewTicker(20 * time.Second)
 	defer pingTicker.Stop()
 
 	for {
+		select {
+		case <-ctx.Done():
+			_ = conn.WriteMessage(
+				websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+			)
+			return
+		default:
+		}
+
+		// Preserve lifecycle ordering when both queues are ready: round/death/
+		// error control messages were enqueued before the replaceable snapshot
+		// that follows them and must reach the client first.
+		select {
+		case msg, ok := <-sendChan:
+			if !ok {
+				return
+			}
+			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				slog.Warn("bot write error", "error", err)
+				return
+			}
+			continue
+		default:
+		}
+
 		select {
 		case <-ctx.Done():
 			conn.WriteMessage(
@@ -787,6 +830,17 @@ func botWriter(ctx context.Context, conn *websocket.Conn, sendChan <-chan []byte
 			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 				slog.Warn("bot write error", "error", err)
+				return
+			}
+
+		case msg, ok := <-tickChan:
+			if !ok {
+				return
+			}
+
+			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				slog.Warn("bot tick write error", "error", err)
 				return
 			}
 		}
