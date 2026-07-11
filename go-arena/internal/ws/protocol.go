@@ -42,6 +42,14 @@ type AuthMessage struct {
 	APIKey string `json:"api_key"`
 }
 
+// TauntMessage is a cosmetic emote from a bot, rendered as a speech bubble
+// for spectators. It is deliberately NOT an action: it never consumes the
+// per-tick action budget and never appears in any bot-facing payload.
+type TauntMessage struct {
+	Type  string `json:"type"`
+	Emote string `json:"emote"`
+}
+
 // actionStringToType maps action name strings to game.ActionType constants.
 var actionStringToType = map[string]game.ActionType{
 	"move":             game.ActionMove,
@@ -89,6 +97,15 @@ func ParseBotMessage(data []byte) (msgType string, msg interface{}, err error) {
 			return raw.Type, nil, fmt.Errorf("invalid auth message: %w", err)
 		}
 		return raw.Type, &auth, nil
+
+	case "taunt":
+		// Parsed even when taunts are disabled so a bot sending one never
+		// accrues an unknown-type protocol strike; the engine drops it.
+		var tm TauntMessage
+		if err := unmarshalStrict(data, &tm); err != nil {
+			return raw.Type, nil, fmt.Errorf("invalid taunt message: %w", err)
+		}
+		return raw.Type, &tm, nil
 
 	default:
 		return raw.Type, nil, fmt.Errorf("unknown message type: %q", raw.Type)

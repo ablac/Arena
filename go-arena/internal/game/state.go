@@ -242,6 +242,10 @@ type BotState struct {
 	// two increasing but delayed client ticks may arrive during one server tick.
 	LastAcceptedServerTick int
 	HasAcceptedServerTick  bool
+	// LastTauntTick gates the cosmetic taunt cooldown against the engine's
+	// monotonic TickCount. Deliberately NOT part of the one-action-per-tick
+	// budget: a taunt must never cost a gameplay action.
+	LastTauntTick int
 
 	// Stats allocation
 	Stats map[string]int // {hp, speed, attack, defense}
@@ -485,6 +489,10 @@ type ArenaEvent struct {
 	Color        string  `json:"color,omitempty"`
 	Radius       float64 `json:"radius,omitempty"`
 	Intensity    float64 `json:"intensity,omitempty"`
+	// Emote/Text carry bot taunts. Text is always server-authored (the
+	// tauntEmotes table), never bot input.
+	Emote string `json:"emote,omitempty"`
+	Text  string `json:"text,omitempty"`
 }
 
 // SpectatorState is the serialized arena state for spectators.

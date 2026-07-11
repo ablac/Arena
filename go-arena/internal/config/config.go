@@ -387,6 +387,13 @@ type Config struct {
 	ChatMaxBodyLen  int  `envconfig:"ARENA_CHAT_MAX_BODY_LEN" default:"280"`
 	ChatPostsPerMin int  `envconfig:"ARENA_CHAT_POSTS_PER_MIN" default:"12"`
 	ChatAliveLock   bool `envconfig:"ARENA_CHAT_ALIVE_LOCK" default:"true"`
+
+	// Bot taunts: cosmetic enum-only emotes rendered as speech bubbles in
+	// the spectator view. Spectator-only by construction (they ride the
+	// delayed arena_state events channel and never enter bot tick payloads),
+	// so they cannot become a bot-to-bot signal.
+	TauntsEnabled     bool    `envconfig:"ARENA_TAUNTS_ENABLED" default:"false"`
+	TauntCooldownSecs float64 `envconfig:"ARENA_TAUNT_COOLDOWN_SECS" default:"5"`
 }
 
 var C Config

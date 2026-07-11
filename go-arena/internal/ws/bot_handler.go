@@ -625,6 +625,24 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 				return
 			}
 
+		case "taunt":
+			tauntMsg, ok := msg.(*TauntMessage)
+			if !ok {
+				continue
+			}
+			// Taunts are cosmetic: every rejection except an unknown emote
+			// is a silent drop, and none of them accrue violation strikes
+			// (a cooldown-spamming taunter is enthusiastic, not malicious).
+			if err := engine.AddTauntForSession(bot.BotID, bot, tauntMsg.Emote); err != nil {
+				if errors.Is(err, game.ErrTauntInvalidEmote) {
+					game.SendStructuredError(bot, "Unknown taunt emote", "TAUNT_INVALID_EMOTE", map[string]interface{}{
+						"emote":  tauntMsg.Emote,
+						"emotes": game.TauntEmoteKeys(),
+					})
+				}
+				continue
+			}
+
 		default:
 			if rejectBotViolation(engine, bot, "Unexpected message type: "+msgType, "UNKNOWN_MSG_TYPE", map[string]interface{}{
 				"received_type": msgType,
