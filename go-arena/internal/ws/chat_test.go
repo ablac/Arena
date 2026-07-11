@@ -426,6 +426,34 @@ func TestChatRateLimitIsPerAccountAcrossSockets(t *testing.T) {
 	}
 }
 
+func TestChatReservePostWindowAtomic(t *testing.T) {
+	withChatConfig(t)
+	env := newChatTestEnv(t)
+
+	// The check and the slot append are one critical section: N concurrent
+	// reservations for the same account must admit exactly `limit`, never
+	// more (the TOCTOU burst that separate check/record allowed).
+	const limit = 5
+	const attempts = 40
+	now := time.Now()
+	var wg sync.WaitGroup
+	granted := make(chan struct{}, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if env.hub.reservePostWindow("acct-race", limit, now) {
+				granted <- struct{}{}
+			}
+		}()
+	}
+	wg.Wait()
+	close(granted)
+	if got := len(granted); got != limit {
+		t.Fatalf("concurrent reservations granted = %d, want exactly %d", got, limit)
+	}
+}
+
 func TestChatPanicInPostDoesNotLeakSlot(t *testing.T) {
 	withChatConfig(t)
 	env := newChatTestEnv(t)

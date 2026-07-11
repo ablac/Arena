@@ -186,11 +186,13 @@ func newChatHub(store ChatStore, isBotAlive func(string) bool, roundActive func(
 	return h
 }
 
-// checkPostWindow reports whether the account is under the per-minute post
-// cap in the in-memory fallback window (used when Redis is down). It prunes
-// stale timestamps but does NOT record a new one; recordPostWindow does that
-// only after every other check passes. Callers hold no lock; this takes mu.
-func (h *ChatHub) checkPostWindow(accountID string, limit int, now time.Time) bool {
+// reservePostWindow reserves a post slot in the per-account fallback window
+// (used when Redis is down). Prune, check, and append happen under ONE lock
+// so concurrent sockets for the same account cannot all pass the check
+// before any of them records a slot. The slot is consumed even when the
+// post later fails a downstream check (ban, alive-lock, insert); a rejected
+// poster burning budget is acceptable and also throttles error spam.
+func (h *ChatHub) reservePostWindow(accountID string, limit int, now time.Time) bool {
 	cutoff := now.Add(-time.Minute)
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -201,19 +203,12 @@ func (h *ChatHub) checkPostWindow(accountID string, limit int, now time.Time) bo
 			kept = append(kept, t)
 		}
 	}
-	if len(kept) == 0 {
-		delete(h.postWindows, accountID)
-	} else {
+	if len(kept) >= limit {
 		h.postWindows[accountID] = kept
+		return false
 	}
-	return len(kept) < limit
-}
-
-// recordPostWindow appends a successful post timestamp to the account window.
-func (h *ChatHub) recordPostWindow(accountID string, now time.Time) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.postWindows[accountID] = append(h.postWindows[accountID], now)
+	h.postWindows[accountID] = append(kept, now)
+	return true
 }
 
 // WarmHistory seeds the in-memory ring from the database at startup. A
@@ -310,7 +305,7 @@ func (h *ChatHub) post(ctx context.Context, c *chatClient, rawBody string) *chat
 
 	// Per-account fallback window: holds across a poster's sockets even when
 	// Redis is down (security.CheckRateLimit fails open).
-	if !h.checkPostWindow(c.identity.AccountID, config.C.ChatPostsPerMin, now) {
+	if !h.reservePostWindow(c.identity.AccountID, config.C.ChatPostsPerMin, now) {
 		return &chatPostError{"RATE_LIMITED", "slow down: too many messages"}
 	}
 
@@ -364,8 +359,6 @@ func (h *ChatHub) post(ctx context.Context, c *chatClient, rawBody string) *chat
 			return &chatPostError{"POST_FAILED", "message could not be saved, try again"}
 		}
 	}
-
-	h.recordPostWindow(c.identity.AccountID, now)
 
 	payload, _ := json.Marshal(chatBroadcastMessage{
 		Type:    "chat_message",
