@@ -298,6 +298,11 @@ export class BotRenderer {
     for (const [id, entry] of this.entries) {
       if (!seen.has(id)) {
         if (this.selectedBotId === id) this.clearSelection();
+        if (entry.tauntBubble) {
+          entry.tauntBubble.dispose();
+          entry.tauntBubble = null;
+          entry.tauntText = null;
+        }
         disposeBotCosmetics(entry);
         disposeBotEntry(entry);
         this.entries.delete(id);
@@ -317,6 +322,10 @@ export class BotRenderer {
     this._lastFrame = now;
 
     for (const [, entry] of this.entries) {
+      if (entry.tauntBubble && entry.tauntBubble.isVisible &&
+          (!entry.isAlive || now >= entry.tauntHideAt)) {
+        entry.tauntBubble.isVisible = false;
+      }
       if (!entry._interpReady) continue;
       if (entry.isAlive) {
         // Exponential smoothing toward current server position.
@@ -454,6 +463,51 @@ export class BotRenderer {
 
     this.scene.beginDirectAnimation(entry.bodyMat, [bodyAnim], 0, 30, false);
     this.scene.beginDirectAnimation(entry.headMat, [headAnim], 0, 30, false);
+  }
+
+  /**
+   * Shows a short-lived speech bubble above a bot. Text is server-authored
+   * (the taunt emote table), but GUI TextBlock text is canvas-drawn and
+   * injection-safe regardless. One bubble per bot; a new taunt replaces it.
+   */
+  showTaunt(botId, text) {
+    if (!isEnabled('taunts', 'speechBubbles')) return;
+    const entry = this.entries.get(botId);
+    if (!entry || !entry.isAlive) return;
+    const GUI = window.BABYLON && window.BABYLON.GUI;
+    if (!GUI) return;
+
+    if (!entry.tauntBubble) {
+      const adt = getGuiTexture();
+      const bubble = new GUI.Rectangle('taunt-' + botId);
+      bubble.adaptWidthToChildren = true;
+      bubble.height = '30px';
+      bubble.thickness = 1;
+      bubble.cornerRadius = 10;
+      bubble.color = 'rgba(255,215,90,0.9)';
+      bubble.background = 'rgba(8,12,20,0.88)';
+      bubble.isVisible = false;
+      adt.addControl(bubble);
+
+      const tb = new GUI.TextBlock('taunt-text-' + botId);
+      tb.color = '#ffd75a';
+      tb.fontFamily = 'monospace';
+      tb.fontSize = 13;
+      tb.paddingLeft = '10px';
+      tb.paddingRight = '10px';
+      tb.resizeToFit = true;
+      bubble.addControl(tb);
+
+      bubble.linkWithMesh(entry.root);
+      bubble.linkOffsetY = -74;
+      entry.tauntBubble = bubble;
+      entry.tauntText = tb;
+    }
+    entry.tauntText.text = String(text).slice(0, 28);
+    entry.tauntBubble.isVisible = true;
+    // Wall-clock expiry swept in interpolate(): survives tab throttling and
+    // needs no timers that could outlive a scene rebuild.
+    entry.tauntHideAt = performance.now() + 2600;
   }
 
   playImpactReaction(botId, fromX, fromZ) {

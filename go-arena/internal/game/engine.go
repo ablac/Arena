@@ -640,6 +640,9 @@ func (e *GameEngine) startRound() {
 	e.KillEvents = nil
 	e.Landmines = nil
 	e.GravityWells = nil
+	// Spectator events (incl. taunts) buffered after the previous round's
+	// last broadcast would otherwise ghost into the new round's first frame.
+	e.RecentEvents = nil
 	e.Grid.Clear()
 	e.KillFeed.Clear()
 	e.AntiTeam.Clear()

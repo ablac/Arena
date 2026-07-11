@@ -6,7 +6,7 @@
  */
 
 import { CameraController } from './camera.js?v=20260710d';
-import { BotRenderer } from './bots.js?v=20260710a';
+import { BotRenderer } from './bots.js?v=20260711b';
 import { EnvironmentRenderer } from './environment.js?v=20260710f';
 import { ObstacleRenderer } from './obstacles.js?v=20260710f';
 import { PickupRenderer } from './pickups.js?v=20260521m';
@@ -303,12 +303,14 @@ export class ArenaEngine {
     // arriving at 10Hz either way, and every effect's cleanup runs in the
     // render loop, so spawning here would grow the scene without bound.
     // _seenArenaEvents dedup means skipped events never replay.
-    if (this.shouldSpawnEffects()) {
-      this._playArenaEvents(state.events || [], state);
-    }
     this.obstacleRenderer.update(state.obstacles);
     this.envRenderer.update(state.safe_zone, !!state.sudden_death);
     this.botRenderer.update(state.bots);
+    // Events play after the entity updates so a taunt arriving in the same
+    // broadcast that introduces its bot can find the fresh entry.
+    if (this.shouldSpawnEffects()) {
+      this._playArenaEvents(state.events || [], state);
+    }
     this.pickupRenderer.update(state.pickups || []);
     this.effectRenderer.update(state.bots);
     this.gameplayRenderer.update(state);
@@ -437,6 +439,8 @@ export class ArenaEngine {
         if (ev.target_id && this.botRenderer) {
           this.botRenderer.playImpactReaction(ev.target_id);
         }
+      } else if (ev.type === 'taunt' && ev.owner_id && ev.text) {
+        if (this.botRenderer) this.botRenderer.showTaunt(ev.owner_id, ev.text);
       } else if (ev.type === 'flag_captured' && ev.position) {
         // CTF capture: celebratory burst at the base.
         this.effectRenderer.spawnMineExplosion(ev.position[0], ev.position[1], 30);

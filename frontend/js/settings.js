@@ -33,6 +33,13 @@ export const SETTINGS_SCHEMA = {
       directionalDeath: { label: 'Directional death fall' },
     },
   },
+  taunts: {
+    label: 'Bot Taunts',
+    description: 'Speech bubbles when a bot emotes.',
+    effects: {
+      speechBubbles: { label: 'Speech bubbles above bots' },
+    },
+  },
   hitReactions: {
     label: 'Hit Reactions',
     description: 'Feedback when a bot takes damage but stays alive.',
