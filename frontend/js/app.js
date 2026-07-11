@@ -5,8 +5,8 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260710g';
-import { HudRenderer } from './renderer/hud.js?v=20260710f';
+import { ArenaEngine } from './renderer/engine.js?v=20260711b';
+import { HudRenderer } from './renderer/hud.js?v=20260711b';
 import { Minimap } from './renderer/minimap.js?v=20260710d';
 import { SpectatorSocket } from './spectator-ws.js';
 import { initLeaderboardWidget } from './leaderboard.js?v=20260710f';
@@ -113,6 +113,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const spectator = new SpectatorSocket(wsUrl,
     (state) => {
       arenaEngine.setState(state);
+      // Taunt events ride single broadcasts; queue them unthrottled (cheap
+      // array push, no DOM) so the 200ms HUD lane below cannot miss one.
+      if (state.type === 'arena_state' && Array.isArray(state.events)) {
+        hud.queueTaunts(state.events);
+      }
       if (state.type === 'arena_state' && Array.isArray(state.kill_feed) && state.kill_feed.length > 0) {
         const k = state.kill_feed[state.kill_feed.length - 1];
         const sig = `${k.killer}|${k.victim}|${k.tick}`;

@@ -550,6 +550,12 @@ body.arena-fullscreen {
   text-transform: uppercase;
 }
 
+/* Bot taunts share the kill feed panel but read as banter, not combat. */
+.killfeed-entry.killfeed-taunt .taunt-text {
+  color: var(--accent-gold);
+  font-style: italic;
+}
+
 @keyframes killfeed-in {
   from { transform: translateX(-16px) scale(0.96); opacity: 0; }
   to { transform: translateX(0) scale(1); opacity: 1; }

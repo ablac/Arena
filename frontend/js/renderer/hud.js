@@ -21,6 +21,10 @@ export class HudRenderer {
     this.statusEl = statusEl;
     this._seenKeys = new Set();
     this._activeEntries = [];
+    // Bot taunt feed: event ids already shown, plus a small pending queue
+    // filled unthrottled from app.js and drained on the throttled update.
+    this._seenTauntIds = new Set();
+    this._pendingTaunts = [];
     /** @type {Map<string, {el: HTMLElement, refs: Object, sig: string}>} */
     this._playerRows = new Map();
     this._playerOrder = '';
@@ -61,6 +65,7 @@ export class HudRenderer {
     }
     this._updateRoundInfo(state);
     this._updateKillFeed(state.kill_feed || []);
+    this._updateTaunts(state.bots || []);
     this._updatePlayers(state.bots || []);
     this._updateWaitingBots(state.waiting_bots || []);
   }
@@ -335,6 +340,59 @@ export class HudRenderer {
     return el;
   }
 
+  /**
+   * Collects taunt events from every broadcast (called unthrottled from
+   * app.js so single-broadcast events survive the 200ms HUD throttle).
+   */
+  queueTaunts(events) {
+    for (const ev of events) {
+      if (!ev || ev.type !== 'taunt' || !ev.id || !ev.text) continue;
+      if (this._seenTauntIds.has(ev.id)) continue;
+      this._seenTauntIds.add(ev.id);
+      this._pendingTaunts.push(ev);
+    }
+    // A taunt-heavy lobby must not grow the queue while the tab is hidden.
+    while (this._pendingTaunts.length > 30) this._pendingTaunts.shift();
+  }
+
+  _updateTaunts(bots) {
+    if (this._pendingTaunts.length === 0) return;
+    const names = new Map();
+    for (const bot of bots) {
+      if (bot && bot.bot_id) names.set(bot.bot_id, bot.name);
+    }
+    const pending = this._pendingTaunts;
+    this._pendingTaunts = [];
+    for (const ev of pending) {
+      const el = this._createTauntEntry(names.get(ev.owner_id) || '???', ev.text);
+      this.killfeedEl.prepend(el);
+      this._activeEntries.unshift({ key: 'taunt-' + ev.id, el });
+    }
+    while (this._activeEntries.length > 30) {
+      this._activeEntries.pop().el.remove();
+    }
+  }
+
+  _createTauntEntry(name, text) {
+    const el = document.createElement('div');
+    el.className = 'killfeed-entry killfeed-new killfeed-taunt';
+
+    const left = document.createElement('div');
+    const who = document.createElement('span');
+    who.className = 'killer';
+    who.textContent = name;
+    const sep = document.createElement('span');
+    sep.style.color = 'var(--text-muted)';
+    sep.textContent = ' says ';
+    const body = document.createElement('span');
+    body.className = 'taunt-text';
+    body.textContent = text;
+    left.append(who, sep, body);
+
+    el.append(left);
+    return el;
+  }
+
   _updateWaitingBots(waitingBots) {
     if (!waitingBots || waitingBots.length === 0) {
       if (this._lastLobbyHtml !== '') {
@@ -364,6 +422,8 @@ export class HudRenderer {
   resetKillFeed() {
     this._seenKeys.clear();
     this._activeEntries = [];
+    this._seenTauntIds.clear();
+    this._pendingTaunts = [];
     this.killfeedEl.innerHTML = '';
   }
 

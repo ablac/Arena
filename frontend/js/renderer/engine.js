@@ -6,7 +6,7 @@
  */
 
 import { CameraController } from './camera.js?v=20260710d';
-import { BotRenderer } from './bots.js?v=20260710a';
+import { BotRenderer } from './bots.js?v=20260711b';
 import { EnvironmentRenderer } from './environment.js?v=20260710f';
 import { ObstacleRenderer } from './obstacles.js?v=20260710f';
 import { PickupRenderer } from './pickups.js?v=20260521m';
@@ -437,6 +437,8 @@ export class ArenaEngine {
         if (ev.target_id && this.botRenderer) {
           this.botRenderer.playImpactReaction(ev.target_id);
         }
+      } else if (ev.type === 'taunt' && ev.owner_id && ev.text) {
+        if (this.botRenderer) this.botRenderer.showTaunt(ev.owner_id, ev.text);
       } else if (ev.type === 'flag_captured' && ev.position) {
         // CTF capture: celebratory burst at the base.
         this.effectRenderer.spawnMineExplosion(ev.position[0], ev.position[1], 30);
