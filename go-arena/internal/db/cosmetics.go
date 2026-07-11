@@ -32,6 +32,7 @@ type CosmeticItem struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
 	Description   string `json:"description"`
+	CategoryID    string `json:"category_id"`
 	Slot          string `json:"slot"`
 	AssetKey      string `json:"asset_key"`
 	Rarity        string `json:"rarity"`
@@ -40,6 +41,7 @@ type CosmeticItem struct {
 	IsFree        bool   `json:"is_free"`
 	IsPurchasable bool   `json:"is_purchasable"`
 	IsActive      bool   `json:"is_active"`
+	SortOrder     int    `json:"sort_order"`
 }
 
 // BotCosmeticItem adds ownership and equip state for an authenticated bot.
@@ -52,39 +54,39 @@ type BotCosmeticItem struct {
 var starterCosmeticCatalog = []CosmeticItem{
 	{
 		ID: "skin-standard", Name: "Standard Chassis", Description: "The classic Arena bot finish.",
-		Slot: CosmeticSlotBotSkin, AssetKey: "standard", Rarity: "common", Currency: "USD", IsFree: true, IsActive: true,
+		CategoryID: "chassis", Slot: CosmeticSlotBotSkin, AssetKey: "standard", Rarity: "common", Currency: "USD", IsFree: true, IsActive: true, SortOrder: 10,
 	},
 	{
 		ID: "skin-neon-grid", Name: "Neon Grid Chassis", Description: "Animated-looking neon armor accents with no gameplay effect.",
-		Slot: CosmeticSlotBotSkin, AssetKey: "neon_grid", Rarity: "rare", PriceCents: 499, Currency: "USD", IsActive: true,
+		CategoryID: "chassis", Slot: CosmeticSlotBotSkin, AssetKey: "neon_grid", Rarity: "rare", PriceCents: 499, Currency: "USD", IsActive: true, SortOrder: 20,
 	},
 	{
 		ID: "skin-carbon-armor", Name: "Carbon Armor Chassis", Description: "Dark geometric armor plates with no defensive bonus.",
-		Slot: CosmeticSlotBotSkin, AssetKey: "carbon_armor", Rarity: "rare", PriceCents: 399, Currency: "USD", IsActive: true,
+		CategoryID: "chassis", Slot: CosmeticSlotBotSkin, AssetKey: "carbon_armor", Rarity: "rare", PriceCents: 399, Currency: "USD", IsActive: true, SortOrder: 30,
 	},
 	{
 		ID: "weapon-standard", Name: "Standard Weapon Finish", Description: "The default Arena weapon materials.",
-		Slot: CosmeticSlotWeaponSkin, AssetKey: "standard", Rarity: "common", Currency: "USD", IsFree: true, IsActive: true,
+		CategoryID: "weapon-finishes", Slot: CosmeticSlotWeaponSkin, AssetKey: "standard", Rarity: "common", Currency: "USD", IsFree: true, IsActive: true, SortOrder: 10,
 	},
 	{
 		ID: "weapon-solar-flare", Name: "Solar Flare Finish", Description: "A warm gold weapon finish with no damage bonus.",
-		Slot: CosmeticSlotWeaponSkin, AssetKey: "solar_flare", Rarity: "rare", PriceCents: 299, Currency: "USD", IsActive: true,
+		CategoryID: "weapon-finishes", Slot: CosmeticSlotWeaponSkin, AssetKey: "solar_flare", Rarity: "rare", PriceCents: 299, Currency: "USD", IsActive: true, SortOrder: 20,
 	},
 	{
 		ID: "weapon-void-edge", Name: "Void Edge Finish", Description: "A violet-black weapon finish with no cooldown bonus.",
-		Slot: CosmeticSlotWeaponSkin, AssetKey: "void_edge", Rarity: "rare", PriceCents: 299, Currency: "USD", IsActive: true,
+		CategoryID: "weapon-finishes", Slot: CosmeticSlotWeaponSkin, AssetKey: "void_edge", Rarity: "rare", PriceCents: 299, Currency: "USD", IsActive: true, SortOrder: 30,
 	},
 	{
 		ID: "attachment-none", Name: "No Attachment", Description: "Run the chassis without an attachment.",
-		Slot: CosmeticSlotAttachment, AssetKey: "none", Rarity: "common", Currency: "USD", IsFree: true, IsActive: true,
+		CategoryID: "attachments", Slot: CosmeticSlotAttachment, AssetKey: "none", Rarity: "common", Currency: "USD", IsFree: true, IsActive: true, SortOrder: 10,
 	},
 	{
 		ID: "attachment-signal-antenna", Name: "Signal Antenna", Description: "A free starter antenna for proving the customization flow end to end.",
-		Slot: CosmeticSlotAttachment, AssetKey: "signal_antenna", Rarity: "common", Currency: "USD", IsFree: true, IsActive: true,
+		CategoryID: "attachments", Slot: CosmeticSlotAttachment, AssetKey: "signal_antenna", Rarity: "common", Currency: "USD", IsFree: true, IsActive: true, SortOrder: 20,
 	},
 	{
 		ID: "attachment-orbital-halo", Name: "Orbital Halo", Description: "A luminous halo attachment with no gameplay effect.",
-		Slot: CosmeticSlotAttachment, AssetKey: "orbital_halo", Rarity: "epic", PriceCents: 299, Currency: "USD", IsActive: true,
+		CategoryID: "attachments", Slot: CosmeticSlotAttachment, AssetKey: "orbital_halo", Rarity: "epic", PriceCents: 299, Currency: "USD", IsActive: true, SortOrder: 30,
 	},
 }
 
@@ -127,10 +129,20 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 	}
 
 	statements := []string{
+		`CREATE TABLE IF NOT EXISTS cosmetic_categories (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			is_active BOOLEAN NOT NULL DEFAULT true,
+			sort_order INT NOT NULL DEFAULT 0 CHECK (sort_order BETWEEN 0 AND 1000000),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
 		`CREATE TABLE IF NOT EXISTS cosmetic_items (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
+			category_id TEXT NOT NULL CONSTRAINT cosmetic_items_category_fk REFERENCES cosmetic_categories(id) ON DELETE RESTRICT,
 			slot TEXT NOT NULL CHECK (slot IN ('bot_skin', 'weapon_skin', 'attachment')),
 			asset_key TEXT NOT NULL,
 			rarity TEXT NOT NULL DEFAULT 'common',
@@ -139,10 +151,45 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			is_free BOOLEAN NOT NULL DEFAULT false,
 			is_purchasable BOOLEAN NOT NULL DEFAULT false,
 			is_active BOOLEAN NOT NULL DEFAULT true,
+			sort_order INT NOT NULL DEFAULT 0 CHECK (sort_order BETWEEN 0 AND 1000000),
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE (slot, asset_key)
 		)`,
+		`ALTER TABLE cosmetic_items ADD COLUMN IF NOT EXISTS category_id TEXT`,
+		`ALTER TABLE cosmetic_items ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS cosmetic_packs (
+			id TEXT PRIMARY KEY,
+			category_id TEXT NOT NULL REFERENCES cosmetic_categories(id) ON DELETE RESTRICT,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			price_cents INT NOT NULL DEFAULT 0 CHECK (price_cents >= 0),
+			currency TEXT NOT NULL DEFAULT 'USD',
+			is_free BOOLEAN NOT NULL DEFAULT false,
+			is_purchasable BOOLEAN NOT NULL DEFAULT false,
+			is_active BOOLEAN NOT NULL DEFAULT true,
+			sort_order INT NOT NULL DEFAULT 0 CHECK (sort_order BETWEEN 0 AND 1000000),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS cosmetic_pack_items (
+			pack_id TEXT NOT NULL REFERENCES cosmetic_packs(id) ON DELETE CASCADE,
+			item_id TEXT NOT NULL REFERENCES cosmetic_items(id) ON DELETE RESTRICT,
+			sort_order INT NOT NULL DEFAULT 0 CHECK (sort_order BETWEEN 0 AND 1000000),
+			PRIMARY KEY (pack_id, item_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_cosmetic_pack_items_item ON cosmetic_pack_items (item_id, pack_id)`,
+		`CREATE TABLE IF NOT EXISTS cosmetic_catalog_audit (
+			id BIGSERIAL PRIMARY KEY,
+			actor TEXT NOT NULL,
+			action TEXT NOT NULL CHECK (action IN ('create', 'update', 'delete')),
+			entity_type TEXT NOT NULL CHECK (entity_type IN ('category', 'item', 'pack')),
+			entity_id TEXT NOT NULL,
+			before_data JSONB,
+			after_data JSONB,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_cosmetic_catalog_audit_created ON cosmetic_catalog_audit (created_at DESC, id DESC)`,
 		`CREATE TABLE IF NOT EXISTS cosmetic_entitlements (
 			bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
 			cosmetic_id TEXT NOT NULL REFERENCES cosmetic_items(id) ON DELETE RESTRICT,
@@ -275,16 +322,82 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 		}
 	}
 
+	for _, category := range starterCosmeticCategories {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO cosmetic_categories (id, name, description, is_active, sort_order)
+			VALUES ($1,$2,$3,$4,$5)
+			ON CONFLICT (id) DO NOTHING`,
+			category.ID, category.Name, category.Description, category.IsActive, category.SortOrder,
+		); err != nil {
+			return fmt.Errorf("EnsureCosmeticsSchema seed category %s: %w", category.ID, err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE cosmetic_items
+		SET category_id = CASE slot
+			WHEN 'bot_skin' THEN 'chassis'
+			WHEN 'weapon_skin' THEN 'weapon-finishes'
+			ELSE 'attachments'
+		END
+		WHERE category_id IS NULL OR category_id = ''`); err != nil {
+		return fmt.Errorf("EnsureCosmeticsSchema backfill item categories: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `ALTER TABLE cosmetic_items ALTER COLUMN category_id SET NOT NULL`); err != nil {
+		return fmt.Errorf("EnsureCosmeticsSchema require item category: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DO $$
+	BEGIN
+		IF NOT EXISTS (
+			SELECT 1 FROM pg_constraint
+			WHERE conrelid = 'cosmetic_items'::regclass
+			  AND conname = 'cosmetic_items_category_fk'
+		) THEN
+			ALTER TABLE cosmetic_items
+				ADD CONSTRAINT cosmetic_items_category_fk
+				FOREIGN KEY (category_id) REFERENCES cosmetic_categories(id) ON DELETE RESTRICT;
+		END IF;
+	END
+	$$`); err != nil {
+		return fmt.Errorf("EnsureCosmeticsSchema item category constraint: %w", err)
+	}
+
 	for _, item := range starterCosmeticCatalog {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO cosmetic_items
-				(id, name, description, slot, asset_key, rarity, price_cents, currency, is_free, is_purchasable, is_active)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+				(id, name, description, category_id, slot, asset_key, rarity, price_cents, currency, is_free, is_purchasable, is_active, sort_order)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 			ON CONFLICT (id) DO NOTHING`,
-			item.ID, item.Name, item.Description, item.Slot, item.AssetKey, item.Rarity,
-			item.PriceCents, item.Currency, item.IsFree, item.IsPurchasable, item.IsActive,
+			item.ID, item.Name, item.Description, item.CategoryID, item.Slot, item.AssetKey, item.Rarity,
+			item.PriceCents, item.Currency, item.IsFree, item.IsPurchasable, item.IsActive, item.SortOrder,
 		); err != nil {
 			return fmt.Errorf("EnsureCosmeticsSchema seed %s: %w", item.ID, err)
+		}
+	}
+
+	for _, pack := range starterCosmeticPacks {
+		result, err := tx.Exec(ctx, `
+			INSERT INTO cosmetic_packs
+				(id, category_id, name, description, price_cents, currency, is_free, is_purchasable, is_active, sort_order)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			ON CONFLICT (id) DO NOTHING`,
+			pack.ID, pack.CategoryID, pack.Name, pack.Description, pack.PriceCents,
+			pack.Currency, pack.IsFree, pack.IsPurchasable, pack.IsActive, pack.SortOrder,
+		)
+		if err != nil {
+			return fmt.Errorf("EnsureCosmeticsSchema seed pack %s: %w", pack.ID, err)
+		}
+		// Seed membership only alongside a newly inserted pack. Re-running schema
+		// repair must preserve an operator's edits to a starter pack.
+		if result.RowsAffected() == 0 {
+			continue
+		}
+		for index, itemID := range pack.ItemIDs {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO cosmetic_pack_items (pack_id, item_id, sort_order)
+				VALUES ($1,$2,$3)
+				ON CONFLICT (pack_id, item_id) DO NOTHING`, pack.ID, itemID, (index+1)*10); err != nil {
+				return fmt.Errorf("EnsureCosmeticsSchema seed pack item %s/%s: %w", pack.ID, itemID, err)
+			}
 		}
 	}
 
@@ -325,12 +438,12 @@ func ListCosmeticCatalog(ctx context.Context) ([]CosmeticItem, error) {
 		return nil, ErrNoDatabase
 	}
 	rows, err := Pool.Query(ctx, `
-		SELECT id, name, description, slot, asset_key, rarity, price_cents, currency,
-		       is_free, is_purchasable, is_active
+		SELECT id, name, description, category_id, slot, asset_key, rarity, price_cents, currency,
+		       is_free, is_purchasable, is_active, sort_order
 		FROM cosmetic_items
 		WHERE is_active = true
 		ORDER BY CASE slot WHEN 'bot_skin' THEN 1 WHEN 'weapon_skin' THEN 2 ELSE 3 END,
-		         price_cents, name`)
+		         sort_order, price_cents, name`)
 	if err != nil {
 		return nil, fmt.Errorf("ListCosmeticCatalog: %w", err)
 	}
@@ -339,8 +452,8 @@ func ListCosmeticCatalog(ctx context.Context) ([]CosmeticItem, error) {
 	items := make([]CosmeticItem, 0)
 	for rows.Next() {
 		var item CosmeticItem
-		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.Slot, &item.AssetKey,
-			&item.Rarity, &item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable, &item.IsActive); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.CategoryID, &item.Slot, &item.AssetKey,
+			&item.Rarity, &item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable, &item.IsActive, &item.SortOrder); err != nil {
 			return nil, fmt.Errorf("ListCosmeticCatalog scan: %w", err)
 		}
 		items = append(items, item)
@@ -353,8 +466,8 @@ func ListBotCosmetics(ctx context.Context, botID string) ([]BotCosmeticItem, err
 		return nil, ErrNoDatabase
 	}
 	rows, err := Pool.Query(ctx, `
-		SELECT i.id, i.name, i.description, i.slot, i.asset_key, i.rarity,
-		       i.price_cents, i.currency, i.is_free, i.is_purchasable, i.is_active,
+		SELECT i.id, i.name, i.description, i.category_id, i.slot, i.asset_key, i.rarity,
+		       i.price_cents, i.currency, i.is_free, i.is_purchasable, i.is_active, i.sort_order,
 		       (i.is_free OR EXISTS (
 		         SELECT 1 FROM cosmetic_licenses owned_license
 		         WHERE owned_license.cosmetic_id = i.id
@@ -390,9 +503,9 @@ func ListBotCosmetics(ctx context.Context, botID string) ([]BotCosmeticItem, err
 	items := make([]BotCosmeticItem, 0)
 	for rows.Next() {
 		var item BotCosmeticItem
-		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.Slot, &item.AssetKey,
+		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.CategoryID, &item.Slot, &item.AssetKey,
 			&item.Rarity, &item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable,
-			&item.IsActive, &item.Owned, &item.Equipped); err != nil {
+			&item.IsActive, &item.SortOrder, &item.Owned, &item.Equipped); err != nil {
 			return nil, fmt.Errorf("ListBotCosmetics scan: %w", err)
 		}
 		items = append(items, item)
@@ -460,11 +573,11 @@ func EquipCosmetic(ctx context.Context, botID, slot, cosmeticID string) (*Cosmet
 
 	var item CosmeticItem
 	err = tx.QueryRow(ctx, `
-		SELECT id, name, description, slot, asset_key, rarity, price_cents, currency,
-		       is_free, is_purchasable, is_active
+		SELECT id, name, description, category_id, slot, asset_key, rarity, price_cents, currency,
+		       is_free, is_purchasable, is_active, sort_order
 		FROM cosmetic_items WHERE id = $1`, cosmeticID).
-		Scan(&item.ID, &item.Name, &item.Description, &item.Slot, &item.AssetKey, &item.Rarity,
-			&item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable, &item.IsActive)
+		Scan(&item.ID, &item.Name, &item.Description, &item.CategoryID, &item.Slot, &item.AssetKey, &item.Rarity,
+			&item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable, &item.IsActive, &item.SortOrder)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrCosmeticNotFound
 	}

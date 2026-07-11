@@ -18,28 +18,63 @@ import (
 )
 
 type fakeCosmeticsStore struct {
-	catalog      []db.CosmeticItem
-	items        []db.BotCosmeticItem
-	equipped     map[string]string
-	equipItem    *db.CosmeticItem
-	equipErr     error
-	grantCreated bool
-	grantErr     error
-	revoked      bool
-	revokeErr    error
-	inventory    *db.CustomerCosmeticsInventory
-	linkBot      *db.AccountBot
-	assignment   *db.CosmeticAssignmentChange
-	license      *db.CosmeticLicense
-	lastBotID    string
-	lastAccount  string
-	lastLicense  string
-	lastSlot     string
-	lastCosmetic string
+	publicCatalog *db.CosmeticCatalog
+	adminCatalog  *db.CosmeticCatalog
+	audit         []db.CosmeticCatalogAudit
+	items         []db.BotCosmeticItem
+	equipped      map[string]string
+	equipItem     *db.CosmeticItem
+	equipErr      error
+	grantCreated  bool
+	grantErr      error
+	revoked       bool
+	revokeErr     error
+	inventory     *db.CustomerCosmeticsInventory
+	linkBot       *db.AccountBot
+	assignment    *db.CosmeticAssignmentChange
+	license       *db.CosmeticLicense
+	lastBotID     string
+	lastAccount   string
+	lastLicense   string
+	lastSlot      string
+	lastCosmetic  string
+	lastActor     string
+	lastLimit     int
 }
 
-func (f *fakeCosmeticsStore) ListCatalog(context.Context) ([]db.CosmeticItem, error) {
-	return f.catalog, nil
+func (f *fakeCosmeticsStore) PublicCatalog(context.Context) (*db.CosmeticCatalog, error) {
+	return f.publicCatalog, f.grantErr
+}
+func (f *fakeCosmeticsStore) AdminCatalog(context.Context) (*db.CosmeticCatalog, error) {
+	return f.adminCatalog, f.grantErr
+}
+func (f *fakeCosmeticsStore) UpsertCategory(_ context.Context, category db.CosmeticCategory, actor string) (*db.CosmeticCategory, error) {
+	f.lastActor = actor
+	return &category, f.grantErr
+}
+func (f *fakeCosmeticsStore) DeleteCategory(_ context.Context, id, actor string) (bool, error) {
+	f.lastCosmetic, f.lastActor = id, actor
+	return f.revoked, f.revokeErr
+}
+func (f *fakeCosmeticsStore) UpsertItem(_ context.Context, item db.CosmeticItem, actor string) (*db.CosmeticItem, error) {
+	f.lastCosmetic, f.lastActor = item.ID, actor
+	return &item, f.grantErr
+}
+func (f *fakeCosmeticsStore) DeleteItem(_ context.Context, id, actor string) (bool, error) {
+	f.lastCosmetic, f.lastActor = id, actor
+	return f.revoked, f.revokeErr
+}
+func (f *fakeCosmeticsStore) UpsertPack(_ context.Context, pack db.CosmeticPack, actor string) (*db.CosmeticPack, error) {
+	f.lastCosmetic, f.lastActor = pack.ID, actor
+	return &pack, f.grantErr
+}
+func (f *fakeCosmeticsStore) DeletePack(_ context.Context, id, actor string) (bool, error) {
+	f.lastCosmetic, f.lastActor = id, actor
+	return f.revoked, f.revokeErr
+}
+func (f *fakeCosmeticsStore) ListAudit(_ context.Context, limit int) ([]db.CosmeticCatalogAudit, error) {
+	f.lastLimit = limit
+	return f.audit, f.grantErr
 }
 func (f *fakeCosmeticsStore) ListForBot(context.Context, string) ([]db.BotCosmeticItem, error) {
 	return f.items, nil
@@ -102,10 +137,21 @@ func requestWithCustomerParam(method, target string, body []byte, param, value s
 	return req.WithContext(ctx)
 }
 
+func requestWithRouteParam(method, target string, body []byte, param, value string) *http.Request {
+	req := httptest.NewRequest(method, target, bytes.NewReader(body))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add(param, value)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+}
+
 func TestCosmeticsCatalogDisclosesCheckoutState(t *testing.T) {
-	store := &fakeCosmeticsStore{catalog: []db.CosmeticItem{
-		{ID: "free", IsFree: true, IsActive: true},
-		{ID: "paid", PriceCents: 299, IsPurchasable: true, IsActive: true},
+	store := &fakeCosmeticsStore{publicCatalog: &db.CosmeticCatalog{
+		Categories: []db.CosmeticCategory{{ID: "starter-packs", Name: "Starter Packs", IsActive: true}},
+		Items:      []db.CosmeticItem{{ID: "free", IsFree: true, IsActive: true}},
+		Packs: []db.CosmeticPack{{
+			ID: "neon-pack", CategoryID: "starter-packs", PriceCents: 99, Currency: "USD",
+			IsPurchasable: true, IsActive: true, ItemIDs: []string{"free"},
+		}},
 	}}
 	handler := newCosmeticsHandlerWithStore(store, nil)
 	// Staging a sale flag must not advertise working checkout until a payment
@@ -116,13 +162,15 @@ func TestCosmeticsCatalogDisclosesCheckoutState(t *testing.T) {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	var response struct {
-		CheckoutEnabled bool              `json:"checkout_enabled"`
-		Items           []db.CosmeticItem `json:"items"`
+		CheckoutEnabled bool                  `json:"checkout_enabled"`
+		Categories      []db.CosmeticCategory `json:"categories"`
+		Packs           []db.CosmeticPack     `json:"packs"`
+		Items           []db.CosmeticItem     `json:"items"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.CheckoutEnabled || len(response.Items) != 2 {
+	if response.CheckoutEnabled || len(response.Categories) != 1 || len(response.Packs) != 1 || len(response.Items) != 1 {
 		t.Fatalf("unexpected catalog response: %+v", response)
 	}
 
@@ -134,6 +182,147 @@ func TestCosmeticsCatalogDisclosesCheckoutState(t *testing.T) {
 	}
 	if !response.CheckoutEnabled {
 		t.Fatal("configured checkout with a purchasable item was not disclosed")
+	}
+}
+
+func TestAdminCosmeticsCatalogIncludesInactiveEntriesWithoutEnablingCheckout(t *testing.T) {
+	store := &fakeCosmeticsStore{adminCatalog: &db.CosmeticCatalog{
+		Categories: []db.CosmeticCategory{{ID: "drafts", Name: "Drafts", IsActive: false}},
+		Items:      []db.CosmeticItem{{ID: "draft-item", CategoryID: "drafts", IsActive: false}},
+		Packs:      []db.CosmeticPack{{ID: "draft-pack", CategoryID: "drafts", PriceCents: 99, Currency: "USD", IsPurchasable: true, IsActive: false}},
+	}}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+	rec := httptest.NewRecorder()
+	handler.AdminCatalog(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/cosmetics/catalog", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		CheckoutEnabled bool                  `json:"checkout_enabled"`
+		Categories      []db.CosmeticCategory `json:"categories"`
+		Packs           []db.CosmeticPack     `json:"packs"`
+		Items           []db.CosmeticItem     `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.CheckoutEnabled || len(response.Categories) != 1 || len(response.Packs) != 1 || len(response.Items) != 1 {
+		t.Fatalf("unexpected admin catalog response: %+v", response)
+	}
+}
+
+func TestAdminCosmeticCatalogMutationsUsePathIdentityAndSafeAuditActor(t *testing.T) {
+	store := &fakeCosmeticsStore{revoked: true}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+
+	category := httptest.NewRecorder()
+	categoryReq := requestWithRouteParam(http.MethodPut, "/api/v1/admin/cosmetics/categories/event", []byte(`{
+		"name":"Event", "description":"Limited event cosmetics", "is_active":true, "sort_order":50
+	}`), "category_id", "event")
+	categoryReq.Header.Set("X-Admin-Token", "never-store-this-secret")
+	handler.UpsertAdminCategory(category, categoryReq)
+	if category.Code != http.StatusOK || store.lastActor != "admin-token" {
+		t.Fatalf("category mutation status=%d actor=%q body=%s", category.Code, store.lastActor, category.Body.String())
+	}
+
+	item := httptest.NewRecorder()
+	handler.UpsertAdminItem(item, requestWithRouteParam(http.MethodPut, "/api/v1/admin/cosmetics/items/attachment-event", []byte(`{
+		"name":"Event Crown", "description":"Presentation only", "category_id":"event",
+		"slot":"attachment", "asset_key":"event_crown", "rarity":"rare", "price_cents":99,
+		"currency":"USD", "is_free":false, "is_purchasable":true, "is_active":true, "sort_order":10
+	}`), "item_id", "attachment-event"))
+	if item.Code != http.StatusOK || store.lastCosmetic != "attachment-event" {
+		t.Fatalf("item mutation status=%d id=%q body=%s", item.Code, store.lastCosmetic, item.Body.String())
+	}
+
+	pack := httptest.NewRecorder()
+	handler.UpsertAdminPack(pack, requestWithRouteParam(http.MethodPut, "/api/v1/admin/cosmetics/packs/event-pack", []byte(`{
+		"name":"Event Pack", "description":"A tiny pack", "category_id":"event", "price_cents":99,
+		"currency":"USD", "is_free":false, "is_purchasable":true, "is_active":true,
+		"sort_order":20, "item_ids":["attachment-event"]
+	}`), "pack_id", "event-pack"))
+	if pack.Code != http.StatusOK || store.lastCosmetic != "event-pack" {
+		t.Fatalf("pack mutation status=%d id=%q body=%s", pack.Code, store.lastCosmetic, pack.Body.String())
+	}
+
+	deleted := httptest.NewRecorder()
+	handler.DeleteAdminPack(deleted, requestWithRouteParam(http.MethodDelete, "/api/v1/admin/cosmetics/packs/event-pack", nil, "pack_id", "event-pack"))
+	if deleted.Code != http.StatusOK || !strings.Contains(deleted.Body.String(), `"deleted":true`) {
+		t.Fatalf("pack delete status=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+	if strings.Contains(category.Body.String(), "never-store-this-secret") {
+		t.Fatal("admin token leaked into mutation response")
+	}
+}
+
+func TestAdminCosmeticCatalogMutationsValidateAndMapConflicts(t *testing.T) {
+	badJSON := httptest.NewRecorder()
+	newCosmeticsHandlerWithStore(&fakeCosmeticsStore{}, nil).UpsertAdminCategory(badJSON,
+		requestWithRouteParam(http.MethodPut, "/api/v1/admin/cosmetics/categories/event", []byte(`{"name":"Event","unknown":true}`), "category_id", "event"))
+	if badJSON.Code != http.StatusBadRequest {
+		t.Fatalf("unknown field status = %d, want 400", badJSON.Code)
+	}
+
+	conflictStore := &fakeCosmeticsStore{grantErr: db.ErrCosmeticCatalogConflict}
+	conflict := httptest.NewRecorder()
+	newCosmeticsHandlerWithStore(conflictStore, nil).UpsertAdminItem(conflict,
+		requestWithRouteParam(http.MethodPut, "/api/v1/admin/cosmetics/items/item", []byte(`{
+			"name":"Item", "category_id":"event", "slot":"attachment", "asset_key":"item", "rarity":"common",
+			"currency":"USD", "is_free":true, "is_active":true
+		}`), "item_id", "item"))
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("catalog conflict status = %d, want 409; body=%s", conflict.Code, conflict.Body.String())
+	}
+}
+
+func TestAdminCosmeticAuditCapsLimit(t *testing.T) {
+	store := &fakeCosmeticsStore{audit: []db.CosmeticCatalogAudit{{ID: 1, Actor: "admin-token"}}}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+	rec := httptest.NewRecorder()
+	handler.AdminAudit(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/cosmetics/audit?limit=9999", nil))
+	if rec.Code != http.StatusOK || store.lastLimit != 200 {
+		t.Fatalf("audit status=%d limit=%d body=%s", rec.Code, store.lastLimit, rec.Body.String())
+	}
+}
+
+func TestRegisterCosmeticsAdminRoutes(t *testing.T) {
+	store := &fakeCosmeticsStore{
+		adminCatalog: &db.CosmeticCatalog{},
+		revoked:      true,
+	}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+	router := chi.NewRouter()
+	registerCosmeticsAdminRoutes(router, handler)
+
+	tests := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/cosmetics/catalog", ""},
+		{http.MethodGet, "/cosmetics/audit", ""},
+		{http.MethodPut, "/cosmetics/categories/event", `{"name":"Event","is_active":true}`},
+		{http.MethodDelete, "/cosmetics/categories/event", ""},
+		{http.MethodPut, "/cosmetics/items/event-item", `{
+			"name":"Event Item","category_id":"event","slot":"attachment","asset_key":"event_item",
+			"rarity":"common","currency":"USD","is_free":true,"is_active":true
+		}`},
+		{http.MethodDelete, "/cosmetics/items/event-item", ""},
+		{http.MethodPut, "/cosmetics/packs/event-pack", `{
+			"name":"Event Pack","category_id":"event","price_cents":99,"currency":"USD",
+			"is_purchasable":true,"is_active":true,"item_ids":["event-item"]
+		}`},
+		{http.MethodDelete, "/cosmetics/packs/event-pack", ""},
+	}
+	for _, test := range tests {
+		t.Run(test.method+" "+test.path, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+			router.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 

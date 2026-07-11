@@ -73,6 +73,21 @@ func TestVerifyManagedSchema(t *testing.T) {
 	}
 }
 
+func TestManagedSchemaPreflightRequiresCosmeticCatalogAdministration(t *testing.T) {
+	for _, required := range []string{
+		"('cosmetic_categories', 'id')",
+		"('cosmetic_items', 'category_id')",
+		"('cosmetic_items', 'sort_order')",
+		"('cosmetic_packs', 'id')",
+		"('cosmetic_pack_items', 'pack_id')",
+		"('cosmetic_catalog_audit', 'id')",
+	} {
+		if !strings.Contains(managedSchemaPreflightQuery, required) {
+			t.Errorf("managed schema preflight is missing %s", required)
+		}
+	}
+}
+
 func TestRuntimePrivilegeStatementsAreScopedAndRoleValidated(t *testing.T) {
 	statements, err := runtimePrivilegeStatements("arena_app")
 	if err != nil {
