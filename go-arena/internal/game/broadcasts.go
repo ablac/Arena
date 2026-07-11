@@ -143,6 +143,12 @@ func SendRoundStart(bot *BotState, round RoundState, bots map[string]*BotState, 
 		"round_modifier_label": round.Modifier.Label(),
 		"position":             [2]int{gridPos[0], gridPos[1]},
 		"bots_in_round":        len(bots),
+		// Older clients expect this object to exist. Expose only the receiver's
+		// already-known position; restoring opponent entries would recreate the
+		// round-start radar leak that the fairness boundary removed.
+		"all_positions": map[string]interface{}{
+			bot.BotID: [2]int{gridPos[0], gridPos[1]},
+		},
 		"safe_zone": map[string]interface{}{
 			"center":        [2]int{zoneCenter[0], zoneCenter[1]},
 			"radius":        int(math.Round(arena.ZoneRadius / cellSize)),

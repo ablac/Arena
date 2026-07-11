@@ -29,8 +29,15 @@ func TestSendRoundStartDoesNotRevealOpponentPositions(t *testing.T) {
 		if err := json.Unmarshal(payload, &message); err != nil {
 			t.Fatalf("decode round_start: %v", err)
 		}
-		if _, exists := message["all_positions"]; exists {
-			t.Fatalf("round_start leaks every bot position: %s", payload)
+		positions, exists := message["all_positions"].(map[string]interface{})
+		if !exists {
+			t.Fatalf("round_start removed the legacy all_positions shape: %s", payload)
+		}
+		if len(positions) != 1 || positions[bot.BotID] == nil {
+			t.Fatalf("legacy all_positions = %v, want only the receiving bot", positions)
+		}
+		if _, leaked := positions[opponent.BotID]; leaked {
+			t.Fatalf("round_start leaks opponent position: %s", payload)
 		}
 		if got := int(message["bots_in_round"].(float64)); got != len(bots) {
 			t.Fatalf("bots_in_round = %d, want %d", got, len(bots))
