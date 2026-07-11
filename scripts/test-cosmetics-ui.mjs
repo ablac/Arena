@@ -59,9 +59,29 @@ globalThis.fetch = async (url, options = {}) => {
     ok: true,
     json: async () => ({
       checkout_enabled: false,
+      categories: [
+        {id: 'chassis', name: 'Chassis', is_active: true, sort_order: 10},
+        {id: 'starter-packs', name: 'Starter Packs', is_active: true, sort_order: 40},
+      ],
       items: [
-        {id: 'skin-standard', name: 'Standard', slot: 'bot_skin', is_free: true, rarity: 'common'},
-        {id: 'skin-neon', name: 'Neon', slot: 'bot_skin', is_free: false, price_cents: 499, currency: 'USD', rarity: 'rare'},
+        {id: 'skin-standard', name: 'Standard', category_id: 'chassis', slot: 'bot_skin', is_free: true, rarity: 'common'},
+        {id: 'skin-neon', name: 'Neon', category_id: 'chassis', slot: 'bot_skin', is_free: false, price_cents: 499, currency: 'USD', rarity: 'rare'},
+      ],
+      packs: [
+        {
+          id: 'neon-signal-pack',
+          name: 'Neon Signal Pack',
+          description: 'A coordinated three-piece Arena loadout.',
+          category_id: 'starter-packs',
+          price_cents: 99,
+          currency: 'USD',
+          is_purchasable: true,
+          items: [
+            {id: 'skin-neon', name: 'Neon'},
+            {id: 'weapon-solar', name: 'Solar Flare'},
+            {id: 'attachment-signal', name: 'Signal Antenna'},
+          ],
+        },
       ],
     }),
   };
@@ -73,6 +93,9 @@ assert.ok(api, 'panel should initialise without an API-key input');
 assert.equal(requestOptions.cache, 'no-store');
 assert.ok(findNode(catalogRoot, node => node.textContent === 'Starter item'));
 assert.ok(findNode(catalogRoot, node => node.textContent === 'Coming soon'));
+assert.ok(findNode(catalogRoot, node => node.textContent === 'Neon Signal Pack'), 'pack name should be rendered');
+assert.ok(findNode(catalogRoot, node => node.textContent === 'Preview · $0.99'), 'disabled checkout should show the planned pack price');
+assert.ok(findNode(catalogRoot, node => node.textContent === 'Solar Flare'), 'pack contents should be inspectable');
 assert.equal(findNode(catalogRoot, node => node.textContent === 'Email-account license'), null, 'disabled checkout must not advertise a purchasable license');
 assert.match(status.textContent, /verified email account/i);
 
