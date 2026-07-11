@@ -74,6 +74,42 @@ func runBalanceRounds(rounds int, bots map[string]*BotState, winnerID string) {
 	}
 }
 
+func seedPositiveHeadlineWithInconclusiveAxes(t *testing.T, weapon string, rounds int) {
+	t.Helper()
+	entry := &weaponRoundPerformance{
+		bots:            3,
+		totalShotsFired: 120,
+		totalShotsHit:   60,
+		botIDs: map[string]struct{}{
+			weapon + "-a": {},
+			weapon + "-b": {},
+			weapon + "-c": {},
+		},
+		engagedOpponentIDs: map[string]struct{}{
+			"opponent-a": {},
+			"opponent-b": {},
+			"opponent-c": {},
+		},
+	}
+	opponents := &weaponRoundPerformance{
+		bots:            3,
+		totalShotsFired: 120,
+		totalShotsHit:   60,
+	}
+	evidence := &weaponBalanceEvidence{}
+	for i := 0; i < rounds; i++ {
+		axisPressure := 2.0
+		if i%2 != 0 {
+			axisPressure = -2.0
+		}
+		evidence.add(entry, opponents, 0.5, axisPressure, -axisPressure)
+	}
+
+	weaponBalanceMu.Lock()
+	weaponEvidence[weapon] = evidence
+	weaponBalanceMu.Unlock()
+}
+
 func TestAutoBalanceSkipsTeamModes(t *testing.T) {
 	setupWeaponBalanceTest(t)
 	ActiveModeRules = ModeRulesFor(ModeTeamBattle)
@@ -247,6 +283,9 @@ func TestAutoBalanceInconclusiveEvidenceExpiresWithoutDecay(t *testing.T) {
 	}
 
 	state, _ := GetWeaponBalanceState("sword")
+	if state.DamageScale != initial.DamageScale || state.CooldownScale != initial.CooldownScale {
+		t.Fatalf("expired headline noise moved weapon: damage=%.4f cooldown=%.4f", state.DamageScale, state.CooldownScale)
+	}
 	if state.AdjustmentScale != initial.AdjustmentScale {
 		t.Fatalf("expired inconclusive evidence changed adjustment step: %.4f -> %.4f", initial.AdjustmentScale, state.AdjustmentScale)
 	}
@@ -255,6 +294,40 @@ func TestAutoBalanceInconclusiveEvidenceExpiresWithoutDecay(t *testing.T) {
 	weaponBalanceMu.RUnlock()
 	if retainedRounds != 0 {
 		t.Fatalf("expired inconclusive evidence retained %d rounds, want 0", retainedRounds)
+	}
+}
+
+func TestAutoBalanceMaxEvidenceCompositeNerfConvergesWhenAxesStayInconclusive(t *testing.T) {
+	setupWeaponBalanceTest(t)
+	config.C.WeaponAutoBalanceMaxEvidenceRounds = 8
+	minStep, _ := weaponBalanceStepBounds()
+	initial, _ := GetWeaponBalanceState("sword")
+	expectedDamage := 1.0
+	expectedCooldown := 1.0
+
+	for batch := 1; batch <= 3; batch++ {
+		seedPositiveHeadlineWithInconclusiveAxes(t, "sword", config.C.WeaponAutoBalanceMaxEvidenceRounds-1)
+		AutoBalanceWeapons(context.Background(), balanceTestBots(8, 0), "sword-a")
+
+		expectedDamage *= 1 - minStep
+		expectedCooldown *= 1 + minStep
+		state, _ := GetWeaponBalanceState("sword")
+		if math.Abs(state.DamageScale-expectedDamage) > 1e-12 {
+			t.Fatalf("batch %d damage scale = %.12f, want bounded composite nerf %.12f", batch, state.DamageScale, expectedDamage)
+		}
+		if math.Abs(state.CooldownScale-expectedCooldown) > 1e-12 {
+			t.Fatalf("batch %d cooldown scale = %.12f, want bounded composite nerf %.12f", batch, state.CooldownScale, expectedCooldown)
+		}
+		if state.AdjustmentScale != initial.AdjustmentScale {
+			t.Fatalf("batch %d changed adjustment step: %.4f -> %.4f", batch, initial.AdjustmentScale, state.AdjustmentScale)
+		}
+
+		weaponBalanceMu.RLock()
+		retainedRounds := weaponEvidence["sword"].rounds
+		weaponBalanceMu.RUnlock()
+		if retainedRounds != 0 {
+			t.Fatalf("batch %d retained %d evidence rounds after resolution, want 0", batch, retainedRounds)
+		}
 	}
 }
 
