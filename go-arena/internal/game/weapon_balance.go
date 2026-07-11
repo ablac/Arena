@@ -837,6 +837,7 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, _ string
 				resolvedEvidence = true
 				slog.Info("weapon auto-balance adjusted",
 					"weapon", weapon,
+					"resolution_reason", "axis_evidence",
 					"evidence_rounds", evidence.rounds,
 					"bot_samples", evidence.botSamples,
 					"distinct_weapon_bots", len(evidence.distinctWeaponBots),
@@ -847,6 +848,28 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, _ string
 					"cooldown_scale", round1(state.CooldownScale),
 					"adjust_damage", adjustDamage,
 					"adjust_cooldown", adjustCooldown,
+				)
+			} else if evidence.rounds >= maxEvidenceRounds && scoreDirection > 0 && damageDirection == 0 && cooldownDirection == 0 {
+				// A sustained headline advantage must not deadlock forever merely
+				// because its damage and cooldown attribution remains noisy. At the
+				// evidence cap, apply one conservative composite nerf and collect a
+				// fresh batch. Opposing axis evidence is deliberately excluded.
+				state.DamageScale = applyRelativeScaleChange(state.DamageScale, -minStep, minStep, minDamageScale, maxDamageScale)
+				state.CooldownScale = applyRelativeScaleChange(state.CooldownScale, minStep, minStep, minCooldownScale, maxCooldownScale)
+				resolvedEvidence = true
+				slog.Info("weapon auto-balance adjusted",
+					"weapon", weapon,
+					"resolution_reason", "headline_composite_nerf",
+					"evidence_rounds", evidence.rounds,
+					"bot_samples", evidence.botSamples,
+					"distinct_weapon_bots", len(evidence.distinctWeaponBots),
+					"distinct_opponent_bots", len(evidence.distinctOpponentBots),
+					"score_effect", round1(evidence.scoreDiff.mean),
+					"score_margin", round1(confidenceZ*evidence.scoreDiff.standardError()),
+					"damage_scale", round1(state.DamageScale),
+					"cooldown_scale", round1(state.CooldownScale),
+					"adjust_damage", true,
+					"adjust_cooldown", true,
 				)
 			} else if scoreDirection == 0 && evidence.scoreDiff.equivalentWithin(deadzone, confidenceZ) {
 				// Decay responsiveness only after equivalence is affirmatively
@@ -860,6 +883,7 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, _ string
 				resolvedEvidence = true
 				slog.Debug("weapon auto-balance rejected confounded batch",
 					"weapon", weapon,
+					"resolution_reason", "inconclusive_expired",
 					"evidence_rounds", evidence.rounds,
 					"score_direction", scoreDirection,
 					"damage_direction", damageDirection,
