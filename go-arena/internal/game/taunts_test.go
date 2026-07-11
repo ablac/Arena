@@ -251,6 +251,64 @@ func TestTauntNeverReachesBotTick(t *testing.T) {
 	}
 }
 
+// TestTauntDoesNotConsumeActionBudget locks in the other half of the
+// design: a taunt must never touch the action machinery, so taunting and
+// acting on the same server tick both succeed in either order.
+func TestTauntDoesNotConsumeActionBudget(t *testing.T) {
+	withTauntConfig(t)
+
+	idleAction := func() *Action { return &Action{Type: ActionIdle} }
+
+	t.Run("taunt then action", func(t *testing.T) {
+		e, bot := newTauntTestEngine(t)
+		if err := e.AddTauntForSession(bot.BotID, bot, "gg"); err != nil {
+			t.Fatalf("taunt: %v", err)
+		}
+		if bot.PendingAction != nil {
+			t.Fatal("taunt set PendingAction")
+		}
+		if bot.HasAcceptedServerTick {
+			t.Fatal("taunt consumed the per-server-tick action budget")
+		}
+		if err := e.SubmitBotActionForSession(bot.BotID, bot, e.TickCount, idleAction()); err != nil {
+			t.Fatalf("action after same-tick taunt rejected: %v", err)
+		}
+	})
+
+	t.Run("action then taunt", func(t *testing.T) {
+		e, bot := newTauntTestEngine(t)
+		if err := e.SubmitBotActionForSession(bot.BotID, bot, e.TickCount, idleAction()); err != nil {
+			t.Fatalf("action: %v", err)
+		}
+		if err := e.AddTauntForSession(bot.BotID, bot, "gg"); err != nil {
+			t.Fatalf("taunt after same-tick action rejected: %v", err)
+		}
+	})
+}
+
+// TestTauntClearedAtRoundStart: a taunt buffered after the previous round's
+// final broadcast must not ghost into the next round's first frame.
+func TestTauntClearedAtRoundStart(t *testing.T) {
+	loadTestConfig(t) // startRound generates terrain, which needs real config
+	withTauntConfig(t)
+	e, bot := newTauntTestEngine(t)
+
+	if err := e.AddTauntForSession(bot.BotID, bot, "too_easy"); err != nil {
+		t.Fatalf("taunt: %v", err)
+	}
+	if len(e.RecentEvents) != 1 {
+		t.Fatalf("taunt not buffered: %d events", len(e.RecentEvents))
+	}
+
+	e.mu.Lock()
+	e.startRound()
+	e.mu.Unlock()
+
+	if len(e.RecentEvents) != 0 {
+		t.Fatalf("RecentEvents survived startRound: %d events would ghost into the new round", len(e.RecentEvents))
+	}
+}
+
 func TestTauntEmoteKeysSorted(t *testing.T) {
 	keys := TauntEmoteKeys()
 	if len(keys) == 0 {

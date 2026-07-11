@@ -303,12 +303,14 @@ export class ArenaEngine {
     // arriving at 10Hz either way, and every effect's cleanup runs in the
     // render loop, so spawning here would grow the scene without bound.
     // _seenArenaEvents dedup means skipped events never replay.
-    if (this.shouldSpawnEffects()) {
-      this._playArenaEvents(state.events || [], state);
-    }
     this.obstacleRenderer.update(state.obstacles);
     this.envRenderer.update(state.safe_zone, !!state.sudden_death);
     this.botRenderer.update(state.bots);
+    // Events play after the entity updates so a taunt arriving in the same
+    // broadcast that introduces its bot can find the fresh entry.
+    if (this.shouldSpawnEffects()) {
+      this._playArenaEvents(state.events || [], state);
+    }
     this.pickupRenderer.update(state.pickups || []);
     this.effectRenderer.update(state.bots);
     this.gameplayRenderer.update(state);

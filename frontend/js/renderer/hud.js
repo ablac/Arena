@@ -65,7 +65,7 @@ export class HudRenderer {
     }
     this._updateRoundInfo(state);
     this._updateKillFeed(state.kill_feed || []);
-    this._updateTaunts(state.bots || []);
+    this._updateTaunts(state.bots || [], state.tick);
     this._updatePlayers(state.bots || []);
     this._updateWaitingBots(state.waiting_bots || []);
   }
@@ -349,13 +349,17 @@ export class HudRenderer {
       if (!ev || ev.type !== 'taunt' || !ev.id || !ev.text) continue;
       if (this._seenTauntIds.has(ev.id)) continue;
       this._seenTauntIds.add(ev.id);
+      if (this._seenTauntIds.size > 256) {
+        const first = this._seenTauntIds.values().next();
+        if (!first.done) this._seenTauntIds.delete(first.value);
+      }
       this._pendingTaunts.push(ev);
     }
     // A taunt-heavy lobby must not grow the queue while the tab is hidden.
     while (this._pendingTaunts.length > 30) this._pendingTaunts.shift();
   }
 
-  _updateTaunts(bots) {
+  _updateTaunts(bots, currentTick) {
     if (this._pendingTaunts.length === 0) return;
     const names = new Map();
     for (const bot of bots) {
@@ -363,7 +367,17 @@ export class HudRenderer {
     }
     const pending = this._pendingTaunts;
     this._pendingTaunts = [];
-    for (const ev of pending) {
+    // Reverse iteration matches the kill feed convention (oldest-at-top
+    // within one drained batch, both entry kinds read the same way).
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const ev = pending[i];
+      // Age gate: a tab hidden for minutes accumulates stale banter; only
+      // taunts from the last ~6 seconds of ticks (10 Hz) are worth showing.
+      // ev.tick > currentTick means the round rolled over; drop those too.
+      if (typeof currentTick === 'number' && typeof ev.tick === 'number' &&
+          (ev.tick > currentTick || currentTick - ev.tick > 60)) {
+        continue;
+      }
       const el = this._createTauntEntry(names.get(ev.owner_id) || '???', ev.text);
       this.killfeedEl.prepend(el);
       this._activeEntries.unshift({ key: 'taunt-' + ev.id, el });

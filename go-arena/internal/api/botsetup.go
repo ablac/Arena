@@ -180,7 +180,7 @@ func BotSetup() http.HandlerFunc {
 						},
 					},
 					"taunt": map[string]interface{}{
-						"description": fmt.Sprintf("Optional cosmetic emote shown as a speech bubble to spectators (never to other bots). Does not consume your per-tick action. Cooldown %.0fs; extra taunts are silently dropped. Valid emotes: %v", c.TauntCooldownSecs, game.TauntEmoteKeys()),
+						"description": fmt.Sprintf("Optional cosmetic emote shown as a speech bubble to spectators (never to other bots). Does not consume your per-tick action. Cooldown %gs; extra taunts are silently dropped. Valid emotes: %v", c.TauntCooldownSecs, game.TauntEmoteKeys()),
 						"enabled":     c.TauntsEnabled,
 						"example": map[string]interface{}{
 							"type":  "taunt",
