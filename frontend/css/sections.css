@@ -375,7 +375,15 @@
   background:
     linear-gradient(180deg, rgba(11, 20, 32, 0.96), rgba(7, 13, 22, 0.96));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  transition: border-radius 0.28s ease, padding 0.28s ease, box-shadow 0.28s ease;
+  /* Same list and timing as the Spectator HUD card (.hud-round), so the
+     Hide/Show-feed collapse morphs identically instead of popping. */
+  transition: width 0.18s ease, padding 0.18s ease, border-radius 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* Applied for one frame when the persisted collapsed state is restored on
+   page load, so the pill doesn't animate shut in front of the visitor. */
+.arena-sidebar.no-transition {
+  transition: none;
 }
 
 .arena-sidebar-intro h3 {
@@ -792,6 +800,35 @@ body.arena-fullscreen {
   border-radius: 50%;
   background: var(--accent-gold);
   box-shadow: 0 0 14px rgba(255, 206, 84, 0.4);
+}
+
+/* Sudden death: the phase chip becomes a pulsing red warning; stall (nobody
+   fighting, everyone taking ramping damage) pulses harder and faster. */
+.hud-phase.is-sudden-death {
+  color: #ff8391;
+  border-color: rgba(255, 70, 92, 0.55);
+  background: rgba(255, 51, 85, 0.14);
+  animation: hud-sudden-death-pulse 1.4s ease-in-out infinite;
+}
+
+.hud-phase.is-sudden-death::before {
+  background: #ff3355;
+  box-shadow: 0 0 14px rgba(255, 51, 85, 0.65);
+}
+
+.hud-phase.is-sudden-death.is-stall {
+  animation-duration: 0.6s;
+  background: rgba(255, 51, 85, 0.24);
+}
+
+@keyframes hud-sudden-death-pulse {
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-phase.is-sudden-death {
+    animation: none;
+  }
 }
 
 .hud-metric-grid {

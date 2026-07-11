@@ -29,6 +29,10 @@ export class SpectatorSocket {
     this._staleTimer = null;
     /** Milliseconds of application-message silence before forcing reconnect. */
     this._staleTimeout = 45000;
+    /** @type {number|null} Pending reconnect timer handle. */
+    this._reconnectTimer = null;
+    /** @type {number|null} Timer that resets the backoff once a connection survives. */
+    this._backoffResetTimer = null;
   }
 
   /** Start connecting to the spectator stream. */
@@ -42,6 +46,8 @@ export class SpectatorSocket {
     this.shouldConnect = false;
     this._stopPing();
     this._clearStaleTimer();
+    this._clearReconnectTimer();
+    this._clearBackoffResetTimer();
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -51,6 +57,8 @@ export class SpectatorSocket {
   /** @private */
   _doConnect() {
     if (!this.shouldConnect) return;
+    // A connect racing a pending reconnect must not produce two sockets.
+    this._clearReconnectTimer();
     this.onStatus('connecting');
     try {
       this.ws = new WebSocket(this.url);
@@ -63,7 +71,13 @@ export class SpectatorSocket {
     this.ws.onopen = () => {
       console.log('[SpectatorWS] Connected');
       this.onStatus('connected');
-      this.reconnectDelay = 1000;
+      // Only reset the backoff once the connection has survived a while;
+      // an accept-then-drop server would otherwise loop at 1s forever.
+      this._clearBackoffResetTimer();
+      this._backoffResetTimer = setTimeout(() => {
+        this._backoffResetTimer = null;
+        this.reconnectDelay = 1000;
+      }, 5000);
       this._startPing();
       this._resetStaleTimer();
     };
@@ -90,6 +104,7 @@ export class SpectatorSocket {
       console.log('[SpectatorWS] Disconnected:', event.code);
       this._stopPing();
       this._clearStaleTimer();
+      this._clearBackoffResetTimer();
       this.onStatus('disconnected');
       this._scheduleReconnect();
     };
@@ -138,13 +153,35 @@ export class SpectatorSocket {
     }
   }
 
-  /** @private Exponential backoff reconnect. */
+  /** @private Exponential backoff reconnect with jitter. */
   _scheduleReconnect() {
     if (!this.shouldConnect) return;
-    const delay = this.reconnectDelay;
+    if (this._reconnectTimer) return; // one pending reconnect at a time
+    let delay = this.reconnectDelay;
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
-    console.log(`[SpectatorWS] Reconnecting in ${delay}ms`);
+    // Jitter spreads clients out so a server restart doesn't get a stampede.
+    delay = delay / 2 + Math.random() * (delay / 2);
+    console.log(`[SpectatorWS] Reconnecting in ${Math.round(delay)}ms`);
     this.onStatus('reconnecting');
-    setTimeout(() => this._doConnect(), delay);
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      this._doConnect();
+    }, delay);
+  }
+
+  /** @private */
+  _clearReconnectTimer() {
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+  }
+
+  /** @private */
+  _clearBackoffResetTimer() {
+    if (this._backoffResetTimer) {
+      clearTimeout(this._backoffResetTimer);
+      this._backoffResetTimer = null;
+    }
   }
 }

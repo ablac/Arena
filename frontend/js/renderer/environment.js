@@ -24,6 +24,7 @@ export class EnvironmentRenderer {
     this._lastZoneR = -1;
     this._lastZoneCx = -1;
     this._lastZoneCy = -1;
+    this._zoneSuddenDeath = false;
 
     this._createSkybox();
     this._createSpaceObjects();
@@ -91,10 +92,12 @@ export class EnvironmentRenderer {
       }
 
       // Fractal Brownian Motion for nebula clouds
+      // (4 octaves — the 5th cost a full noise3 per fragment for detail
+      // that's invisible at sky distance behind the smoothstep threshold)
       float fbm(vec3 p) {
         float v = 0.0;
         float a = 0.5;
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 4; i++) {
           v += a * noise3(p);
           p *= 2.0;
           a *= 0.5;
@@ -160,21 +163,20 @@ export class EnvironmentRenderer {
         float nebula3 = smoothstep(0.5, 0.8, n3) * 0.08;
         color += vec3(0.12, 0.04, 0.02) * nebula3; // warm red-orange
 
-        // --- Stars at multiple scales ---
+        // --- Stars at two scales ---
+        // (each starField call walks a 3x3x3 cell neighborhood, so the
+        // mid 40.0 layer was dropped — dense + sparse covers the range and
+        // it's a third of the heaviest loop back for integrated GPUs)
         // Dense small stars
         float s1 = starField(dir, 80.0, 0.7);
-        // Medium stars
-        float s2 = starField(dir, 40.0, 0.8);
         // Sparse bright stars
         float s3 = starField(dir, 20.0, 0.9);
 
         // Star color temperature varies
         vec3 starColor1 = mix(vec3(0.7, 0.8, 1.0), vec3(1.0, 0.95, 0.8), hash(dir * 80.0 + 999.0));
-        vec3 starColor2 = mix(vec3(0.8, 0.85, 1.0), vec3(1.0, 0.9, 0.7), hash(dir * 40.0 + 888.0));
         vec3 starColor3 = mix(vec3(0.9, 0.95, 1.0), vec3(1.0, 0.85, 0.6), hash(dir * 20.0 + 777.0));
 
         color += starColor1 * s1 * 0.6;
-        color += starColor2 * s2 * 0.8;
         color += starColor3 * s3 * 1.2;
 
         // --- Distant sun glow (optional, matching the reference) ---
@@ -282,6 +284,20 @@ export class EnvironmentRenderer {
       ctx.fillStyle = coreGrad;
       ctx.fillRect(0, 0, s, s);
     });
+
+    // Small white circle for comet-trail particles, shared across all comet
+    // respawns instead of rebuilt per trail; freed once in dispose() like
+    // _pylonGlowTex (ParticleSystem.dispose() defaults to tearing down its
+    // texture, so trails must always dispose with `false`).
+    const trailTex = new B.DynamicTexture('cometTrailTex', 16, scene, false);
+    const ptCtx = trailTex.getContext();
+    const ptGrad = ptCtx.createRadialGradient(8, 8, 0, 8, 8, 8);
+    ptGrad.addColorStop(0, 'rgba(255,255,255,1)');
+    ptGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    ptCtx.fillStyle = ptGrad;
+    ptCtx.fillRect(0, 0, 16, 16);
+    trailTex.update();
+    this._cometTrailTex = trailTex;
 
     // 🚗 Tesla Roadster (Starman!)
     const teslaTex = makeTexture('teslaTex', (ctx, s) => {
@@ -398,7 +414,7 @@ export class EnvironmentRenderer {
       );
     };
 
-    const spawnObject = () => {
+    const spawnObject = (reuseMat = null) => {
       const def = pool[Math.floor(Math.random() * pool.length)];
 
       // Start position — random point on the outer shell
@@ -413,13 +429,17 @@ export class EnvironmentRenderer {
         height: def.size
       }, scene);
 
-      const mat = new B.StandardMaterial('spMat_' + Date.now(), scene);
+      // Reuse the slot's material on respawn — only the sprite textures
+      // change between object types; the static flags are set once.
+      const mat = reuseMat || new B.StandardMaterial('spMat_' + Date.now(), scene);
       mat.diffuseTexture = def.tex;
       mat.emissiveTexture = def.tex; // self-lit in space
-      mat.emissiveColor = new B.Color3(0.8, 0.8, 0.8);
       mat.opacityTexture = def.tex;
-      mat.backFaceCulling = false;
-      mat.disableLighting = true;
+      if (!reuseMat) {
+        mat.emissiveColor = new B.Color3(0.8, 0.8, 0.8);
+        mat.backFaceCulling = false;
+        mat.disableLighting = true;
+      }
       plane.material = mat;
       plane.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
       plane.position = start.clone();
@@ -444,15 +464,7 @@ export class EnvironmentRenderer {
         trail.maxEmitPower = 3;
         trail.gravity = new B.Vector3(0, 0, 0);
         trail.blendMode = B.ParticleSystem.BLENDMODE_ADD;
-        // Small white circle for particles
-        trail.particleTexture = new B.DynamicTexture('pt', 16, scene, false);
-        const ptCtx = trail.particleTexture.getContext();
-        const ptGrad = ptCtx.createRadialGradient(8, 8, 0, 8, 8, 8);
-        ptGrad.addColorStop(0, 'rgba(255,255,255,1)');
-        ptGrad.addColorStop(1, 'rgba(255,255,255,0)');
-        ptCtx.fillStyle = ptGrad;
-        ptCtx.fillRect(0, 0, 16, 16);
-        trail.particleTexture.update();
+        trail.particleTexture = this._cometTrailTex; // shared — see hoist above
         trail.start();
       }
 
@@ -496,14 +508,15 @@ export class EnvironmentRenderer {
         obj.plane.setEnabled(true);
         if (obj.trail) obj.trail.emitRate = COMET_TRAIL_EMIT_RATE;
         obj.elapsed += dt;
-        const pos = obj.start.add(obj.dir.scale(obj.speed * obj.elapsed));
+        // Mutate the existing position vector in place — .add()/.scale()
+        // here allocated 2 fresh Vector3 per object per frame.
+        obj.plane.position.copyFrom(obj.start);
+        obj.dir.scaleAndAddToRef(obj.speed * obj.elapsed, obj.plane.position);
 
         // UFO wobble
         if (obj.wobble > 0) {
-          pos.y += Math.sin(obj.elapsed * 3) * obj.wobble * 20;
+          obj.plane.position.y += Math.sin(obj.elapsed * 3) * obj.wobble * 20;
         }
-
-        obj.plane.position = pos;
 
         // Rotate satellites and debris slowly
         if (obj.def.name === 'satellite' || obj.def.name === 'debris') {
@@ -519,13 +532,14 @@ export class EnvironmentRenderer {
 
         // Respawn when it's traveled its full path
         if (obj.elapsed >= obj.duration) {
-          // Cleanup
+          // Cleanup — the material is handed back to spawnObject() for
+          // reuse, and the trail texture is the shared _cometTrailTex
+          // (hence dispose(false); see the hoist above).
           obj.plane.dispose();
-          obj.mat.dispose();
-          if (obj.trail) { obj.trail.dispose(); }
+          if (obj.trail) { obj.trail.dispose(false); }
 
           // Replace with new object
-          this._spaceObjects[i] = spawnObject();
+          this._spaceObjects[i] = spawnObject(obj.mat);
         }
       }
     });
@@ -685,6 +699,8 @@ export class EnvironmentRenderer {
       [0, this.h / 2, wallD, this.h + wallD],
       [this.w, this.h / 2, wallD, this.h + wallD],
     ];
+    // Collected so setupShadows() can register them as static casters.
+    this._walls = [];
     for (let i = 0; i < specs.length; i++) {
       const [cx, cz, bw, bd] = specs[i];
       // Main wall body
@@ -695,6 +711,7 @@ export class EnvironmentRenderer {
       wall.material = wallMat;
       wall.isPickable = false;
       wall.freezeWorldMatrix();
+      this._walls.push(wall);
 
       // Glowing trim strip on top
       const trim = B.MeshBuilder.CreateBox(`trim-${i}`, {
@@ -944,6 +961,7 @@ export class EnvironmentRenderer {
 
     this._waterfalls = [];
     const wallH = 50;
+    const WATERFALL_EMIT_RATE = 20;
 
     for (let i = 0; i < edges.length; i++) {
       const e = edges[i];
@@ -960,7 +978,7 @@ export class EnvironmentRenderer {
       ps.maxLifeTime = 3.0;
       ps.minSize = 2;
       ps.maxSize = 6;
-      ps.emitRate = 20;
+      ps.emitRate = WATERFALL_EMIT_RATE;
       ps.gravity = new B.Vector3(0, -20, 0);
       ps.color1 = new B.Color4(0.2, 0.5, 1.0, 0.6);
       ps.color2 = new B.Color4(0.1, 0.3, 0.8, 0.3);
@@ -969,6 +987,13 @@ export class EnvironmentRenderer {
       ps.start();
       this._waterfalls.push(ps);
     }
+
+    // Live settings check — zero the emit rate rather than stop() so a
+    // toggle takes effect immediately without losing emitter state.
+    this.scene.registerBeforeRender(() => {
+      const rate = isEnabled('arenaAmbience', 'edgeWaterfalls') ? WATERFALL_EMIT_RATE : 0;
+      for (const ps of this._waterfalls) ps.emitRate = rate;
+    });
   }
 
   /** @private Rotating energy rings around corner pylons. */
@@ -1202,15 +1227,36 @@ export class EnvironmentRenderer {
   /** Set up shadow generator on the directional light. */
   setupShadows(light) {
     const B = window.BABYLON;
-    const shadowGen = new B.ShadowGenerator(1024, light);
+    // 2048 instead of 1024: every caster is static and the light never
+    // moves, so the map below is baked once (REFRESHRATE_RENDER_ONCE), not
+    // re-rendered per frame — the higher resolution is free at runtime.
+    const shadowGen = new B.ShadowGenerator(2048, light);
     shadowGen.usePercentageCloserFiltering = true;
     shadowGen.bias = 0.005;
     shadowGen.normalBias = 0.02;
+    shadowGen.setDarkness(0.55);
+    shadowGen.getShadowMap().refreshRate = B.RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
+    // The boundary walls are static geometry too — let them cast.
+    if (this._walls) {
+      for (const wall of this._walls) shadowGen.addShadowCaster(wall);
+    }
     // Ground receives shadows
     if (this._ground) {
       this._ground.receiveShadows = true;
     }
+    // Live settings check — the shadowEnabled setter early-returns when the
+    // value is unchanged, so a per-frame assignment costs the same as the
+    // other ambience gates above.
+    this.scene.registerBeforeRender(() => {
+      light.shadowEnabled = isEnabled('rendering', 'shadows');
+    });
     this._shadowGen = shadowGen;
+  }
+
+  /** Re-bake the frozen shadow map. Call whenever static casters change
+   *  (e.g. the obstacle rebuild at a round boundary). */
+  refreshShadows() {
+    this._shadowGen?.getShadowMap()?.resetRefreshCounter();
   }
 
   /** Register a mesh as a shadow caster. */
@@ -1223,9 +1269,19 @@ export class EnvironmentRenderer {
   /**
    * Update safe zone visualization.
    * @param {Object|null} safeZone - { center: [x,y], radius, target_center: [x,y], target_radius }
+   * @param {boolean} [suddenDeath] - tint the zone ring red while sudden death is active
    */
-  update(safeZone) {
+  update(safeZone, suddenDeath = false) {
     if (!safeZone) return;
+
+    // Sudden-death tint — menacing red vs the usual electric blue. Mutate
+    // the shared Color3 in place (no per-call alloc), only on transitions.
+    const sd = !!suddenDeath;
+    if (this._zoneSuddenDeath !== sd) {
+      this._zoneSuddenDeath = sd;
+      if (sd) this._zoneMat.emissiveColor.set(1.0, 0.18, 0.24);
+      else this._zoneMat.emissiveColor.set(0.1, 0.5, 1.0);
+    }
 
     const cx = safeZone.center[0];
     const cy = safeZone.center[1];
@@ -1306,10 +1362,11 @@ export class EnvironmentRenderer {
     if (this._spaceObjects) {
       for (const obj of this._spaceObjects) {
         obj.plane.dispose(); obj.mat.dispose();
-        if (obj.trail) obj.trail.dispose();
+        if (obj.trail) obj.trail.dispose(false);
       }
       this._spaceObjects = null;
     }
+    if (this._cometTrailTex) { this._cometTrailTex.dispose(); this._cometTrailTex = null; }
     if (this._pylons) {
       for (const p of this._pylons) { p.pylon.dispose(); p.beacon.dispose(); p.beam.dispose(false); p.ring.dispose(); }
       this._pylons = null;

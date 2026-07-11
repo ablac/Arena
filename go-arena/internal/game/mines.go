@@ -89,10 +89,11 @@ func UpdateMines(mines *[]Landmine, bots map[string]*BotState, tickCount int) []
 						if target.InvulnTicks > 0 {
 							continue
 						}
-						target.HP -= mine.Damage
-						target.RoundDamageTaken += mine.Damage
-						owner.RoundDamageDealt += mine.Damage
-						recordAttributedDamage(target, owner, mine.Damage, "landmine", tickCount)
+						dmg := mine.Damage * SuddenDeathDamageMultiplier()
+						target.HP -= dmg
+						target.RoundDamageTaken += dmg
+						owner.RoundDamageDealt += dmg
+						recordAttributedDamage(target, owner, dmg, "landmine", tickCount)
 					}
 				}
 				triggered = true

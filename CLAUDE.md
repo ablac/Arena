@@ -93,15 +93,16 @@ cd sdk/nodejs && npm install
 - **Stats:** 20-point budget across HP/Speed/Attack/Defense (1-10 each)
 - **Pickups:** Health, Damage Boost, Speed Boost, Shield Bubble, Gravity Well, Cooldown Shard, Bounty Token, Hazard Key, Overdrive Core, Grapple Charge, Relay Battery
 - **Game modes:** `ARENA_GAME_MODE` = `ffa` (default) | `team_battle` | `ctf`; `ARENA_TEAM_COUNT` (2), `ARENA_FRIENDLY_FIRE` (false), CTF first to `ARENA_CTF_CAPTURES_TO_WIN` (3) captures
-- **Map shapes:** `ARENA_MAP_SHAPE` = `random` (default) | `square` | `circle` | `hexagon` | `diamond` | `cross` | `caves` — carved into the terrain grid as blocked cells
+- **Map shapes:** `ARENA_MAP_SHAPE` = `random` (default) | `square` | `circle` | `hexagon` | `diamond` | `cross` | `caves` | `donut` | `islands` | `rooms` | `spiral` — carved into the terrain grid as blocked cells; random obstacles are rejection-sampled against the carved mask (never inside walls) and the combined grid is connectivity-checked
 - **Safe zone:** Starts covering the whole map (`ARENA_ZONE_COVER_MAP`, default true; `ARENA_ZONE_INITIAL_RADIUS` only applies when false), shrinks 15% every 20s after a 60s delay, 3 dmg/tick outside
 - **Tick rate:** 10 ticks/sec (configurable)
 - **Round:** 300s default, min 2 bots to start
 - **Extras:** teleport pads, capture pads, hazard zones, landmines, gravity wells, bounty system, universal grapple ability, sudden death, ~30% chance of a round modifier
+- **Sudden death:** activates when the zone reaches min radius OR the round clock expires with the fight unresolved; the round then plays overtime (up to `ARENA_SUDDEN_DEATH_MAX_OVERTIME`, 90s) instead of ending on the timer. All damage is multiplied by `ARENA_SUDDEN_DEATH_DAMAGE_MULT` (2x), void tiles spawn, and if no bot deals damage for `ARENA_SUDDEN_DEATH_STALL_SECONDS` (20s) every living bot takes ramping stall damage until combat resumes
 
 ## Protocols
 
-- **Bot WebSocket:** `ws://host:8700/ws/bot?key=<api_key>` — ticks carry `your_state.team`, `game_mode`, and in team modes `team_scores` + `flags`; `void_tiles` during sudden death
+- **Bot WebSocket:** `ws://host:8700/ws/bot?key=<api_key>` — ticks carry `your_state.team`, `game_mode`, and in team modes `team_scores` + `flags`; `void_tiles` + `sudden_death_stall` during sudden death
 - **Spectator WebSocket:** `ws://host:8700/ws/spectator` — per-bot `team`; top-level `game_mode`, `map_shape`, `team_scores`, `flags`; obstacles only on keyframe broadcasts (`ARENA_SPECTATOR_KEYFRAME_INTERVAL`, default 10, plus on join) — clients keep the last copy between keyframes
 - **REST API:** `/api/v1/keys/generate`, `/api/v1/arena/status`, `/api/v1/arena/map`, `/api/v1/leaderboard`, `/api/v1/bot-setup`, `/api/v1/version` (build identity: git commit + build time; shown in the site's About drawer), `/api/v1/admin/*`
 - **Admin runtime tuning:** `PUT /api/v1/admin/game/config` accepts `game_mode`, `team_count`, `friendly_fire`, `map_shape` (plus round/zone/stat keys) — mode/shape changes take effect next round

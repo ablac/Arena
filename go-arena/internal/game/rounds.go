@@ -9,12 +9,21 @@ import (
 // ShouldEndRound returns true when the current round should end, based on
 // time expiry, bot count, all bots being dead/disconnected, or the active
 // game mode's win condition (team elimination, CTF capture target).
-func ShouldEndRound(bots map[string]*BotState, round *RoundState, tickCount int, teamScores map[int]int) bool {
+// While sudden death is active the duration timer no longer ends the round;
+// overtime plays out (capped at SuddenDeathMaxOvertime) until a winner
+// emerges or the stall damage forces one.
+func ShouldEndRound(bots map[string]*BotState, round *RoundState, tickCount int, teamScores map[int]int, suddenDeath *SuddenDeathSystem) bool {
 	c := &config.C
 
 	// Duration exceeded.
-	if (tickCount - round.StartTick) >= int(c.RoundDuration*float64(c.TickRate)) {
-		return true
+	elapsed := tickCount - round.StartTick
+	durationTicks := int(c.RoundDuration * float64(c.TickRate))
+	if elapsed >= durationTicks {
+		overtimeTicks := int(c.SuddenDeathMaxOvertime * float64(c.TickRate))
+		inOvertime := suddenDeath != nil && suddenDeath.Active && overtimeTicks > 0
+		if !inOvertime || elapsed >= durationTicks+overtimeTicks {
+			return true
+		}
 	}
 
 	// All bots disconnected.

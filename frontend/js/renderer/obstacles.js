@@ -14,8 +14,10 @@ export class ObstacleRenderer {
   constructor(scene, envRenderer) {
     this.scene = scene;
     this._env = envRenderer || null;
-    /** @type {Map<number, {mesh: BABYLON.Mesh, edge: BABYLON.Mesh}>} */
-    this.meshes = new Map();
+    /** @type {BABYLON.Mesh|null} all pillar bodies merged (one draw call) */
+    this._bodyMesh = null;
+    /** @type {BABYLON.Mesh|null} all edge + base trims merged (one draw call) */
+    this._trimMesh = null;
     this._mat = null;
     this._edgeMat = null;
     this._initMaterials();
@@ -53,70 +55,77 @@ export class ObstacleRenderer {
     // Detect if obstacles changed (new round). Build a fingerprint from
     // the obstacle data to compare against last update.
     const fp = obstacles.map(o => `${o.x},${o.y},${o.width},${o.height}`).join('|');
-    if (fp !== this._lastFingerprint) {
-      // Obstacles changed — dispose all old meshes and rebuild from scratch.
-      // This handles frozen world matrices and size changes between rounds.
-      this.clear();
-      this._lastFingerprint = fp;
+    if (fp === this._lastFingerprint) return; // same layout — merged meshes stand
+
+    // Obstacles changed — dispose the old merged meshes and rebuild from
+    // scratch. This handles frozen world matrices and size changes between
+    // rounds.
+    this.clear();
+    this._lastFingerprint = fp;
+    if (!obstacles.length) {
+      // Casters were just removed — the frozen shadow map still needs the
+      // re-bake or it would keep showing the previous round's shadows.
+      if (this._env && this._env.refreshShadows) this._env.refreshShadows();
+      return;
     }
 
-    const seen = new Set();
-
+    // Build the 3 boxes per obstacle as before, but merge them into two
+    // meshes — one per shared material. The layout is immutable for the
+    // whole round (the fingerprint proves it), so 3 draw calls per obstacle
+    // (150-450 on cave maps) collapse to 2 total. One merge call per
+    // material group means no multi-materials are needed.
+    const bodyBoxes = [];
+    const trimBoxes = [];
     obstacles.forEach((obs, i) => {
-      seen.add(i);
-      if (this.meshes.has(i)) {
-        return; // Already created for this round's layout
-      }
-
       // Stone pillar
       const mesh = B.MeshBuilder.CreateBox(`obs-${i}`, {
         width: obs.width, height: PILLAR_HEIGHT, depth: obs.height
       }, this.scene);
       mesh.position.set(obs.x + obs.width / 2, PILLAR_HEIGHT / 2, obs.y + obs.height / 2);
-      mesh.material = this._mat;
-      mesh.isPickable = false;
-      mesh.freezeWorldMatrix();
-      if (this._env) this._env.addShadowCaster(mesh);
+      bodyBoxes.push(mesh);
 
       // Glowing edge wireframe on top
       const edge = B.MeshBuilder.CreateBox(`obsEdge-${i}`, {
         width: obs.width + 1.5, height: 2, depth: obs.height + 1.5
       }, this.scene);
       edge.position.set(obs.x + obs.width / 2, PILLAR_HEIGHT + 0.8, obs.y + obs.height / 2);
-      edge.material = this._edgeMat;
-      edge.isPickable = false;
-      edge.freezeWorldMatrix();
+      trimBoxes.push(edge);
 
       // Bottom glow ring
       const base = B.MeshBuilder.CreateBox(`obsBase-${i}`, {
         width: obs.width + 1.5, height: 1.5, depth: obs.height + 1.5
       }, this.scene);
       base.position.set(obs.x + obs.width / 2, 0.75, obs.y + obs.height / 2);
-      base.material = this._edgeMat;
-      base.isPickable = false;
-      base.freezeWorldMatrix();
-
-      this.meshes.set(i, { mesh, edge, base });
+      trimBoxes.push(base);
     });
 
-    // Remove stale
-    for (const [k, entry] of this.meshes) {
-      if (!seen.has(k)) {
-        entry.mesh.dispose();
-        entry.edge.dispose();
-        if (entry.base) entry.base.dispose();
-        this.meshes.delete(k);
-      }
+    // MergeMeshes(meshes, disposeSource=true, allow32BitsIndices=true) —
+    // sources are disposed inside the merge, so nothing leaks here.
+    this._bodyMesh = B.Mesh.MergeMeshes(bodyBoxes, true, true);
+    if (this._bodyMesh) {
+      this._bodyMesh.name = 'obstacleBodies';
+      this._bodyMesh.material = this._mat;
+      this._bodyMesh.isPickable = false;
+      this._bodyMesh.freezeWorldMatrix();
+      // Only the opaque bodies cast — the trims are emissive decoration.
+      if (this._env) this._env.addShadowCaster(this._bodyMesh);
     }
+    this._trimMesh = B.Mesh.MergeMeshes(trimBoxes, true, true);
+    if (this._trimMesh) {
+      this._trimMesh.name = 'obstacleTrims';
+      this._trimMesh.material = this._edgeMat;
+      this._trimMesh.isPickable = false;
+      this._trimMesh.freezeWorldMatrix();
+    }
+
+    // The environment's shadow map is frozen (RENDER_ONCE) — re-bake it now
+    // that the casters changed.
+    if (this._env && this._env.refreshShadows) this._env.refreshShadows();
   }
 
   /** Clear all obstacles (round reset). */
   clear() {
-    for (const [, entry] of this.meshes) {
-      entry.mesh.dispose();
-      entry.edge.dispose();
-      if (entry.base) entry.base.dispose();
-    }
-    this.meshes.clear();
+    if (this._bodyMesh) { this._bodyMesh.dispose(); this._bodyMesh = null; }
+    if (this._trimMesh) { this._trimMesh.dispose(); this._trimMesh = null; }
   }
 }
