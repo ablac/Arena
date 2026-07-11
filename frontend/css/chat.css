@@ -1,0 +1,130 @@
+/* Developer lobby chat panel. Dark-theme only, uses arena.css variables. */
+
+/* Chat entry points stay hidden until chat-panel.js confirms the server
+   has chat enabled. */
+[data-overlay-open="chat-overlay"] {
+  display: none;
+}
+body.chat-enabled [data-overlay-open="chat-overlay"] {
+  display: inline-flex;
+}
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.chat-status-line {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+.chat-status-line[data-tone="ok"] {
+  color: var(--accent-gold);
+}
+.chat-status-line[data-tone="warn"] {
+  color: var(--text-muted);
+}
+
+.chat-messages {
+  flex: 1;
+  min-height: 220px;
+  max-height: 48vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.chat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-row-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.chat-handle {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent-blue);
+  overflow-wrap: anywhere;
+}
+
+.chat-time {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.chat-body {
+  font-size: 0.85rem;
+  line-height: 1.35;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.chat-row-notice {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.chat-form {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-form input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+.chat-form input[type="text"]:disabled {
+  opacity: 0.55;
+}
+
+.chat-form button {
+  padding: 9px 16px;
+  background: var(--bg-card-strong, var(--bg-card));
+  border: 1px solid var(--border-strong, var(--border-color));
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.chat-form button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.chat-form button:not(:disabled):hover {
+  border-color: var(--accent-blue);
+}
+
+.chat-signin {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.chat-signin a {
+  color: var(--accent-blue);
+}

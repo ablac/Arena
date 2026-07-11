@@ -373,6 +373,19 @@ type Config struct {
 	CustomerOIDCRedirectURI  string `envconfig:"ARENA_CUSTOMER_OIDC_REDIRECT_URI" default:""`
 	CustomerOIDCSessionTTL   int    `envconfig:"ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS" default:"24"`
 	CustomerBotLinkRPM       int    `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
+
+	// Developer lobby chat. Off by default; posting requires a signed-in
+	// customer session, so enabling chat without customer OIDC yields a
+	// read-only lobby. ChatAliveLock blocks posting while any bot linked to
+	// the poster's account is alive in an active round, so chat cannot be
+	// used to coordinate live bots (the spectator stream is delayed for the
+	// same reason).
+	ChatEnabled     bool `envconfig:"ARENA_CHAT_ENABLED" default:"false"`
+	ChatMaxClients  int  `envconfig:"ARENA_CHAT_MAX_CLIENTS" default:"200"`
+	ChatHistorySize int  `envconfig:"ARENA_CHAT_HISTORY_SIZE" default:"50"`
+	ChatMaxBodyLen  int  `envconfig:"ARENA_CHAT_MAX_BODY_LEN" default:"280"`
+	ChatPostsPerMin int  `envconfig:"ARENA_CHAT_POSTS_PER_MIN" default:"12"`
+	ChatAliveLock   bool `envconfig:"ARENA_CHAT_ALIVE_LOCK" default:"true"`
 }
 
 var C Config
