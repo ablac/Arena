@@ -133,12 +133,19 @@ func spectatorReader(conn *websocket.Conn) {
 	})
 
 	for {
-		_, _, err := conn.ReadMessage()
+		messageType, payload, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
 				slog.Warn("spectator read error", "error", err)
 			}
 			return
+		}
+		// Older browser bundles send this application heartbeat every 15
+		// seconds. Keep it as an exact compatibility no-op so cached clients do
+		// not reconnect forever; every other application message remains denied.
+		if messageType == websocket.TextMessage && bytes.Equal(payload, []byte("ping")) {
+			conn.SetReadDeadline(time.Now().Add(spectatorPongTimeout))
+			continue
 		}
 		slog.Warn("spectator sent unexpected application data; closing receive-only stream")
 		return

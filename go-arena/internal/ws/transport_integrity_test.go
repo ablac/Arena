@@ -46,6 +46,28 @@ func TestBotHandlerLimitsOversizedAuthenticationFrameBeforeAuth(t *testing.T) {
 	requireWebSocketCloseCode(t, conn, websocket.CloseMessageTooBig)
 }
 
+func TestBotUpgradeRateLimitSupportsMessageAuthBotsBehindNAT(t *testing.T) {
+	previousRate := config.C.WSConnectRatePerMin
+	config.C.WSConnectRatePerMin = 3
+	t.Cleanup(func() {
+		config.C.WSConnectRatePerMin = previousRate
+	})
+
+	limitKey, limit := botUpgradeRateLimit("203.0.113.7")
+	if limitKey != "ws:bot:connect:203.0.113.7" {
+		t.Fatalf("connect bucket = %q, want one non-bypassable per-IP bucket", limitKey)
+	}
+	if limit != 40 {
+		t.Fatalf("NAT reconnect limit = %d, want bounded burst 40", limit)
+	}
+
+	config.C.WSConnectRatePerMin = 75
+	_, configuredLimit := botUpgradeRateLimit("203.0.113.7")
+	if configuredLimit != 75 {
+		t.Fatalf("configured reconnect limit = %d, want 75", configuredLimit)
+	}
+}
+
 func TestLoadoutPhaseLimitsOversizedSelectionFrame(t *testing.T) {
 	cfg := config.C
 	cfg.WSMessageMaxBytes = testBotFrameLimit
