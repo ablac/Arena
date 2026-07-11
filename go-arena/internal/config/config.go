@@ -44,7 +44,7 @@ type Config struct {
 	// Map generation. "square" (classic), "circle", "hexagon", "diamond",
 	// "cross", "caves", or "random" to roll a shape each round.
 	MapShape     string `envconfig:"ARENA_MAP_SHAPE" default:"random"`
-	MapShapePool string `envconfig:"ARENA_MAP_SHAPE_POOL" default:"square,circle,hexagon,diamond,cross,caves"`
+	MapShapePool string `envconfig:"ARENA_MAP_SHAPE_POOL" default:"square,circle,hexagon,diamond,cross,caves,donut,islands,rooms,spiral"`
 
 	// Dynamic arena size: the map grows with the number of bots joining the
 	// round, from the base ARENA_WIDTH/HEIGHT at <= ARENA_SIZE_BASE_BOTS up
@@ -276,6 +276,18 @@ type Config struct {
 	// Sudden Death
 	SuddenDeathTilesPerTick int     `envconfig:"ARENA_SUDDEN_DEATH_TILES_PER_TICK" default:"2"`
 	SuddenDeathDamage       float64 `envconfig:"ARENA_SUDDEN_DEATH_DAMAGE" default:"999"`
+	// All damage is multiplied by this factor while sudden death is active.
+	SuddenDeathDamageMult float64 `envconfig:"ARENA_SUDDEN_DEATH_DAMAGE_MULT" default:"2.0"`
+	// If no bot deals damage for this many seconds during sudden death, every
+	// living bot starts taking stall damage each tick until combat resumes.
+	SuddenDeathStallSeconds float64 `envconfig:"ARENA_SUDDEN_DEATH_STALL_SECONDS" default:"20"`
+	SuddenDeathStallDamage  float64 `envconfig:"ARENA_SUDDEN_DEATH_STALL_DAMAGE_PER_TICK" default:"2"`
+	// Stall damage grows by another SuddenDeathStallDamage step every this
+	// many seconds of continued stalling, so no round can drag on forever.
+	SuddenDeathStallRampSeconds float64 `envconfig:"ARENA_SUDDEN_DEATH_STALL_RAMP_SECONDS" default:"5"`
+	// Once sudden death is active the round no longer ends on the duration
+	// timer; it plays out in overtime capped at this many extra seconds.
+	SuddenDeathMaxOvertime float64 `envconfig:"ARENA_SUDDEN_DEATH_MAX_OVERTIME" default:"90"`
 
 	// Bounty System
 	BountyKillStreakThreshold int     `envconfig:"ARENA_BOUNTY_KILL_STREAK" default:"3"`

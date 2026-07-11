@@ -120,7 +120,8 @@ func ApplyDamage(target, attacker *BotState, baseDamage float64, weapon string, 
 		return 0
 	}
 
-	actual := baseDamage
+	// Sudden death doubles all incoming damage so closed-zone fights resolve.
+	actual := baseDamage * SuddenDeathDamageMultiplier()
 
 	// Shield weapon passive: 50% damage reduction when the target wields a shield.
 	if target.Weapon == "shield" {
@@ -176,6 +177,11 @@ func ApplyHitKnockback(target *BotState, attackerPos Vec2, knockbackDist float64
 }
 
 func applyHitKnockback(target *BotState, attackerPos Vec2, knockbackDist float64, obstacles []Obstacle, attacker *BotState, source string, tickCount int) {
+	// Invulnerable (dodging) bots are immune to displacement and the wall-slam
+	// damage it can cause, matching the shove and projectile rules.
+	if target.InvulnTicks > 0 {
+		return
+	}
 	dir := target.Position.Sub(attackerPos).Normalized()
 	if dir.Length() < 1e-10 {
 		// Target is at the exact same position; push in an arbitrary direction.
@@ -218,8 +224,8 @@ func applyHitKnockback(target *BotState, attackerPos Vec2, knockbackDist float64
 }
 
 func applyWallSlamDamage(target, attacker *BotState, source string, tickCount int) {
-	damage := config.C.KnockbackWallDamage
-	if target == nil || damage <= 0 {
+	damage := config.C.KnockbackWallDamage * SuddenDeathDamageMultiplier()
+	if target == nil || damage <= 0 || target.InvulnTicks > 0 {
 		return
 	}
 	target.HP -= damage
@@ -249,6 +255,11 @@ func ApplyAttributedGridKnockback(target, attacker *BotState, attackerPos Vec2, 
 }
 
 func applyGridKnockback(target *BotState, attackerPos Vec2, gridTiles int, obstacles []Obstacle, attacker *BotState, source string, tickCount int) {
+	// Same invulnerability rule as applyHitKnockback (which also covers the
+	// ActiveTerrain == nil fallback below).
+	if target.InvulnTicks > 0 {
+		return
+	}
 	if ActiveTerrain == nil {
 		applyHitKnockback(target, attackerPos, float64(gridTiles)*config.C.PathfindingCellSize, obstacles, attacker, source, tickCount)
 		return

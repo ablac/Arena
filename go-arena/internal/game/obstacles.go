@@ -9,24 +9,93 @@ import (
 // Count is chosen randomly between minCount and maxCount. Each obstacle is
 // placed with a 50-unit margin from the arena edges.
 func GenerateObstacles(arenaW, arenaH float64, minCount, maxCount int) []Obstacle {
+	return GenerateObstaclesInMask(arenaW, arenaH, minCount, maxCount, nil, 0, 0)
+}
+
+// GenerateObstaclesInMask places random obstacles that never overlap the
+// blocked region of a map-shape mask (mask[col][row], true = playable) or
+// each other. Obstacles used to be generated before the shape mask existed,
+// so on non-square maps they routinely embedded inside carved walls — the
+// client then drew obstacle boxes intersecting the wall geometry (z-fighting
+// and blocks protruding through the map outline). Each obstacle gets a
+// bounded number of placement attempts; on crowded shapes the round simply
+// gets fewer obstacles rather than a glitched one. A nil mask preserves the
+// classic square-map behavior.
+func GenerateObstaclesInMask(arenaW, arenaH float64, minCount, maxCount int, mask [][]bool, cellSize, botRadius float64) []Obstacle {
+	if maxCount < minCount {
+		maxCount = minCount
+	}
 	count := minCount + rand.Intn(maxCount-minCount+1)
 	obstacles := make([]Obstacle, 0, count)
 	margin := 50.0
 
 	for i := 0; i < count; i++ {
-		ow := 10.0 + rand.Float64()*50.0 // 10..60
-		oh := 10.0 + rand.Float64()*50.0 // 10..60
-		ox := margin + rand.Float64()*(arenaW-margin-margin-ow)
-		oy := margin + rand.Float64()*(arenaH-margin-margin-oh)
+		for attempt := 0; attempt < 40; attempt++ {
+			ow := 10.0 + rand.Float64()*50.0 // 10..60
+			oh := 10.0 + rand.Float64()*50.0 // 10..60
+			ox := margin + rand.Float64()*(arenaW-margin-margin-ow)
+			oy := margin + rand.Float64()*(arenaH-margin-margin-oh)
+			candidate := Obstacle{X: ox, Y: oy, Width: ow, Height: oh}
 
-		obstacles = append(obstacles, Obstacle{
-			X:      ox,
-			Y:      oy,
-			Width:  ow,
-			Height: oh,
-		})
+			if mask != nil && !obstacleFitsMask(candidate, mask, cellSize, botRadius) {
+				continue
+			}
+			if obstacleOverlapsAny(candidate, obstacles, botRadius) {
+				continue
+			}
+			obstacles = append(obstacles, candidate)
+			break
+		}
 	}
 	return obstacles
+}
+
+// obstacleFitsMask reports whether every terrain cell covered by the obstacle
+// (expanded by bot-radius padding, the same footprint NewTerrainGrid stamps
+// as walls) is playable in the shape mask, with one extra cell of clearance
+// so an obstacle can never pinch a one-cell corridor shut against a wall.
+func obstacleFitsMask(obs Obstacle, mask [][]bool, cellSize, botRadius float64) bool {
+	if cellSize <= 0 {
+		return true
+	}
+	cols := len(mask)
+	if cols == 0 {
+		return true
+	}
+	rows := len(mask[0])
+
+	pad := botRadius + cellSize // padding footprint + 1 cell clearance
+	minCX := int((obs.X - pad) / cellSize)
+	minCY := int((obs.Y - pad) / cellSize)
+	maxCX := int((obs.X + obs.Width + pad) / cellSize)
+	maxCY := int((obs.Y + obs.Height + pad) / cellSize)
+
+	for cx := minCX; cx <= maxCX; cx++ {
+		for cy := minCY; cy <= maxCY; cy++ {
+			if cx < 0 || cy < 0 || cx >= cols || cy >= rows {
+				return false
+			}
+			if !mask[cx][cy] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// obstacleOverlapsAny reports whether the candidate's padded AABB intersects
+// any already-placed obstacle's padded AABB. Overlapping obstacles rendered
+// as coplanar boxes z-fight, and merged silhouettes read as glitches.
+func obstacleOverlapsAny(candidate Obstacle, placed []Obstacle, botRadius float64) bool {
+	pad := botRadius
+	for i := range placed {
+		o := &placed[i]
+		if candidate.X-pad < o.X+o.Width+pad && candidate.X+candidate.Width+pad > o.X-pad &&
+			candidate.Y-pad < o.Y+o.Height+pad && candidate.Y+candidate.Height+pad > o.Y-pad {
+			return true
+		}
+	}
+	return false
 }
 
 // CollidesWithObstacle checks whether a circle (centre x,y with the given
@@ -158,6 +227,12 @@ func EnforceObstacleBounds(bot *BotState, obstacles []Obstacle, radius float64) 
 				pushX, pushY = bx, bottom+0.1
 			}
 
+			// Never push the bot INTO blocked terrain (this legacy path only
+			// runs without a terrain grid, but guard anyway: a push target
+			// inside a wall would start a revert/push jitter loop).
+			if terrainBlockedAt(NewVec2(pushX, pushY)) {
+				continue
+			}
 			bot.Position = NewVec2(pushX, pushY)
 		}
 	}
@@ -176,10 +251,10 @@ func pointInRect(x, y float64, obs *Obstacle) bool {
 func lineRectIntersect(x1, y1, x2, y2 float64, obs *Obstacle) bool {
 	// Four edges of the rectangle.
 	edges := [4][4]float64{
-		{obs.X, obs.Y, obs.X + obs.Width, obs.Y},                                 // top
-		{obs.X, obs.Y + obs.Height, obs.X + obs.Width, obs.Y + obs.Height},       // bottom
-		{obs.X, obs.Y, obs.X, obs.Y + obs.Height},                                 // left
-		{obs.X + obs.Width, obs.Y, obs.X + obs.Width, obs.Y + obs.Height},         // right
+		{obs.X, obs.Y, obs.X + obs.Width, obs.Y},                           // top
+		{obs.X, obs.Y + obs.Height, obs.X + obs.Width, obs.Y + obs.Height}, // bottom
+		{obs.X, obs.Y, obs.X, obs.Y + obs.Height},                          // left
+		{obs.X + obs.Width, obs.Y, obs.X + obs.Width, obs.Y + obs.Height},  // right
 	}
 
 	for _, e := range edges {

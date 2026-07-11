@@ -71,6 +71,56 @@ func NewTerrainGrid(arenaW, arenaH float64, obstacles []Obstacle, cellSize, botR
 	}
 }
 
+// FullyConnected reports whether every open cell is reachable from every
+// other open cell (4-connectivity, matching cardinal movement). The shape
+// mask is connectivity-checked on its own during generation, but obstacles
+// are stamped afterwards and can seal off a pocket — bots and pickups placed
+// inside would be unreachable.
+func (g *TerrainGrid) FullyConnected() bool {
+	totalOpen := 0
+	var start [2]int
+	found := false
+	for x := 0; x < g.Width; x++ {
+		for y := 0; y < g.Height; y++ {
+			if g.Cells[x][y] != '#' {
+				totalOpen++
+				if !found {
+					start = [2]int{x, y}
+					found = true
+				}
+			}
+		}
+	}
+	if totalOpen == 0 {
+		return false
+	}
+
+	visited := make([][]bool, g.Width)
+	for x := range visited {
+		visited[x] = make([]bool, g.Height)
+	}
+	stack := [][2]int{start}
+	visited[start[0]][start[1]] = true
+	reached := 0
+	for len(stack) > 0 {
+		c := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		reached++
+		for _, d := range [4][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+			nx, ny := c[0]+d[0], c[1]+d[1]
+			if nx < 0 || ny < 0 || nx >= g.Width || ny >= g.Height {
+				continue
+			}
+			if visited[nx][ny] || g.Cells[nx][ny] == '#' {
+				continue
+			}
+			visited[nx][ny] = true
+			stack = append(stack, [2]int{nx, ny})
+		}
+	}
+	return reached == totalOpen
+}
+
 // IsBlocked returns true if the cell is out of bounds or a wall.
 func (g *TerrainGrid) IsBlocked(x, y int) bool {
 	if x < 0 || y < 0 || x >= g.Width || y >= g.Height {

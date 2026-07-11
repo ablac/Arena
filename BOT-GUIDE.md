@@ -339,6 +339,7 @@ Additional tick fields worth knowing:
 - `game_mode` — always present: `"ffa"`, `"team_battle"`, or `"ctf"`.
 - `team_scores` and `flags` — only present in team modes. See [Game Modes](#game-modes) below.
 - `void_tiles` — only present while sudden death is active: the list of `[col, row]` void tiles within your fog radius.
+- `sudden_death_stall` — `true` while nobody has dealt damage for the sudden-death stall window (default 20s): every living bot is taking ramping environmental damage until combat resumes. If you see this, go fight.
 - Bot entities also expose combat-read fields such as `has_los`, `attack_range`, `can_attack`, `facing`, `rear_exposed`, `brace_ready`, `bow_charge_level`, `charged_shot_ready`, `recently_disrupted_ticks`, `near_impact_surface`, and `threat_score` — the full field list lives at `GET /api/v1/bot-setup`.
 
 #### `death`
@@ -1051,10 +1052,12 @@ This returns all weapons, stats, game mechanics, endpoints, protocol details, an
 - Pad entities expose `progress_ticks`, `capture_ticks`, `owner_id`, `is_contested`, and `contender_count`
 
 ### Sudden Death
-- Activates when the safe zone reaches minimum radius
+- Activates when the safe zone reaches minimum radius, or when the round clock expires with more than one bot alive — the round then continues in overtime (up to 90s) instead of ending on the timer
+- ALL damage is doubled while active
 - Random floor tiles become void (instant death)
+- If nobody deals damage for 20s, every living bot takes rapidly ramping damage until combat resumes (`"sudden_death_stall": true` in ticks)
 - Track via the `"sudden_death"` field in tick messages; while active, `"void_tiles"` lists the void cells within your fog radius
-- Prioritize moving to safe tiles
+- Prioritize moving to safe tiles, and keep fighting — passivity is lethal
 
 ### Bounty System
 - Bot with 3+ kill streak becomes the bounty target

@@ -9,7 +9,7 @@
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260710d';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260710f';
 import { Minimap } from '../js/renderer/minimap.js?v=20260710d';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, wsURL } from '../js/paths.js?v=20260710a';
@@ -129,7 +129,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     ui.fabFollow.hidden = !followId;
     ui.fabFollowName.textContent = followName;
-    rosterCache = ''; // force roster re-render for highlight
+    rosterCache = ''; // force lobby-roster re-render paths
+    // Live roster rows update in place: flip the highlight class now; the
+    // per-row signatures (which include the follow flag) re-sync next tick.
+    rosterRows.forEach((row, id) => {
+      row.el.classList.toggle('following', followId === id);
+    });
   }
 
   ui.fabFollow.addEventListener('click', () => setFollow(null));
@@ -183,9 +188,57 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ---------- Players roster ----------
   let rosterCache = '';
+  // Keyed in-place roster rows (bot_id -> {el, refs, sig}) so the 200ms
+  // combat updates patch text/width instead of rebuilding the whole list.
+  const rosterRows = new Map();
+  let rosterOrder = '';
+  let rosterLive = false; // true while #panel-players holds the keyed rows
+
+  function resetRosterRows() {
+    rosterRows.clear();
+    rosterOrder = '';
+    rosterLive = false;
+  }
 
   function teamColor(team) {
     return team > 0 ? TEAM_COLORS[(team - 1) % TEAM_COLORS.length] : '';
+  }
+
+  // All user-controlled strings land via textContent/dataset/style props —
+  // never interpolated into innerHTML.
+  function buildRosterRow(botId) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'p-row';
+    el.dataset.botId = botId;
+
+    const dot = document.createElement('span');
+    dot.className = 'p-dot';
+
+    const main = document.createElement('span');
+    main.className = 'p-main';
+    const name = document.createElement('span');
+    name.className = 'p-name';
+    const sub = document.createElement('span');
+    sub.className = 'p-sub';
+    main.append(name, sub);
+
+    const hp = document.createElement('span');
+    hp.className = 'p-hp';
+    const track = document.createElement('span');
+    track.className = 'p-hp-track';
+    const fill = document.createElement('span');
+    fill.className = 'p-hp-fill';
+    track.append(fill);
+    const label = document.createElement('span');
+    label.className = 'p-hp-label';
+    hp.append(track, label);
+
+    const kills = document.createElement('span');
+    kills.className = 'p-kills';
+
+    el.append(dot, main, hp, kills);
+    return { el, refs: { dot, name, sub, fill, label, kills }, sig: '' };
   }
 
   function renderRoster(state) {
@@ -195,34 +248,77 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (rosterCache !== empty) {
         ui.panelPlayers.innerHTML = empty;
         rosterCache = empty;
+        resetRosterRows();
       }
       return;
     }
+
+    // Take the panel over from lobby/empty/placeholder HTML.
+    if (!rosterLive) {
+      ui.panelPlayers.innerHTML = '';
+      rosterCache = '';
+      rosterRows.clear();
+      rosterOrder = '';
+      rosterLive = true;
+    }
+
     const teamMode = state.game_mode === 'team_battle' || state.game_mode === 'ctf';
     const alive = bots.filter((b) => b.is_alive);
     const dead = bots.filter((b) => !b.is_alive);
-    const html = [...alive, ...dead].map((b) => {
+    const sorted = [...alive, ...dead];
+
+    // Drop rows for bots that left the arena.
+    const ids = new Set(sorted.map((b) => b.bot_id));
+    for (const [id, row] of rosterRows) {
+      if (!ids.has(id)) {
+        row.el.remove();
+        rosterRows.delete(id);
+      }
+    }
+
+    for (const b of sorted) {
       const maxHp = b.max_hp || 100;
       const pct = b.is_alive ? Math.max(0, Math.min(100, Math.round((b.hp / maxHp) * 100))) : 0;
-      const nameColor = teamMode && b.team > 0 ? ` style="color:${teamColor(b.team)}"` : '';
       const hpLabel = b.is_alive ? `${Math.round(b.hp)} HP` : 'Out';
-      return `
-        <button type="button" class="p-row${b.is_alive ? '' : ' dead'}${followId === b.bot_id ? ' following' : ''}" data-bot-id="${esc(b.bot_id)}" data-name="${esc(b.name)}">
-          <span class="p-dot" style="background:${esc(b.avatar_color || '#fff')};color:${esc(b.avatar_color || '#fff')}"></span>
-          <span class="p-main">
-            <span class="p-name"${nameColor}>${esc(b.name)}</span>
-            <span class="p-sub">${esc(b.weapon || '?')}</span>
-          </span>
-          <span class="p-hp">
-            <span class="p-hp-track"><span class="p-hp-fill${pct < 35 ? ' low' : ''}" style="width:${pct}%"></span></span>
-            <span class="p-hp-label">${hpLabel}</span>
-          </span>
-          <span class="p-kills">${Math.round(b.round_kills || 0)}K</span>
-        </button>`;
-    }).join('');
-    if (html !== rosterCache) {
-      ui.panelPlayers.innerHTML = html;
-      rosterCache = html;
+      const color = b.avatar_color || '#fff';
+      const nameColor = teamMode && b.team > 0 ? teamColor(b.team) : '';
+      const name = b.name == null ? '???' : String(b.name);
+      const kills = `${Math.round(b.round_kills || 0)}K`;
+      const following = followId === b.bot_id;
+
+      let row = rosterRows.get(b.bot_id);
+      if (!row) {
+        row = buildRosterRow(b.bot_id);
+        rosterRows.set(b.bot_id, row);
+      }
+
+      const sig = [
+        name, color, b.weapon || '?', b.is_alive ? 1 : 0, pct, hpLabel,
+        kills, nameColor, following ? 1 : 0,
+      ].join('\u0001');
+      if (sig === row.sig) continue;
+      row.sig = sig;
+
+      row.el.classList.toggle('dead', !b.is_alive);
+      row.el.classList.toggle('following', following);
+      row.el.dataset.name = name;
+      row.refs.dot.style.background = color;
+      row.refs.dot.style.color = color;
+      row.refs.name.textContent = name;
+      row.refs.name.style.color = nameColor;
+      row.refs.sub.textContent = b.weapon || '?';
+      row.refs.fill.style.width = `${pct}%`;
+      row.refs.fill.classList.toggle('low', pct < 35);
+      row.refs.label.textContent = hpLabel;
+      row.refs.kills.textContent = kills;
+    }
+
+    // Reorder (appendChild moves attached nodes) only when the alive/dead
+    // sort order changed; new bot ids always change the order key.
+    const order = sorted.map((b) => b.bot_id).join('\u0001');
+    if (order !== rosterOrder) {
+      rosterOrder = order;
+      for (const b of sorted) ui.panelPlayers.appendChild(rosterRows.get(b.bot_id).el);
     }
   }
 
@@ -242,6 +338,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (html !== rosterCache) {
       ui.panelPlayers.innerHTML = html;
       rosterCache = html;
+      resetRosterRows();
     }
   }
 
@@ -312,14 +409,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         ui.panelRanks.innerHTML = '<p class="panel-empty">No ranked bots yet.</p>';
         return;
       }
-      ui.panelRanks.innerHTML = entries.map((e) => `
-        <div class="r-row${e.rank <= 3 ? ' top' : ''}">
-          <span class="r-rank">#${e.rank}</span>
+      ui.panelRanks.innerHTML = entries.map((e, i) => {
+        // Period responses can omit rank — fall back to list position
+        // (same as the desktop leaderboard) instead of showing "#undefined".
+        const rank = Number(e.rank) || i + 1;
+        return `
+        <div class="r-row${rank <= 3 ? ' top' : ''}">
+          <span class="r-rank">#${rank}</span>
           <span class="p-dot" style="background:${esc(e.avatar_color || '#fff')};color:${esc(e.avatar_color || '#fff')}"></span>
           <span class="r-name">${esc(e.name)}</span>
           <span class="r-stat">${e.kills}/${e.deaths} K/D</span>
           <span class="r-elo">${e.elo}</span>
-        </div>`).join('');
+        </div>`;
+      }).join('');
     } catch (err) {
       console.error('[Mobile] Leaderboard fetch failed:', err);
       ui.panelRanks.innerHTML = '<p class="panel-empty">Standings unavailable.</p>';

@@ -21,7 +21,9 @@ export class HudRenderer {
     this.statusEl = statusEl;
     this._seenKeys = new Set();
     this._activeEntries = [];
-    this._lastPlayerHtml = '';
+    /** @type {Map<string, {el: HTMLElement, refs: Object, sig: string}>} */
+    this._playerRows = new Map();
+    this._playerOrder = '';
     this._lastLobbyHtml = '';
     this._lastRoundState = null;
     this._lastLobbyState = null;
@@ -115,11 +117,21 @@ export class HudRenderer {
     const modeLabel = this._modeLabel(state.game_mode);
     const scoreText = this._teamScoreText(state.team_scores);
     const teamInfo = modeLabel && scoreText ? `${modeLabel} ${scoreText}` : modeLabel;
-    const phase = teamInfo || (botsAlive > 0 ? modifierLabel : 'Syncing');
+    let phase = teamInfo || (botsAlive > 0 ? modifierLabel : 'Syncing');
     let compactLabel = modifierLabel === 'Normal'
       ? `${this._esc(roundLabel)} - ${botsAlive}/${totalBots}`
       : `${this._esc(roundLabel)} - ${modifierLabel} - ${botsAlive}/${totalBots}`;
     if (teamInfo) compactLabel = `${this._esc(roundLabel)} - ${teamInfo}`;
+
+    // Sudden-death overtime: override the phase line and flag the element
+    // with class hooks (styling lands in CSS separately).
+    const suddenDeath = !!state.sudden_death;
+    const suddenStall = suddenDeath && !!state.sudden_death_stall;
+    if (suddenDeath) {
+      const mult = state.sudden_death_mult || 2;
+      phase = suddenStall ? 'RAPID DAMAGE — FIGHT!' : `SUDDEN DEATH — ${mult}x DMG`;
+      compactLabel = `☠ ${compactLabel}`;
+    }
 
     if (this.roundCollapsed) {
       this._ensureCompactHud();
@@ -130,6 +142,8 @@ export class HudRenderer {
     this._ensureRoundHud();
     this._roundRefs.title.textContent = roundLabel;
     this._roundRefs.phase.textContent = phase;
+    this._roundRefs.phase.classList.toggle('is-sudden-death', suddenDeath);
+    this._roundRefs.phase.classList.toggle('is-stall', suddenStall);
     this._roundRefs.metric1.textContent = String(state.tick || 0);
     this._roundRefs.metric2.textContent = `${botsAlive} / ${totalBots}`;
     this._roundRefs.metric3.textContent = String(zoneRadius);
@@ -171,25 +185,98 @@ export class HudRenderer {
     const alive = bots.filter((b) => b.is_alive);
     const dead = bots.filter((b) => !b.is_alive);
     const sorted = [...alive, ...dead];
-    const html = sorted.map((b) => this._playerCard({
-      botId: b.bot_id,
-      name: b.name,
-      avatarColor: b.avatar_color,
-      weapon: b.weapon,
-      status: b.is_alive ? `${Math.round(b.hp)} HP` : 'Eliminated',
-      selectable: true,
-      dead: !b.is_alive,
-      selected: this.selectedBotId === b.bot_id,
-      pills: [
+    const rows = this._playerRows;
+
+    // Drop rows for bots that left the arena.
+    const ids = new Set(sorted.map((b) => b.bot_id));
+    for (const [id, row] of rows) {
+      if (!ids.has(id)) {
+        row.el.remove();
+        rows.delete(id);
+      }
+    }
+
+    for (const b of sorted) {
+      const isDead = !b.is_alive;
+      const selected = this.selectedBotId === b.bot_id;
+      const status = b.is_alive ? `${Math.round(b.hp)} HP` : 'Eliminated';
+      const pills = [
         b.weapon,
         `${Math.round(b.round_kills || 0)} Kills`,
         ...(b.kill_streak > 0 ? [`Streak ${Math.round(b.kill_streak)}`] : []),
-      ],
-    })).join('');
+      ].map((pill) => (pill == null ? '???' : String(pill)));
 
-    if (html !== this._lastPlayerHtml) {
-      this.playersEl.innerHTML = html;
-      this._lastPlayerHtml = html;
+      let row = rows.get(b.bot_id);
+      if (!row) {
+        row = this._buildPlayerRow({
+          botId: b.bot_id,
+          name: b.name,
+          avatarColor: b.avatar_color,
+          weapon: b.weapon,
+          status,
+          selectable: true,
+          dead: isDead,
+          selected,
+          pills,
+        });
+        rows.set(b.bot_id, row);
+      }
+
+      // Signature covers every patchable field; skip untouched rows so the
+      // 200ms combat updates never disturb hover/click on stable rows.
+      const sig = [
+        b.name, b.avatar_color, status,
+        isDead ? 1 : 0, selected ? 1 : 0, pills.join('\u0001'),
+      ].join('\u0002');
+      if (sig === row.sig) continue;
+      row.sig = sig;
+
+      row.el.classList.toggle('dead', isDead);
+      row.el.classList.toggle('selected', selected);
+      row.refs.dot.style.color = b.avatar_color || '#fff';
+      row.refs.name.textContent = b.name == null ? '???' : String(b.name);
+      row.refs.status.textContent = status;
+      this._patchPills(row.refs.meta, pills);
+    }
+
+    // Reorder (appendChild moves attached nodes) only when the alive/dead
+    // sort order actually changed. New rows attach here too: a new bot id
+    // always changes the order key.
+    const order = sorted.map((b) => b.bot_id).join('\u0001');
+    if (order !== this._playerOrder) {
+      this._playerOrder = order;
+      for (const b of sorted) this.playersEl.appendChild(rows.get(b.bot_id).el);
+    }
+  }
+
+  /** @private Build one roster row element via a template and capture patch refs. */
+  _buildPlayerRow(opts) {
+    _ROW_TEMPLATE.innerHTML = this._playerCard(opts);
+    const el = _ROW_TEMPLATE.content.firstElementChild;
+    el.remove();
+    return {
+      el,
+      refs: {
+        dot: el.querySelector('.player-entry-title > span:first-child'),
+        name: el.querySelector('.player-entry-name'),
+        status: el.querySelector('.player-entry-status'),
+        meta: el.querySelector('.player-entry-meta'),
+      },
+      sig: '',
+    };
+  }
+
+  /** @private Reuse pill spans in place; add/remove spans only when the count changes. */
+  _patchPills(metaEl, pills) {
+    while (metaEl.children.length > pills.length) metaEl.lastElementChild.remove();
+    for (let i = 0; i < pills.length; i++) {
+      let span = metaEl.children[i];
+      if (!span) {
+        span = document.createElement('span');
+        span.className = 'player-pill';
+        metaEl.appendChild(span);
+      }
+      if (span.textContent !== pills[i]) span.textContent = pills[i];
     }
   }
 
@@ -294,7 +381,12 @@ export class HudRenderer {
 
   setSelectedBot(botID) {
     this.selectedBotId = botID || null;
-    this._lastPlayerHtml = '';
+    // Force-refresh the highlight in place: toggle classes now, and clear
+    // each row's signature so the next state update re-patches consistently.
+    for (const [id, row] of this._playerRows) {
+      row.el.classList.toggle('selected', this.selectedBotId === id);
+      row.sig = '';
+    }
   }
 
   _compactHudMarkup(label) {
@@ -418,3 +510,7 @@ export class HudRenderer {
 }
 
 const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+// Shared scratch template for building one roster row at a time from
+// _playerCard markup (parsed, never attached to the document itself).
+const _ROW_TEMPLATE = document.createElement('template');

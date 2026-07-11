@@ -58,6 +58,15 @@ export function initLeaderboardWidget({
     period: 'all_time',
     limit,
     refreshTimer: null,
+    // Last-rendered payload signature per board: refreshes that return
+    // identical data skip the DOM rebuild entirely.
+    lastSig: { leaderboard: '', bounty: '', weapons: '' },
+    // Set when a periodic refresh was skipped while the standings overlay
+    // was closed (or the tab hidden), so reopening can refresh immediately.
+    dirty: false,
+    // The standings widget lives inside #standings-overlay; when the element
+    // is missing (other embeds), treat the boards as always visible.
+    overlayEl: document.getElementById('standings-overlay'),
   };
 
   buildSortTabs(state, sortTabsContainer, podiumEl, leaderboardBody);
@@ -66,8 +75,34 @@ export function initLeaderboardWidget({
     btn.addEventListener('click', () => switchBoard(root, btn.dataset.board, modeTabsContainer));
   });
 
+  // Force an immediate refresh when the overlay opens with stale data
+  // (app.js toggles the 'open' class; we just watch for it).
+  if (state.overlayEl) {
+    new MutationObserver(() => {
+      if (state.dirty && boardsVisible(state)) {
+        state.dirty = false;
+        refreshData(state, podiumEl, leaderboardBody, bountyBody, weaponPodiumEl, weaponBody, weaponUpdatedEl);
+      }
+    }).observe(state.overlayEl, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  // Flush a dirty refresh when the tab becomes visible again with the
+  // overlay already open (the MutationObserver only covers overlay reopen).
+  document.addEventListener('visibilitychange', () => {
+    if (state.dirty && boardsVisible(state)) {
+      state.dirty = false;
+      refreshData(state, podiumEl, leaderboardBody, bountyBody, weaponPodiumEl, weaponBody, weaponUpdatedEl);
+    }
+  });
+
   refreshData(state, podiumEl, leaderboardBody, bountyBody, weaponPodiumEl, weaponBody, weaponUpdatedEl);
   startAutoRefresh(state, podiumEl, leaderboardBody, bountyBody, weaponPodiumEl, weaponBody, weaponUpdatedEl);
+}
+
+/** True when refreshing the boards can produce something the user can see. */
+function boardsVisible(state) {
+  if (document.hidden) return false;
+  return !state.overlayEl || state.overlayEl.classList.contains('open');
 }
 
 function buildSortTabs(state, sortTabsContainer, podiumEl, leaderboardBody) {
@@ -127,7 +162,7 @@ function switchBoard(root, board, modeTabsContainer) {
 async function refreshLeaderboardOnly(state, podiumEl, tbody) {
   try {
     const data = await fetchLeaderboard(state.sort, state.limit, state.period);
-    renderLeaderboard(data, podiumEl, tbody, state);
+    renderLeaderboardIfChanged(data, podiumEl, tbody, state);
   } catch (err) {
     console.error('[Leaderboard] Fetch error:', err);
   }
@@ -141,25 +176,52 @@ async function refreshData(state, podiumEl, leaderboardBody, bountyBody, weaponP
       fetchWeaponStats(),
     ]);
 
-    renderLeaderboard(leaderboardData, podiumEl, leaderboardBody, state);
-    renderBountyBoard(bountyData, bountyBody);
-    renderWeaponStatsBoard(weaponStatsData, weaponPodiumEl, weaponBody, weaponUpdatedEl);
+    renderLeaderboardIfChanged(leaderboardData, podiumEl, leaderboardBody, state);
+
+    const bountySig = JSON.stringify(bountyData);
+    if (bountySig !== state.lastSig.bounty) {
+      state.lastSig.bounty = bountySig;
+      renderBountyBoard(bountyData, bountyBody);
+    }
+
+    const weaponSig = JSON.stringify(weaponStatsData);
+    if (weaponSig !== state.lastSig.weapons) {
+      state.lastSig.weapons = weaponSig;
+      renderWeaponStatsBoard(weaponStatsData, weaponPodiumEl, weaponBody, weaponUpdatedEl);
+    }
   } catch (err) {
     console.error('[Leaderboard] Refresh error:', err);
   }
 }
 
+/** Rebuild the leaderboard table/podium only when the payload (or view) changed. */
+function renderLeaderboardIfChanged(data, podiumEl, tbody, state) {
+  const sig = `${state.sort}|${state.period}|${JSON.stringify(data)}`;
+  if (sig === state.lastSig.leaderboard) return;
+  state.lastSig.leaderboard = sig;
+  renderLeaderboard(data, podiumEl, tbody, state);
+}
+
 function startAutoRefresh(state, podiumEl, leaderboardBody, bountyBody, weaponPodiumEl, weaponBody, weaponUpdatedEl) {
   if (state.refreshTimer) clearInterval(state.refreshTimer);
-  state.refreshTimer = setInterval(() => refreshData(
-    state,
-    podiumEl,
-    leaderboardBody,
-    bountyBody,
-    weaponPodiumEl,
-    weaponBody,
-    weaponUpdatedEl,
-  ), 15000);
+  state.refreshTimer = setInterval(() => {
+    // No point fetching while the standings overlay is closed or the tab is
+    // hidden; mark dirty so opening the overlay refreshes right away.
+    if (!boardsVisible(state)) {
+      state.dirty = true;
+      return;
+    }
+    state.dirty = false;
+    refreshData(
+      state,
+      podiumEl,
+      leaderboardBody,
+      bountyBody,
+      weaponPodiumEl,
+      weaponBody,
+      weaponUpdatedEl,
+    );
+  }, 15000);
 }
 
 // Rank-change memory for standings motion: previous rank per bot, keyed to
@@ -499,8 +561,8 @@ function toTitleCase(value) {
     .join(' ');
 }
 
+const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
 function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+  return String(str ?? '').replace(/[&<>"']/g, (ch) => _ESC_MAP[ch]);
 }

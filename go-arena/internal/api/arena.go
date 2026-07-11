@@ -41,7 +41,9 @@ func GetArenaStatus(engine *game.GameEngine) http.HandlerFunc {
 // If no terrain is active (e.g. lobby before first round), returns a message.
 func GetArenaMap(engine *game.GameEngine) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		terrain := game.ActiveTerrain
+		// Snapshot the active map under the engine lock: the tick goroutine
+		// swaps these during round transitions.
+		terrain, mapShape, gameMode := engine.GetActiveMap()
 		if terrain == nil {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
 				"status":  "no_map",
@@ -72,15 +74,15 @@ func GetArenaMap(engine *game.GameEngine) http.HandlerFunc {
 		}
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status":        "ok",
-			"width":         terrain.Width,
-			"height":        terrain.Height,
-			"cell_size":     terrain.CellSize,
+			"status":    "ok",
+			"width":     terrain.Width,
+			"height":    terrain.Height,
+			"cell_size": terrain.CellSize,
 			// Shape of this terrain. Non-square shapes are already carved
 			// into the terrain rows as '#' walls; this names the outline so
 			// bots and dashboards can adapt strategy per shape.
-			"map_shape": string(game.ActiveMapShape),
-			"game_mode": string(game.ActiveModeRules.Mode),
+			"map_shape":     string(mapShape),
+			"game_mode":     string(gameMode),
 			"terrain":       terrain.ToCompactJSONWithFeatures(pads, zones, capturePads),
 			"teleport_pads": padViews,
 			"capture_pads":  captureViews,

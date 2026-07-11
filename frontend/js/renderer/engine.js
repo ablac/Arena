@@ -7,14 +7,14 @@
 
 import { CameraController } from './camera.js?v=20260710d';
 import { BotRenderer } from './bots.js?v=20260710a';
-import { EnvironmentRenderer } from './environment.js?v=20260710d';
-import { ObstacleRenderer } from './obstacles.js?v=20260521h';
+import { EnvironmentRenderer } from './environment.js?v=20260710f';
+import { ObstacleRenderer } from './obstacles.js?v=20260710f';
 import { PickupRenderer } from './pickups.js?v=20260521m';
-import { EffectRenderer } from './effects.js?v=20260710d';
+import { EffectRenderer } from './effects.js?v=20260710f';
 import { TrailRenderer } from './trails.js?v=20260707c';
 import { ProjectileRenderer } from './projectiles.js?v=20260521l';
-import { GameplayRenderer } from './gameplay.js?v=20260710d';
-import { isEnabled } from '../settings.js';
+import { GameplayRenderer } from './gameplay.js?v=20260710f';
+import { getState, isEnabled, onSettingsChange } from '../settings.js';
 
 // Bot positions are smoothed via exponential lerp each frame,
 // so no tick-interval-based alpha is needed.
@@ -61,8 +61,25 @@ export class ArenaEngine {
       });
       console.log('[Arena] WebGL');
     }
-    // Cap at 1x device pixel ratio to prevent supersampling on HiDPI
-    engine.setHardwareScalingLevel(1.0 / Math.min(window.devicePixelRatio, 1));
+    // Cap at 1x device pixel ratio to prevent supersampling on HiDPI —
+    // unless the user unchecks the resolutionCap setting, which lets capable
+    // GPUs render at native resolution (up to 2x) for a sharper image.
+    const applyResolution = () => {
+      // Read the raw effect flag, NOT isEnabled(): this toggle has inverted
+      // semantics (checked = cheaper). Turning the whole Rendering section
+      // OFF means "less GPU work" and must not uncap resolution to 2x.
+      const capFlag = getState().rendering?.effects?.resolutionCap !== false;
+      const cap = capFlag ? 1 : 2;
+      const level = 1.0 / Math.min(window.devicePixelRatio, cap);
+      if (engine.getHardwareScalingLevel() !== level) {
+        engine.setHardwareScalingLevel(level);
+        engine.resize();
+      }
+    };
+    applyResolution();
+    // init() re-runs on between-round arena resizes; without unsubscribing in
+    // dispose(), listeners would pile up holding disposed engines.
+    this._unsubSettings = onSettingsChange(applyResolution);
     this.engine = engine;
     const scene = new B.Scene(engine);
     this.scene = scene;
@@ -88,9 +105,10 @@ export class ArenaEngine {
     this.projectileRenderer = new ProjectileRenderer(scene);
     this.gameplayRenderer = new GameplayRenderer(scene);
     this.gameplayRenderer.onStaffImpactCreated = (impact) => {
-      // Same hidden-tab guard as the other effect spawns: projectile cleanup
-      // is Animatable-driven, which freezes without rAF frames.
-      if (document.hidden) return;
+      // Same guard as the other effect spawns: projectile cleanup is
+      // Animatable/render-loop-driven, which freezes without rendered frames
+      // (hidden tab OR canvas scrolled off-screen).
+      if (!this.shouldSpawnEffects()) return;
       const owner = (this.state?.bots || []).find((bot) => (bot.bot_id || bot.id) === impact.ownerId);
       if (!owner || !impact?.position) return;
       this.projectileRenderer.spawn(
@@ -135,9 +153,9 @@ export class ArenaEngine {
       // unless the exact scene that owned this swing is still the live one.
       const swingScene = this.scene;
       setTimeout(() => {
-        // document.hidden: no rAF frames run, so strike meshes would pile up
-        // with no render-loop cleanup — and nobody can see them anyway.
-        if (!this.effectRenderer || document.hidden || this.scene !== swingScene || swingScene.isDisposed) return;
+        // No rendered frames (hidden tab or off-screen canvas) means no
+        // render-loop cleanup, so strike meshes would pile up unseen.
+        if (!this.effectRenderer || !this.shouldSpawnEffects() || this.scene !== swingScene || swingScene.isDisposed) return;
         this.effectRenderer.spawnWeaponStrike(ax, az, tx, tz, color, weapon);
         this.effectRenderer.spawnHitSparks(tx, tz, color, weapon);
         if (targetId && this.botRenderer) {
@@ -151,13 +169,13 @@ export class ArenaEngine {
 
     // Wire up dodge → afterimage shimmer
     this.botRenderer.onDodge = (x, z, color) => {
-      if (document.hidden) return;
+      if (!this.shouldSpawnEffects()) return;
       this.effectRenderer.spawnDodgeEffect(x, z, color);
     };
 
     // Wire up shove → shockwave blast effect
     this.botRenderer.onShove = (ax, az, tx, tz, color) => {
-      if (document.hidden) return;
+      if (!this.shouldSpawnEffects()) return;
       this.effectRenderer.spawnShoveEffect(ax, az, tx, tz, color);
     };
 
@@ -210,14 +228,34 @@ export class ArenaEngine {
       if (self.gameplayRenderer) {
         self.gameplayRenderer.animate(self.botRenderer ? self.botRenderer.entries : null, dt);
       }
-      // Cheap boolean assignments so bloom/vignette toggles apply live,
-      // without needing a page reload.
+      // Cheap boolean assignments so bloom/vignette/fxaa/sharpen toggles
+      // apply live, without needing a page reload (the setters early-return
+      // when unchanged).
       if (self.pipeline && self.pipeline.isSupported) {
         self.pipeline.bloomEnabled = isEnabled('rendering', 'bloom');
         self.pipeline.imageProcessing.vignetteEnabled = isEnabled('rendering', 'vignette');
+        self.pipeline.fxaaEnabled = isEnabled('rendering', 'fxaa');
+        self.pipeline.sharpenEnabled = isEnabled('rendering', 'sharpen');
       }
-      scene.render();
+      // Skip the GPU render while the canvas is scrolled out of view or
+      // covered — the browser only parks rAF for hidden TABS, so reading the
+      // docs below the arena otherwise keeps the full scene rendering.
+      // Interpolation/trails above stay live so state snaps on return.
+      if (self._canvasVisible !== false) {
+        scene.render();
+      }
     });
+    // IntersectionObserver drives the off-screen render skip. threshold 0:
+    // any visible pixel keeps rendering.
+    if (typeof IntersectionObserver === 'function' && !this._visObserver) {
+      this._canvasVisible = true;
+      this._visObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          this._canvasVisible = entry.isIntersecting;
+        }
+      }, { threshold: 0 });
+      this._visObserver.observe(this.canvas);
+    }
     this._resizeHandler = () => engine.resize();
     window.addEventListener('resize', this._resizeHandler);
     this.ready = true;
@@ -259,16 +297,17 @@ export class ArenaEngine {
     }
 
     this.state = state;
-    // Transient combat effects only spawn while the tab actually renders.
-    // Chrome parks rAF for hidden AND fully-occluded windows while WS states
-    // keep arriving at 10Hz; every effect's cleanup runs in the render loop,
-    // so spawning here would grow the scene without bound until the GPU
-    // process dies. _seenArenaEvents dedup means skipped events never replay.
-    if (!document.hidden) {
+    // Transient combat effects only spawn while frames actually render.
+    // Chrome parks rAF for hidden/occluded windows, and the render loop now
+    // also skips while the canvas is scrolled off-screen — WS states keep
+    // arriving at 10Hz either way, and every effect's cleanup runs in the
+    // render loop, so spawning here would grow the scene without bound.
+    // _seenArenaEvents dedup means skipped events never replay.
+    if (this.shouldSpawnEffects()) {
       this._playArenaEvents(state.events || [], state);
     }
     this.obstacleRenderer.update(state.obstacles);
-    this.envRenderer.update(state.safe_zone);
+    this.envRenderer.update(state.safe_zone, !!state.sudden_death);
     this.botRenderer.update(state.bots);
     this.pickupRenderer.update(state.pickups || []);
     this.effectRenderer.update(state.bots);
@@ -429,6 +468,15 @@ export class ArenaEngine {
     }
   }
 
+  /**
+   * Whether transient combat effects may spawn right now. Effects clean
+   * themselves up from the render loop, so they must only spawn while frames
+   * are actually rendering: not in a hidden tab (rAF parked) and not while
+   * the canvas is scrolled off-screen (render loop skipped). The `!== false`
+   * form keeps behavior identical when IntersectionObserver is unavailable.
+   */
+  shouldSpawnEffects() { return !document.hidden && this._canvasVisible !== false; }
+
   setZoom(z) { if (this.camera) this.camera.setZoom(z); }
   followBot(id) { if (this.camera) this.camera.followBot(id); }
   setAutoPan(on) { if (this.camera) this.camera.setAutoPan(on); }
@@ -439,9 +487,18 @@ export class ArenaEngine {
     if (this._resizeHandler) {
       window.removeEventListener('resize', this._resizeHandler);
     }
+    if (this._unsubSettings) {
+      this._unsubSettings();
+      this._unsubSettings = null;
+    }
+    if (this._visObserver) {
+      this._visObserver.disconnect();
+      this._visObserver = null;
+    }
     if (this.camera && this.camera.dispose) this.camera.dispose();
     if (this.projectileRenderer) this.projectileRenderer.dispose();
     if (this.trailRenderer) this.trailRenderer.dispose();
+    if (this.effectRenderer && this.effectRenderer.dispose) this.effectRenderer.dispose();
     if (this.envRenderer && this.envRenderer.dispose) this.envRenderer.dispose();
     if (this.engine) {
       this.engine.stopRenderLoop();

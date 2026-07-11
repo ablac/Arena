@@ -357,7 +357,12 @@ summary {
     height: auto;
     min-height: 0;
     padding: 10px 14px;
-    border-radius: 999px;
+    /* Constant radius between states, like the Spectator HUD card: the pill
+       is ~47px tall so 24px still renders fully rounded, but expanding no
+       longer interpolates from 999px — which kept the used radius clamped at
+       half the panel (a full capsule, "a circle") for ~87% of the animation
+       and then popped square in the last frames. */
+    border-radius: 24px;
   }
 
   .arena-shell.telemetry-collapsed .arena-tabs,

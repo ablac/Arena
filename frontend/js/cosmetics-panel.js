@@ -1,6 +1,6 @@
 'use strict';
 
-import { apiPath } from './paths.js?v=20260710b';
+import { apiPath } from './paths.js?v=20260710a';
 
 const SLOT_LABELS = {
   bot_skin: 'Chassis Skins',

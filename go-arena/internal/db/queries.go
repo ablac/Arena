@@ -1037,12 +1037,16 @@ func UpdateRound(ctx context.Context, round *Round) error {
 	if Pool == nil {
 		return ErrNoDatabase
 	}
-	_, err := Pool.Exec(ctx,
+	tag, err := Pool.Exec(ctx,
 		`UPDATE rounds SET ended_at = $1, status = $2, mvp_bot_id = $3 WHERE id = $4`,
 		round.EndedAt, round.Status, round.MVPBotID, round.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("UpdateRound: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// A zero-row UPDATE silently loses the round's completion; surface it.
+		return fmt.Errorf("UpdateRound: round %s not found (0 rows updated)", round.ID)
 	}
 	return nil
 }

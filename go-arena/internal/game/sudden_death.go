@@ -6,10 +6,38 @@ import (
 	"arena-server/internal/config"
 )
 
-// SuddenDeathSystem tracks void tiles that appear after the zone reaches minimum.
+// SuddenDeathSystem tracks void tiles that appear after the zone reaches
+// minimum, plus the overtime pressure that forces stalled rounds to resolve:
+// all damage is multiplied while active, and if no bot deals damage for a
+// configured window every living bot starts taking ramping stall damage.
 type SuddenDeathSystem struct {
 	Active    bool
 	VoidTiles map[[2]int]bool // grid cells marked as void
+
+	// StallActive is true while the no-combat window has been exceeded and
+	// rapid stall damage is being applied. It switches back off as soon as
+	// any bot deals damage again.
+	StallActive bool
+
+	stallTicks       int     // ticks since a bot last dealt damage
+	lastCombatDamage float64 // sum of RoundDamageDealt at the last stall check
+	combatDamageSeen bool    // lastCombatDamage has been initialised
+}
+
+// ActiveSuddenDeath mirrors the engine's sudden-death system so package-level
+// damage helpers can read the active damage multiplier without an engine
+// reference (same pattern as ActiveTerrain / ActiveModeRules).
+var ActiveSuddenDeath *SuddenDeathSystem
+
+// SuddenDeathDamageMultiplier returns the global damage multiplier: the
+// configured sudden-death factor while sudden death is active, 1 otherwise.
+func SuddenDeathDamageMultiplier() float64 {
+	if ActiveSuddenDeath != nil && ActiveSuddenDeath.Active {
+		if m := config.C.SuddenDeathDamageMult; m > 0 {
+			return m
+		}
+	}
+	return 1
 }
 
 // NewSuddenDeathSystem creates an inactive sudden death system.
@@ -23,15 +51,83 @@ func NewSuddenDeathSystem() *SuddenDeathSystem {
 func (sd *SuddenDeathSystem) Clear() {
 	sd.Active = false
 	sd.VoidTiles = make(map[[2]int]bool)
+	sd.StallActive = false
+	sd.stallTicks = 0
+	sd.lastCombatDamage = 0
+	sd.combatDamageSeen = false
 }
 
-// CheckActivation checks if sudden death should activate (zone at min radius).
-func (sd *SuddenDeathSystem) CheckActivation(arena *ArenaMap) {
+// CheckActivation checks if sudden death should activate. It fires when the
+// zone reaches minimum radius, or when the round clock expires while the fight
+// is unresolved (on default-size maps the shrink schedule needs slightly
+// longer than the round duration, so without the clock trigger sudden death
+// would almost never happen). Returns true on the tick it first activates.
+func (sd *SuddenDeathSystem) CheckActivation(arena *ArenaMap, elapsedTicks, roundDurationTicks int) bool {
 	if sd.Active {
+		return false
+	}
+	if arena.ZoneRadius <= arena.MinRadius+1 || (roundDurationTicks > 0 && elapsedTicks >= roundDurationTicks) {
+		sd.Active = true
+		return true
+	}
+	return false
+}
+
+// UpdateStall drives the anti-stall pressure while sudden death is active.
+// Combat is detected through the total damage dealt by bots (RoundDamageDealt
+// only grows from attacker-attributed hits, so zone/stall/void damage never
+// resets the window). After SuddenDeathStallSeconds without combat, every
+// living bot takes SuddenDeathStallDamage per tick, ramping up by another
+// step every SuddenDeathStallRampSeconds until someone lands a hit.
+func (sd *SuddenDeathSystem) UpdateStall(bots map[string]*BotState) {
+	if !sd.Active {
 		return
 	}
-	if arena.ZoneRadius <= arena.MinRadius+1 {
-		sd.Active = true
+	c := &config.C
+
+	total := 0.0
+	for _, bot := range bots {
+		total += bot.RoundDamageDealt
+	}
+	if !sd.combatDamageSeen || total > sd.lastCombatDamage {
+		sd.lastCombatDamage = total
+		sd.combatDamageSeen = true
+		sd.stallTicks = 0
+		sd.StallActive = false
+		return
+	}
+	if total < sd.lastCombatDamage {
+		// A bot disconnected and took its dealt-damage total with it.
+		// Re-baseline without resetting the stall window, otherwise later
+		// combat could go unnoticed until the sum catches back up.
+		sd.lastCombatDamage = total
+	}
+
+	sd.stallTicks++
+	stallThreshold := int(c.SuddenDeathStallSeconds * float64(c.TickRate))
+	if stallThreshold <= 0 || sd.stallTicks < stallThreshold {
+		return
+	}
+	sd.StallActive = true
+
+	// Linear ramp: one extra damage step per ramp interval of continued stall.
+	damage := c.SuddenDeathStallDamage
+	if rampTicks := int(c.SuddenDeathStallRampSeconds * float64(c.TickRate)); rampTicks > 0 {
+		steps := (sd.stallTicks - stallThreshold) / rampTicks
+		damage += c.SuddenDeathStallDamage * float64(steps)
+	}
+	if damage <= 0 {
+		return
+	}
+
+	// Environmental pressure, like zone damage: ignores invulnerability so
+	// dodge spam cannot stall the round indefinitely.
+	for _, bot := range bots {
+		if !bot.IsAlive {
+			continue
+		}
+		bot.HP -= damage
+		bot.RoundDamageTaken += damage
 	}
 }
 

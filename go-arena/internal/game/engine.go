@@ -108,6 +108,12 @@ type GameEngine struct {
 	// Persistence tracking
 	lastPersistTick      int
 	skipLeaderboardRound int // active round that straddled a leaderboard reset
+	// roundDBReady is closed once the current round's CreateRound insert has
+	// finished (or failed). Round persistence runs in background goroutines,
+	// so dependent writes (UpdateRound, kill logs) wait on this to keep the
+	// per-round INSERT-before-UPDATE/FK ordering the old synchronous calls
+	// guaranteed. Written only by the tick goroutine in startRound.
+	roundDBReady chan struct{}
 }
 
 // GameEventHook is a callback for emitting game events to the dashboard.
@@ -137,7 +143,7 @@ func (s *SpectatorConn) CloseDone() {
 
 // NewGameEngine initialises all fields and returns a ready-to-run engine.
 func NewGameEngine() *GameEngine {
-	return &GameEngine{
+	e := &GameEngine{
 		Bots:        make(map[string]*BotState),
 		WaitingBots: make(map[string]*BotState),
 		Arena:       NewArenaMap(),
@@ -153,6 +159,9 @@ func NewGameEngine() *GameEngine {
 			Phase: PhaseLobby,
 		},
 	}
+	// Expose the sudden-death system to package-level damage helpers.
+	ActiveSuddenDeath = e.SuddenDeath
+	return e
 }
 
 // Run starts the main game loop. It ticks at the configured TickRate and
@@ -297,14 +306,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 				continue
 			}
 			cell := ActiveTerrain.WorldToGrid(bot.Position)
-			prevCell := ActiveTerrain.WorldToGrid(bot.LastValidPosition)
-			if cell == prevCell {
-				bot.StuckTicks++
-				bot.StillTicks++
-			} else {
-				bot.StuckTicks = 0
-				bot.StillTicks = 0
-			}
+			updateStuckDetection(bot, cell)
 			// Only nudge bots that are actually trying to move: shuffling a
 			// deliberately-idle bot (territorial guards, braced spears) makes
 			// it twitch in place every second for no reason.
@@ -378,14 +380,24 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Sudden death: activate when zone reaches minimum, remove floor tiles.
 	// (Runs before death checks so void-tile damage registers this tick;
 	// the bounty target is recalculated after deaths instead.)
-	e.SuddenDeath.CheckActivation(e.Arena)
+	if e.SuddenDeath.CheckActivation(e.Arena, e.TickCount-e.Round.StartTick, roundTotalTicks) {
+		e.appendArenaEvents(ArenaEvent{
+			ID:       fmt.Sprintf("sudden-death:%d", e.TickCount),
+			Type:     "sudden_death",
+			Tick:     e.TickCount,
+			Position: e.Arena.ZoneCenter,
+			Color:    "#ff3355",
+			Radius:   e.Arena.ZoneRadius,
+		})
+	}
 	e.SuddenDeath.Update(e.Bots, e.Arena)
+	e.SuddenDeath.UpdateStall(e.Bots)
 
 	// Anti-teaming: penalise bots that stay near each other without fighting.
 	penalised := e.AntiTeam.Update(e.Bots, e.Grid)
 	for _, botID := range penalised {
 		if bot, ok := e.Bots[botID]; ok && bot.IsAlive {
-			bot.HP -= config.C.AntiTeamDamagePerTick
+			bot.HP -= config.C.AntiTeamDamagePerTick * SuddenDeathDamageMultiplier()
 		}
 	}
 
@@ -489,7 +501,7 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	}
 
 	// Check round end.
-	if ShouldEndRound(e.Bots, &e.Round, e.TickCount, e.TeamScores) {
+	if ShouldEndRound(e.Bots, &e.Round, e.TickCount, e.TeamScores, e.SuddenDeath) {
 		e.endRound()
 	}
 
@@ -549,10 +561,6 @@ func (e *GameEngine) startRound() {
 	e.Bounty.ResetRoundState(e.Bots)
 
 	// Spawn new gameplay systems.
-	e.Landmines = nil
-	e.GravityWells = nil
-	e.SuddenDeath.Clear()
-	e.Bounty.ResetRoundState(e.Bots)
 	e.TeleportPads = SpawnTeleportPads(e.Arena, config.C.TeleportPadPairs)
 	e.CapturePads = SpawnCapturePads(e.Arena, config.C.CapturePadCount)
 	e.HazardZones = SpawnHazardZones(e.Arena, config.C.HazardZoneCount)
@@ -588,9 +596,16 @@ func (e *GameEngine) startRound() {
 			BotsParticipated: len(e.Bots),
 			Status:           "active",
 		}
-		if err := db.CreateRound(context.Background(), round); err != nil {
-			slog.Error("failed to create round record", "round_id", round.ID, "round", round.RoundNumber, "error", err)
-		}
+		// Persist off the tick goroutine: a slow DB here would freeze the
+		// whole game loop (tick() holds the engine lock for its duration).
+		ready := make(chan struct{})
+		e.roundDBReady = ready
+		safeGo(func() {
+			defer close(ready) // close even on error so waiters never hang
+			if err := db.CreateRound(context.Background(), round); err != nil {
+				slog.Error("failed to create round record", "round_id", round.ID, "round", round.RoundNumber, "error", err)
+			}
+		})
 	}
 
 	// Spawn bots evenly around the zone perimeter. In team modes each team
@@ -700,9 +715,20 @@ func (e *GameEngine) endRound() {
 			MVPBotID: winnerIDPtr,
 			Status:   "completed",
 		}
-		if err := db.UpdateRound(context.Background(), round); err != nil {
-			slog.Error("failed to update round record", "round_id", round.ID, "round", e.Round.RoundNumber, "error", err)
-		}
+		roundNumber := e.Round.RoundNumber
+		// Persist off the tick goroutine, same as the other persistence paths.
+		// Wait for this round's CreateRound insert first: a plain UPDATE that
+		// races ahead of the INSERT matches zero rows and the round would be
+		// recorded as permanently 'active'.
+		ready := e.roundDBReady
+		safeGo(func() {
+			if ready != nil {
+				<-ready
+			}
+			if err := db.UpdateRound(context.Background(), round); err != nil {
+				slog.Error("failed to update round record", "round_id", round.ID, "round", roundNumber, "error", err)
+			}
+		})
 	}
 
 	// A leaderboard reset during an active round must not rewrite pre-reset
@@ -1009,6 +1035,17 @@ func (e *GameEngine) GetMapFeatures() ([]TeleportPad, []HazardZone, []CapturePad
 	capturePads := make([]CapturePad, len(e.CapturePads))
 	copy(capturePads, e.CapturePads)
 	return pads, zones, capturePads
+}
+
+// GetActiveMap returns the active terrain grid, map shape, and game mode under
+// the engine read lock. HTTP handlers must use this instead of reading the
+// ActiveTerrain / ActiveMapShape / ActiveModeRules package globals directly:
+// those are written by the tick goroutine during round transitions and a
+// lock-free read is a data race (and can observe a torn shape/mode pair).
+func (e *GameEngine) GetActiveMap() (*TerrainGrid, MapShape, GameMode) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return ActiveTerrain, ActiveMapShape, ActiveModeRules.Mode
 }
 
 // ConnectedBotCount returns the number of connected bots (active + waiting)
@@ -1388,14 +1425,33 @@ func findGrappleLandingPosition(from, anchor Vec2) (Vec2, bool) {
 	return ActiveTerrain.GridToWorld(bestCell), true
 }
 
+// updateStuckDetection advances the per-bot stuck/still counters by comparing
+// the current grid cell with the PREVIOUS tick's recorded cell. Comparing
+// against LastValidPosition is wrong: every movement path syncs it to the
+// current position within the same tick, which made this check read "not
+// moved" for every bot on every tick — spear brace was permanently ready and
+// moving bots were teleport-nudged sideways every second.
+func updateStuckDetection(bot *BotState, cell [2]int) {
+	if bot.PrevTickCellSet && cell == bot.PrevTickCell {
+		bot.StuckTicks++
+		bot.StillTicks++
+	} else {
+		bot.StuckTicks = 0
+		bot.StillTicks = 0
+	}
+	bot.PrevTickCell = cell
+	bot.PrevTickCellSet = true
+}
+
 // applyZoneDamage hurts alive bots that are outside the safe zone.
 func (e *GameEngine) applyZoneDamage() {
+	dmg := config.C.ZoneDamagePerTick * SuddenDeathDamageMultiplier()
 	for _, bot := range e.Bots {
 		if !bot.IsAlive {
 			continue
 		}
 		if !e.Arena.IsInZone(bot.Position) {
-			bot.HP -= config.C.ZoneDamagePerTick
+			bot.HP -= dmg
 		}
 	}
 }
@@ -1480,11 +1536,17 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 			last.RoundKills = killer.RoundKills
 		}
 
-		// Log the kill to the database.
+		// Log the kill to the database. Waits for the round row to exist:
+		// kill_logs.round_id has a foreign key on rounds(id), and a kill in
+		// the opening ticks could otherwise race the async CreateRound.
 		if killer != nil && victimOk {
 			roundID, tick := e.Round.RoundID, e.TickCount
 			killerID, victimID, killerHP := killer.BotID, victim.BotID, int(killer.HP)
+			ready := e.roundDBReady
 			safeGo(func() {
+				if ready != nil {
+					<-ready
+				}
 				InsertKillLog(context.Background(), roundID, killerID, victimID, weapon, damage, killerHP, tick)
 			})
 		}
@@ -1700,11 +1762,12 @@ func (e *GameEngine) sendBotTickUpdates() {
 
 		// Add sudden death, bounty, and game-mode info to tick.
 		tickExtra := map[string]interface{}{
-			"sudden_death":   e.SuddenDeath.Active,
-			"bounty_target":  e.Bounty.TargetID,
-			"nearby_mines":   nearbyMineCount,
-			"round_tick":     e.TickCount - e.Round.StartTick,
-			"round_modifier": string(e.Round.Modifier),
+			"sudden_death":       e.SuddenDeath.Active,
+			"sudden_death_stall": e.SuddenDeath.StallActive,
+			"bounty_target":      e.Bounty.TargetID,
+			"nearby_mines":       nearbyMineCount,
+			"round_tick":         e.TickCount - e.Round.StartTick,
+			"round_modifier":     string(e.Round.Modifier),
 		}
 		// Maintenance data is repeated only while active. This is a bounded
 		// reliability fallback for a direct control message dropped from a slow
@@ -1790,6 +1853,19 @@ func (e *GameEngine) sendLobbyStateUpdate() {
 // received copy in between, which cuts steady-state bandwidth noticeably
 // (obstacles dominate the static payload, especially on cave maps).
 func (e *GameEngine) sendSpectatorUpdate() {
+	// With no spectators connected, skip building and marshaling the full
+	// arena state (per-bot view maps, pads, zones, mines...) every 100 ms.
+	// forceKeyframe is left un-consumed so the first broadcast after a
+	// spectator joins still carries the static round data, and the transient
+	// event buffer is drained the same way the broadcast path drains it.
+	e.spectatorsMu.RLock()
+	spectatorCount := len(e.Spectators)
+	e.spectatorsMu.RUnlock()
+	if spectatorCount == 0 {
+		e.RecentEvents = nil
+		return
+	}
+
 	state := BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.WaitingBots, e.Round.Modifier)
 
 	keyframeInterval := config.C.SpectatorKeyframeInterval
@@ -1828,6 +1904,10 @@ func (e *GameEngine) sendSpectatorUpdate() {
 	}
 	state.VoidTiles = e.SuddenDeath.GetAllVoidTiles()
 	state.SuddenDeath = e.SuddenDeath.Active
+	state.SuddenDeathStall = e.SuddenDeath.StallActive
+	if e.SuddenDeath.Active {
+		state.SuddenDeathMult = SuddenDeathDamageMultiplier()
+	}
 	state.BountyTarget = e.Bounty.TargetID
 
 	// Game mode metadata.

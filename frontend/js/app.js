@@ -5,13 +5,13 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260710d';
-import { HudRenderer } from './renderer/hud.js?v=20260710d';
+import { ArenaEngine } from './renderer/engine.js?v=20260710f';
+import { HudRenderer } from './renderer/hud.js?v=20260710f';
 import { Minimap } from './renderer/minimap.js?v=20260710d';
 import { SpectatorSocket } from './spectator-ws.js';
-import { initLeaderboardWidget } from './leaderboard.js?v=20260706e';
-import { initKeyGenerator } from './key-generator.js?v=20260710b';
-import { initCosmeticsPanel } from './cosmetics-panel.js?v=20260710b';
+import { initLeaderboardWidget } from './leaderboard.js?v=20260710f';
+import { initKeyGenerator } from './key-generator.js?v=20260710f';
+import { initCosmeticsPanel } from './cosmetics-panel.js?v=20260710f';
 import { isEnabled, onSettingsChange } from './settings.js';
 import { initSettingsPanel } from './settings-panel.js';
 import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';
@@ -94,10 +94,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   const arenaShell = document.querySelector('.arena-shell');
   let lastKillSig = '';
   let lastPhase = '';
+  const pulseTimers = {};
   const pulseShell = (cls) => {
     if (!arenaShell || arenaShell.classList.contains(cls)) return;
     arenaShell.classList.add(cls);
-    arenaShell.addEventListener('animationend', () => arenaShell.classList.remove(cls), { once: true });
+    arenaShell.addEventListener('animationend', () => {
+      clearTimeout(pulseTimers[cls]);
+      arenaShell.classList.remove(cls);
+    }, { once: true });
+    // If the animation never runs (prefers-reduced-motion sets animation:
+    // none, or the shell is display:none), animationend never fires and the
+    // latched class would suppress every future pulse. The timer is tracked
+    // per class and cleared on re-arm so a stale fallback from a previous
+    // pulse can never truncate the next one mid-animation.
+    clearTimeout(pulseTimers[cls]);
+    pulseTimers[cls] = setTimeout(() => arenaShell.classList.remove(cls), 1500);
   };
   const spectator = new SpectatorSocket(wsUrl,
     (state) => {
@@ -111,8 +122,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       if (state.type === 'arena_state' && lastPhase === 'lobby_state' && isEnabled('siteMotion', 'roundSweep')) pulseShell('round-sweep');
       if (state.type === 'arena_state' || state.type === 'lobby_state') lastPhase = state.type;
+      // Chrome parks rAF for hidden tabs but keeps delivering WS messages;
+      // skip the DOM/canvas half while hidden (the engine still consumes
+      // state above for continuity) and snap fresh on return.
       const now = performance.now();
-      if (now - lastUiUpdate >= UI_UPDATE_INTERVAL_MS) {
+      if (!document.hidden && now - lastUiUpdate >= UI_UPDATE_INTERVAL_MS) {
         lastUiUpdate = now;
         hud.updateState(state);
         if (state.type === 'arena_state') minimap.update(state);
@@ -161,8 +175,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 /** @private Setup arena controls. */
 function setupControls(engine) {
-  const arenaSection = document.getElementById('arena');
-  const arenaShell = document.getElementById('arena-shell');
   const zoomSlider = document.getElementById('zoom-slider');
   const zoomLabel = document.getElementById('zoom-value');
   if (zoomSlider) {
@@ -193,142 +205,10 @@ function setupControls(engine) {
     });
   }
 
-  const fullscreenBtn = document.getElementById('fullscreen-btn');
-  if (fullscreenBtn && arenaSection && arenaShell) {
-    let expanded = false;
-    let animating = false;
-    let restoreScrollY = 0;
-
-    const setBtn = (isExpanded) => {
-      fullscreenBtn.textContent = isExpanded ? 'Collapse View' : 'Expand View';
-      fullscreenBtn.classList.toggle('active', isExpanded);
-    };
-
-    const getViewportInset = () => (window.innerWidth <= 768 ? 10 : 18);
-
-    const setScrollbarComp = () => {
-      const comp = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
-      document.documentElement.style.setProperty('--arena-scrollbar-comp', `${comp}px`);
-    };
-
-    const refreshArenaSize = () => {
-      engine.engine?.resize();
-      requestAnimationFrame(() => engine.engine?.resize());
-      setTimeout(() => engine.engine?.resize(), 120);
-      setTimeout(() => engine.engine?.resize(), 280);
-    };
-
-    const applyShellRect = (rect) => {
-      arenaShell.style.top = `${rect.top}px`;
-      arenaShell.style.left = `${rect.left}px`;
-      arenaShell.style.width = `${rect.width}px`;
-      arenaShell.style.height = `${rect.height}px`;
-    };
-
-    const clearShellRect = () => {
-      arenaShell.style.removeProperty('top');
-      arenaShell.style.removeProperty('left');
-      arenaShell.style.removeProperty('width');
-      arenaShell.style.removeProperty('height');
-    };
-
-    const getExpandedRect = () => {
-      const inset = getViewportInset();
-      return {
-        top: inset,
-        left: inset,
-        width: window.innerWidth - (inset * 2),
-        height: window.innerHeight - (inset * 2),
-      };
-    };
-
-    const finishExpand = () => {
-      expanded = true;
-      animating = false;
-      setBtn(true);
-      refreshArenaSize();
-    };
-
-    const finishCollapse = () => {
-      const settledRect = arenaSection.getBoundingClientRect();
-      applyShellRect(settledRect);
-      document.body.classList.remove('arena-fullscreen');
-      window.scrollTo(0, restoreScrollY);
-
-      requestAnimationFrame(() => {
-        arenaShell.classList.remove('is-floating');
-        arenaSection.classList.remove('is-floating');
-
-        requestAnimationFrame(() => {
-          clearShellRect();
-          arenaSection.style.removeProperty('height');
-          expanded = false;
-          animating = false;
-          setBtn(false);
-          refreshArenaSize();
-        });
-      });
-    };
-
-    const transitionShell = (targetRect, onComplete) => {
-      const handleEnd = (event) => {
-        if (event.target !== arenaShell || event.propertyName !== 'width') return;
-        arenaShell.removeEventListener('transitionend', handleEnd);
-        onComplete();
-      };
-
-      arenaShell.addEventListener('transitionend', handleEnd);
-      requestAnimationFrame(() => {
-        applyShellRect(targetRect);
-      });
-    };
-
-    const expandShell = () => {
-      if (animating || expanded) return;
-      animating = true;
-      restoreScrollY = window.scrollY;
-      setScrollbarComp();
-
-      const startRect = arenaShell.getBoundingClientRect();
-      arenaSection.style.height = `${startRect.height}px`;
-      arenaSection.classList.add('is-floating');
-      document.body.classList.add('arena-fullscreen');
-      arenaShell.classList.add('is-floating');
-      applyShellRect(startRect);
-
-      // Force layout so the browser has a stable start box before animating.
-      arenaShell.getBoundingClientRect();
-      transitionShell(getExpandedRect(), finishExpand);
-    };
-
-    const collapseShell = () => {
-      if (animating || !expanded) return;
-      animating = true;
-      const targetRect = arenaSection.getBoundingClientRect();
-      applyShellRect(arenaShell.getBoundingClientRect());
-      transitionShell(targetRect, finishCollapse);
-    };
-
-    fullscreenBtn.addEventListener('click', () => {
-      if (expanded) {
-        collapseShell();
-        return;
-      }
-      expandShell();
-    });
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && expanded) {
-        collapseShell();
-      }
-    });
-
-    window.addEventListener('resize', () => {
-      if (!expanded || animating) return;
-      applyShellRect(getExpandedRect());
-      refreshArenaSize();
-    });
-  }
+  // #fullscreen-btn is owned by site-shell.js cinema mode, which captures the
+  // click with stopImmediatePropagation. The legacy animated expand/collapse
+  // implementation that used to live here was permanently shadowed dead code
+  // (and carried a transitionend latch-up bug), so it has been removed.
 }
 
 /** @private Populate follow dropdown with current bots. */
@@ -348,6 +228,13 @@ function updateFollowDropdown(state) {
     select.appendChild(opt);
   });
   select.value = current;
+  if (current && select.value !== current) {
+    // The followed bot died or left: its option is gone, so the restore
+    // failed and the select shows blank while the camera keeps chasing the
+    // corpse. Fall back to free camera through the normal change handler.
+    select.value = '';
+    select.dispatchEvent(new Event('change'));
+  }
 }
 
 /** @private Wire up the arena info tab bar. */
