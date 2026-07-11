@@ -317,10 +317,11 @@ export default class ArenaBot {
       const rejectConnection = (error) => finish(reject, error);
       const pendingMessages = [];
       let processingMessages = false;
+      let closed = false;
       let handshakeTimer;
 
       const handleMessage = async (msg) => {
-        if (settled && !ready) return;
+        if (closed || this.ws !== socket || (settled && !ready)) return;
         if (!ready && msg.type === 'error') {
           const error = serverConnectionError(msg);
           if (error.retryAfter) {
@@ -330,11 +331,11 @@ export default class ArenaBot {
             );
           }
           rejectConnection(error);
-          this.ws?.close(1000, 'handshake rejected');
+          socket.close(1000, 'handshake rejected');
           return;
         }
         try {
-          await this._handleMessage(msg, readyConnection);
+          await this._handleMessage(msg, readyConnection, socket);
         } catch (err) {
           console.error('[ArenaBot] Handler error:', err.message);
           if (!ready) rejectConnection(err);
@@ -345,7 +346,7 @@ export default class ArenaBot {
         if (processingMessages) return;
         processingMessages = true;
         try {
-          while (pendingMessages.length > 0) {
+          while (!closed && this.ws === socket && pendingMessages.length > 0) {
             const msg = pendingMessages.shift();
             await handleMessage(msg);
           }
@@ -355,6 +356,7 @@ export default class ArenaBot {
       };
 
       const enqueueMessage = (msg) => {
+        if (closed || this.ws !== socket) return;
         // An action for an older tick has no value after a newer tick arrives.
         // Keep lifecycle messages ordered, but collapse adjacent queued ticks so
         // a slow agent callback cannot later flush a punitive action burst.
@@ -367,24 +369,27 @@ export default class ArenaBot {
         void drainMessages();
       };
 
-      this.ws = new WebSocket(url);
+      const socket = new WebSocket(url);
+      this.ws = socket;
       handshakeTimer = setTimeout(() => {
         const error = new Error('Arena connection timed out before loadout confirmation');
         error.code = 'HANDSHAKE_TIMEOUT';
         rejectConnection(error);
-        this.ws?.close(1000, 'handshake timeout');
+        socket.close(1000, 'handshake timeout');
       }, CONNECT_HANDSHAKE_TIMEOUT_MS);
-      this.ws.on('open', () => console.log('[ArenaBot] Connected'));
-      this.ws.on('message', async (raw) => {
+      socket.on('open', () => console.log('[ArenaBot] Connected'));
+      socket.on('message', async (raw) => {
         let msg;
         try { msg = JSON.parse(raw); } catch { return; }
         enqueueMessage(msg);
       });
-      this.ws.on('error', (err) => {
+      socket.on('error', (err) => {
         console.error('[ArenaBot] WebSocket error:', err.message);
         rejectConnection(err);
       });
-      this.ws.on('close', (code, reason) => {
+      socket.on('close', (code, reason) => {
+        closed = true;
+        pendingMessages.length = 0;
         console.log(`[ArenaBot] Disconnected (code=${code})`);
         if (!ready) {
           const suffix = reason?.length ? `: ${reason.toString()}` : '';
@@ -434,7 +439,7 @@ export default class ArenaBot {
   }
 
   /** @private */
-  async _handleMessage(msg, onReady) {
+  async _handleMessage(msg, onReady, socket = this.ws) {
     switch (msg.type) {
       case 'connected':
         this.botId = msg.bot_id;
@@ -443,13 +448,13 @@ export default class ArenaBot {
         this._send({
           type: 'select_loadout', weapon: this._weapon,
           stats: this._stats, fallback_behavior: this._fallback,
-        });
+        }, socket);
         if (msg.service_status) await this._handleServiceStatus(msg.service_status);
         break;
       case 'loadout_confirmed':
         console.log(`[ArenaBot] Loadout confirmed: ${msg.weapon}`);
         await this.fetchMap();
-        if (onReady) onReady();
+        if (onReady && this.ws === socket && socket?.readyState === WebSocket.OPEN) onReady();
         break;
       case 'map_init':
         // Normalise compact row-string format to 2D char array
@@ -490,8 +495,8 @@ export default class ArenaBot {
         // later round explicitly marks the bot alive again.
         if (st.is_alive !== true) break;
         const action = await this.onTick(st, msg.nearby_entities, safeZone);
-        if (action) {
-          this._send({ type: 'action', tick: msg.tick_number, ...action });
+        if (action && this.ws === socket) {
+          this._send({ type: 'action', tick: msg.tick_number, ...action }, socket);
         }
         break;
       }
@@ -515,15 +520,15 @@ export default class ArenaBot {
         break;
       case 'kick':
         console.error(`[ArenaBot] Kicked: ${msg.reason}`);
-        this.ws?.close();
+        socket?.close();
         break;
     }
   }
 
   /** @private */
-  _send(data) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(data));
+  _send(data, socket = this.ws) {
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(data));
     }
   }
 

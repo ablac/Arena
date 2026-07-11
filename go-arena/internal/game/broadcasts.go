@@ -125,6 +125,11 @@ func SendKillMessage(bot *BotState, event KillEvent) {
 
 // SendRoundEnd notifies a bot that the round has ended.
 func SendRoundEnd(bot *BotState, info RoundEndInfo, nextRoundIn float64) {
+	// The active tick is queued before the engine evaluates the round-ending
+	// condition. Drop any snapshot the writer has not already claimed so a
+	// control-priority writer can never deliver round_end followed by stale
+	// alive state from the completed round.
+	discardPendingTick(bot.TickChan)
 	msg := map[string]interface{}{
 		"type":         "round_end",
 		"round_number": info.RoundNumber,
@@ -137,6 +142,16 @@ func SendRoundEnd(bot *BotState, info RoundEndInfo, nextRoundIn float64) {
 		"next_round_in": nextRoundIn,
 	}
 	SendToBot(bot, msg)
+}
+
+func discardPendingTick(ch chan []byte) {
+	if ch == nil {
+		return
+	}
+	select {
+	case <-ch:
+	default:
+	}
 }
 
 // SendRoundStart notifies a bot that a new round has begun.

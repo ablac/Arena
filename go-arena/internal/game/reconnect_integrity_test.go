@@ -1,11 +1,14 @@
 package game
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"arena-server/internal/config"
+	"arena-server/internal/db"
 )
 
 func TestAddBotReconnectPreservesActiveRoundState(t *testing.T) {
@@ -182,6 +185,93 @@ func TestDetachedSessionExpiresAfterReconnectGrace(t *testing.T) {
 	}
 }
 
+func TestEndRoundPrunesDetachedSessionsAfterFinalPersistence(t *testing.T) {
+	isolateBotStatsPersistence(t)
+	persisted := make(chan db.BotStatsDelta, 4)
+	botStatsPersistenceMu.Lock()
+	applyBotStatsDelta = func(_ context.Context, delta *db.BotStatsDelta) error {
+		persisted <- *delta
+		return nil
+	}
+	botStatsPersistenceMu.Unlock()
+
+	previousConfig := config.C
+	previousTerrain := ActiveTerrain
+	previousShape := ActiveMapShape
+	config.C.MaxBots = 2
+	config.C.WeaponAutoBalanceEnabled = false
+	config.C.ArenaWidth = 200
+	config.C.ArenaHeight = 200
+	config.C.PathfindingCellSize = 20
+	config.C.BotRadius = 5
+	config.C.ZoneCenterX = 100
+	config.C.ZoneCenterY = 100
+	config.C.ZoneInitialRadius = 100
+	config.C.ZoneMinRadius = 20
+	t.Cleanup(func() {
+		config.C = previousConfig
+		ActiveTerrain = previousTerrain
+		ActiveMapShape = previousShape
+	})
+
+	engine := NewGameEngine()
+	engine.Round = RoundState{Phase: PhaseActive, RoundNumber: 1, RoundID: "round-1"}
+	connected := &BotState{
+		BotID: "connected", Name: "Connected", IsAlive: true, Elo: 1000,
+		Position: NewVec2(100, 100), SendChan: make(chan []byte, 2),
+	}
+	detached := &BotState{
+		BotID: "detached", Name: "Detached", Elo: 1000, RoundKills: 2,
+		Position: NewVec2(200, 200), ReconnectPending: true, DisconnectedAtTick: 10,
+	}
+	engine.Bots[connected.BotID] = connected
+	engine.Bots[detached.BotID] = detached
+	engine.Grid.Insert(connected.BotID, connected.Position)
+	engine.Grid.Insert(detached.BotID, detached.Position)
+
+	engine.endRound()
+
+	if engine.Round.Phase != PhaseIntermission {
+		t.Fatalf("round phase = %v, want intermission", engine.Round.Phase)
+	}
+	if _, present := engine.Bots[detached.BotID]; present {
+		t.Fatal("detached session crossed the round boundary")
+	}
+	if _, present := engine.Grid.GetPosition(detached.BotID); present {
+		t.Fatal("detached session retained a spatial-grid entry after round end")
+	}
+	if got := engine.ConnectedBotCount(); got != 1 {
+		t.Fatalf("connected bots after round end = %d, want 1", got)
+	}
+	if admitted := engine.AddBot(&BotState{BotID: "replacement", SendChan: make(chan []byte, 1)}); !admitted {
+		t.Fatal("detached session still consumed capacity after round end")
+	}
+
+	seen := make(map[string]bool, 2)
+	deadline := time.After(time.Second)
+	for len(seen) < 2 {
+		select {
+		case delta := <-persisted:
+			if delta.BotID != connected.BotID && delta.BotID != detached.BotID {
+				// A previous test may still have a persistence goroutine draining;
+				// ignore unrelated snapshots rather than making this assertion flaky.
+				continue
+			}
+			seen[delta.BotID] = true
+			if delta.BotID == detached.BotID {
+				if delta.Kills != 2 || delta.RoundsPlayed != 1 {
+					t.Fatalf("detached final delta = %+v, want two kills and one completed round", delta)
+				}
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for final round persistence")
+		}
+	}
+	if !seen[detached.BotID] {
+		t.Fatal("detached participant was pruned before final round persistence")
+	}
+}
+
 func TestAddBotReconnectIsAllowedAtCapacity(t *testing.T) {
 	previousMax := config.C.MaxBots
 	config.C.MaxBots = 1
@@ -198,6 +288,26 @@ func TestAddBotReconnectIsAllowedAtCapacity(t *testing.T) {
 	}
 	if reconnected.HP != 50 || !reconnected.IsAlive {
 		t.Fatalf("capacity reconnect did not preserve state: %+v", reconnected)
+	}
+}
+
+func TestAddBotCapacityCountsWaitingButNotDetachedSessions(t *testing.T) {
+	previousMax := config.C.MaxBots
+	config.C.MaxBots = 2
+	t.Cleanup(func() { config.C.MaxBots = previousMax })
+
+	engine := NewGameEngine()
+	engine.Round.Phase = PhaseActive
+	engine.Bots["connected"] = &BotState{BotID: "connected", SendChan: make(chan []byte, 1)}
+	engine.Bots["detached"] = &BotState{BotID: "detached", ReconnectPending: true}
+	engine.WaitingBots["waiting"] = &BotState{BotID: "waiting", SendChan: make(chan []byte, 1)}
+
+	if admitted := engine.AddBot(&BotState{BotID: "overflow", SendChan: make(chan []byte, 1)}); admitted {
+		t.Fatal("waiting bot was omitted from the global capacity check")
+	}
+	delete(engine.WaitingBots, "waiting")
+	if admitted := engine.AddBot(&BotState{BotID: "replacement", SendChan: make(chan []byte, 1)}); !admitted {
+		t.Fatal("detached transport incorrectly consumed a connected capacity slot")
 	}
 }
 

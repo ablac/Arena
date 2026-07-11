@@ -49,6 +49,28 @@ func TestBotMessageLimiterEscalatesSustainedFlood(t *testing.T) {
 	}
 }
 
+func TestBotMessageLimiterEscalatesSteadyFloodAcrossSlidingWindows(t *testing.T) {
+	limiter := newBotMessageLimiter(25)
+	now := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
+	punishments := 0
+	notices := 0
+	for i := 0; i < 1000; i++ { // 50 messages/second for 20 seconds.
+		decision := limiter.Check(now.Add(time.Duration(i) * 20 * time.Millisecond))
+		if decision.Notify {
+			notices++
+		}
+		if decision.Punish {
+			punishments++
+		}
+	}
+	if punishments < 3 {
+		t.Fatalf("steady flood punishments=%d, want enough escalation to lock repeated abuse", punishments)
+	}
+	if notices != 1 {
+		t.Fatalf("steady flood notices=%d, want one notice until traffic becomes quiet", notices)
+	}
+}
+
 func TestBotMessageLimiterResetsAfterQuietWindow(t *testing.T) {
 	limiter := newBotMessageLimiter(2)
 	now := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)

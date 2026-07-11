@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { WebSocketServer } from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 
 import ArenaBot from '../src/ArenaBot.js';
 
@@ -112,6 +112,73 @@ test('tick handlers are serialized and stale queued ticks are coalesced', async 
     assert.equal(maxActiveHandlers, 1, 'onTick must not overlap for one bot');
     assert.ok(handledTicks <= 3, `processed ${handledTicks} stale ticks instead of coalescing them`);
     bot.ws.close();
+  });
+});
+
+test('closed connection handlers cannot act on or close a replacement socket', async () => {
+  let connectionNumber = 0;
+  const replacementMessages = [];
+  let releaseOldTick;
+  let oldTickStarted;
+  let oldTickFinished;
+  const oldTickGate = new Promise((resolve) => { releaseOldTick = resolve; });
+  const started = new Promise((resolve) => { oldTickStarted = resolve; });
+  const finished = new Promise((resolve) => { oldTickFinished = resolve; });
+
+  class ReconnectingBot extends ArenaBot {
+    async fetchMap() { return true; }
+
+    async onTick() {
+      oldTickStarted();
+      await oldTickGate;
+      oldTickFinished();
+      return this.idle();
+    }
+  }
+
+  await withServer((socket) => {
+    connectionNumber += 1;
+    const session = connectionNumber;
+    socket.send(JSON.stringify({ type: 'connected', bot_id: 'reconnecting-bot' }));
+    socket.on('message', (raw) => {
+      const message = JSON.parse(raw);
+      if (session === 2) replacementMessages.push(message);
+      if (message.type !== 'select_loadout') return;
+      socket.send(JSON.stringify({ type: 'loadout_confirmed', weapon: 'sword' }));
+      if (session === 1) {
+        socket.send(JSON.stringify({
+          type: 'tick',
+          tick: 10,
+          tick_number: 10,
+          your_state: { is_alive: true, position: [1, 1] },
+          nearby_entities: [],
+        }));
+        socket.send(JSON.stringify({ type: 'kick', reason: 'old session ended' }));
+      }
+    });
+  }, async (serverUrl) => {
+    const bot = new ReconnectingBot('test-key', serverUrl);
+    await bot.connect();
+    await started;
+
+    const oldSocket = bot.ws;
+    const oldClosed = new Promise((resolve) => oldSocket.once('close', resolve));
+    oldSocket.close();
+    await oldClosed;
+
+    await bot.connect();
+    const replacementSocket = bot.ws;
+    releaseOldTick();
+    await finished;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    assert.equal(replacementSocket.readyState, WebSocket.OPEN, 'old kick closed the replacement socket');
+    assert.equal(
+      replacementMessages.filter((message) => message.type === 'action').length,
+      0,
+      'old tick submitted an action through the replacement socket',
+    );
+    replacementSocket.close();
   });
 });
 
