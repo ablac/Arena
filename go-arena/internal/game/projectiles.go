@@ -51,49 +51,53 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 		}
 
 		// 4. Check bot hits using a swept segment so fast projectiles can still
-		// connect without landing in the exact same grid cell.
-		hit := false
+		// connect without landing in the exact same grid cell. When several
+		// bots overlap the segment, hit the EARLIEST one along the flight
+		// path — iterating the bots map and taking the first match picked a
+		// random victim (map order), sometimes the bot standing behind the
+		// one actually blocking the shot.
 		projectileHitRadius := proj.HitRadius
 		if projectileHitRadius <= 0 {
 			projectileHitRadius = config.C.ProjectileHitRadius
 		}
 		hitRadius := config.C.BotRadius + projectileHitRadius
 
+		var victim *BotState
+		bestT := math.MaxFloat64
 		for _, bot := range bots {
 			if !bot.IsAlive || bot.BotID == proj.OwnerID {
 				continue
 			}
-
-			if distancePointToSegment(bot.Position, prevPos, proj.Position) > hitRadius {
+			dist, t := distanceAndParamToSegment(bot.Position, prevPos, proj.Position)
+			if dist > hitRadius {
 				continue
 			}
+			if t < bestT {
+				bestT = t
+				victim = bot
+			}
+		}
 
-			// We have a hit.
+		if victim != nil {
 			owner, ownerOk := bots[proj.OwnerID]
 
-			if bot.InvulnTicks > 0 {
+			if victim.InvulnTicks > 0 {
 				// Invulnerable: consume projectile, no damage.
 				if proj.Weapon == "bow" && arenaEvents != nil {
-					*arenaEvents = append(*arenaEvents, buildBowImpactEvent(proj.ID, proj.OwnerID, proj.Color, bot.Position, tickCount, bot.BotID, proj.Intensity))
+					*arenaEvents = append(*arenaEvents, buildBowImpactEvent(proj.ID, proj.OwnerID, proj.Color, victim.Position, tickCount, victim.BotID, proj.Intensity))
 				}
-				hit = true
-				break
+				continue // Remove: hit a bot
 			}
 
 			if ownerOk {
-				ApplyDamage(bot, owner, proj.Damage, proj.Weapon, tickCount)
-				ApplyAttributedGridKnockback(bot, owner, proj.Position.Sub(proj.Direction.Scale(proj.Speed*dt)), 1, obstacles, proj.Weapon, tickCount)
+				ApplyDamage(victim, owner, proj.Damage, proj.Weapon, tickCount)
+				ApplyAttributedGridKnockback(victim, owner, proj.Position.Sub(proj.Direction.Scale(proj.Speed*dt)), 1, obstacles, proj.Weapon, tickCount)
 				owner.RoundShotsHit++
 			}
 			if proj.Weapon == "bow" && arenaEvents != nil {
-				*arenaEvents = append(*arenaEvents, buildBowImpactEvent(proj.ID, proj.OwnerID, proj.Color, bot.Position, tickCount, bot.BotID, proj.Intensity))
+				*arenaEvents = append(*arenaEvents, buildBowImpactEvent(proj.ID, proj.OwnerID, proj.Color, victim.Position, tickCount, victim.BotID, proj.Intensity))
 			}
 
-			hit = true
-			break // One hit per projectile.
-		}
-
-		if hit {
 			continue // Remove: hit a bot
 		}
 
@@ -114,10 +118,18 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 }
 
 func distancePointToSegment(point, segStart, segEnd Vec2) float64 {
+	dist, _ := distanceAndParamToSegment(point, segStart, segEnd)
+	return dist
+}
+
+// distanceAndParamToSegment returns the distance from point to the segment
+// and the clamped projection parameter t in [0,1] (how far along the segment
+// the closest approach happens — used to order projectile victims).
+func distanceAndParamToSegment(point, segStart, segEnd Vec2) (float64, float64) {
 	seg := segEnd.Sub(segStart)
 	segLenSq := seg.X()*seg.X() + seg.Y()*seg.Y()
 	if segLenSq <= 1e-9 {
-		return point.DistanceTo(segStart)
+		return point.DistanceTo(segStart), 0
 	}
 
 	toPoint := point.Sub(segStart)
@@ -125,5 +137,5 @@ func distancePointToSegment(point, segStart, segEnd Vec2) float64 {
 	t = math.Max(0, math.Min(1, t))
 
 	closest := segStart.Add(seg.Scale(t))
-	return point.DistanceTo(closest)
+	return point.DistanceTo(closest), t
 }

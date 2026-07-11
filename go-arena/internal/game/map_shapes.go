@@ -23,14 +23,23 @@ const (
 	ShapeDiamond MapShape = "diamond"
 	ShapeCross   MapShape = "cross"
 	ShapeCaves   MapShape = "caves"
+	ShapeDonut   MapShape = "donut"
+	ShapeIslands MapShape = "islands"
+	ShapeRooms   MapShape = "rooms"
+	ShapeSpiral  MapShape = "spiral"
 )
+
+// builtInMapShapes is the single canonical list of built-in shapes. Name
+// lookups, pool defaults, and pick validation all derive from it so a new
+// shape only needs a const, this entry, and a generateShapeMask case.
+var builtInMapShapes = []MapShape{
+	ShapeSquare, ShapeCircle, ShapeHexagon, ShapeDiamond, ShapeCross,
+	ShapeCaves, ShapeDonut, ShapeIslands, ShapeRooms, ShapeSpiral,
+}
 
 // ActiveMapShape is the shape of the currently-active round's terrain.
 // Set by the engine whenever it installs a terrain grid.
 var ActiveMapShape = ShapeSquare
-
-// randomShapePool are the shapes eligible when MapShape is "random".
-var randomShapePool = []MapShape{ShapeSquare, ShapeCircle, ShapeHexagon, ShapeDiamond, ShapeCross, ShapeCaves}
 
 // CustomMapTemplate describes a generated map shape saved from the Admin Panel.
 // It is intentionally seed/base-shape based rather than arbitrary geometry so
@@ -49,23 +58,20 @@ var customMaps = struct {
 }{items: make(map[string]CustomMapTemplate)}
 
 func BuiltInMapShapeNames() []string {
-	return []string{
-		string(ShapeSquare),
-		string(ShapeCircle),
-		string(ShapeHexagon),
-		string(ShapeDiamond),
-		string(ShapeCross),
-		string(ShapeCaves),
+	names := make([]string, len(builtInMapShapes))
+	for i, shape := range builtInMapShapes {
+		names[i] = string(shape)
 	}
+	return names
 }
 
 func IsBuiltInMapShape(name string) bool {
-	switch MapShape(name) {
-	case ShapeSquare, ShapeCircle, ShapeHexagon, ShapeDiamond, ShapeCross, ShapeCaves:
-		return true
-	default:
-		return false
+	for _, shape := range builtInMapShapes {
+		if MapShape(name) == shape {
+			return true
+		}
 	}
+	return false
 }
 
 func CustomMapShapeName(name string) string {
@@ -173,11 +179,11 @@ func SetRandomShapePool(names []string) []string {
 // PickMapShape resolves the configured map shape, rolling a random one per
 // call when set to "random". Unknown values fall back to square.
 func PickMapShape() MapShape {
-	switch v := config.C.MapShape; v {
-	case "random":
+	switch v := config.C.MapShape; {
+	case v == "random":
 		pool := NormalizeMapShapePool(strings.Split(config.C.MapShapePool, ","))
 		return pool[rand.Intn(len(pool))]
-	case string(ShapeCircle), string(ShapeHexagon), string(ShapeDiamond), string(ShapeCross), string(ShapeCaves):
+	case IsBuiltInMapShape(v):
 		return MapShape(v)
 	default:
 		if _, ok := getCustomMap(MapShape(v)); ok {
@@ -256,35 +262,232 @@ func generateShapeMask(shape MapShape, cols, rows int, rng *rand.Rand) [][]bool 
 
 	case ShapeCaves:
 		generateCaveMask(mask, cols, rows, rng)
+
+	case ShapeDonut:
+		// Annulus: circle with a blocked inner disc. Forces rotational
+		// combat around the core; the zone target re-rolls off blocked
+		// terrain so the endgame ring always lands on the playable band.
+		rOuter := math.Min(cx, cy)
+		rInner := rOuter * 0.38
+		for x := 0; x < cols; x++ {
+			for y := 0; y < rows; y++ {
+				dx, dy := float64(x)-cx, float64(y)-cy
+				d2 := dx*dx + dy*dy
+				mask[x][y] = d2 <= rOuter*rOuter && d2 >= rInner*rInner
+			}
+		}
+
+	case ShapeIslands:
+		generateIslandsMask(mask, cols, rows, rng)
+
+	case ShapeRooms:
+		generateRoomsMask(mask, cols, rows, rng)
+
+	case ShapeSpiral:
+		generateSpiralMask(mask, cols, rows)
 	}
 
 	ensureConnected(mask, cols, rows)
 
-	// Degenerate output (tiny playable area) falls back to a circle.
-	if playableFraction(mask, cols, rows) < 0.30 && shape == ShapeCaves {
+	// Degenerate output (tiny playable area) falls back to a circle. Applies
+	// to every procedurally-generated shape, not just caves.
+	if playableFraction(mask, cols, rows) < 0.30 && shape != ShapeCircle {
 		return generateShapeMask(ShapeCircle, cols, rows, rng)
 	}
 	return mask
 }
 
+// maskRandFloat / maskRandIntn draw from the supplied seeded rng when
+// present (admin custom maps) and the global source otherwise.
+func maskRandFloat(rng *rand.Rand) float64 {
+	if rng != nil {
+		return rng.Float64()
+	}
+	return rand.Float64()
+}
+
+func maskRandIntn(rng *rand.Rand, n int) int {
+	if n <= 0 {
+		return 0
+	}
+	if rng != nil {
+		return rng.Intn(n)
+	}
+	return rand.Intn(n)
+}
+
+// generateIslandsMask carves 4-5 elliptical islands joined by wide bridges,
+// giving an archipelago with chokepoints between open fighting areas.
+func generateIslandsMask(mask [][]bool, cols, rows int, rng *rand.Rand) {
+	type island struct{ cx, cy, rx, ry float64 }
+	count := 4 + maskRandIntn(rng, 2)
+	islands := make([]island, 0, count)
+
+	minDim := math.Min(float64(cols), float64(rows))
+	for i := 0; i < count; i++ {
+		// Spread the island centres around the map with jitter: an anchor on
+		// a ring plus one near the middle keeps layouts varied but usable.
+		angle := (2*math.Pi*float64(i))/float64(count) + maskRandFloat(rng)*0.8
+		ringR := minDim * (0.26 + maskRandFloat(rng)*0.08)
+		icx := float64(cols)/2 + math.Cos(angle)*ringR
+		icy := float64(rows)/2 + math.Sin(angle)*ringR
+		r := minDim * (0.12 + maskRandFloat(rng)*0.06)
+		islands = append(islands, island{icx, icy, r * (0.8 + maskRandFloat(rng)*0.4), r * (0.8 + maskRandFloat(rng)*0.4)})
+	}
+
+	for x := 0; x < cols; x++ {
+		for y := 0; y < rows; y++ {
+			open := false
+			for _, is := range islands {
+				dx := (float64(x) - is.cx) / is.rx
+				dy := (float64(y) - is.cy) / is.ry
+				if dx*dx+dy*dy <= 1 {
+					open = true
+					break
+				}
+			}
+			mask[x][y] = open && x > 0 && y > 0 && x < cols-1 && y < rows-1
+		}
+	}
+
+	// Bridges between consecutive islands (and a closing loop) so
+	// ensureConnected doesn't have to discard any of them.
+	for i := range islands {
+		a, b := islands[i], islands[(i+1)%len(islands)]
+		carveCorridor(mask, cols, rows, a.cx, a.cy, b.cx, b.cy, 2)
+	}
+}
+
+// generateRoomsMask carves a dungeon: rectangular rooms linked by L-shaped
+// corridors, all walls elsewhere.
+func generateRoomsMask(mask [][]bool, cols, rows int, rng *rand.Rand) {
+	for x := range mask {
+		for y := range mask[x] {
+			mask[x][y] = false
+		}
+	}
+
+	type room struct{ x0, y0, x1, y1 int }
+	count := 8 + maskRandIntn(rng, 3)
+	rooms := make([]room, 0, count)
+	for i := 0; i < count; i++ {
+		w := 14 + maskRandIntn(rng, cols/6)
+		h := 14 + maskRandIntn(rng, rows/6)
+		x0 := 2 + maskRandIntn(rng, maxInt(1, cols-w-4))
+		y0 := 2 + maskRandIntn(rng, maxInt(1, rows-h-4))
+		rooms = append(rooms, room{x0, y0, x0 + w, y0 + h})
+	}
+
+	for _, r := range rooms {
+		for x := r.x0; x <= r.x1 && x < cols-1; x++ {
+			for y := r.y0; y <= r.y1 && y < rows-1; y++ {
+				mask[x][y] = true
+			}
+		}
+	}
+
+	// L-shaped corridors between consecutive room centres, plus one long
+	// link from the last room back to the first for a loop.
+	for i := range rooms {
+		a, b := rooms[i], rooms[(i+1)%len(rooms)]
+		acx, acy := float64(a.x0+a.x1)/2, float64(a.y0+a.y1)/2
+		bcx, bcy := float64(b.x0+b.x1)/2, float64(b.y0+b.y1)/2
+		carveCorridor(mask, cols, rows, acx, acy, bcx, acy, 2)
+		carveCorridor(mask, cols, rows, bcx, acy, bcx, bcy, 2)
+	}
+}
+
+// generateSpiralMask carves a single wide spiral corridor from the rim to an
+// open centre arena — a dramatic endgame as the zone collapses inward.
+func generateSpiralMask(mask [][]bool, cols, rows int) {
+	for x := range mask {
+		for y := range mask[x] {
+			mask[x][y] = false
+		}
+	}
+
+	ccx, ccy := float64(cols-1)/2, float64(rows-1)/2
+	maxR := math.Min(ccx, ccy) - 1
+	const turns = 2.25
+	halfWidth := math.Max(3, math.Min(float64(cols), float64(rows))*0.045)
+
+	// Walk the Archimedean spiral from rim to centre carving open discs.
+	steps := int(turns * 2 * math.Pi * maxR) // dense enough to leave no gaps
+	for i := 0; i <= steps; i++ {
+		t := float64(i) / float64(steps)
+		theta := t * turns * 2 * math.Pi
+		r := (1 - t) * maxR
+		px := ccx + math.Cos(theta)*r
+		py := ccy + math.Sin(theta)*r
+		carveDisc(mask, cols, rows, px, py, halfWidth)
+	}
+	// Open centre arena where the spiral terminates.
+	carveDisc(mask, cols, rows, ccx, ccy, math.Max(halfWidth*2.2, maxR*0.18))
+}
+
+// carveDisc opens all cells within radius of (px, py), keeping a 1-cell rim.
+func carveDisc(mask [][]bool, cols, rows int, px, py, radius float64) {
+	minX := maxInt(1, int(px-radius))
+	maxX := minInt(cols-2, int(px+radius+1))
+	minY := maxInt(1, int(py-radius))
+	maxY := minInt(rows-2, int(py+radius+1))
+	for x := minX; x <= maxX; x++ {
+		for y := minY; y <= maxY; y++ {
+			dx, dy := float64(x)-px, float64(y)-py
+			if dx*dx+dy*dy <= radius*radius {
+				mask[x][y] = true
+			}
+		}
+	}
+}
+
+// carveCorridor opens a straight corridor of the given half-width between
+// two points by stamping discs along the segment.
+func carveCorridor(mask [][]bool, cols, rows int, x0, y0, x1, y1 float64, halfWidth float64) {
+	dist := math.Hypot(x1-x0, y1-y0)
+	steps := maxInt(1, int(dist))
+	for i := 0; i <= steps; i++ {
+		t := float64(i) / float64(steps)
+		carveDisc(mask, cols, rows, x0+(x1-x0)*t, y0+(y1-y0)*t, halfWidth)
+	}
+}
+
 // generateRoundTerrain rolls a map shape and builds a round's obstacles and
 // grids with the shape carved into both, sized for the given bot count.
 // Returns the boundary rectangles of the carved area for client rendering.
+// The shape mask is generated FIRST so obstacle placement can reject spots
+// inside carved walls, and the combined grid is connectivity-checked so an
+// obstacle can never seal off part of the playable area.
 func generateRoundTerrain(botCount int) (obstacles []Obstacle, nav *NavGrid, terrain *TerrainGrid, shape MapShape, maskRects []Obstacle) {
 	c := &config.C
 	scale := ApplyDynamicArenaSize(botCount)
 	shape = PickMapShape()
 
+	// Same cell math as NewTerrainGrid / NewNavGrid.
+	cols := int(math.Ceil(c.ArenaWidth / c.PathfindingCellSize))
+	rows := int(math.Ceil(c.ArenaHeight / c.PathfindingCellSize))
+	mask := GenerateShapeMask(shape, cols, rows)
+
 	// Preserve obstacle density on scaled maps: counts grow with area.
 	area := scale * scale
 	obsMin := int(float64(c.ObstacleCountMin) * area)
 	obsMax := int(float64(c.ObstacleCountMax) * area)
-	obstacles = GenerateObstacles(c.ArenaWidth, c.ArenaHeight, obsMin, obsMax)
-	nav = NewNavGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.BotRadius)
-	terrain = NewTerrainGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.PathfindingCellSize, c.BotRadius)
 
-	if mask := GenerateShapeMask(shape, terrain.Width, terrain.Height); mask != nil {
+	// Rare layouts can still pinch the map into disconnected pockets (e.g.
+	// an obstacle across a narrow cave tunnel). Re-roll the obstacles a few
+	// times if that happens; keep the last attempt if it never resolves —
+	// no worse than the old behavior, and the anti-stuck rescue still works.
+	for attempt := 0; attempt < 5; attempt++ {
+		obstacles = GenerateObstaclesInMask(c.ArenaWidth, c.ArenaHeight, obsMin, obsMax, mask, c.PathfindingCellSize, c.BotRadius)
+		terrain = NewTerrainGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.PathfindingCellSize, c.BotRadius)
 		terrain.ApplyMask(mask)
+		if terrain.FullyConnected() {
+			break
+		}
+	}
+
+	nav = NewNavGrid(c.ArenaWidth, c.ArenaHeight, obstacles, c.BotRadius)
+	if mask != nil {
 		nav.ApplyMask(mask)
 		maskRects = MaskToRects(mask, terrain.Width, terrain.Height, terrain.CellSize)
 	}

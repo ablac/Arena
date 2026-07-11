@@ -845,11 +845,17 @@ func AutoBalanceWeapons(ctx context.Context, bots map[string]*BotState, _ string
 
 	// Database latency must never hold weaponBalanceMu: GetWeaponConfig is on
 	// the combat path, and this routine performs two writes per sampled weapon.
-	for _, snapshot := range pending {
-		persistWeaponBalanceSnapshot(ctx, snapshot.state, snapshot.entry,
-			snapshot.comparisonMean, snapshot.diffRatio,
-			snapshot.damageDelta, snapshot.cooldownDelta)
-	}
+	// It must not hold up the tick goroutine either (AutoBalanceWeapons runs
+	// inside endRound under the engine lock), so persist in the background.
+	// pending holds value snapshots plus per-round performance structs that are
+	// not referenced anywhere else after this function returns.
+	safeGo(func() {
+		for _, snapshot := range pending {
+			persistWeaponBalanceSnapshot(ctx, snapshot.state, snapshot.entry,
+				snapshot.comparisonMean, snapshot.diffRatio,
+				snapshot.damageDelta, snapshot.cooldownDelta)
+		}
+	})
 }
 func clampFloat(v, minV, maxV float64) float64 {
 	if v < minV {

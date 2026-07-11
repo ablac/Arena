@@ -51,7 +51,7 @@ func TestShapeMasksConnectedAndSized(t *testing.T) {
 	loadTestConfig(t)
 	const cols, rows = 100, 100
 
-	for _, shape := range []MapShape{ShapeCircle, ShapeHexagon, ShapeDiamond, ShapeCross, ShapeCaves} {
+	for _, shape := range []MapShape{ShapeCircle, ShapeHexagon, ShapeDiamond, ShapeCross, ShapeCaves, ShapeDonut, ShapeIslands, ShapeRooms, ShapeSpiral} {
 		mask := GenerateShapeMask(shape, cols, rows)
 		if mask == nil {
 			t.Fatalf("%s: expected a mask", shape)
@@ -286,5 +286,60 @@ func TestTeamAssignmentAndDamageRules(t *testing.T) {
 	ffa := ModeRules{Mode: ModeFFA}
 	if !ffa.CanDamage(bots["a"], ally) {
 		t.Error("FFA should not block damage")
+	}
+}
+
+// TestObstaclesNeverInsideMaskWalls is the regression test for the
+// blockers-embedded-in-map-walls glitch: random obstacles used to be placed
+// before the shape mask existed, so on carved maps they could end up inside
+// the wall region and the client drew intersecting geometry.
+func TestObstaclesNeverInsideMaskWalls(t *testing.T) {
+	loadTestConfig(t)
+
+	prevTerrain := ActiveTerrain
+	prevShape := config.C.MapShape
+	defer func() {
+		ActiveTerrain = prevTerrain
+		config.C.MapShape = prevShape
+	}()
+
+	for _, shape := range []MapShape{ShapeCircle, ShapeHexagon, ShapeDiamond, ShapeCross, ShapeCaves, ShapeDonut, ShapeIslands, ShapeRooms, ShapeSpiral} {
+		config.C.MapShape = string(shape)
+		for round := 0; round < 25; round++ {
+			obstacles, _, terrain, _, maskRects := generateRoundTerrain(8)
+
+			// The combined grid (mask + obstacles) must stay one region.
+			if !terrain.FullyConnected() {
+				t.Errorf("%s round %d: combined terrain has unreachable pockets", shape, round)
+			}
+
+			// No obstacle footprint (padded by bot radius, like the terrain
+			// stamp) may intersect a carved wall rectangle.
+			pad := config.C.BotRadius
+			for oi, obs := range obstacles {
+				for _, wall := range maskRects {
+					if obs.X-pad < wall.X+wall.Width && obs.X+obs.Width+pad > wall.X &&
+						obs.Y-pad < wall.Y+wall.Height && obs.Y+obs.Height+pad > wall.Y {
+						t.Fatalf("%s round %d: obstacle %d (%.0f,%.0f %gx%g) intersects wall rect (%.0f,%.0f %gx%g)",
+							shape, round, oi, obs.X, obs.Y, obs.Width, obs.Height, wall.X, wall.Y, wall.Width, wall.Height)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestGenerateObstaclesInMaskRejectsWalls pins the placement helper directly.
+func TestGenerateObstaclesInMaskRejectsWalls(t *testing.T) {
+	loadTestConfig(t)
+	const cols, rows = 100, 100
+	cellSize := config.C.PathfindingCellSize
+	mask := GenerateShapeMask(ShapeDonut, cols, rows)
+
+	obstacles := GenerateObstaclesInMask(float64(cols)*cellSize, float64(rows)*cellSize, 10, 15, mask, cellSize, config.C.BotRadius)
+	for _, obs := range obstacles {
+		if !obstacleFitsMask(obs, mask, cellSize, config.C.BotRadius) {
+			t.Errorf("obstacle (%.0f,%.0f %gx%g) placed on blocked mask cells", obs.X, obs.Y, obs.Width, obs.Height)
+		}
 	}
 }

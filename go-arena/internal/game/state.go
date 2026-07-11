@@ -244,8 +244,13 @@ type BotState struct {
 	MoveCooldown  int
 
 	// Stuck detection: counts consecutive ticks at the same grid cell.
-	StuckTicks int
-	StillTicks int
+	// PrevTickCell is the grid cell at the END of the previous tick; comparing
+	// against LastValidPosition is wrong because movement syncs it to the
+	// current position within the same tick (making every bot look stuck).
+	StuckTicks      int
+	StillTicks      int
+	PrevTickCell    [2]int
+	PrevTickCellSet bool
 
 	// Pathfinding
 	CurrentPath []Vec2
@@ -425,28 +430,33 @@ type ArenaEvent struct {
 
 // SpectatorState is the serialized arena state for spectators.
 type SpectatorState struct {
-	Type          string                   `json:"type"`
-	Tick          int                      `json:"tick"`
-	RoundTick     int                      `json:"round_tick"`
-	RoundNumber   int                      `json:"round_number,omitempty"`
-	Bots          []map[string]interface{} `json:"bots"`
-	SafeZone      map[string]interface{}   `json:"safe_zone"`
-	Pickups       []map[string]interface{} `json:"pickups"`
-	KillFeed      []map[string]interface{} `json:"kill_feed"`
-	Obstacles     []Obstacle               `json:"obstacles,omitempty"`
-	WaitingBots   []map[string]interface{} `json:"waiting_bots,omitempty"`
-	TeleportPads  []map[string]interface{} `json:"teleport_pads,omitempty"`
-	CapturePads   []map[string]interface{} `json:"capture_pads,omitempty"`
-	HazardZones   []map[string]interface{} `json:"hazard_zones,omitempty"`
-	BurnFields    []map[string]interface{} `json:"burn_fields,omitempty"`
-	Landmines     []map[string]interface{} `json:"landmines,omitempty"`
-	GravityWells  []map[string]interface{} `json:"gravity_wells,omitempty"`
-	StaffImpacts  []map[string]interface{} `json:"staff_impacts,omitempty"`
-	VoidTiles     [][2]int                 `json:"void_tiles,omitempty"`
-	SuddenDeath   bool                     `json:"sudden_death"`
-	BountyTarget  string                   `json:"bounty_target,omitempty"`
-	RoundModifier string                   `json:"round_modifier,omitempty"`
-	Events        []ArenaEvent             `json:"events,omitempty"`
+	Type         string                   `json:"type"`
+	Tick         int                      `json:"tick"`
+	RoundTick    int                      `json:"round_tick"`
+	RoundNumber  int                      `json:"round_number,omitempty"`
+	Bots         []map[string]interface{} `json:"bots"`
+	SafeZone     map[string]interface{}   `json:"safe_zone"`
+	Pickups      []map[string]interface{} `json:"pickups"`
+	KillFeed     []map[string]interface{} `json:"kill_feed"`
+	Obstacles    []Obstacle               `json:"obstacles,omitempty"`
+	WaitingBots  []map[string]interface{} `json:"waiting_bots,omitempty"`
+	TeleportPads []map[string]interface{} `json:"teleport_pads,omitempty"`
+	CapturePads  []map[string]interface{} `json:"capture_pads,omitempty"`
+	HazardZones  []map[string]interface{} `json:"hazard_zones,omitempty"`
+	BurnFields   []map[string]interface{} `json:"burn_fields,omitempty"`
+	Landmines    []map[string]interface{} `json:"landmines,omitempty"`
+	GravityWells []map[string]interface{} `json:"gravity_wells,omitempty"`
+	StaffImpacts []map[string]interface{} `json:"staff_impacts,omitempty"`
+	VoidTiles    [][2]int                 `json:"void_tiles,omitempty"`
+	SuddenDeath  bool                     `json:"sudden_death"`
+	// SuddenDeathStall is true while the no-combat window has been exceeded
+	// and every living bot is taking ramping stall damage.
+	SuddenDeathStall bool `json:"sudden_death_stall,omitempty"`
+	// SuddenDeathMult is the active damage multiplier ("2x DAMAGE" display).
+	SuddenDeathMult float64      `json:"sudden_death_mult,omitempty"`
+	BountyTarget    string       `json:"bounty_target,omitempty"`
+	RoundModifier   string       `json:"round_modifier,omitempty"`
+	Events          []ArenaEvent `json:"events,omitempty"`
 
 	// Game modes (groundwork)
 	GameMode   string                   `json:"game_mode,omitempty"`
@@ -513,6 +523,7 @@ func (b *BotState) ResetRoundStats() {
 	b.RecentlyDisruptedTicks = 0
 	b.BowChargeTicks = 0
 	b.StillTicks = 0
+	b.PrevTickCellSet = false
 	b.MoveProgress = 0
 	b.MovementTrace = nil
 	b.MoveCooldown = 0

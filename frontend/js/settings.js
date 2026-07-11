@@ -106,6 +106,12 @@ export const SETTINGS_SCHEMA = {
     effects: {
       bloom: { label: 'Bloom' },
       vignette: { label: 'Vignette' },
+      fxaa: { label: 'Anti-aliasing (FXAA)' },
+      sharpen: { label: 'Sharpen' },
+      shadows: { label: 'Obstacle shadows' },
+      // Default-on keeps the current 1x render resolution; unchecking lets
+      // HiDPI displays render at native resolution (sharper, more GPU).
+      resolutionCap: { label: 'Cap resolution at 1x (performance)' },
     },
   },
   arenaAmbience: {
@@ -118,6 +124,7 @@ export const SETTINGS_SCHEMA = {
       thrusters: { label: 'Underside thruster jets' },
       spaceObjects: { label: 'Space objects (satellites, comets, UFO)' },
       floorEnergyGlow: { label: 'Floor energy glow motion' },
+      edgeWaterfalls: { label: 'Edge energy waterfalls' },
       holoTitle: { label: 'Holographic arena title' },
       idleWeaponAnims: { label: 'Idle weapon animations' },
     },

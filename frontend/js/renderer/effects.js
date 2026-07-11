@@ -12,6 +12,14 @@ import { isEnabled } from '../settings.js';
 /** Max concurrent damage numbers to prevent buildup. */
 const MAX_DMG_NUMBERS = 12;
 
+/**
+ * Tube thickness of the pooled unit ring (torus of diameter 1). Pooled rings
+ * vary only by a uniform scale, so thickness tracks diameter at this fixed
+ * ratio; the transient combat rings it replaces span ratios of 0.075-0.1,
+ * which this mid-range value approximates fine at spectator distance.
+ */
+const RING_UNIT_THICKNESS = 0.085;
+
 /** Per-weapon hit effect configs — distinct particle colors, counts, and spread. */
 const HIT_EFFECTS = {
   sword:   { count: 8,  c1: [1, 0.8, 0.3],   dead: [0.3, 0.1, 0],     minSz: 1,   maxSz: 2,   minLife: 0.06, maxLife: 0.12, rate: 120, minPow: 15, maxPow: 35, d1: [-1, 1, -1],     d2: [1, 1, 1],       stop: 0.06 },
@@ -74,6 +82,75 @@ export class EffectRenderer {
       created: Date.now(),
       dispose: () => { try { ps.dispose(false); } catch { /* already gone */ } },
     });
+  }
+
+  /**
+   * @private Acquire a pooled unit ring (torus, diameter 1) with its own
+   * reusable StandardMaterial — the transient combat rings differ only by
+   * diameter/thickness, so callers just scale by the target diameter.
+   * Mirrors the _dmgPool pattern: pop-or-create, fully re-initialize on
+   * acquire, hand back through _releaseRing() instead of dispose().
+   */
+  _acquireRing() {
+    const B = window.BABYLON;
+    if (!this._ringPool) this._ringPool = [];
+    let entry = this._ringPool.pop();
+    if (!entry || entry.mesh.isDisposed()) {
+      const mesh = B.MeshBuilder.CreateTorus(`fx-ring-${++_psCounter}`, {
+        diameter: 1,
+        thickness: RING_UNIT_THICKNESS,
+        tessellation: 32,
+      }, this.scene);
+      const mat = new B.StandardMaterial(`fx-ring-mat-${_psCounter}`, this.scene);
+      mat.diffuseColor = B.Color3.Black();
+      mat.disableLighting = true;
+      mesh.material = mat;
+      entry = { mesh, mat };
+    }
+    entry.mesh.parent = null;
+    entry.mesh.position.set(0, 0, 0);
+    entry.mesh.rotation.set(Math.PI / 2, 0, 0);
+    entry.mesh.scaling.set(1, 1, 1);
+    entry.mat.alpha = 1;
+    entry.mesh.setEnabled(true);
+    return entry;
+  }
+
+  /** @private Return a pooled ring for reuse instead of disposing it. */
+  _releaseRing(entry) {
+    entry.mesh.setEnabled(false);
+    this._ringPool.push(entry);
+  }
+
+  /** @private Same pooling as _acquireRing, for a unit disc (radius 1). */
+  _acquireDisc() {
+    const B = window.BABYLON;
+    if (!this._discPool) this._discPool = [];
+    let entry = this._discPool.pop();
+    if (!entry || entry.mesh.isDisposed()) {
+      const mesh = B.MeshBuilder.CreateDisc(`fx-disc-${++_psCounter}`, {
+        radius: 1,
+        tessellation: 36,
+      }, this.scene);
+      const mat = new B.StandardMaterial(`fx-disc-mat-${_psCounter}`, this.scene);
+      mat.diffuseColor = B.Color3.Black();
+      mat.disableLighting = true;
+      mesh.material = mat;
+      entry = { mesh, mat };
+    }
+    entry.mesh.parent = null;
+    entry.mesh.position.set(0, 0, 0);
+    entry.mesh.rotation.set(Math.PI / 2, 0, 0);
+    entry.mesh.scaling.set(1, 1, 1);
+    entry.mat.alpha = 1;
+    entry.mesh.setEnabled(true);
+    return entry;
+  }
+
+  /** @private Return a pooled disc for reuse instead of disposing it. */
+  _releaseDisc(entry) {
+    entry.mesh.setEnabled(false);
+    this._discPool.push(entry);
   }
 
   update(bots) {
@@ -156,22 +233,17 @@ export class EffectRenderer {
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     const power = Math.max(1, intensity || 1);
-    const ring = B.MeshBuilder.CreateTorus(`bow-impact-ring-${++_psCounter}`, {
-      diameter: (didHit ? 10 : 8) * Math.min(1.35, 1 + (power - 1) * 0.18),
-      thickness: (didHit ? 0.8 : 0.6) * Math.min(1.25, 1 + (power - 1) * 0.12),
-      tessellation: 28,
-    }, this.scene);
+    const ringSize = (didHit ? 10 : 8) * Math.min(1.35, 1 + (power - 1) * 0.18);
+    const ringEntry = this._acquireRing();
+    const ring = ringEntry.mesh;
+    const ringMat = ringEntry.mat;
     ring.position.set(x, didHit ? 10.4 : 2.6, z);
-    ring.rotation.x = Math.PI / 2;
-    const ringMat = new B.StandardMaterial(`bow-impact-ring-mat-${_psCounter}`, this.scene);
-    ringMat.diffuseColor = B.Color3.Black();
-    ringMat.emissiveColor = new B.Color3(
+    ring.scaling.set(ringSize, ringSize, ringSize);
+    ringMat.emissiveColor.set(
       Math.min(1, c.r + (didHit ? 0.15 : 0.05)),
       Math.min(1, c.g + (didHit ? 0.15 : 0.05)),
       Math.min(1, c.b + (didHit ? 0.15 : 0.05)),
     );
-    ringMat.disableLighting = true;
-    ring.material = ringMat;
 
     if (!didHit) {
       const dust = new B.ParticleSystem(`bow-miss-${++_psCounter}`, 12, this.scene);
@@ -195,12 +267,11 @@ export class EffectRenderer {
       const t = (performance.now() - start) / 180;
       if (t >= 1) {
         this.scene.onBeforeRenderObservable.remove(obs);
-        ring.dispose();
-        ringMat.dispose();
+        this._releaseRing(ringEntry);
         return;
       }
-      const s = 1 + t * 1.4;
-      ring.scaling.set(s, s, 1);
+      const s = ringSize * (1 + t * 1.4);
+      ring.scaling.set(s, s, ringSize);
       ringMat.alpha = 1 - t;
     });
   }
@@ -376,70 +447,54 @@ export class EffectRenderer {
 
   spawnShieldBash(ax, az, tx, tz, hexColor = '#bfe3ff') {
     if (!isEnabled('weaponImpactVfx', 'shieldBash')) return;
-    const B = window.BABYLON;
     const c = parseColor(hexColor);
     this.spawnWeaponStrike(ax, az, tx, tz, hexColor, 'shield');
     this.spawnHitSparks(tx, tz, hexColor, 'shield');
 
-    const ring = B.MeshBuilder.CreateTorus(`shield-bash-${++_psCounter}`, {
-      diameter: 18,
-      thickness: 1.8,
-      tessellation: 28,
-    }, this.scene);
+    const ringEntry = this._acquireRing();
+    const ring = ringEntry.mesh;
+    const ringMat = ringEntry.mat;
     ring.position.set(tx, 2.2, tz);
-    ring.rotation.x = Math.PI / 2;
-    const ringMat = new B.StandardMaterial(`shield-bash-mat-${_psCounter}`, this.scene);
-    ringMat.diffuseColor = B.Color3.Black();
-    ringMat.emissiveColor = new B.Color3(Math.min(1, c.r + 0.2), Math.min(1, c.g + 0.2), Math.min(1, c.b + 0.2));
-    ringMat.disableLighting = true;
-    ring.material = ringMat;
+    ring.scaling.set(18, 18, 18);
+    ringMat.emissiveColor.set(Math.min(1, c.r + 0.2), Math.min(1, c.g + 0.2), Math.min(1, c.b + 0.2));
 
     const start = performance.now();
     const obs = this.scene.onBeforeRenderObservable.add(() => {
       const t = (performance.now() - start) / 180;
       if (t >= 1) {
         this.scene.onBeforeRenderObservable.remove(obs);
-        ring.dispose();
-        ringMat.dispose();
+        this._releaseRing(ringEntry);
         return;
       }
-      const s = 1 + t * 1.2;
-      ring.scaling.set(s, s, 1);
+      const s = 18 * (1 + t * 1.2);
+      ring.scaling.set(s, s, 18);
       ringMat.alpha = 1 - t;
     });
   }
 
   spawnSpearBrace(ax, az, tx, tz, hexColor = '#ffe38a') {
     if (!isEnabled('weaponImpactVfx', 'spearBrace')) return;
-    const B = window.BABYLON;
     const c = parseColor(hexColor);
     this.spawnWeaponStrike(ax, az, tx, tz, hexColor, 'spear');
     this.spawnHitSparks(tx, tz, hexColor, 'spear');
 
-    const ring = B.MeshBuilder.CreateTorus(`spear-brace-${++_psCounter}`, {
-      diameter: 12,
-      thickness: 0.9,
-      tessellation: 24,
-    }, this.scene);
+    const ringEntry = this._acquireRing();
+    const ring = ringEntry.mesh;
+    const mat = ringEntry.mat;
     ring.position.set(tx, 10.8, tz);
-    ring.rotation.x = Math.PI / 2;
-    const mat = new B.StandardMaterial(`spear-brace-mat-${_psCounter}`, this.scene);
-    mat.diffuseColor = B.Color3.Black();
-    mat.emissiveColor = new B.Color3(Math.min(1, c.r + 0.15), Math.min(1, c.g + 0.1), Math.min(1, c.b + 0.05));
-    mat.disableLighting = true;
-    ring.material = mat;
+    ring.scaling.set(12, 12, 12);
+    mat.emissiveColor.set(Math.min(1, c.r + 0.15), Math.min(1, c.g + 0.1), Math.min(1, c.b + 0.05));
 
     const start = performance.now();
     const obs = this.scene.onBeforeRenderObservable.add(() => {
       const t = (performance.now() - start) / 220;
       if (t >= 1) {
         this.scene.onBeforeRenderObservable.remove(obs);
-        ring.dispose();
-        mat.dispose();
+        this._releaseRing(ringEntry);
         return;
       }
-      const s = 1 + t * 1.1;
-      ring.scaling.set(s, s, 1);
+      const s = 12 * (1 + t * 1.1);
+      ring.scaling.set(s, s, 12);
       mat.alpha = 1 - t;
     });
   }
@@ -483,33 +538,25 @@ export class EffectRenderer {
 
   spawnGrappleSlam(ax, az, tx, tz, hexColor = '#59f1ff') {
     if (!isEnabled('weaponImpactVfx', 'grappleSlam')) return;
-    const B = window.BABYLON;
     const c = parseColor(hexColor);
     this.spawnHitSparks(tx, tz, hexColor, 'grapple');
-    const burst = B.MeshBuilder.CreateTorus(`grapple-slam-${++_psCounter}`, {
-      diameter: 14,
-      thickness: 1.2,
-      tessellation: 28,
-    }, this.scene);
+    const burstEntry = this._acquireRing();
+    const burst = burstEntry.mesh;
+    const mat = burstEntry.mat;
     burst.position.set(tx, 10.6, tz);
-    burst.rotation.x = Math.PI / 2;
-    const mat = new B.StandardMaterial(`grapple-slam-mat-${_psCounter}`, this.scene);
-    mat.diffuseColor = B.Color3.Black();
-    mat.emissiveColor = new B.Color3(Math.min(1, c.r + 0.2), Math.min(1, c.g + 0.18), Math.min(1, c.b + 0.22));
-    mat.disableLighting = true;
-    burst.material = mat;
+    burst.scaling.set(14, 14, 14);
+    mat.emissiveColor.set(Math.min(1, c.r + 0.2), Math.min(1, c.g + 0.18), Math.min(1, c.b + 0.22));
 
     const start = performance.now();
     const obs = this.scene.onBeforeRenderObservable.add(() => {
       const t = (performance.now() - start) / 260;
       if (t >= 1) {
         this.scene.onBeforeRenderObservable.remove(obs);
-        burst.dispose();
-        mat.dispose();
+        this._releaseRing(burstEntry);
         return;
       }
-      const s = 1 + t * 1.6;
-      burst.scaling.set(s, s, 1);
+      const s = 14 * (1 + t * 1.6);
+      burst.scaling.set(s, s, 14);
       mat.alpha = 1 - t;
     });
   }
@@ -609,34 +656,29 @@ export class EffectRenderer {
     // extra ~2 meshes + 1 particle system per death are negligible.
 
     // (1) Expanding avatar-tinted shockwave ring (shield-bash ring pattern).
-    const ring = B.MeshBuilder.CreateTorus(`death-ring-${++_psCounter}`, {
-      diameter: 26,
-      thickness: 2,
-      tessellation: 28,
-    }, this.scene);
+    const ringEntry = this._acquireRing();
+    const ring = ringEntry.mesh;
+    const ringMat = ringEntry.mat;
     ring.position.set(x, 2.2, z);
-    ring.rotation.x = Math.PI / 2;
-    const ringMat = new B.StandardMaterial(`death-ring-mat-${_psCounter}`, this.scene);
-    ringMat.diffuseColor = B.Color3.Black();
-    ringMat.emissiveColor = new B.Color3(Math.min(1, c.r + 0.2), Math.min(1, c.g + 0.2), Math.min(1, c.b + 0.2));
-    ringMat.disableLighting = true;
-    ring.material = ringMat;
+    ring.scaling.set(26, 26, 26);
+    ringMat.emissiveColor.set(Math.min(1, c.r + 0.2), Math.min(1, c.g + 0.2), Math.min(1, c.b + 0.2));
     const ringStart = performance.now();
     const ringObs = this.scene.onBeforeRenderObservable.add(() => {
       const t = (performance.now() - ringStart) / 320;
       if (t >= 1) {
         this.scene.onBeforeRenderObservable.remove(ringObs);
-        ring.dispose();
-        ringMat.dispose();
+        this._releaseRing(ringEntry);
         return;
       }
-      const s = 1 + t * 1.6;
-      ring.scaling.set(s, s, 1);
+      const s = 26 * (1 + t * 1.6);
+      ring.scaling.set(s, s, 26);
       ringMat.alpha = 1 - t;
     });
 
     // (2) Vertical light pillar (teleport-shell pattern): a brief beam that
-    // marks the elimination spot even at overview zoom.
+    // marks the elimination spot even at overview zoom. Stays un-pooled: it
+    // is a cylinder, so the unit ring/disc pools cannot approximate it by
+    // scaling — and deaths are rare enough that this stays negligible.
     const pillar = B.MeshBuilder.CreateCylinder(`death-pillar-${++_psCounter}`, {
       height: 22,
       diameter: 6,
@@ -1126,55 +1168,45 @@ export class EffectRenderer {
             this._launch(ps);
     };
     const rippleAt = (x, z, tint = 1) => {
-      const ring = B.MeshBuilder.CreateTorus(`tp-ripple-${++_psCounter}`, {
-        diameter: 18,
-        thickness: 1.8,
-        tessellation: 40,
-      }, this.scene);
+      const ringEntry = this._acquireRing();
+      const ring = ringEntry.mesh;
+      const ringMat = ringEntry.mat;
       ring.position.set(x, 1.8, z);
-      ring.rotation.x = Math.PI / 2;
-      const ringMat = new B.StandardMaterial(`tp-ripple-mat-${_psCounter}`, this.scene);
-      ringMat.diffuseColor = B.Color3.Black();
-      ringMat.emissiveColor = new B.Color3(
+      ring.scaling.set(18, 18, 18);
+      ringMat.emissiveColor.set(
         Math.min(1, c.r * tint + 0.2),
         Math.min(1, c.g * tint + 0.2),
         Math.min(1, c.b * tint + 0.2),
       );
-      ringMat.disableLighting = true;
-      ring.material = ringMat;
 
-      const disc = B.MeshBuilder.CreateDisc(`tp-disc-${++_psCounter}`, {
-        radius: 8,
-        tessellation: 36,
-      }, this.scene);
+      const discEntry = this._acquireDisc();
+      const disc = discEntry.mesh;
+      const discMat = discEntry.mat;
       disc.position.set(x, 0.3, z);
-      disc.rotation.x = Math.PI / 2;
-      const discMat = new B.StandardMaterial(`tp-disc-mat-${_psCounter}`, this.scene);
-      discMat.diffuseColor = B.Color3.Black();
-      discMat.emissiveColor = new B.Color3(c.r * tint, c.g * tint, c.b * tint);
-      discMat.disableLighting = true;
+      disc.scaling.set(8, 8, 1);
+      discMat.emissiveColor.set(c.r * tint, c.g * tint, c.b * tint);
       discMat.alpha = 0.22;
-      disc.material = discMat;
 
       const start = performance.now();
       const obs = this.scene.onBeforeRenderObservable.add(() => {
         const t = (performance.now() - start) / 320;
         if (t >= 1) {
           this.scene.onBeforeRenderObservable.remove(obs);
-          ring.dispose();
-          ringMat.dispose();
-          disc.dispose();
-          discMat.dispose();
+          this._releaseRing(ringEntry);
+          this._releaseDisc(discEntry);
           return;
         }
-        const ringScale = 1 + t * 1.75;
-        ring.scaling.set(ringScale, ringScale, 1);
-        disc.scaling.set(1 + t * 0.9, 1 + t * 0.9, 1);
+        const ringScale = 18 * (1 + t * 1.75);
+        ring.scaling.set(ringScale, ringScale, 18);
+        const discScale = 8 * (1 + t * 0.9);
+        disc.scaling.set(discScale, discScale, 1);
         ringMat.alpha = 1 - t;
         discMat.alpha = Math.max(0, 0.22 - t * 0.18);
       });
     };
     const portalAt = (x, z, invert = false, tint = 1) => {
+      // Shell stays un-pooled: it is a cylinder, so the unit ring/disc pools
+      // cannot approximate it by scaling.
       const shell = B.MeshBuilder.CreateCylinder(`tp-shell-${++_psCounter}`, {
         height: 14,
         diameter: 12,
@@ -1192,23 +1224,17 @@ export class EffectRenderer {
       shellMat.alpha = 0.18;
       shell.material = shellMat;
 
-      const innerRing = B.MeshBuilder.CreateTorus(`tp-inner-${++_psCounter}`, {
-        diameter: 10,
-        thickness: 0.85,
-        tessellation: 26,
-      }, this.scene);
+      const innerEntry = this._acquireRing();
+      const innerRing = innerEntry.mesh;
+      const innerMat = innerEntry.mat;
       innerRing.position.set(x, 4.2, z);
-      innerRing.rotation.x = Math.PI / 2;
-      const innerMat = new B.StandardMaterial(`tp-inner-mat-${_psCounter}`, this.scene);
-      innerMat.diffuseColor = B.Color3.Black();
-      innerMat.emissiveColor = new B.Color3(
+      innerRing.scaling.set(10, 10, 10);
+      innerMat.emissiveColor.set(
         Math.min(1, c.r * tint + 0.12),
         Math.min(1, c.g * tint + 0.12),
         Math.min(1, c.b * tint + 0.12),
       );
-      innerMat.disableLighting = true;
       innerMat.alpha = 0.72;
-      innerRing.material = innerMat;
 
       const start = performance.now();
       const obs = this.scene.onBeforeRenderObservable.add(() => {
@@ -1217,8 +1243,7 @@ export class EffectRenderer {
           this.scene.onBeforeRenderObservable.remove(obs);
           shell.dispose();
           shellMat.dispose();
-          innerRing.dispose();
-          innerMat.dispose();
+          this._releaseRing(innerEntry);
           return;
         }
         const pulse = Math.sin(t * Math.PI);
@@ -1241,9 +1266,41 @@ export class EffectRenderer {
 
   /** @private */
   _cleanup(now) {
+    // Hold finished systems just past the longest tail in this file — the
+    // death embers (targetStopDuration 0.15s + maxLifeTime 0.9s = 1.05s) —
+    // plus a 100ms margin; everything else finishes well under that.
     this.active = this.active.filter(e => {
-      if (now - e.created > 2000) { e.dispose(); return false; }
+      if (now - e.created > 1150) { e.dispose(); return false; }
       return true;
     });
+  }
+
+  /**
+   * Dispose pooled meshes/materials, any still-active transient particle
+   * systems, and the shared glow texture. In-flight ring/disc animations
+   * (<= ~400ms) release into the emptied pools afterward; their meshes are
+   * reclaimed by scene.dispose() at teardown.
+   */
+  dispose() {
+    for (const e of this.active) e.dispose();
+    this.active = [];
+    if (this._ringPool) {
+      for (const { mesh, mat } of this._ringPool) { mesh.dispose(); mat.dispose(); }
+      this._ringPool.length = 0;
+    }
+    if (this._discPool) {
+      for (const { mesh, mat } of this._discPool) { mesh.dispose(); mat.dispose(); }
+      this._discPool.length = 0;
+    }
+    if (this._dmgPool) {
+      for (const { plane, tex, mat } of this._dmgPool) { plane.dispose(); tex.dispose(); mat.dispose(); }
+      this._dmgPool.length = 0;
+    }
+    // Shared glow texture is freed last, after every particle system that
+    // referenced it has been disposed without it (dispose(false)).
+    if (this._glowTex) {
+      this._glowTex.dispose();
+      this._glowTex = null;
+    }
   }
 }

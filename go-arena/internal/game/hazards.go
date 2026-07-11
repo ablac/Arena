@@ -21,7 +21,9 @@ type HazardZone struct {
 	TickCounter   int
 }
 
-// SpawnHazardZones creates hazard zones at valid terrain positions.
+// SpawnHazardZones creates hazard zones at valid terrain positions. The
+// whole zone rectangle must sit on open terrain — validating only the centre
+// let hazard overlays draw on top of wall geometry on carved maps.
 func SpawnHazardZones(arena *ArenaMap, count int) []HazardZone {
 	c := &config.C
 	var zones []HazardZone
@@ -30,10 +32,25 @@ func SpawnHazardZones(arena *ArenaMap, count int) []HazardZone {
 		w := c.HazardMinWidth + rand.Intn(c.HazardMaxWidth-c.HazardMinWidth+1)
 		h := c.HazardMinWidth + rand.Intn(c.HazardMaxWidth-c.HazardMinWidth+1)
 
-		pos := arena.GetSpawnPoint()
-		if ActiveTerrain != nil {
+		var pos Vec2
+		placed := false
+		for attempt := 0; attempt < 20; attempt++ {
+			pos = arena.GetSpawnPoint()
+			if ActiveTerrain == nil {
+				placed = true
+				break
+			}
 			cell := ActiveTerrain.WorldToGrid(pos)
 			pos = ActiveTerrain.GridToWorld(cell)
+			if hazardRectOpen(cell, w, h) {
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			// Cramped map: shrink to a single open cell rather than draping
+			// the zone over walls.
+			w, h = 1, 1
 		}
 
 		zones = append(zones, HazardZone{
@@ -50,6 +67,20 @@ func SpawnHazardZones(arena *ArenaMap, count int) []HazardZone {
 	}
 
 	return zones
+}
+
+// hazardRectOpen reports whether every grid cell covered by a hazard zone of
+// w x h tiles centred on cell is open terrain.
+func hazardRectOpen(cell [2]int, w, h int) bool {
+	halfW, halfH := w/2, h/2
+	for cx := cell[0] - halfW; cx <= cell[0]+halfW; cx++ {
+		for cy := cell[1] - halfH; cy <= cell[1]+halfH; cy++ {
+			if ActiveTerrain.IsBlocked(cx, cy) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // UpdateHazards ticks all hazard zones, toggling their active state based on
@@ -91,8 +122,9 @@ func UpdateHazards(zones []HazardZone, bots map[string]*BotState, tickCount int,
 				continue
 			}
 			if botMovementIntersectsHazard(bot, zone) {
-				bot.HP -= damagePerTick
-				bot.RoundDamageTaken += damagePerTick
+				dmg := damagePerTick * SuddenDeathDamageMultiplier()
+				bot.HP -= dmg
+				bot.RoundDamageTaken += dmg
 			}
 		}
 	}

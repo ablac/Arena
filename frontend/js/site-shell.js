@@ -102,7 +102,14 @@ function setupTelemetryCollapse() {
 
   let saved = null;
   try { saved = localStorage.getItem(KEY); } catch { /* private mode */ }
-  if (saved === '1') setCollapsed(true);
+  if (saved === '1') {
+    // Restore without animating: the visitor shouldn't watch the panel
+    // morph shut on every page load.
+    const sidebar = document.getElementById('arena-telemetry');
+    sidebar?.classList.add('no-transition');
+    setCollapsed(true);
+    requestAnimationFrame(() => requestAnimationFrame(() => sidebar?.classList.remove('no-transition')));
+  }
 }
 
 // Mirrors the header's spectator pill into the mobile menu sheet so the nav

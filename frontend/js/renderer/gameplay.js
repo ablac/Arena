@@ -43,6 +43,11 @@ export class GameplayRenderer {
     this._capturePadNeutral = new B.Color3(0.44, 0.62, 0.74);
     this._capturePadLocked = new B.Color3(0.36, 0.36, 0.4);
     this._capturePadContested = new B.Color3(1.0, 0.42, 0.2);
+    // Teleport-pad cooldown tint plus scratch colors for the per-tick
+    // lerp/scale math, so the 10Hz update loops stay allocation-free.
+    this._tpInactive = new B.Color3(0.38, 0.38, 0.42);
+    this._scratchA = new B.Color3();
+    this._scratchB = new B.Color3();
   }
 
   /** @private Create shared glow particle texture. */
@@ -285,16 +290,17 @@ export class GameplayRenderer {
       const x = pos[0], z = pos[1];
       const ready = pad.is_ready !== false;
       const cooldown = pad.cooldown_remaining_ticks || 0;
-      const inactiveColor = new B.Color3(0.38, 0.38, 0.42);
       const blend = ready ? 1 : Math.max(0.15, 1 - cooldown / 30);
-      const emissive = B.Color3.Lerp(inactiveColor, entry.color, blend);
+      // Lerp straight into the platform material's existing Color3, then fan
+      // out with copyFrom — no per-tick Color3 allocations.
+      const emissive = entry.platform.material.emissiveColor;
+      B.Color3.LerpToRef(this._tpInactive, entry.color, blend, emissive);
       entry.platform.position.set(x, 0.75, z);
       entry.beam.emitter.x = x;
       entry.beam.emitter.z = z;
       entry.swirl.emitter.x = x;
       entry.swirl.emitter.z = z;
       entry.halo.position.set(x, 0.18, z);
-      entry.platform.material.emissiveColor.copyFrom(emissive);
       entry.ring.material.emissiveColor.copyFrom(emissive);
       entry.haloMat.emissiveColor.copyFrom(emissive);
       entry.beam.color1.set(emissive.r, emissive.g, emissive.b, ready ? 0.4 : 0.11);
@@ -373,7 +379,15 @@ export class GameplayRenderer {
         innerMat.alpha = 0.16;
         inner.material = innerMat;
 
-        entry = { base, baseMat, ring, ringMat, inner, innerMat };
+        // pad.color is stable for the pad's lifetime — parse it once here
+        // instead of every 10Hz tick, with the +0.08 owner boost pre-applied.
+        const ownerColor = parseColor(pad.color || '#7ef7ff');
+        const ownerCapture = new B.Color3(
+          Math.min(1, ownerColor.r + 0.08),
+          Math.min(1, ownerColor.g + 0.08),
+          Math.min(1, ownerColor.b + 0.08)
+        );
+        entry = { base, baseMat, ring, ringMat, inner, innerMat, ownerCapture };
         this.capturePads.set(pad.id, entry);
       }
 
@@ -383,7 +397,6 @@ export class GameplayRenderer {
       const progress = Math.max(0, Math.min(1, (pad.progress_ticks || 0) / Math.max(1, pad.capture_ticks || 1)));
       const contested = !!pad.is_contested;
       const contenderCount = pad.contender_count || 0;
-      const ownerColor = parseColor(pad.color || '#7ef7ff');
       const neutral = this._capturePadNeutral;
       const locked = this._capturePadLocked;
       const contestedColor = this._capturePadContested;
@@ -394,20 +407,20 @@ export class GameplayRenderer {
 
       let captureColor = targetColor;
       if (pad.owner_id || pad.capturing_bot_id) {
-        captureColor = new B.Color3(
-          Math.min(1, ownerColor.r + 0.08),
-          Math.min(1, ownerColor.g + 0.08),
-          Math.min(1, ownerColor.b + 0.08)
-        );
+        captureColor = entry.ownerCapture;
       }
       if (contested) {
         captureColor = contestedColor;
       }
 
-      const emissive = B.Color3.Lerp(targetColor, captureColor, Math.max(progress, pad.owner_id ? 1 : 0));
-      entry.baseMat.emissiveColor.copyFrom(emissive.scale(0.72));
+      // Scratch Color3s keep the per-tick lerp/scale math allocation-free.
+      const emissive = this._scratchA;
+      B.Color3.LerpToRef(targetColor, captureColor, Math.max(progress, pad.owner_id ? 1 : 0), emissive);
+      emissive.scaleToRef(0.72, this._scratchB);
+      entry.baseMat.emissiveColor.copyFrom(this._scratchB);
       entry.ringMat.emissiveColor.copyFrom(emissive);
-      entry.innerMat.emissiveColor.copyFrom(emissive.scale(0.55));
+      emissive.scaleToRef(0.55, this._scratchB);
+      entry.innerMat.emissiveColor.copyFrom(this._scratchB);
 
       entry.baseMat.alpha = ready ? 0.34 + 0.08 * progress : 0.22;
       entry.ringMat.alpha = ready ? 0.48 + 0.22 * progress : 0.2;
