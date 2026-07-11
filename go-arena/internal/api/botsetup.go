@@ -95,6 +95,16 @@ func BotSetup() http.HandlerFunc {
 
 			// ── WebSocket Protocol ──────────────────────────────
 			"websocket_protocol": map[string]interface{}{
+				"reconnect": map[string]interface{}{
+					"grace_seconds":          c.WSReconnectGraceSecs,
+					"active_state_preserved": true,
+					"recommended_backoff":    "1s, 2s, 4s, then cap at 30s; honor details.retry_after",
+					"note":                   "During grace the bot remains targetable but cannot act. Protocol locks, bans, and admin kicks are not resumable.",
+				},
+				"message_rate_limit": map[string]interface{}{
+					"messages_per_second": c.WSMaxMessagesPerSec,
+					"note":                "A short overflow is dropped and reported without a strike; sustained floods escalate to protocol strikes.",
+				},
 				"connection_flow": []string{
 					"1. Connect to wss://arena.angel-serv.com/ws/bot?key=YOUR_API_KEY",
 					"2. Receive 'connected' message with arena config and available weapons",

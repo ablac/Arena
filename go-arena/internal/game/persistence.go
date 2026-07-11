@@ -48,11 +48,14 @@ func botStatsDeltaFromSnapshot(snap BotStatsSnapshot, winnerID string, finalizeR
 			roundWins = 1
 		}
 	}
-	lifeSecs := int(math.Round(float64(snap.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))))
+	tickRate := max(1, snap.TickRate)
+	lifeSecs := int(math.Round(float64(snap.RoundLongestLife) / float64(tickRate)))
 	capturedAt := snap.CapturedAt
 	if capturedAt.IsZero() {
 		capturedAt = time.Now()
 	}
+	// takeBotStatsSnapshot clamps Elo before asynchronous persistence. Do not
+	// reread mutable runtime config from this goroutine.
 	return db.BotStatsDelta{
 		BotID:            snap.BotID,
 		Kills:            snap.KillsDelta,
@@ -61,7 +64,7 @@ func botStatsDeltaFromSnapshot(snap BotStatsSnapshot, winnerID string, finalizeR
 		DamageTaken:      snap.DamageTakenDelta,
 		CurrentStreak:    snap.KillStreak,
 		BestStreak:       snap.BestStreak,
-		Elo:              ClampElo(snap.Elo),
+		Elo:              snap.Elo,
 		LongestLifeSecs:  lifeSecs,
 		RoundsPlayed:     roundsPlayed,
 		RoundWins:        roundWins,

@@ -179,6 +179,18 @@ func TestBotUpgradeRateLimitSupportsMessageAuthBotsBehindNAT(t *testing.T) {
 	}
 }
 
+func TestBotKeyConnectRateLimitSeparatesAdmissionFromResume(t *testing.T) {
+	key, limit, window := botKeyConnectRateLimit("bot-1", "key-1", false)
+	if key != "ws:bot:key:key-1" || limit != 1 || window != 5 {
+		t.Fatalf("new admission bucket = %q %d/%ds, want legacy 1/5s", key, limit, window)
+	}
+
+	key, limit, window = botKeyConnectRateLimit("bot-1", "key-1", true)
+	if key != "ws:bot:resume:bot-1:key-1" || limit != 3 || window != 5 {
+		t.Fatalf("resume bucket = %q %d/%ds, want bounded 3/5s recovery burst", key, limit, window)
+	}
+}
+
 func TestLoadoutPhaseLimitsOversizedSelectionFrame(t *testing.T) {
 	cfg := config.C
 	cfg.WSMessageMaxBytes = testBotFrameLimit
