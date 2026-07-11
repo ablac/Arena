@@ -25,7 +25,14 @@ import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
-import { buildComposeBaseArgs, parseInspectedComposeContext, resolveDeployOwner } from "./compose.mjs";
+import {
+  buildComposeBaseArgs,
+  buildMigrationInvocation,
+  forceRemoveMigrationContainer,
+  parseInspectedComposeContext,
+  reconcileMigrationContainerAfterRunError,
+  resolveDeployOwner
+} from "./compose.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -43,6 +50,9 @@ const COMPOSE_FILES_FALLBACK = (process.env.COMPOSE_FILES ?? "docker-compose.yml
   .split(/\s+/)
   .filter(Boolean);
 const COMPOSE_PROJECT_FALLBACK = process.env.COMPOSE_PROJECT_NAME ?? null;
+const MIGRATOR_DB_USER = process.env.ARENA_DB_MIGRATOR_USER ?? "";
+const MIGRATOR_DB_PASSWORD = process.env.ARENA_DB_MIGRATOR_PASSWORD ?? "";
+const RUNTIME_DB_USER = process.env.ARENA_RUNTIME_DB_USER ?? "";
 const GITHUB_OWNER = process.env.GITHUB_OWNER ?? "ablac";
 const GITHUB_REPO = process.env.GITHUB_REPO ?? "Arena";
 const ARENA_INTERNAL_STATUS_URL = process.env.ARENA_INTERNAL_STATUS_URL ?? "http://arena-server:8000/internal/updater/status";
@@ -66,6 +76,8 @@ const TAR_TIMEOUT_MS = 2 * 60 * 1000;
 const RSYNC_TIMEOUT_MS = 2 * 60 * 1000;
 const DOCKER_INSPECT_TIMEOUT_MS = 30 * 1000;
 const DOCKER_BUILD_TIMEOUT_MS = 20 * 60 * 1000;
+const DOCKER_STOP_TIMEOUT_MS = 30 * 1000;
+const DB_MIGRATION_TIMEOUT_MS = 10 * 60 * 1000;
 const DOCKER_UP_TIMEOUT_MS = 5 * 60 * 1000;
 
 // The app container -- the very thing an update recreates -- is
@@ -240,6 +252,19 @@ function readJsonBody(request) {
 
 async function runUpdate(commitSha, githubToken, onPhase) {
   const workId = randomUUID();
+  const migrationContainerName = `arena-migration-${workId}`;
+  // Validate the release-only role identities before fetching or syncing any
+  // source. buildMigrationInvocation is called again with the detected compose
+  // context after the new image is built.
+  buildMigrationInvocation({
+    composeBaseArgs: [],
+    service: COMPOSE_SERVICE,
+    migratorUser: MIGRATOR_DB_USER,
+    migratorPassword: MIGRATOR_DB_PASSWORD,
+    runtimeUser: RUNTIME_DB_USER,
+    containerName: migrationContainerName
+  });
+
   const tarballPath = join(tmpdir(), `${TMP_PREFIX}${workId}.tar.gz`);
   const stagingDir = await mkdtemp(join(tmpdir(), `${TMP_PREFIX}${workId}-`));
 
@@ -315,6 +340,98 @@ async function runUpdate(commitSha, githubToken, onPhase) {
       log("Could not notify Arena before recreation", error);
     });
     await delay(600);
+
+    // Quiesce the old writer before owner-run migrations. Besides DDL, schema
+    // setup can promote persisted balance-controller epochs and backfill round
+    // identity; allowing the old binary to keep writing during those changes
+    // would mix incompatible state. `stop` retains the old container and image,
+    // which gives us a safe recovery path if migration fails.
+    onPhase("stopping");
+    log(`Stopping the old ${COMPOSE_SERVICE} container before database migration`);
+    let migrationContainerRemoved = false;
+    let recoverySafe = true;
+    try {
+      await execFileAsync("docker", ["compose", ...composeBaseArgs, "stop", "-t", "15", COMPOSE_SERVICE], {
+        cwd: DEPLOY_DIR,
+        timeout: DOCKER_STOP_TIMEOUT_MS
+      });
+
+      onPhase("migrating");
+      const migration = buildMigrationInvocation({
+        composeBaseArgs,
+        service: COMPOSE_SERVICE,
+        migratorUser: MIGRATOR_DB_USER,
+        migratorPassword: MIGRATOR_DB_PASSWORD,
+        runtimeUser: RUNTIME_DB_USER,
+        containerName: migrationContainerName
+      });
+      log(`Migrating the database with the freshly built ${COMPOSE_SERVICE} image`);
+      try {
+        await execFileAsync("docker", migration.args, {
+          cwd: DEPLOY_DIR,
+          env: { ...process.env, ...migration.env },
+          timeout: DB_MIGRATION_TIMEOUT_MS
+        });
+      } catch (runError) {
+        let reconciliation;
+        try {
+          reconciliation = await reconcileMigrationContainerAfterRunError({
+            execFile: execFileAsync,
+            containerName: migrationContainerName,
+            options: { cwd: DEPLOY_DIR, timeout: DOCKER_STOP_TIMEOUT_MS }
+          });
+          migrationContainerRemoved = true;
+        } catch (cleanupError) {
+          recoverySafe = false;
+          throw new Error(
+            `database migration command failed (${errorMessage(runError)}); ` +
+              `its container state could not be resolved (${errorMessage(cleanupError)}), ` +
+              `so the previous app was not restarted`
+          );
+        }
+        if (!reconciliation.migrationSucceeded) {
+          throw runError;
+        }
+        log(`Migration container completed successfully after its Compose client failed (${reconciliation.state})`);
+      }
+
+      if (!migrationContainerRemoved) {
+        try {
+          await forceRemoveMigrationContainer({
+            execFile: execFileAsync,
+            containerName: migrationContainerName,
+            options: { cwd: DEPLOY_DIR, timeout: DOCKER_STOP_TIMEOUT_MS }
+          });
+          migrationContainerRemoved = true;
+        } catch (cleanupError) {
+          recoverySafe = false;
+          throw new Error(
+            `database migration completed but its container could not be removed (${errorMessage(cleanupError)}), ` +
+              `so the previous app was not restarted`
+          );
+        }
+      }
+    } catch (migrationError) {
+      onPhase("recovering");
+      if (!recoverySafe) {
+        throw migrationError;
+      }
+      log(`Migration failed; restarting the retained old ${COMPOSE_SERVICE} container`, migrationError);
+      try {
+        await execFileAsync("docker", ["compose", ...composeBaseArgs, "start", COMPOSE_SERVICE], {
+          cwd: DEPLOY_DIR,
+          timeout: DOCKER_UP_TIMEOUT_MS
+        });
+        await waitForArenaReachable();
+      } catch (recoveryError) {
+        throw new Error(
+          `database migration failed (${errorMessage(migrationError)}); ` +
+            `the previous app could not be restored (${errorMessage(recoveryError)})`
+        );
+      }
+      throw new Error(`database migration failed; previous app restored: ${errorMessage(migrationError)}`);
+    }
+
     onPhase("recreating");
     // --no-deps: recreate ONLY the app service, never its compose dependencies.
     // arena-server depends_on arena-db + arena-redis, and a plain `up -d
@@ -380,6 +497,25 @@ async function waitForArenaCommit(targetCommit) {
     await delay(1000);
   }
   throw new Error(`Arena did not report target commit ${targetCommit} within 60 seconds`);
+}
+
+async function waitForArenaReachable() {
+  const deadline = Date.now() + 60_000;
+  const versionURL = new URL("/api/v1/version", ARENA_INTERNAL_STATUS_URL).toString();
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(versionURL, { signal: AbortSignal.timeout(2500) });
+      if (response.ok) return;
+    } catch {
+      // Expected while the retained app container starts again.
+    }
+    await delay(1000);
+  }
+  throw new Error("previous Arena container did not become reachable within 60 seconds");
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**

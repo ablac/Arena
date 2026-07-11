@@ -19,6 +19,10 @@ type Config struct {
 	DBName     string `envconfig:"ARENA_DB_NAME" default:"arena"`
 	DBUser     string `envconfig:"ARENA_DB_USER" default:"arena"`
 	DBPassword string `envconfig:"ARENA_DB_PASSWORD" default:"arena"`
+	// DBRuntimeUser is the least-privilege application role that an owner-run
+	// `arena-server migrate` command grants access to. It is normally supplied
+	// only to the one-shot migration container.
+	DBRuntimeUser string `envconfig:"ARENA_RUNTIME_DB_USER" default:""`
 
 	// Redis
 	RedisHost string `envconfig:"ARENA_REDIS_HOST" default:"localhost"`
@@ -228,6 +232,10 @@ type Config struct {
 	DBConnectAttempts     int  `envconfig:"ARENA_DB_CONNECT_ATTEMPTS" default:"10"`
 	DBConnectRetrySeconds int  `envconfig:"ARENA_DB_CONNECT_RETRY_SECONDS" default:"3"`
 	DBOptional            bool `envconfig:"ARENA_DB_OPTIONAL" default:"false"`
+	// Managed migrations keep DDL out of the runtime role. When enabled, normal
+	// server startup performs only a read-only schema preflight and refuses to
+	// start on a stale schema; `arena-server migrate` still applies migrations.
+	DBMigrationsManaged bool `envconfig:"ARENA_DB_MIGRATIONS_MANAGED" default:"false"`
 
 	// Rate limiting per endpoint
 	RateLimitBotConfigPerMin int `envconfig:"ARENA_RATE_LIMIT_BOT_CONFIG_PER_MIN" default:"120"`
@@ -368,6 +376,14 @@ type Config struct {
 }
 
 var C Config
+
+// ShouldAutoMigrateDatabase reports whether the long-running server process
+// owns schema setup. Managed production releases run the same idempotent
+// migrations in the updater's one-shot owner container instead, so every
+// runtime startup path must use this shared guard before attempting DDL.
+func ShouldAutoMigrateDatabase() bool {
+	return !C.DBMigrationsManaged
+}
 
 const (
 	DefaultEloStarting = 1000

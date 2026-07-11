@@ -82,6 +82,8 @@ jobs:
           node scripts/test-teleporter-readiness.mjs
           node scripts/test-service-status-ui.mjs
           node scripts/test-sdk-service-status.mjs
+          node --check updater/server.mjs
+          node --test updater/*.test.mjs
       - name: Check Python syntax
         run: |
           python -m compileall sdk/python/arena_sdk sdk/python/examples bots
