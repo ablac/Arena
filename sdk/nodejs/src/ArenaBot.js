@@ -1,6 +1,16 @@
 import WebSocket from 'ws';
 import { distance, directionToward, directionAway } from './helpers.js';
 
+const CONNECT_HANDSHAKE_TIMEOUT_MS = 15_000;
+
+function serverConnectionError(message) {
+  const error = new Error(message?.message || 'Arena connection rejected');
+  if (message?.code) error.code = message.code;
+  const retryAfter = Number(message?.details?.retry_after || 0);
+  if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfter = retryAfter;
+  return error;
+}
+
 function serviceStatusFingerprint(status) {
   const canonicalize = (value) => {
     if (Array.isArray(value)) return value.map(canonicalize);
@@ -45,6 +55,7 @@ export default class ArenaBot {
     /** @type {number} */ this._mapWidth = 0;
     /** @type {number} */ this._mapHeight = 0;
     /** @type {number} */ this._cellSize = 1;
+    /** @type {object|null} */ this.mapInfo = null;
   }
 
   /**
@@ -291,25 +302,135 @@ export default class ArenaBot {
   async connect() {
     const url = `${this.serverUrl}?key=${this.apiKey}`;
     return new Promise((resolve, reject) => {
+      let ready = false;
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(handshakeTimer);
+        callback(value);
+      };
+      const readyConnection = () => {
+        ready = true;
+        finish(resolve);
+      };
+      const rejectConnection = (error) => finish(reject, error);
+      const pendingMessages = [];
+      let processingMessages = false;
+      let handshakeTimer;
+
+      const handleMessage = async (msg) => {
+        if (settled && !ready) return;
+        if (!ready && msg.type === 'error') {
+          const error = serverConnectionError(msg);
+          if (error.retryAfter) {
+            this._maintenanceRetryUntil = Math.max(
+              this._maintenanceRetryUntil,
+              Date.now() + error.retryAfter * 1000,
+            );
+          }
+          rejectConnection(error);
+          this.ws?.close(1000, 'handshake rejected');
+          return;
+        }
+        try {
+          await this._handleMessage(msg, readyConnection);
+        } catch (err) {
+          console.error('[ArenaBot] Handler error:', err.message);
+          if (!ready) rejectConnection(err);
+        }
+      };
+
+      const drainMessages = async () => {
+        if (processingMessages) return;
+        processingMessages = true;
+        try {
+          while (pendingMessages.length > 0) {
+            const msg = pendingMessages.shift();
+            await handleMessage(msg);
+          }
+        } finally {
+          processingMessages = false;
+        }
+      };
+
+      const enqueueMessage = (msg) => {
+        // An action for an older tick has no value after a newer tick arrives.
+        // Keep lifecycle messages ordered, but collapse adjacent queued ticks so
+        // a slow agent callback cannot later flush a punitive action burst.
+        const last = pendingMessages[pendingMessages.length - 1];
+        if (msg.type === 'tick' && last?.type === 'tick') {
+          pendingMessages[pendingMessages.length - 1] = msg;
+        } else {
+          pendingMessages.push(msg);
+        }
+        void drainMessages();
+      };
+
       this.ws = new WebSocket(url);
+      handshakeTimer = setTimeout(() => {
+        const error = new Error('Arena connection timed out before loadout confirmation');
+        error.code = 'HANDSHAKE_TIMEOUT';
+        rejectConnection(error);
+        this.ws?.close(1000, 'handshake timeout');
+      }, CONNECT_HANDSHAKE_TIMEOUT_MS);
       this.ws.on('open', () => console.log('[ArenaBot] Connected'));
       this.ws.on('message', async (raw) => {
         let msg;
         try { msg = JSON.parse(raw); } catch { return; }
-        try {
-          await this._handleMessage(msg, resolve);
-        } catch (err) {
-          console.error('[ArenaBot] Handler error:', err.message);
-        }
+        enqueueMessage(msg);
       });
       this.ws.on('error', (err) => {
         console.error('[ArenaBot] WebSocket error:', err.message);
-        reject(err);
+        rejectConnection(err);
       });
-      this.ws.on('close', (code) => {
+      this.ws.on('close', (code, reason) => {
         console.log(`[ArenaBot] Disconnected (code=${code})`);
+        if (!ready) {
+          const suffix = reason?.length ? `: ${reason.toString()}` : '';
+          const error = new Error(`Arena connection closed before loadout confirmation (code=${code})${suffix}`);
+          error.code = 'CONNECTION_CLOSED';
+          rejectConnection(error);
+        }
       });
     });
+  }
+
+  /** @private Wait for the current ready connection to close. */
+  async _waitForDisconnect() {
+    const socket = this.ws;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    await new Promise((resolve) => socket.once('close', resolve));
+  }
+
+  /** Fetch the current or pre-generated arena map over REST. */
+  async fetchMap() {
+    const base = this.serverUrl
+      .replace(/^wss:/, 'https:')
+      .replace(/^ws:/, 'http:')
+      .split('/ws/')[0];
+    try {
+      const response = await fetch(`${base}/api/v1/arena/map`, {
+        signal: AbortSignal.timeout(CONNECT_HANDSHAKE_TIMEOUT_MS / 3),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      if (data.status !== 'ok' || !Array.isArray(data.terrain)) return false;
+
+      const terrain = data.terrain.map((row) => (
+        typeof row === 'string' ? row.split('') : row
+      ));
+      this._terrain = terrain;
+      this._mapWidth = Number(data.width || 0);
+      this._mapHeight = Number(data.height || 0);
+      this._cellSize = Number(data.cell_size || 1);
+      this.mapInfo = { ...data, terrain };
+      await this.onMapInit(terrain, this._mapWidth, this._mapHeight);
+      return true;
+    } catch (error) {
+      console.warn(`[ArenaBot] Map fetch failed: ${error.message}`);
+      return false;
+    }
   }
 
   /** @private */
@@ -327,6 +448,7 @@ export default class ArenaBot {
         break;
       case 'loadout_confirmed':
         console.log(`[ArenaBot] Loadout confirmed: ${msg.weapon}`);
+        await this.fetchMap();
         if (onReady) onReady();
         break;
       case 'map_init':
@@ -340,7 +462,12 @@ export default class ArenaBot {
         this._mapHeight = msg.height;
         this._cellSize = msg.cell_size || 1;
         console.log(`[ArenaBot] Map loaded: ${msg.width}x${msg.height} (cell_size=${this._cellSize})`);
-        await this.onMapInit(msg.terrain, msg.width, msg.height);
+        await this.onMapInit(this._terrain, msg.width, msg.height);
+        break;
+      case 'round_start':
+        // Intermission exposes the next terrain early; fetch again once the
+        // round starts to receive pads, hazards, objectives, and game mode.
+        await this.fetchMap();
         break;
       case 'tick': {
         if (msg.service_status) await this._handleServiceStatus(msg.service_status);
@@ -358,6 +485,10 @@ export default class ArenaBot {
         if (msg.fog_radius !== undefined) {
           safeZone.fog_radius = msg.fog_radius;
         }
+        // The server keeps sending state snapshots after death so clients can
+        // observe the round. Do not run agent logic or submit actions until a
+        // later round explicitly marks the bot alive again.
+        if (st.is_alive !== true) break;
         const action = await this.onTick(st, msg.nearby_entities, safeZone);
         if (action) {
           this._send({ type: 'action', tick: msg.tick_number, ...action });
@@ -424,7 +555,7 @@ export default class ArenaBot {
       try {
         await this.connect();
         delay = 1000;
-        await new Promise((resolve) => { this.ws.on('close', resolve); });
+        await this._waitForDisconnect();
       } catch { /* connection failed */ }
       if (!this._running) break;
       const maintenanceDelay = Math.max(0, this._maintenanceRetryUntil - Date.now());

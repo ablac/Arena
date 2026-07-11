@@ -3191,6 +3191,14 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	if ts.Danger.hasLethal(cell[0], cell[1]) {
 		return escapeDanger(ts, canDodge)
 	}
+	// Ready pads are soft danger: ordinary routing must not enter their trigger
+	// footprint, but a bot already inside it needs a one-cell egress path. If
+	// every adjacent pad cell stays blocked, BFS returns zero and the bot idles
+	// forever. Do not dodge here; a single step preserves multi-cell entry
+	// avoidance while moving along the shortest route out of the footprint.
+	if ts.Danger.hasPad(cell[0], cell[1]) {
+		return escapeDanger(ts, false)
+	}
 
 	// Picking up an adjacent health pack is immediate and cannot be deferred
 	// behind mines, grapples, or objective movement. The old ordering could

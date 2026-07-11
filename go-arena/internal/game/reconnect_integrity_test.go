@@ -73,6 +73,115 @@ func TestAddBotReconnectPreservesActiveRoundState(t *testing.T) {
 	}
 }
 
+func TestDetachBotSessionPreservesActiveStateForReconnect(t *testing.T) {
+	previousGrace := config.C.WSReconnectGraceSecs
+	previousTickRate := config.C.TickRate
+	config.C.WSReconnectGraceSecs = 10
+	config.C.TickRate = 10
+	t.Cleanup(func() {
+		config.C.WSReconnectGraceSecs = previousGrace
+		config.C.TickRate = previousTickRate
+	})
+
+	engine := NewGameEngine()
+	engine.Round.Phase = PhaseActive
+	engine.TickCount = 250
+	existing := &BotState{
+		BotID: "transient-bot", APIKeyID: "key-1", Name: "Transient Bot",
+		HP: 42, MaxHP: 120, IsAlive: true, Weapon: "staff",
+		Position: NewVec2(300, 240), LastValidPosition: NewVec2(300, 240),
+		PendingAction: &Action{Type: ActionAttack},
+		SendChan:      make(chan []byte, 2),
+	}
+	engine.Bots[existing.BotID] = existing
+	engine.Grid.Insert(existing.BotID, existing.Position)
+
+	if preserved := engine.DetachBotSession(existing.BotID, existing); !preserved {
+		t.Fatal("active transport loss was not preserved for reconnect")
+	}
+	if got := engine.Bots[existing.BotID]; got != existing {
+		t.Fatalf("detached state = %p, want original %p", got, existing)
+	}
+	if !existing.ReconnectPending || existing.DisconnectedAtTick != 250 {
+		t.Fatalf("disconnect metadata = pending:%v tick:%d", existing.ReconnectPending, existing.DisconnectedAtTick)
+	}
+	if existing.Conn != nil || existing.SendChan != nil || existing.PendingAction != nil {
+		t.Fatalf("detached transport/action was retained: conn=%v send=%v action=%v", existing.Conn, existing.SendChan, existing.PendingAction)
+	}
+	if got := engine.ConnectedBotCount(); got != 0 {
+		t.Fatalf("connected count includes detached session: %d", got)
+	}
+
+	newSend := make(chan []byte, 2)
+	newTicks := make(chan []byte, 1)
+	reconnected := &BotState{
+		BotID: existing.BotID, APIKeyID: existing.APIKeyID, Name: existing.Name,
+		HP: 999, MaxHP: 999, Weapon: "sword", SendChan: newSend, TickChan: newTicks,
+	}
+	if admitted := engine.AddBot(reconnected); !admitted {
+		t.Fatal("reconnect during grace was rejected")
+	}
+	if reconnected.HP != 42 || reconnected.MaxHP != 120 || reconnected.Weapon != "staff" || !reconnected.IsAlive {
+		t.Fatalf("reconnect did not preserve authoritative state: %+v", reconnected)
+	}
+	if reconnected.ReconnectPending || reconnected.DisconnectedAtTick != 0 {
+		t.Fatalf("reconnect retained detach metadata: pending=%v tick=%d", reconnected.ReconnectPending, reconnected.DisconnectedAtTick)
+	}
+	if reconnected.SendChan != newSend {
+		t.Fatal("reconnect lost the new transport channel")
+	}
+	if reconnected.TickChan != newTicks {
+		t.Fatal("reconnect lost the new replaceable tick channel")
+	}
+}
+
+func TestDetachedBotDoesNotRunFallbackAI(t *testing.T) {
+	engine := NewGameEngine()
+	engine.Round.Phase = PhaseActive
+	bot := &BotState{
+		BotID: "detached", IsAlive: true, HP: 100, MaxHP: 100,
+		FallbackBehavior: "aggressive", Position: NewVec2(200, 200),
+		SendChan: make(chan []byte, 1),
+	}
+	engine.Bots[bot.BotID] = bot
+	if !engine.DetachBotSession(bot.BotID, bot) {
+		t.Fatal("active session was not detached")
+	}
+
+	engine.applyFallbacks()
+
+	if bot.PendingAction != nil {
+		t.Fatalf("detached bot received fallback action: %+v", bot.PendingAction)
+	}
+}
+
+func TestDetachedSessionExpiresAfterReconnectGrace(t *testing.T) {
+	previousGrace := config.C.WSReconnectGraceSecs
+	previousTickRate := config.C.TickRate
+	config.C.WSReconnectGraceSecs = 1
+	config.C.TickRate = 10
+	t.Cleanup(func() {
+		config.C.WSReconnectGraceSecs = previousGrace
+		config.C.TickRate = previousTickRate
+	})
+
+	engine := NewGameEngine()
+	engine.Round.Phase = PhaseActive
+	engine.TickCount = 100
+	bot := &BotState{BotID: "expired", IsAlive: true, SendChan: make(chan []byte, 1)}
+	engine.Bots[bot.BotID] = bot
+	if !engine.DetachBotSession(bot.BotID, bot) {
+		t.Fatal("active session was not detached")
+	}
+
+	engine.TickCount = 111
+	engine.checkAFK()
+
+	if _, present := engine.Bots[bot.BotID]; present {
+		t.Fatal("detached bot survived beyond reconnect grace")
+	}
+}
+
 func TestAddBotReconnectIsAllowedAtCapacity(t *testing.T) {
 	previousMax := config.C.MaxBots
 	config.C.MaxBots = 1

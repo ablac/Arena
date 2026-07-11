@@ -229,6 +229,21 @@ func TestSnapshotBotStatsNeverEmitsNegativeDelta(t *testing.T) {
 	}
 }
 
+func TestBotStatsDeltaUsesCapturedTickRate(t *testing.T) {
+	snapshot := BotStatsSnapshot{
+		BotID:            "tick-rate-snapshot",
+		Elo:              1000,
+		RoundLongestLife: 40,
+		TickRate:         10,
+	}
+
+	delta := botStatsDeltaFromSnapshot(snapshot, "", false)
+
+	if delta.LongestLifeSecs != 4 {
+		t.Fatalf("longest life seconds = %d, want captured 40/10 = 4", delta.LongestLifeSecs)
+	}
+}
+
 func TestFailedBotStatsDeltaIsRetriedWithNextSnapshot(t *testing.T) {
 	epoch := isolateBotStatsPersistence(t)
 	calls := 0

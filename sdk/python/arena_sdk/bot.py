@@ -423,6 +423,12 @@ class ArenaBot:
                 self._last_action_result = state.get("last_action_result")
                 # Team number in team-based game modes (0 = no team / FFA).
                 self._team = state.get("team", 0)
+                # Dead bots keep receiving state snapshots for observation, but
+                # submitting actions wastes bandwidth and can amplify reconnect
+                # or rate-limit incidents. A later round explicitly restores
+                # ``is_alive`` before agent logic resumes.
+                if state.get("is_alive") is not True:
+                    continue
                 nearby = msg.get("nearby_entities", [])
                 safe_zone = {
                     "center": state.get("zone_center", [0, 0]),

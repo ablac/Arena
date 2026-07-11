@@ -712,8 +712,8 @@ func (e *GameEngine) startRound() {
 		spawnPoints = e.Arena.GetSpawnPoints(len(botList))
 	}
 	for i, bot := range botList {
-		SpawnBotAt(bot, spawnPoints[i], e.Grid, e.TickCount)
 		bot.ResetRoundStats()
+		SpawnBotAt(bot, spawnPoints[i], e.Grid, e.TickCount)
 		bot.KillStreak = 0
 		bot.LastActionTick = 0 // Reset AFK timer so bots aren't kicked at round start
 		bot.StillTicks = 0
@@ -878,11 +878,15 @@ func (e *GameEngine) AddBot(bot *BotState) bool {
 			// reset HP, deaths, cooldowns, position, or the round-locked loadout.
 			newConn := bot.Conn
 			newSendChan := bot.SendChan
+			newTickChan := bot.TickChan
 			newConnectedAt := bot.ConnectedAt
 			*bot = *existing
 			bot.Conn = newConn
 			bot.SendChan = newSendChan
+			bot.TickChan = newTickChan
 			bot.ConnectedAt = newConnectedAt
+			bot.ReconnectPending = false
+			bot.DisconnectedAtTick = 0
 			e.Grid.Update(bot.BotID, bot.Position)
 		} else {
 			// Between rounds the newly validated loadout is authoritative. Carry
@@ -954,8 +958,49 @@ func (e *GameEngine) DisconnectBotSessionForKey(botID, apiKeyID string) bool {
 	}
 	conn := bot.Conn
 	e.mu.RUnlock()
+	// Protocol locks are punitive, not ordinary transport failures. Remove the
+	// authoritative session first so handler cleanup cannot place a locked bot
+	// into transient reconnect grace.
+	e.RemoveBot(botID, bot)
 	_ = conn.Close()
 	return true
+}
+
+// DetachBotSession preserves an active-round bot across a short, ordinary
+// transport interruption. The bot remains targetable but cannot act while its
+// connection is absent. A matching reconnect keeps the authoritative combat
+// state; checkAFK expires it after the configured grace window.
+func (e *GameEngine) DetachBotSession(botID string, expected *BotState) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.Round.Phase != PhaseActive || expected == nil {
+		return false
+	}
+	current := e.Bots[botID]
+	if current == nil || current != expected {
+		return false
+	}
+	current.Conn = nil
+	current.SendChan = nil
+	current.TickChan = nil
+	current.PendingAction = nil
+	current.ReconnectPending = true
+	current.DisconnectedAtTick = e.TickCount
+	return true
+}
+
+// HasBotSessionForKey reports whether this key already owns an active or
+// waiting session. This distinguishes a bounded reconnect from a new admission
+// without exposing mutable session state outside the engine lock.
+func (e *GameEngine) HasBotSessionForKey(botID, apiKeyID string) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	bot := e.Bots[botID]
+	if bot == nil {
+		bot = e.WaitingBots[botID]
+	}
+	return bot != nil && bot.APIKeyID == apiKeyID
 }
 
 // RemoveBot removes a specific bot instance from both active and waiting maps
@@ -1351,7 +1396,18 @@ func (e *GameEngine) GetActiveMap() (*TerrainGrid, MapShape, GameMode) {
 func (e *GameEngine) ConnectedBotCount() int {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return len(e.Bots) + len(e.WaitingBots)
+	connected := 0
+	for _, bot := range e.Bots {
+		if !bot.ReconnectPending {
+			connected++
+		}
+	}
+	for _, bot := range e.WaitingBots {
+		if !bot.ReconnectPending {
+			connected++
+		}
+	}
+	return connected
 }
 
 // GetBountyBoard returns a snapshot of the current cross-round bounty board.
@@ -1425,6 +1481,10 @@ func (e *GameEngine) applyFallbacks() {
 	var nearbyIDs []string
 	var nearbyBots []*BotState
 	for _, bot := range e.Bots {
+		if bot.ReconnectPending {
+			bot.PendingAction = nil
+			continue
+		}
 		if bot.PendingAction != nil || !bot.IsAlive || bot.StunTicks > 0 {
 			continue
 		}
@@ -1936,11 +1996,25 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 func (e *GameEngine) checkAFK() {
 	c := &config.C
 	var toRemove []string
+	var snapshots []BotStatsSnapshot
 	for _, bot := range e.Bots {
 		isAFK := false
+		reason := "AFK timeout"
+		eventName := "afk_kick"
 
 		// Bot with no websocket connection is a ghost — remove immediately.
-		if bot.Conn == nil {
+		if bot.ReconnectPending {
+			graceTicks := int(math.Ceil(c.WSReconnectGraceSecs * float64(c.TickRate)))
+			if graceTicks < 1 {
+				graceTicks = 1
+			}
+			if e.TickCount-bot.DisconnectedAtTick < graceTicks {
+				continue
+			}
+			isAFK = true
+			reason = "reconnect grace expired"
+			eventName = "reconnect_timeout"
+		} else if bot.Conn == nil {
 			isAFK = true
 		} else if !bot.IsAlive {
 			// Dead bots can't act — don't kick them for AFK.
@@ -1955,16 +2029,17 @@ func (e *GameEngine) checkAFK() {
 		}
 
 		if isAFK {
-			SendKick(bot, "AFK timeout")
+			SendKick(bot, reason)
 			if bot.Conn != nil {
 				bot.Conn.Close()
 			}
 			toRemove = append(toRemove, bot.BotID)
+			snapshots = append(snapshots, takeBotStatsSnapshot(bot))
 			if GameEventHook != nil {
-				GameEventHook("afk_kick", map[string]interface{}{
+				GameEventHook(eventName, map[string]interface{}{
 					"bot_id":   bot.BotID,
 					"bot_name": bot.Name,
-					"reason":   "AFK timeout",
+					"reason":   reason,
 				})
 			}
 		}
@@ -1972,6 +2047,10 @@ func (e *GameEngine) checkAFK() {
 	for _, id := range toRemove {
 		delete(e.Bots, id)
 		e.Grid.Remove(id)
+	}
+	for _, snapshot := range snapshots {
+		snapshot := snapshot
+		safeGo(func() { PersistSingleBot(context.Background(), snapshot) })
 	}
 }
 
@@ -3025,6 +3104,7 @@ type BotStatsSnapshot struct {
 	DistanceDelta    float64
 	RoundLongestLife int
 	PickupsDelta     int
+	TickRate         int
 	CapturedAt       time.Time
 	PersistenceEpoch uint64
 }
@@ -3082,6 +3162,7 @@ func takeBotStatsSnapshot(bot *BotState) BotStatsSnapshot {
 		DistanceDelta:    math.Max(0, bot.RoundDistance-bot.PersistedDistance),
 		RoundLongestLife: longestLife,
 		PickupsDelta:     max(0, bot.RoundPickups-bot.PersistedPickups),
+		TickRate:         max(1, config.C.TickRate),
 		CapturedAt:       time.Now(),
 		PersistenceEpoch: botStatsPersistenceEpoch.Load(),
 	}
