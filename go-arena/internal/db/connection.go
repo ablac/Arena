@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"arena-server/internal/config"
@@ -20,6 +21,126 @@ var Pool *pgxpool.Pool
 // this instead of dereferencing a nil pool prevents the nil-pointer panic
 // that took the keyed bot-join path down in the 2026-05-29 incident.
 var ErrNoDatabase = errors.New("database connection pool is not initialized")
+
+// ErrRuntimeLeaseHeld means another Arena server process is already serving
+// this database. A singleton runtime is required because one engine owns the
+// authoritative match clock and performs whole-board snapshot persistence.
+var ErrRuntimeLeaseHeld = errors.New("another arena server runtime already holds the database lease")
+
+// This key is a stable namespace reserved for the Arena server runtime. Schema
+// migrations use a different transaction-scoped key.
+const arenaRuntimeAdvisoryLockID int64 = 2026071102
+
+const (
+	runtimeLeaseHeartbeatInterval = time.Second
+	runtimeLeaseHeartbeatTimeout  = 2 * time.Second
+)
+
+// RuntimeLease owns one dedicated pool connection for the lifetime of a server
+// process. PostgreSQL session advisory locks are bound to that connection.
+type RuntimeLease struct {
+	mu   sync.Mutex
+	conn *pgxpool.Conn
+}
+
+// AcquireRuntimeLease prevents two game engines from writing rounds and global
+// snapshot state to the same database at once.
+func AcquireRuntimeLease(ctx context.Context) (*RuntimeLease, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
+	conn, err := Pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("AcquireRuntimeLease acquire: %w", err)
+	}
+	var acquired bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, arenaRuntimeAdvisoryLockID).Scan(&acquired); err != nil {
+		// The query may have reached PostgreSQL before its result failed to scan.
+		// Destroy the session so a possibly acquired session lock cannot leak
+		// back into the pool.
+		raw := conn.Hijack()
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = raw.Close(closeCtx)
+		return nil, fmt.Errorf("AcquireRuntimeLease lock: %w", err)
+	}
+	if !acquired {
+		conn.Release()
+		return nil, ErrRuntimeLeaseHeld
+	}
+	return &RuntimeLease{conn: conn}, nil
+}
+
+// Close explicitly releases the runtime lease, then closes its dedicated
+// PostgreSQL session. It is idempotent; destroying instead of returning the
+// connection to the pool guarantees a session-scoped lock cannot leak even if
+// the unlock result is lost.
+func (lease *RuntimeLease) Close(ctx context.Context) error {
+	if lease == nil {
+		return nil
+	}
+	lease.mu.Lock()
+	defer lease.mu.Unlock()
+	if lease.conn == nil {
+		return nil
+	}
+	var unlocked bool
+	unlockErr := lease.conn.QueryRow(ctx, `SELECT pg_advisory_unlock($1)`, arenaRuntimeAdvisoryLockID).Scan(&unlocked)
+	raw := lease.conn.Hijack()
+	lease.conn = nil
+	closeErr := raw.Close(ctx)
+	if unlockErr != nil {
+		return fmt.Errorf("RuntimeLease unlock: %w", unlockErr)
+	}
+	if !unlocked {
+		return errors.New("RuntimeLease unlock: advisory lock was not held by its dedicated session")
+	}
+	if closeErr != nil {
+		return fmt.Errorf("RuntimeLease close: %w", closeErr)
+	}
+	return nil
+}
+
+// Monitor verifies that the dedicated PostgreSQL session remains usable. A
+// session-level advisory lock disappears if that connection dies, even when
+// the process can still use other pooled connections; callers must shut the
+// runtime down on a non-nil result so another server can never overlap it.
+func (lease *RuntimeLease) Monitor(ctx context.Context) error {
+	ticker := time.NewTicker(runtimeLeaseHeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			checkCtx, cancel := context.WithTimeout(ctx, runtimeLeaseHeartbeatTimeout)
+			err := lease.check(checkCtx)
+			cancel()
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return fmt.Errorf("RuntimeLease heartbeat: %w", err)
+			}
+		}
+	}
+}
+
+func (lease *RuntimeLease) check(ctx context.Context) error {
+	lease.mu.Lock()
+	defer lease.mu.Unlock()
+	if lease.conn == nil {
+		return errors.New("runtime lease is closed")
+	}
+	var alive int
+	if err := lease.conn.QueryRow(ctx, `SELECT 1`).Scan(&alive); err != nil {
+		return err
+	}
+	if alive != 1 {
+		return fmt.Errorf("unexpected heartbeat value %d", alive)
+	}
+	return nil
+}
 
 // Connect establishes the global pgx pool from config.C. It retries on
 // failure (config.C.DBConnectAttempts, spaced by DBConnectRetrySeconds) so a
