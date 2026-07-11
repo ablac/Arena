@@ -98,6 +98,27 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	oidcHandler := NewOIDCHandler()
 	customerOIDCHandler := NewCustomerOIDCHandler()
 
+	// Developer lobby chat hub. The session resolver maps a request cookie
+	// to a chat identity; it stays nil-safe when customer OIDC is disabled
+	// (chat is then read-only for everyone).
+	chatHub := ws.NewChatHub(engine)
+	if config.C.ChatEnabled {
+		warmCtx, cancelWarm := context.WithTimeout(context.Background(), 10*time.Second)
+		chatHub.WarmHistory(warmCtx)
+		cancelWarm()
+	}
+	chatSessionResolver := func(r *http.Request) *ws.ChatIdentity {
+		if customerOIDCHandler == nil {
+			return nil
+		}
+		session := customerOIDCHandler.GetSession(r)
+		if session == nil {
+			return nil
+		}
+		return &ws.ChatIdentity{AccountID: session.AccountID, Name: session.Name}
+	}
+	adminHandler.ChatHub = chatHub
+
 	// --- OIDC routes (mounted OUTSIDE admin auth — these handle pre-auth flow) ---
 	if oidcHandler != nil {
 		// Rate-limited per IP so an attacker can't grow the in-memory CSRF
@@ -188,6 +209,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		// Arena map (public) — returns current terrain grid.
 		api.Get("/arena/map", GetArenaMap(engine))
 
+		// Chat configuration (public).
+		api.Get("/chat/config", ChatConfigHandler)
+
 		// Admin routes (token-authenticated or OIDC session, rate-limited).
 		api.Route("/admin", func(admin chi.Router) {
 			admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
@@ -207,6 +231,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	// --- WebSocket endpoints ---
 	r.Get("/ws/bot", ws.BotHandler(engine))
 	r.Get("/ws/spectator", ws.SpectatorHandler(engine))
+	r.Get("/ws/chat", ws.ChatHandler(engine, chatHub, chatSessionResolver))
 	r.Post("/internal/updater/status", serviceStatus.updaterStatusCallback)
 
 	// The public reverse proxy can mount the app behind an /arena prefix.
@@ -214,6 +239,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	r.Route("/arena", func(ar chi.Router) {
 		ar.Get("/ws/bot", ws.BotHandler(engine))
 		ar.Get("/ws/spectator", ws.SpectatorHandler(engine))
+		ar.Get("/ws/chat", ws.ChatHandler(engine, chatHub, chatSessionResolver))
 
 		ar.Route("/api/v1", func(api chi.Router) {
 			api.Get("/health", healthHandler(engine))
@@ -262,6 +288,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			api.Get("/weapon-stats", GetWeaponStats)
 			api.Get("/arena/status", GetArenaStatus(engine))
 			api.Get("/arena/map", GetArenaMap(engine))
+			api.Get("/chat/config", ChatConfigHandler)
 
 			// Admin routes (mirrored under /arena prefix).
 			api.Route("/admin", func(admin chi.Router) {
