@@ -74,6 +74,7 @@ jobs:
           node scripts/test-cosmetics-ui.mjs
           node scripts/test-key-generator.mjs
           node scripts/test-admin-cosmetics-ui.mjs
+          node scripts/test-admin-broadcast-ui.mjs
           node scripts/test-public-paths.mjs
           node scripts/test-spectator-client.mjs
           node scripts/test-swordsman-material-lifecycle.mjs
