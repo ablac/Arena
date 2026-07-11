@@ -114,7 +114,7 @@ All HTTP endpoints are also available under the `/arena` prefix (e.g., `/arena/a
 | `GET` | `/api/v1/leaderboard` | Leaderboard with `?limit=N&offset=N` pagination |
 | `GET` | `/api/v1/arena/status` | Current round, bots alive, safe zone radius |
 | `GET` | `/api/v1/service-status` | Current public broadcast and scheduled-maintenance status (`Cache-Control: no-store`) |
-| `GET` | `/api/v1/arena/map` | Current terrain grid (width, height, cell_size, compact terrain with pad/hazard overlays, teleport/capture/hazard metadata). **Next round's map is pre-generated during intermission** — fetch early and pre-compute pathfinding! |
+| `GET` | `/api/v1/arena/map` | Current or pre-generated next-round terrain. During intermission, `features_pending` is `true`, `game_mode` is omitted, and round-feature arrays/overlays are empty; fetch again after `round_start` for pads, hazards, and capture objectives. |
 | `GET` | `/api/v1/bounties` | Current bounty board |
 | `GET` | `/api/v1/weapon-stats` | Live weapon stats (including auto-balance adjustments) |
 | `GET` | `/api/v1/cosmetics/catalog` | Presentation-only bot skins, weapon finishes, and attachments |
@@ -145,7 +145,7 @@ X-Arena-Key: YOUR_API_KEY
 
 ### Spectator WebSocket
 
-`wss://arena.angel-serv.com/ws/spectator` requires no auth and streams `arena_state` snapshots every tick. Notable fields for client builders:
+`wss://arena.angel-serv.com/ws/spectator` requires no auth and streams receive-only `arena_state` and `lobby_state` gameplay snapshots on one ordered, five-second presentation delay. Notable fields for client builders:
 
 - Each bot entry includes `team` (0 in FFA), plus combat state (`facing`, `bow_charge_level`, `shield_absorb`, `is_bounty_target`, ...).
 - Top-level: `game_mode`, `map_shape`, and in team modes `team_scores` (string-keyed) and `flags` (each with `id`, `team`, `position`, `base_position`, `status`, `carrier_id`).
@@ -277,7 +277,6 @@ Sent when a new round begins.
   "round_modifier_label": "",
   "position": [50, 25],
   "bots_in_round": 8,
-  "all_positions": { "bot-id-1": [10, 20], "bot-id-2": [80, 70] },
   "safe_zone": { "center": [50, 50], "radius": 71, "target_center": [50, 50], "target_radius": 71 }
 }
 ```
@@ -445,14 +444,16 @@ Send one per tick to control your bot.
 |--------|-------------|-----------------|
 | `move` | Move in a direction | `direction`: `[dx, dy]` — e.g. `[1, 0]` for right |
 | `move_to` | Pathfind to a position (A* server-side) | `target_position`: `[x, y]` grid coords |
-| `attack` | Attack a target bot (must be in range) | `target`: bot_id |
+| `attack` | Attack a target bot, or place a Staff AoE at a grid position | Exactly one of `target`: bot_id or `target_position`: `[col, row]` (Staff only) |
 | `dodge` | Dash with 3 invulnerability ticks (30 tick cooldown) | `direction`: `[dx, dy]` |
-| `shove` | Push a nearby bot (range 2.0, stun 2 ticks, 1.5s cooldown) | `target`: bot_id |
+| `shove` | Push an adjacent bot (range 1 tile, knockback 2 tiles, stun 2 ticks, 1.5s cooldown) | `target`: bot_id |
 | `use_item` | Collect a nearby pickup | `item_id`: pickup_id |
 | `place_mine` | Place a landmine at your current position (max 3 active) | (none) |
 | `use_gravity_well` | Deploy a gravity well (requires a `gravity_well` pickup charge) | `target_position`: `[col, row]` |
 | `grapple` | Universal grapple ability: yank an enemy to you, or anchor-pull yourself | `target`: bot_id **or** `target_position`: `[col, row]` |
 | `idle` | Do nothing this tick | (none) |
+
+For `attack`, `shove`, and target-mode `grapple`, the target must be in the bot's current fog-of-war view when the server accepts the action. The active bounty target is the one exception because its position is deliberately public. Rejected stale, duplicate, or no-longer-visible actions do not count as cheating strikes; malformed actions and future-tick guesses do.
 
 ### Action Examples
 
@@ -465,6 +466,9 @@ Send one per tick to control your bot.
 
 // Attack enemy
 {"type": "action", "tick": 42, "action": "attack", "target": "enemy-bot-id"}
+
+// Staff: place a delayed AoE at a grid position (do not also send target)
+{"type": "action", "tick": 42, "action": "attack", "target_position": [52, 48]}
 
 // Dodge upward
 {"type": "action", "tick": 42, "action": "dodge", "direction": [0, -1]}
@@ -579,11 +583,11 @@ When your bot doesn't send an action in time, the server plays one of these AI b
 - Arena size: **2000×2000** world units
 - Grid: **100×100** cells (each cell = 20 world units)
 - All positions in tick messages use **grid coordinates** `[col, row]`
-- Fog of war radius: **7 tiles** (Chebyshev distance)
+- Fog of war radius: **7 tiles** (radial distance)
 
 ### Terrain
 
-The map is generated fresh each round. The **next round's map is pre-generated during intermission**, so bots can fetch and analyze it before the round starts. Get it via the REST API: `GET /api/v1/arena/map` — pre-compute your pathfinding while waiting! (The old `map_init` WebSocket message is no longer sent.)
+The map is generated fresh each round. The **next round's terrain is pre-generated during intermission**, so bots can fetch and analyze walls before the round starts. An intermission response has `features_pending: true`: `game_mode` is omitted, the round-feature arrays are empty, and the terrain contains no previous-round overlays. Fetch the endpoint again after `round_start` to receive the new round's teleport pads, capture pads, hazard zones, overlays, and game mode. (The old `map_init` WebSocket message is no longer sent.)
 
 The map endpoint returns the terrain as compact row strings with this legend:
 
@@ -609,6 +613,10 @@ The arena is still a square grid, but each round's playable area is carved into 
 | `diamond` | Diamond (rotated square) |
 | `cross` | Plus-shaped arena with dead-end arms |
 | `caves` | Organic cave system with tunnels and chambers |
+| `donut` | Ring arena with inner and outer boundaries plus cardinal gates |
+| `islands` | Several open islands linked by broad bridges |
+| `rooms` | Dungeon-like rooms connected by corridors |
+| `spiral` | A wide spiral route from the rim into a central arena |
 
 Bot takeaway: don't assume the corners of the grid are reachable. Fetch `GET /api/v1/arena/map` during intermission and pathfind against the actual `#` cells — server-side `move_to` already handles this for you.
 
@@ -658,9 +666,9 @@ Items spawn on the map and can be collected with the `use_item` action.
 ### Combat Details
 
 - **Dodge**: 2.0× speed burst, 3 ticks invulnerability, 30 tick cooldown
-- **Shove**: Range 2.0 tiles, 15.0 knockback, 2 tick stun, 1.5s cooldown
+- **Shove**: Range 1 tile, 2-tile knockback, 2 tick stun, 1.5s cooldown
 - **Wall collision**: Bots knocked into walls take 5 bonus damage
-- **Projectiles** (bow): Speed 240 world units/sec (~12 tiles/sec), generous hit radius, flight time capped by weapon range
+- **Projectiles** (bow): Speed 300 world units/sec (~15 tiles/sec with the Bow's 1.25× projectile-speed multiplier), generous hit radius, flight time capped by weapon range
 - **Staff AoE**: 3 tick delay before impact, 2-tile explosion radius, then leaves a burn field (3 damage every 2 ticks for 12 ticks)
 
 ### Rate Limits
@@ -1036,7 +1044,8 @@ This returns all weapons, stats, game mechanics, endpoints, protocol details, an
 ### Teleport Pads
 - 3 linked pairs spawn each round
 - Step onto a pad to instantly teleport to its linked partner
-- 5-second cooldown per bot per pad; the pad pair also locks for 3 seconds after any use
+- One use gives that bot a 5-second cooldown on both linked pads; the pair also locks for everyone for 3 seconds
+- Only a lit pad with `is_ready: true` will activate
 - Visible in `nearby_entities` as type `"teleport_pad"` with `linked_pad_id`, `color`, `is_ready`, and `cooldown_remaining_ticks`
 
 ### Environmental Hazards
@@ -1067,7 +1076,7 @@ This returns all weapons, stats, game mechanics, endpoints, protocol details, an
 
 ### Grapple Ability (All Bots)
 - Every bot gets **2 grapple charges per round**, regardless of weapon (`grapple_charges` and `grapple_cooldown` in `your_state`; `grapple_charge` pickups grant +1)
-- Action: `"grapple"` with `target: bot_id` — yanks the enemy to melee range, dealing 15 damage and a 3-tick stun (requires line of sight)
+- Action: `"grapple"` with `target: bot_id` — yanks a currently visible enemy to melee range, dealing 15 damage and a 3-tick stun (requires line of sight)
 - Action: `"grapple"` with `target_position: [col, row]` — anchor-pulls YOURSELF to that position (mobility/escape)
 - Range: 12 tiles, cooldown: 4 seconds
 - The separate **grapple weapon** (see Weapons table) works the other way: its regular attacks pull the attacker to the target
@@ -1080,9 +1089,9 @@ This returns all weapons, stats, game mechanics, endpoints, protocol details, an
 - Your own mines are visible in `nearby_entities` as type `"landmine"`
 
 ### Gravity Well
-- Pickup type `"gravity_well"` grants 1 charge (`gravity_well_charge` in `your_state`)
+- Pickup type `"gravity_well"` grants a binary 0-or-1 charge (`gravity_well_charge` in `your_state`); charges do not stack or carry between rounds
 - Action: `"use_gravity_well"` with `target_position: [col, row]`
-- Creates a vortex that pulls nearby bots (within 3 tiles) toward its center for 3 seconds
+- Creates a vortex that pulls vulnerable enemies within 3 tiles toward its center for 3 seconds; it does not pull invulnerable targets or friendly-fire-protected allies
 - Does NOT affect the deploying bot
 - Visible to all bots as type `"gravity_well"` in `nearby_entities`
 

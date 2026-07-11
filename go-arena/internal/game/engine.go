@@ -2,6 +2,7 @@ package game
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -30,6 +31,83 @@ func safeGo(fn func()) {
 		}()
 		fn()
 	}()
+}
+
+var createRoundRecord = db.CreateRound
+
+var roundCreateTimeout = 10 * time.Second
+
+var errRoundCreateIncomplete = errors.New("round record creation did not complete")
+
+// roundPersistenceResult is the completion result for one round's durable
+// INSERT. Closing done publishes err to every dependent persistence goroutine.
+type roundPersistenceResult struct {
+	done        chan struct{}
+	err         error
+	skipLogOnce sync.Once
+}
+
+func newRoundPersistenceResult() *roundPersistenceResult {
+	return &roundPersistenceResult{
+		done: make(chan struct{}),
+		err:  errRoundCreateIncomplete,
+	}
+}
+
+func (result *roundPersistenceResult) wait() error {
+	if result == nil {
+		return errRoundCreateIncomplete
+	}
+	<-result.done
+	return result.err
+}
+
+// enqueueRoundCreate chains round INSERTs in engine start order without
+// blocking the tick goroutine. PostgreSQL therefore allocates persisted_order
+// in match-start order even if an earlier database call is delayed.
+//
+// The engine lock serializes calls to this helper in production.
+func (e *GameEngine) enqueueRoundCreate(round *db.Round) *roundPersistenceResult {
+	result := newRoundPersistenceResult()
+	previous := e.roundCreateTail
+	e.roundCreateTail = result.done
+	create := createRoundRecord
+
+	safeGo(func() {
+		// Always release this round and the next queued round. The non-nil
+		// default error prevents dependents from running if create panics.
+		defer close(result.done)
+		if previous != nil {
+			<-previous
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), roundCreateTimeout)
+		defer cancel()
+		result.err = create(ctx, round)
+		if result.err != nil {
+			slog.Error("failed to create round record",
+				"round_id", round.ID,
+				"round", round.RoundNumber,
+				"error", result.err,
+			)
+		}
+	})
+	return result
+}
+
+func afterRoundCreated(result *roundPersistenceResult, operation, roundID string, fn func()) {
+	if err := result.wait(); err != nil {
+		if result != nil {
+			result.skipLogOnce.Do(func() {
+				slog.Warn("skipping dependent round persistence after create failure",
+					"operation", operation,
+					"round_id", roundID,
+					"error", err,
+				)
+			})
+		}
+		return
+	}
+	fn()
 }
 
 // GameEngine is the central coordinator for the arena game loop.
@@ -108,12 +186,13 @@ type GameEngine struct {
 	// Persistence tracking
 	lastPersistTick      int
 	skipLeaderboardRound int // active round that straddled a leaderboard reset
-	// roundDBReady is closed once the current round's CreateRound insert has
-	// finished (or failed). Round persistence runs in background goroutines,
-	// so dependent writes (UpdateRound, kill logs) wait on this to keep the
-	// per-round INSERT-before-UPDATE/FK ordering the old synchronous calls
-	// guaranteed. Written only by the tick goroutine in startRound.
-	roundDBReady chan struct{}
+	// roundDBReady publishes the current round's CreateRound result. Dependent
+	// updates, stats, and kill logs run only after a successful insert.
+	// roundCreateTail chains inserts in match-start order so the database's
+	// persisted_order sequence cannot be reordered by asynchronous completion.
+	// Both fields are written only by the tick goroutine in startRound.
+	roundDBReady    *roundPersistenceResult
+	roundCreateTail <-chan struct{}
 }
 
 // GameEventHook is a callback for emitting game events to the dashboard.
@@ -337,19 +416,17 @@ func (e *GameEngine) tickActive(c *config.Config, dt float64) {
 	// Combat.
 	ProcessCombat(e.Bots, e.Arena.Obstacles, &e.Projectiles, &e.StaffImpacts, &e.RecentEvents, e.Grid, e.TickCount, dt)
 
-	// Record attacks for anti-teaming (reset proximity for fighting pairs).
-	for _, bot := range e.Bots {
-		if bot.PendingAction != nil && bot.PendingAction.Type == ActionAttack && bot.PendingAction.TargetID != "" {
-			e.AntiTeam.RecordAttack(bot.BotID, bot.PendingAction.TargetID)
-		}
-	}
+	// Only a combat action that passed validation and committed successfully
+	// counts as fighting. Merely naming a nearby bot in an invalid request must
+	// not reset the anti-team proximity clock.
+	e.recordSuccessfulCombatCommitments()
 
 	// Projectiles.
 	UpdateProjectiles(&e.Projectiles, e.Bots, e.Arena.Obstacles, &e.RecentEvents, e.TickCount, dt)
 
 	// Staff area impacts.
-	e.appendArenaEvents(ProcessStaffImpacts(&e.StaffImpacts, &e.BurnFields, e.Bots, e.TickCount)...)
-	ProcessBurnFields(&e.BurnFields, e.Bots, e.TickCount)
+	e.appendArenaEvents(ProcessStaffImpacts(&e.StaffImpacts, &e.BurnFields, e.Bots, e.AntiTeam, e.TickCount)...)
+	ProcessBurnFields(&e.BurnFields, e.Bots, e.AntiTeam, e.TickCount)
 
 	// Zone shrink.
 	e.Arena.UpdateZoneProfile(e.TickCount, e.Round.StartTick, zoneDelayTicks, zoneIntervalTicks, zoneShrinkPercent, roundTotalTicks)
@@ -596,16 +673,14 @@ func (e *GameEngine) startRound() {
 			BotsParticipated: len(e.Bots),
 			Status:           "active",
 		}
-		// Persist off the tick goroutine: a slow DB here would freeze the
-		// whole game loop (tick() holds the engine lock for its duration).
-		ready := make(chan struct{})
-		e.roundDBReady = ready
-		safeGo(func() {
-			defer close(ready) // close even on error so waiters never hang
-			if err := db.CreateRound(context.Background(), round); err != nil {
-				slog.Error("failed to create round record", "round_id", round.ID, "round", round.RoundNumber, "error", err)
-			}
-		})
+		// Persist off the tick goroutine. enqueueRoundCreate serializes only
+		// the background INSERTs, preserving match-start order without ever
+		// making the simulation wait on PostgreSQL.
+		e.roundDBReady = e.enqueueRoundCreate(round)
+	} else {
+		// A dynamically unavailable database must never inherit the previous
+		// round's successful result.
+		e.roundDBReady = nil
 	}
 
 	// Spawn bots evenly around the zone perimeter. In team modes each team
@@ -722,12 +797,11 @@ func (e *GameEngine) endRound() {
 		// recorded as permanently 'active'.
 		ready := e.roundDBReady
 		safeGo(func() {
-			if ready != nil {
-				<-ready
-			}
-			if err := db.UpdateRound(context.Background(), round); err != nil {
-				slog.Error("failed to update round record", "round_id", round.ID, "round", roundNumber, "error", err)
-			}
+			afterRoundCreated(ready, "round completion", round.ID, func() {
+				if err := db.UpdateRound(context.Background(), round); err != nil {
+					slog.Error("failed to update round record", "round_id", round.ID, "round", roundNumber, "error", err)
+				}
+			})
 		})
 	}
 
@@ -736,6 +810,7 @@ func (e *GameEngine) endRound() {
 	// post-reset cumulative deltas while omitting that straddling round from
 	// rounds-played/wins and the time-window table.
 	roundNum := e.Round.RoundNumber
+	roundID := e.Round.RoundID
 	recordCompletedRound := e.skipLeaderboardRound != roundNum
 	finalSnaps := e.snapshotBotStats()
 	safeGo(func() {
@@ -746,8 +821,11 @@ func (e *GameEngine) endRound() {
 	if recordCompletedRound {
 		roundBots := e.copyBotsForPersist()
 		roundStatsEpoch := botStatsPersistenceEpoch.Load()
+		roundReady := e.roundDBReady
 		safeGo(func() {
-			PersistRoundBotStats(context.Background(), roundStatsEpoch, roundNum, roundBots, winnerID)
+			afterRoundCreated(roundReady, "round bot stats", roundID, func() {
+				PersistRoundBotStats(context.Background(), roundStatsEpoch, roundID, roundNum, roundBots, winnerID)
+			})
 		})
 	} else {
 		e.skipLeaderboardRound = 0
@@ -786,12 +864,29 @@ func (e *GameEngine) AddBot(bot *BotState) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if len(e.Bots)+len(e.WaitingBots) >= config.C.MaxBots {
-		return false
-	}
-
 	if existing := e.Bots[bot.BotID]; existing != nil {
-		e.Grid.Remove(bot.BotID)
+		if e.Round.Phase == PhaseActive {
+			// A reconnect during an active round replaces only the transport
+			// session. Preserve the authoritative match state so reconnecting cannot
+			// reset HP, deaths, cooldowns, position, or the round-locked loadout.
+			newConn := bot.Conn
+			newSendChan := bot.SendChan
+			newConnectedAt := bot.ConnectedAt
+			*bot = *existing
+			bot.Conn = newConn
+			bot.SendChan = newSendChan
+			bot.ConnectedAt = newConnectedAt
+			e.Grid.Update(bot.BotID, bot.Position)
+		} else {
+			// Between rounds the newly validated loadout is authoritative. Carry
+			// only live cross-round progression that may not have reached the DB yet;
+			// combat state and resources must not leak into the next match.
+			if existing.Elo > 0 {
+				bot.Elo = existing.Elo
+			}
+			bot.RoundWinStreak = existing.RoundWinStreak
+			e.Grid.Remove(bot.BotID)
+		}
 		e.Bots[bot.BotID] = bot
 		if existing.Conn != nil {
 			go existing.Conn.Close()
@@ -806,11 +901,53 @@ func (e *GameEngine) AddBot(bot *BotState) bool {
 		return true
 	}
 
+	// Existing sessions do not consume an additional slot, so capacity is
+	// checked only after the reconnect cases above.
+	if len(e.Bots)+len(e.WaitingBots) >= config.C.MaxBots {
+		return false
+	}
+
 	if e.Round.Phase == PhaseLobby {
 		e.Bots[bot.BotID] = bot
 	} else {
 		e.WaitingBots[bot.BotID] = bot
 	}
+	return true
+}
+
+// BuildLoadoutConfirmationForSession snapshots one admitted session while the
+// engine lock protects its position and round-locked loadout. Serializing the
+// returned map is safe after the lock is released.
+func (e *GameEngine) BuildLoadoutConfirmationForSession(botID string, expected *BotState) (map[string]interface{}, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	bot := e.Bots[botID]
+	if bot == nil {
+		bot = e.WaitingBots[botID]
+	}
+	if bot == nil || bot != expected {
+		return nil, false
+	}
+	derived := ComputeDerivedStats(bot.Stats, bot.Weapon)
+	return BuildLoadoutConfirmed(bot, derived), true
+}
+
+// DisconnectBotSessionForKey closes the exact active/waiting transport that
+// currently owns botID and apiKeyID. Cleanup remains pointer-checked in
+// RemoveBot, so closing an older connection cannot remove a newer session.
+func (e *GameEngine) DisconnectBotSessionForKey(botID, apiKeyID string) bool {
+	e.mu.RLock()
+	bot := e.Bots[botID]
+	if bot == nil {
+		bot = e.WaitingBots[botID]
+	}
+	if bot == nil || bot.APIKeyID != apiKeyID || bot.Conn == nil {
+		e.mu.RUnlock()
+		return false
+	}
+	conn := bot.Conn
+	e.mu.RUnlock()
+	_ = conn.Close()
 	return true
 }
 
@@ -853,23 +990,143 @@ func (e *GameEngine) RemoveBot(botID string, expected *BotState) {
 	}
 }
 
-// SetBotAction sets the pending action for a bot and updates its last-action
-// tick for AFK tracking.
-func (e *GameEngine) SetBotAction(botID string, action *Action) {
+var (
+	ErrActionBotNotFound      = errors.New("bot is not active")
+	ErrActionNil              = errors.New("action is required")
+	ErrActionTickFuture       = errors.New("action tick is ahead of the server")
+	ErrActionTickStale        = errors.New("action tick is stale")
+	ErrActionTickDuplicate    = errors.New("action tick was already submitted")
+	ErrActionServerTickUsed   = errors.New("an action was already accepted this server tick")
+	ErrActionTargetNotVisible = errors.New("target is outside current visibility")
+	ErrActionSessionReplaced  = errors.New("bot session was replaced")
+	ErrActionRoundNotActive   = errors.New("round is not active")
+	ErrActionBotNotAlive      = errors.New("bot is not alive")
+)
+
+// SubmitBotAction atomically validates the client-observed server tick and
+// installs the action. A bot gets one immutable submission per observed tick;
+// old replays and future-tick guesses are rejected before touching state.
+func (e *GameEngine) SubmitBotAction(botID string, clientTick int, action *Action) error {
+	return e.submitBotAction(botID, nil, clientTick, action)
+}
+
+// SubmitBotActionForSession additionally binds a network action to the
+// BotState that owns the submitting WebSocket. A replaced socket may still
+// have one read in flight after reconnect, but it can never mutate the new
+// authoritative session.
+func (e *GameEngine) SubmitBotActionForSession(botID string, expected *BotState, clientTick int, action *Action) error {
+	return e.submitBotAction(botID, expected, clientTick, action)
+}
+
+func (e *GameEngine) submitBotAction(botID string, expected *BotState, clientTick int, action *Action) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if bot, ok := e.Bots[botID]; ok {
-		bot.PendingAction = action
-		bot.LastActionTick = e.TickCount
-		// Track action history
-		if bot.ActionHistoryMax == 0 {
-			bot.ActionHistoryMax = 100
+	if action == nil {
+		return ErrActionNil
+	}
+	bot, ok := e.Bots[botID]
+	if !ok {
+		return ErrActionBotNotFound
+	}
+	if expected != nil && bot != expected {
+		return ErrActionSessionReplaced
+	}
+	if e.Round.Phase != PhaseActive {
+		return ErrActionRoundNotActive
+	}
+	if !bot.IsAlive {
+		return ErrActionBotNotAlive
+	}
+	if clientTick <= 0 {
+		return ErrActionTickStale
+	}
+	if clientTick > e.TickCount {
+		return ErrActionTickFuture
+	}
+	replayWindow := config.C.TickRate // one second of normal network latency
+	if replayWindow < 1 {
+		replayWindow = 1
+	}
+	if e.TickCount-clientTick > replayWindow {
+		return ErrActionTickStale
+	}
+	if bot.HasClientActionTick {
+		if clientTick == bot.LastClientActionTick {
+			return ErrActionTickDuplicate
 		}
-		bot.ActionHistory = append(bot.ActionHistory, action.Type)
-		if len(bot.ActionHistory) > bot.ActionHistoryMax {
-			bot.ActionHistory = bot.ActionHistory[len(bot.ActionHistory)-bot.ActionHistoryMax:]
+		if clientTick < bot.LastClientActionTick {
+			return ErrActionTickStale
 		}
+	}
+	if bot.HasAcceptedServerTick && bot.LastAcceptedServerTick == e.TickCount {
+		return ErrActionServerTickUsed
+	}
+	if actionRequiresVisibleTarget(action) && !e.targetVisibleToBot(bot, action.TargetID) {
+		return ErrActionTargetNotVisible
+	}
+
+	bot.LastClientActionTick = clientTick
+	bot.HasClientActionTick = true
+	bot.LastAcceptedServerTick = e.TickCount
+	bot.HasAcceptedServerTick = true
+	e.setBotActionLocked(bot, action)
+	return nil
+}
+
+func actionRequiresVisibleTarget(action *Action) bool {
+	if action == nil || action.TargetID == "" {
+		return false
+	}
+	return action.Type == ActionAttack || action.Type == ActionShove || action.Type == ActionGrapple
+}
+
+func (e *GameEngine) targetVisibleToBot(bot *BotState, targetID string) bool {
+	target := e.Bots[targetID]
+	if bot == nil || target == nil || !target.IsAlive {
+		return false
+	}
+	if e.Bounty != nil && e.Bounty.IsBountyTarget(targetID) {
+		return true
+	}
+	viewRadius := float64(config.C.FogRadius) * config.C.PathfindingCellSize
+	return bot.Position.DistanceTo(target.Position) <= viewRadius
+}
+
+// SetBotAction is retained for trusted in-process callers that do not speak
+// the WebSocket protocol. Network actions must use SubmitBotAction.
+func (e *GameEngine) SetBotAction(botID string, action *Action) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if bot, ok := e.Bots[botID]; ok && action != nil {
+		e.setBotActionLocked(bot, action)
+	}
+}
+
+func (e *GameEngine) setBotActionLocked(bot *BotState, action *Action) {
+	bot.PendingAction = action
+	bot.LastActionTick = e.TickCount
+	if bot.ActionHistoryMax == 0 {
+		bot.ActionHistoryMax = 100
+	}
+	bot.ActionHistory = append(bot.ActionHistory, action.Type)
+	if len(bot.ActionHistory) > bot.ActionHistoryMax {
+		bot.ActionHistory = bot.ActionHistory[len(bot.ActionHistory)-bot.ActionHistoryMax:]
+	}
+}
+
+func (e *GameEngine) recordSuccessfulCombatCommitments() {
+	for _, bot := range e.Bots {
+		action := bot.PendingAction
+		result := bot.LastActionResult
+		if action == nil || action.Type != ActionAttack || action.TargetID == "" ||
+			bot.Weapon == "staff" || result == nil || result.Action != "attack" || !result.Success {
+			continue
+		}
+		if result.Target != "" && result.Target != action.TargetID {
+			continue
+		}
+		e.AntiTeam.RecordAttack(bot.BotID, action.TargetID)
 	}
 }
 
@@ -1023,8 +1280,8 @@ func (e *GameEngine) GetArenaSnapshot() ArenaSnapshot {
 }
 
 // GetMapFeatures returns copies of the current teleport pads, hazard zones,
-// and capture pads under the read lock. Used by the /api/v1/arena/map endpoint.
-// under the read lock. Used by the /api/v1/arena/map endpoint.
+// and capture pads under the read lock. The REST map endpoint uses the atomic
+// GetArenaMapSnapshot view instead.
 func (e *GameEngine) GetMapFeatures() ([]TeleportPad, []HazardZone, []CapturePad) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -1037,11 +1294,45 @@ func (e *GameEngine) GetMapFeatures() ([]TeleportPad, []HazardZone, []CapturePad
 	return pads, zones, capturePads
 }
 
+// ArenaMapSnapshot is one atomic REST view of terrain and its round features.
+// Pending pre-generated terrain deliberately carries no previous-round
+// features or mode; those are not resolved until startRound.
+type ArenaMapSnapshot struct {
+	Terrain         *TerrainGrid
+	MapShape        MapShape
+	GameMode        GameMode
+	Tick            int
+	Modifier        RoundModifier
+	FeaturesPending bool
+	TeleportPads    []TeleportPad
+	HazardZones     []HazardZone
+	CapturePads     []CapturePad
+}
+
+func (e *GameEngine) GetArenaMapSnapshot() ArenaMapSnapshot {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	snapshot := ArenaMapSnapshot{
+		Terrain:         ActiveTerrain,
+		MapShape:        ActiveMapShape,
+		Tick:            e.TickCount,
+		Modifier:        e.Round.Modifier,
+		FeaturesPending: e.NextTerrain != nil,
+	}
+	if snapshot.FeaturesPending {
+		return snapshot
+	}
+	snapshot.GameMode = ActiveModeRules.Mode
+	snapshot.TeleportPads = append([]TeleportPad(nil), e.TeleportPads...)
+	snapshot.HazardZones = append([]HazardZone(nil), e.HazardZones...)
+	snapshot.CapturePads = append([]CapturePad(nil), e.CapturePads...)
+	return snapshot
+}
+
 // GetActiveMap returns the active terrain grid, map shape, and game mode under
-// the engine read lock. HTTP handlers must use this instead of reading the
-// ActiveTerrain / ActiveMapShape / ActiveModeRules package globals directly:
-// those are written by the tick goroutine during round transitions and a
-// lock-free read is a data race (and can observe a torn shape/mode pair).
+// the engine read lock. Callers must use a read-locked engine snapshot instead
+// of package globals, which can otherwise expose a torn round transition.
 func (e *GameEngine) GetActiveMap() (*TerrainGrid, MapShape, GameMode) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -1145,6 +1436,9 @@ func (e *GameEngine) processUseItems() {
 
 		switch bot.PendingAction.Type {
 		case ActionUseItem:
+			if rejectControlledAction(bot, "use_item", false) {
+				continue
+			}
 			ok := CollectByAction(bot, bot.PendingAction.ItemID, &e.Pickups)
 			if ok {
 				bot.LastActionResult = &ActionResult{
@@ -1161,6 +1455,9 @@ func (e *GameEngine) processUseItems() {
 			}
 
 		case ActionPlaceMine:
+			if rejectControlledAction(bot, "place_mine", true) {
+				continue
+			}
 			mine := PlaceMine(bot, &e.Landmines, e.TickCount)
 			if mine != nil {
 				bot.LastActionResult = &ActionResult{
@@ -1177,6 +1474,9 @@ func (e *GameEngine) processUseItems() {
 			}
 
 		case ActionUseGravityWell:
+			if rejectControlledAction(bot, "use_gravity_well", true) {
+				continue
+			}
 			if bot.GravityWellCharge <= 0 {
 				bot.LastActionResult = &ActionResult{
 					Action:  "use_gravity_well",
@@ -1211,6 +1511,10 @@ func (e *GameEngine) processUseItems() {
 // the grapple weapon). It can either yank an enemy into close range or latch
 // onto an anchor point and pull the user across the arena.
 func (e *GameEngine) processGrappleAbility(bot *BotState) {
+	offensive := bot != nil && bot.PendingAction != nil && bot.PendingAction.TargetID != ""
+	if rejectControlledAction(bot, "grapple", offensive) {
+		return
+	}
 	if bot.GrappleCharges <= 0 {
 		bot.LastActionResult = &ActionResult{
 			Action:  "grapple",
@@ -1253,6 +1557,14 @@ func (e *GameEngine) processGrappleAbility(bot *BotState) {
 			}
 			return
 		}
+		if CombatLineBlocked(bot.Position, normalizedTarget, e.Arena.Obstacles) {
+			bot.LastActionResult = &ActionResult{
+				Action:  "grapple",
+				Success: false,
+				Message: "no line of sight",
+			}
+			return
+		}
 
 		from := bot.Position
 		landing, ok := findGrappleLandingPosition(bot.Position, normalizedTarget)
@@ -1289,6 +1601,24 @@ func (e *GameEngine) processGrappleAbility(bot *BotState) {
 		}
 		return
 	}
+	if target == bot {
+		bot.LastActionResult = &ActionResult{
+			Action:  "grapple",
+			Success: false,
+			Target:  targetID,
+			Message: "cannot grapple self",
+		}
+		return
+	}
+	if !ActiveModeRules.CanDamage(bot, target) {
+		bot.LastActionResult = &ActionResult{
+			Action:  "grapple",
+			Success: false,
+			Target:  targetID,
+			Message: "friendly fire is disabled",
+		}
+		return
+	}
 	if !IsInRange(bot.Position, target.Position, maxRange) {
 		bot.LastActionResult = &ActionResult{
 			Action:  "grapple",
@@ -1307,7 +1637,15 @@ func (e *GameEngine) processGrappleAbility(bot *BotState) {
 		}
 		return
 	}
-
+	if target.InvulnTicks > 0 {
+		bot.LastActionResult = &ActionResult{
+			Action:  "grapple",
+			Success: false,
+			Target:  targetID,
+			Message: "target dodging",
+		}
+		return
+	}
 	damage := config.C.GrappleAbilityDamage
 	if damage <= 0 {
 		damage = 15
@@ -1544,10 +1882,9 @@ func (e *GameEngine) handleKillCredits(deaths []DeathEvent) {
 			killerID, victimID, killerHP := killer.BotID, victim.BotID, int(killer.HP)
 			ready := e.roundDBReady
 			safeGo(func() {
-				if ready != nil {
-					<-ready
-				}
-				InsertKillLog(context.Background(), roundID, killerID, victimID, weapon, damage, killerHP, tick)
+				afterRoundCreated(ready, "kill log", roundID, func() {
+					InsertKillLog(context.Background(), roundID, killerID, victimID, weapon, damage, killerHP, tick)
+				})
 			})
 		}
 
@@ -1665,10 +2002,10 @@ func (e *GameEngine) sendBotTickUpdates() {
 			if ActiveTerrain != nil {
 				padCell := ActiveTerrain.WorldToGrid(pad.Position)
 				if GridDistance(botCell, padCell) <= fogRadius {
-					nearby = append(nearby, BuildTeleportPadView(pad, e.TickCount, true))
+					nearby = append(nearby, BuildTeleportPadViewForBot(pad, e.TickCount, true, bot))
 				}
 			} else if bot.Position.DistanceTo(pad.Position) <= viewRadius {
-				nearby = append(nearby, BuildTeleportPadView(pad, e.TickCount, true))
+				nearby = append(nearby, BuildTeleportPadViewForBot(pad, e.TickCount, true, bot))
 			}
 		}
 

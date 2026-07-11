@@ -43,9 +43,10 @@ export class GameplayRenderer {
     this._capturePadNeutral = new B.Color3(0.44, 0.62, 0.74);
     this._capturePadLocked = new B.Color3(0.36, 0.36, 0.4);
     this._capturePadContested = new B.Color3(1.0, 0.42, 0.2);
-    // Teleport-pad cooldown tint plus scratch colors for the per-tick
-    // lerp/scale math, so the 10Hz update loops stay allocation-free.
-    this._tpInactive = new B.Color3(0.38, 0.38, 0.42);
+    // Inactive pads stay unmistakably dark for their entire lock interval.
+    // Readiness is binary server state; a gradual color ramp made a locked
+    // pad look usable before it actually re-armed.
+    this._tpInactive = new B.Color3(0.025, 0.03, 0.04);
     this._scratchA = new B.Color3();
     this._scratchB = new B.Color3();
   }
@@ -289,8 +290,16 @@ export class GameplayRenderer {
       const pos = pad.position;
       const x = pos[0], z = pos[1];
       const ready = pad.is_ready !== false;
-      const cooldown = pad.cooldown_remaining_ticks || 0;
-      const blend = ready ? 1 : Math.max(0.15, 1 - cooldown / 30);
+      const blend = ready ? 1 : 0;
+      if (!ready && entry.ready !== false) {
+        entry.beam.stop();
+        entry.swirl.stop();
+        if (entry.beam.reset) entry.beam.reset();
+        if (entry.swirl.reset) entry.swirl.reset();
+      } else if (ready && entry.ready === false) {
+        entry.beam.start();
+        entry.swirl.start();
+      }
       // Lerp straight into the platform material's existing Color3, then fan
       // out with copyFrom — no per-tick Color3 allocations.
       const emissive = entry.platform.material.emissiveColor;
@@ -303,12 +312,12 @@ export class GameplayRenderer {
       entry.halo.position.set(x, 0.18, z);
       entry.ring.material.emissiveColor.copyFrom(emissive);
       entry.haloMat.emissiveColor.copyFrom(emissive);
-      entry.beam.color1.set(emissive.r, emissive.g, emissive.b, ready ? 0.4 : 0.11);
-      entry.beam.color2.set(emissive.r * 0.5, emissive.g * 0.5, emissive.b * 0.5, ready ? 0.16 : 0.04);
-      entry.swirl.color1.set(emissive.r, emissive.g, emissive.b, ready ? 0.5 : 0.12);
-      entry.beam.emitRate = ready ? 16 : 3;
-      entry.swirl.emitRate = ready ? 12 : 2;
-      entry.ring.material.alpha = ready ? 0.8 : 0.28;
+      entry.beam.color1.set(emissive.r, emissive.g, emissive.b, ready ? 0.4 : 0);
+      entry.beam.color2.set(emissive.r * 0.5, emissive.g * 0.5, emissive.b * 0.5, ready ? 0.16 : 0);
+      entry.swirl.color1.set(emissive.r, emissive.g, emissive.b, ready ? 0.5 : 0);
+      entry.beam.emitRate = ready ? 16 : 0;
+      entry.swirl.emitRate = ready ? 12 : 0;
+      entry.ring.material.alpha = ready ? 0.8 : 0.08;
 
       // Ambient bob/pulse runs per-frame in _animateAmbient — store state.
       entry.x = x;
@@ -1065,13 +1074,13 @@ export class GameplayRenderer {
     for (const [, e] of this.teleportPads) {
       if (e.x === undefined) continue;
       e.ring.position.set(e.x, 2 + Math.sin(t * 0.04) * (e.ready ? 0.5 : 0.15), e.z);
-      e.ring.rotation.y += (e.ready ? 0.2 : 0.06) * dt;
+      e.ring.rotation.y += (e.ready ? 0.2 : 0.01) * dt;
       e.platform.material.alpha = e.ready
         ? 0.4 + 0.15 * Math.sin(t * 0.06)
-        : 0.2 + 0.04 * Math.sin(t * 0.03);
+        : 0.08;
       e.haloMat.alpha = e.ready
         ? 0.14 + 0.07 * Math.sin(t * 0.05)
-        : 0.06 + 0.02 * Math.sin(t * 0.03);
+        : 0.01;
       const haloScale = e.ready ? 1.0 + Math.sin(t * 0.04) * 0.04 : 0.94;
       e.halo.scaling.set(haloScale, haloScale, 1);
     }

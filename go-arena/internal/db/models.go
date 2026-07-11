@@ -133,6 +133,7 @@ type WeaponBalance struct {
 	CooldownScale   float64   `json:"cooldown_scale"`
 	AdjustmentScale float64   `json:"adjustment_scale"`
 	RoundsTracked   int       `json:"rounds_tracked"`
+	Revision        int64     `json:"revision"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
@@ -176,6 +177,7 @@ type WeaponBalanceHistory struct {
 	DiffPct         float64   `json:"diff_pct"`
 	DamageDelta     float64   `json:"damage_delta"`
 	CooldownDelta   float64   `json:"cooldown_delta"`
+	Revision        int64     `json:"revision"`
 	CreatedAt       time.Time `json:"created_at"`
 }
 

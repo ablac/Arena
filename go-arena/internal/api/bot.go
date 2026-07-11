@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -21,14 +22,23 @@ func UpdateBotConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req BotConfigRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
+	// Build and validate a complete candidate before changing the authenticated
+	// bot record. A rejected field must not leave earlier fields applied.
+	updatedBot := *bot
+
 	// Apply name.
 	if req.Name != nil {
-		bot.Name = security.SanitizeBotName(*req.Name)
+		updatedBot.Name = security.SanitizeBotName(*req.Name)
 	}
 
 	// Apply avatar color.
@@ -37,7 +47,7 @@ func UpdateBotConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid avatar_color: must be a hex color like #ff00aa")
 			return
 		}
-		bot.AvatarColor = *req.AvatarColor
+		updatedBot.AvatarColor = *req.AvatarColor
 	}
 
 	// Apply loadout.
@@ -48,30 +58,31 @@ func UpdateBotConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid weapon")
 			return
 		}
-		bot.DefaultWeapon = lo.Weapon
+		updatedBot.DefaultWeapon = lo.Weapon
 
 		if err := security.ValidateStats(lo.Stats); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid stats: "+err.Error())
 			return
 		}
-		bot.DefaultStats = db.JSONBStats(lo.Stats)
+		updatedBot.DefaultStats = db.JSONBStats(lo.Stats)
 
 		if !security.ValidateFallbackBehavior(lo.Fallback) {
 			writeError(w, http.StatusBadRequest, "invalid fallback_behavior")
 			return
 		}
-		bot.DefaultFallback = lo.Fallback
+		updatedBot.DefaultFallback = lo.Fallback
 	}
 
-	bot.UpdatedAt = time.Now()
+	updatedBot.UpdatedAt = time.Now()
 
 	if db.Pool != nil {
-		if err := db.UpdateBot(r.Context(), bot); err != nil {
+		if err := db.UpdateBot(r.Context(), &updatedBot); err != nil {
 			slog.Error("failed to update bot", "error", err, "bot_id", bot.ID)
 			writeError(w, http.StatusInternalServerError, "failed to update bot")
 			return
 		}
 	}
+	*bot = updatedBot
 
 	writeJSON(w, http.StatusOK, BotConfigResponse{
 		BotID:       bot.ID,
@@ -209,21 +220,21 @@ func GetBotLive(engine *game.GameEngine) http.HandlerFunc {
 		actionCounts := detail["action_counts"]
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"online":         true,
-			"bot_id":         bot.ID,
-			"name":           bot.Name,
-			"phase":          phase,
-			"hp":             hp,
-			"max_hp":         maxHP,
-			"position":       detail["position"],
-			"weapon":         detail["weapon"],
-			"is_alive":       detail["is_alive"],
-			"speed":          speed,
-			"attack_mult":    atkMult,
-			"defense_red":    defRed,
-			"kill_streak":    killStreak,
-			"round_kills":    roundKills,
-			"round_deaths":   roundDeaths,
+			"online":             true,
+			"bot_id":             bot.ID,
+			"name":               bot.Name,
+			"phase":              phase,
+			"hp":                 hp,
+			"max_hp":             maxHP,
+			"position":           detail["position"],
+			"weapon":             detail["weapon"],
+			"is_alive":           detail["is_alive"],
+			"speed":              speed,
+			"attack_mult":        atkMult,
+			"defense_red":        defRed,
+			"kill_streak":        killStreak,
+			"round_kills":        roundKills,
+			"round_deaths":       roundDeaths,
 			"round_damage_dealt": dmgDealt,
 			"round_damage_taken": dmgTaken,
 			"round_shots_fired":  shotsFired,

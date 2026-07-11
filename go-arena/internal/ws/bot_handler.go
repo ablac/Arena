@@ -3,8 +3,10 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -120,6 +122,10 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			}
 			return
 		}
+		cfg := &config.C
+		// Bound every client-controlled frame from the first WebSocket read,
+		// including authentication and loadout negotiation.
+		conn.SetReadLimit(int64(cfg.WSMessageMaxBytes))
 
 		// Ensure the connection is always closed on exit.
 		defer func() {
@@ -128,8 +134,6 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			}
 			conn.Close()
 		}()
-
-		cfg := &config.C
 
 		// ----------------------------------------------------------------
 		// 1. Authenticate
@@ -157,6 +161,9 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			}
 			return
 		}
+		if rejectTemporarilyLockedBot(conn, botRecord.Name, botRecord.ID, ip, botRecord.APIKeyID) {
+			return
+		}
 
 		// Per-API-key reconnect cooldown (5 second minimum between connections, skip for localhost).
 		if config.C.WSConnectRatePerMin > 0 && !isLocal {
@@ -180,6 +187,14 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// 2. Load bot config and stats from DB
 		// ----------------------------------------------------------------
 		ctx := r.Context()
+		if normalizeStoredLoadout(botRecord) {
+			botRecord.UpdatedAt = time.Now()
+			if err := db.UpdateBot(ctx, botRecord); err != nil {
+				slog.Warn("failed to persist normalized stored loadout; using safe runtime values", "error", err, "bot_id", botRecord.ID)
+			} else {
+				slog.Warn("normalized invalid historical bot loadout", "bot_id", botRecord.ID)
+			}
+		}
 
 		botStats, err := db.GetBotStats(ctx, botRecord.ID)
 		if err != nil {
@@ -207,7 +222,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			AvatarColor:      botRecord.AvatarColor,
 			Cosmetics:        cosmetics,
 			Weapon:           botRecord.DefaultWeapon,
-			Stats:            map[string]int(botRecord.DefaultStats),
+			Stats:            cloneStats(map[string]int(botRecord.DefaultStats)),
 			FallbackBehavior: botRecord.DefaultFallback,
 			Elo:              startingElo,
 			IsAlive:          false,
@@ -238,7 +253,15 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// ----------------------------------------------------------------
 		if err := handleLoadoutPhase(conn, bot, cfg); err != nil {
 			slog.Warn("loadout phase failed", "error", err, "bot", bot.Name)
-			game.SendKick(bot, err.Error())
+			var violation *clientViolationError
+			if errors.As(err, &violation) {
+				result := botViolationTracker.Record(bot.APIKeyID)
+				message, code, details := violationResponse(violation.Message, violation.Code, violation.Details, result)
+				sendWSErrorStructured(conn, message, code, details)
+				disconnectProtocolLockedSession(engine, bot, result)
+			} else {
+				sendWSErrorStructured(conn, "loadout negotiation failed", "LOADOUT_FAILED", nil)
+			}
 			if EventHook != nil {
 				EventHook("loadout_failed", bot.Name, bot.BotID, ip, bot.APIKeyID, err.Error())
 			}
@@ -248,6 +271,15 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// ----------------------------------------------------------------
 		// 6. Register with engine
 		// ----------------------------------------------------------------
+		// A different session sharing this key may have crossed the strike limit
+		// while this connection was in loadout negotiation. Recheck at the actual
+		// admission boundary so an already-locked key cannot wait its way in.
+		if rejectPermanentlyBannedBot(engine, conn, bot.Name, bot.BotID, ip, bot.APIKeyID) {
+			return
+		}
+		if rejectTemporarilyLockedBot(conn, bot.Name, bot.BotID, ip, bot.APIKeyID) {
+			return
+		}
 		if !engine.AddBot(bot) {
 			slog.Warn("bot rejected: server at capacity", "bot", bot.Name, "client_ip", ip, "remote", remoteAddr)
 			sendWSErrorStructured(conn, "server at capacity", "SERVER_FULL", map[string]interface{}{
@@ -256,6 +288,26 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			if EventHook != nil {
 				EventHook("server_full", bot.Name, bot.BotID, ip, bot.APIKeyID, "server at capacity")
 			}
+			return
+		}
+		// Close the final check/AddBot interleaving window: if a ban or protocol
+		// lock landed while AddBot waited for the engine lock, roll back only this
+		// exact admitted session. RemoveBot is pointer-checked against reconnects.
+		if rejectPermanentlyBannedBot(engine, conn, bot.Name, bot.BotID, ip, bot.APIKeyID) ||
+			rejectTemporarilyLockedBot(conn, bot.Name, bot.BotID, ip, bot.APIKeyID) {
+			engine.RemoveBot(bot.BotID, bot)
+			return
+		}
+		// Admission may replace this session's requested loadout with the
+		// authoritative round-locked loadout. Confirm only after that decision so
+		// clients receive exactly one, authoritative confirmation.
+		confirmation, current := engine.BuildLoadoutConfirmationForSession(bot.BotID, bot)
+		if !current {
+			return
+		}
+		if err := conn.WriteJSON(confirmation); err != nil {
+			slog.Error("failed to send admitted loadout confirmation", "error", err, "bot", bot.Name)
+			engine.RemoveBot(bot.BotID, bot)
 			return
 		}
 
@@ -377,75 +429,46 @@ func containsAny(s string, patterns ...string) bool {
 }
 
 // handleLoadoutPhase reads a loadout selection from the bot, validates it,
-// applies it to the BotState, and sends a loadout_confirmed response.
-// If the bot sends an invalid loadout, defaults are used instead.
+// and applies it to the BotState. The caller confirms the authoritative
+// loadout only after engine admission has resolved reconnect state.
+// Invalid client-supplied loadouts are rejected atomically. A read timeout is
+// terminal because Gorilla WebSocket connections cannot safely resume reads
+// after a read deadline fires; the client can reconnect and negotiate again.
 func handleLoadoutPhase(conn *websocket.Conn, bot *game.BotState, cfg *config.Config) error {
+	// Keep this read boundary safe when exercised independently in tests or by
+	// future callers; BotHandler installs the same limit immediately on upgrade.
+	conn.SetReadLimit(int64(cfg.WSMessageMaxBytes))
 	deadline := time.Now().Add(time.Duration(cfg.LoadoutTimeoutSecs * float64(time.Second)))
 	conn.SetReadDeadline(deadline)
 	defer conn.SetReadDeadline(time.Time{})
 
-	// Helper to write directly to conn (writer goroutine not started yet).
-	writeMsg := func(msg interface{}) {
-		if err := conn.WriteJSON(msg); err != nil {
-			slog.Warn("direct write failed in loadout phase", "error", err, "bot", bot.Name)
-		}
-	}
-	sendError := func(message string) {
-		writeMsg(map[string]string{"type": "error", "message": message})
-	}
-	sendConfirmed := func() {
-		derived := game.ComputeDerivedStats(bot.Stats, bot.Weapon)
-		writeMsg(game.BuildLoadoutConfirmed(bot, derived))
-	}
-
 	_, data, err := conn.ReadMessage()
 	if err != nil {
-		// Timeout or read error -- use defaults, which are already set.
-		slog.Warn("loadout read failed, using defaults", "error", err, "bot", bot.Name)
-		applyDerivedStats(bot)
-		sendConfirmed()
-		return nil
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			return fmt.Errorf("loadout selection timed out: %w", err)
+		}
+		return fmt.Errorf("loadout read failed: %w", err)
 	}
 
 	msgType, msg, err := ParseBotMessage(data)
-	if err != nil || msgType != "select_loadout" {
-		slog.Warn("expected select_loadout, got something else, using defaults", "bot", bot.Name, "type", msgType)
-		applyDerivedStats(bot)
-		sendConfirmed()
-		return nil
+	if err != nil {
+		return newClientViolation("INVALID_LOADOUT_MESSAGE", "invalid loadout message", map[string]interface{}{"error": err.Error()})
+	}
+	if msgType != "select_loadout" {
+		return newClientViolation("EXPECTED_LOADOUT", "expected select_loadout message", map[string]interface{}{"received_type": msgType})
 	}
 
 	loadout, ok := msg.(*LoadoutMessage)
 	if !ok {
-		applyDerivedStats(bot)
-		sendConfirmed()
-		return nil
+		return newClientViolation("INVALID_LOADOUT_MESSAGE", "invalid loadout message", nil)
 	}
-
-	// Validate and apply weapon.
-	if security.ValidateWeapon(loadout.Weapon) {
-		bot.Weapon = loadout.Weapon
-	} else {
-		sendError(fmt.Sprintf("invalid weapon %q, using default %q", loadout.Weapon, bot.Weapon))
-	}
-
-	// Validate and apply stats.
-	if err := security.ValidateStats(loadout.Stats); err != nil {
-		sendError(fmt.Sprintf("invalid stats: %s, using defaults", err.Error()))
-	} else {
-		bot.Stats = loadout.Stats
-	}
-
-	// Validate and apply fallback behavior.
-	if security.ValidateFallbackBehavior(loadout.Fallback) {
-		bot.FallbackBehavior = loadout.Fallback
-	} else {
-		sendError(fmt.Sprintf("invalid fallback %q, using default %q", loadout.Fallback, bot.FallbackBehavior))
+	if err := applySelectedLoadout(bot, loadout); err != nil {
+		return newClientViolation("INVALID_LOADOUT", "loadout rejected", map[string]interface{}{"error": err.Error()})
 	}
 
 	// Compute and apply derived stats.
 	applyDerivedStats(bot)
-	sendConfirmed()
 
 	return nil
 }
@@ -467,11 +490,10 @@ func applyDerivedStats(bot *game.BotState) {
 func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, bot *game.BotState, engine *game.GameEngine, cfg *config.Config) {
 	defer cancel()
 
-	conn.SetReadLimit(int64(cfg.WSMessageMaxBytes))
-
 	// Rate limiting state: sliding window of message timestamps.
 	var msgTimestamps []time.Time
 	maxPerSec := cfg.WSMaxMessagesPerSec
+	rateLimitIncident := false
 
 	// Set initial read deadline for heartbeat detection.
 	heartbeatTimeout := time.Duration(cfg.HeartbeatInterval*float64(time.Second)) * 2
@@ -512,21 +534,31 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 		}
 		msgTimestamps = filtered
 
-		if len(msgTimestamps) >= maxPerSec {
+		if maxPerSec > 0 && len(msgTimestamps) >= maxPerSec {
 			slog.Warn("rate limited bot", "bot", bot.Name, "msgs_per_sec", len(msgTimestamps))
-			game.SendStructuredError(bot, "Rate limited: too many messages per second", "WS_RATE_LIMITED", map[string]interface{}{
-				"current_count": len(msgTimestamps),
-				"limit":         maxPerSec,
-				"window":        "1s",
-			})
+			if !rateLimitIncident {
+				rateLimitIncident = true
+				if rejectBotViolation(engine, bot, "Rate limited: too many messages per second", "WS_RATE_LIMITED", map[string]interface{}{
+					"current_count": len(msgTimestamps),
+					"limit":         maxPerSec,
+					"window":        "1s",
+				}) {
+					closeForProtocolViolation(conn)
+					return
+				}
+			}
 			continue
 		}
+		rateLimitIncident = false
 		msgTimestamps = append(msgTimestamps, now)
 
 		// Parse the message.
 		msgType, msg, err := ParseBotMessage(data)
 		if err != nil {
-			game.SendError(bot, "Invalid message")
+			if rejectBotViolation(engine, bot, "Invalid message", "INVALID_MESSAGE", map[string]interface{}{"error": err.Error()}) {
+				closeForProtocolViolation(conn)
+				return
+			}
 			continue
 		}
 
@@ -534,10 +566,30 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 		case "action":
 			actionMsg, ok := msg.(*ActionMessage)
 			if !ok {
+				if rejectBotViolation(engine, bot, "Invalid action message", "INVALID_ACTION", nil) {
+					closeForProtocolViolation(conn)
+					return
+				}
+				continue
+			}
+			if err := validateActionMessage(actionMsg); err != nil {
+				if rejectBotViolation(engine, bot, "Action rejected", "INVALID_ACTION", map[string]interface{}{"error": err.Error()}) {
+					closeForProtocolViolation(conn)
+					return
+				}
 				continue
 			}
 			action := ActionMessageToAction(actionMsg)
-			engine.SetBotAction(bot.BotID, action)
+			if err := engine.SubmitBotActionForSession(bot.BotID, bot, actionMsg.Tick, action); err != nil {
+				if errors.Is(err, game.ErrActionSessionReplaced) {
+					return
+				}
+				if sendActionSubmissionError(engine, bot, actionMsg.Tick, err) {
+					closeForProtocolViolation(conn)
+					return
+				}
+				continue
+			}
 
 			// Log WS message for dashboard.
 			if WSMessageHook != nil {
@@ -549,14 +601,143 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 
 		case "select_loadout":
 			// Loadout changes are only allowed during the initial phase.
-			game.SendStructuredError(bot, "Cannot change loadout mid-game", "LOADOUT_LOCKED", nil)
+			if rejectBotViolation(engine, bot, "Cannot change loadout mid-game", "LOADOUT_LOCKED", nil) {
+				closeForProtocolViolation(conn)
+				return
+			}
 
 		default:
-			game.SendStructuredError(bot, "Unexpected message type: "+msgType, "UNKNOWN_MSG_TYPE", map[string]interface{}{
+			if rejectBotViolation(engine, bot, "Unexpected message type: "+msgType, "UNKNOWN_MSG_TYPE", map[string]interface{}{
 				"received_type": msgType,
-			})
+			}) {
+				closeForProtocolViolation(conn)
+				return
+			}
 		}
 	}
+}
+
+func rejectBotViolation(engine *game.GameEngine, bot *game.BotState, message, code string, details map[string]interface{}) bool {
+	result := botViolationTracker.Record(bot.APIKeyID)
+	message, code, details = violationResponse(message, code, details, result)
+	game.SendStructuredError(bot, message, code, details)
+	disconnectProtocolLockedSession(engine, bot, result)
+	return result.Locked
+}
+
+func violationResponse(message, code string, details map[string]interface{}, result violationResult) (string, string, map[string]interface{}) {
+	responseDetails := make(map[string]interface{}, len(details)+3)
+	for key, value := range details {
+		responseDetails[key] = value
+	}
+	responseDetails["strikes"] = result.Strikes
+	if result.Locked {
+		message = "API key temporarily locked after repeated protocol violations"
+		code = "API_KEY_TEMP_LOCKED"
+		responseDetails["retry_after"] = durationSecondsCeil(result.RetryAfter)
+	} else {
+		remaining := botViolationTracker.strikeLimit - result.Strikes
+		if remaining < 0 {
+			remaining = 0
+		}
+		responseDetails["strikes_remaining"] = remaining
+	}
+	return message, code, responseDetails
+}
+
+func durationSecondsCeil(duration time.Duration) int {
+	if duration <= 0 {
+		return 0
+	}
+	return int((duration + time.Second - 1) / time.Second)
+}
+
+func rejectTemporarilyLockedBot(conn *websocket.Conn, botName, botID, ip, apiKeyID string) bool {
+	retrySeconds, locked := temporaryProtocolLockRetrySeconds(apiKeyID)
+	if !locked {
+		return false
+	}
+	sendWSErrorStructured(conn, "API key temporarily locked after repeated protocol violations", "API_KEY_TEMP_LOCKED", map[string]interface{}{
+		"retry_after": retrySeconds,
+	})
+	if EventHook != nil {
+		EventHook("protocol_temp_locked", botName, botID, ip, apiKeyID, "temporary protocol lock")
+	}
+	return true
+}
+
+func rejectPermanentlyBannedBot(engine *game.GameEngine, conn *websocket.Conn, botName, botID, ip, apiKeyID string) bool {
+	if engine.IsIPBanned(ip) {
+		sendWSErrorStructured(conn, "your IP has been banned", "IP_BANNED", nil)
+		if EventHook != nil {
+			EventHook("ip_banned", botName, botID, ip, apiKeyID, "IP banned")
+		}
+		return true
+	}
+	if engine.IsKeyBanned(apiKeyID) {
+		sendWSErrorStructured(conn, "your API key has been banned", "KEY_BANNED", map[string]interface{}{
+			"api_key_id": apiKeyID,
+		})
+		if EventHook != nil {
+			EventHook("auth_banned", botName, botID, ip, apiKeyID, "key banned")
+		}
+		return true
+	}
+	return false
+}
+
+func temporaryProtocolLockRetrySeconds(apiKeyID string) (int, bool) {
+	retryAfter, locked := botViolationTracker.IsLocked(apiKeyID)
+	return durationSecondsCeil(retryAfter), locked
+}
+
+func disconnectProtocolLockedSession(engine *game.GameEngine, bot *game.BotState, result violationResult) bool {
+	if !result.Locked || engine == nil || bot == nil {
+		return false
+	}
+	return engine.DisconnectBotSessionForKey(bot.BotID, bot.APIKeyID)
+}
+
+func sendActionSubmissionError(engine *game.GameEngine, bot *game.BotState, clientTick int, err error) bool {
+	message, code, punitive := classifyActionSubmissionError(err)
+	details := map[string]interface{}{"client_tick": clientTick}
+	if !punitive {
+		game.SendStructuredError(bot, message, code, details)
+		return false
+	}
+	return rejectBotViolation(engine, bot, message, code, details)
+}
+
+func classifyActionSubmissionError(err error) (string, string, bool) {
+	switch {
+	case errors.Is(err, game.ErrActionTickDuplicate):
+		return "Duplicate action tick rejected", "DUPLICATE_ACTION_TICK", false
+	case errors.Is(err, game.ErrActionServerTickUsed):
+		return "An action was already accepted this server tick", "SERVER_TICK_ACTION_LOCKED", false
+	case errors.Is(err, game.ErrActionTickStale):
+		return "Stale action tick rejected", "STALE_ACTION_TICK", false
+	case errors.Is(err, game.ErrActionTargetNotVisible):
+		return "Target is outside current visibility", "TARGET_NOT_VISIBLE", false
+	case errors.Is(err, game.ErrActionRoundNotActive):
+		return "Round is not active", "ROUND_NOT_ACTIVE", false
+	case errors.Is(err, game.ErrActionBotNotAlive):
+		return "Bot is not alive", "BOT_NOT_ALIVE", false
+	case errors.Is(err, game.ErrActionTickFuture):
+		return "Future action tick rejected", "FUTURE_ACTION_TICK", true
+	case errors.Is(err, game.ErrActionBotNotFound):
+		return "Bot is not active", "BOT_NOT_ACTIVE", true
+	default:
+		return "Action rejected", "INVALID_ACTION", true
+	}
+}
+
+func closeForProtocolViolation(conn *websocket.Conn) {
+	deadline := time.Now().Add(time.Second)
+	_ = conn.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "temporary protocol lock"),
+		deadline,
+	)
 }
 
 // botWriter drains the bot's SendChan and writes each message to the

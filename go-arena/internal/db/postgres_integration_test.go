@@ -2,7 +2,10 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -171,7 +174,12 @@ func TestPostgresFreshSchemaCosmeticsAndLeaderboardResetSmoke(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ApplyBotStatsDelta: %v", err)
 	}
-	if err := InsertRoundBotStats(ctx, 1, bot.ID, bot.Name, "sword", 3, 1, 90, 30, 60, 8, 5, 1, 20, 1040, true); err != nil {
+	if err := CreateRound(ctx, &Round{
+		ID: "integration-round-1", RoundNumber: 1, StartedAt: now, Status: "completed",
+	}); err != nil {
+		t.Fatalf("CreateRound: %v", err)
+	}
+	if err := InsertRoundBotStats(ctx, "integration-round-1", 1, bot.ID, bot.Name, "sword", 3, 1, 90, 30, 60, 8, 5, 1, 20, 1040, true); err != nil {
 		t.Fatalf("InsertRoundBotStats: %v", err)
 	}
 	if err := ResetLeaderboard(ctx); err != nil {
@@ -281,7 +289,12 @@ func TestEloPersistenceWritesClampToConfiguredBounds(t *testing.T) {
 		t.Fatalf("upsert Elo = %d, want lower bound 800", current)
 	}
 
-	if err := InsertRoundBotStats(ctx, 1, bot.ID, bot.Name, "sword", 0, 0, 0, 0, 0, 0, 0, 0, 0, 9999, false); err != nil {
+	if err := CreateRound(ctx, &Round{
+		ID: "elo-round-1", RoundNumber: 1, StartedAt: now, Status: "completed",
+	}); err != nil {
+		t.Fatalf("CreateRound: %v", err)
+	}
+	if err := InsertRoundBotStats(ctx, "elo-round-1", 1, bot.ID, bot.Name, "sword", 0, 0, 0, 0, 0, 0, 0, 0, 0, 9999, false); err != nil {
 		t.Fatalf("InsertRoundBotStats: %v", err)
 	}
 	var historical int
@@ -290,6 +303,375 @@ func TestEloPersistenceWritesClampToConfiguredBounds(t *testing.T) {
 	}
 	if historical != 1200 {
 		t.Fatalf("round Elo = %d, want upper bound 1200", historical)
+	}
+}
+
+func TestWeaponBalancePersistencePromotesLegacyAndRejectsStaleWrites(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	previousConfig := config.C
+	config.C.WeaponAutoBalanceMinDamageScale = 0.70
+	config.C.WeaponAutoBalanceMaxDamageScale = 1.40
+	config.C.WeaponAutoBalanceMinCooldownScale = 0.75
+	config.C.WeaponAutoBalanceMaxCooldownScale = 1.35
+	config.C.WeaponAutoBalanceMinStep = 0.005
+	config.C.WeaponAutoBalanceStartStep = 0.04
+	t.Cleanup(func() { config.C = previousConfig })
+
+	// Reproduce the pre-versioning table so startup has to migrate a real
+	// persisted state and history, not merely create the latest schema.
+	if _, err := Pool.Exec(ctx, `
+		CREATE TABLE weapon_balance (
+			weapon TEXT PRIMARY KEY,
+			damage_scale DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+			cooldown_scale DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+			adjustment_scale DOUBLE PRECISION NOT NULL DEFAULT 0.05,
+			rounds_tracked INT NOT NULL DEFAULT 0,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`); err != nil {
+		t.Fatalf("create legacy balance table: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		INSERT INTO weapon_balance
+			(weapon, damage_scale, cooldown_scale, adjustment_scale, rounds_tracked, updated_at)
+		VALUES
+			('staff', 0.97, 1.19, 0.01, 999, $1),
+			('sword', 0.10, 3.00, 0.09, 888, $1)`, now.Add(time.Hour)); err != nil {
+		t.Fatalf("insert legacy balance state: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		CREATE TABLE weapon_balance_history (
+			id BIGSERIAL PRIMARY KEY,
+			weapon TEXT NOT NULL,
+			rounds_tracked INT NOT NULL DEFAULT 0,
+			damage_scale DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+			cooldown_scale DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+			adjustment_scale DOUBLE PRECISION NOT NULL DEFAULT 0.05,
+			avg_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+			mean_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+			diff_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+			damage_delta DOUBLE PRECISION NOT NULL DEFAULT 0,
+			cooldown_delta DOUBLE PRECISION NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`); err != nil {
+		t.Fatalf("create legacy balance history table: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		INSERT INTO weapon_balance_history
+			(weapon, rounds_tracked, damage_scale, cooldown_scale, adjustment_scale, created_at)
+		VALUES ('staff', 999, 0.97, 1.19, 0.01, $1)`, now.Add(time.Hour)); err != nil {
+		t.Fatalf("insert legacy balance history: %v", err)
+	}
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	rows, err := ListWeaponBalances(ctx)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("migrated balance read = (%+v, %v), want two current rows", rows, err)
+	}
+	migrated := make(map[string]WeaponBalance, len(rows))
+	for _, row := range rows {
+		migrated[row.Weapon] = row
+	}
+	staff := migrated["staff"]
+	if staff.DamageScale != 0.97 || staff.CooldownScale != 1.19 || staff.AdjustmentScale != 0.04 || staff.RoundsTracked != 0 || staff.Revision != 0 {
+		t.Fatalf("migrated Staff = %+v, want scales 0.97/1.19 with fresh step/counter", staff)
+	}
+	sword := migrated["sword"]
+	if sword.DamageScale != 0.70 || sword.CooldownScale != 1.35 || sword.AdjustmentScale != 0.04 || sword.RoundsTracked != 0 || sword.Revision != 0 {
+		t.Fatalf("clamped migrated sword = %+v, want scales 0.70/1.35 with fresh step/counter", sword)
+	}
+	if history, err := ListWeaponBalanceHistory(ctx, 10); err != nil || len(history) != 0 {
+		t.Fatalf("legacy balance history read = (%+v, %v), want no current rows", history, err)
+	}
+
+	current := &WeaponBalance{
+		Weapon: "staff", DamageScale: 0.96, CooldownScale: 1.08,
+		AdjustmentScale: 0.04, RoundsTracked: 12, Revision: 12, UpdatedAt: staff.UpdatedAt.Add(time.Second),
+	}
+	if err := UpsertWeaponBalance(ctx, current); err != nil {
+		t.Fatalf("write current state: %v", err)
+	}
+	stale := &WeaponBalance{
+		Weapon: "staff", DamageScale: 1.40, CooldownScale: 0.75,
+		AdjustmentScale: 0.04, RoundsTracked: 2, Revision: 2, UpdatedAt: staff.UpdatedAt.Add(365 * 24 * time.Hour),
+	}
+	if err := UpsertWeaponBalance(ctx, stale); err != nil {
+		t.Fatalf("stale upsert: %v", err)
+	}
+
+	rows, err = ListWeaponBalances(ctx)
+	if err != nil {
+		t.Fatalf("ListWeaponBalances: %v", err)
+	}
+	migrated = make(map[string]WeaponBalance, len(rows))
+	for _, row := range rows {
+		migrated[row.Weapon] = row
+	}
+	staff = migrated["staff"]
+	if staff.DamageScale != current.DamageScale || staff.CooldownScale != current.CooldownScale ||
+		staff.RoundsTracked != current.RoundsTracked || staff.Revision != current.Revision || !staff.UpdatedAt.Equal(current.UpdatedAt) {
+		t.Fatalf("Staff after stale write = %+v, want %+v", staff, current)
+	}
+	// A logically newer balance must win even when the application clock moves
+	// backward relative to the previously persisted snapshot.
+	clockRollbackNewer := &WeaponBalance{
+		Weapon: "staff", DamageScale: 0.95, CooldownScale: 1.09,
+		AdjustmentScale: 0.04, RoundsTracked: 13, Revision: 13,
+		UpdatedAt: staff.UpdatedAt.Add(-365 * 24 * time.Hour),
+	}
+	if err := UpsertWeaponBalance(ctx, clockRollbackNewer); err != nil {
+		t.Fatalf("clock-rollback upsert: %v", err)
+	}
+	rows, err = ListWeaponBalances(ctx)
+	if err != nil {
+		t.Fatalf("ListWeaponBalances after clock rollback: %v", err)
+	}
+	migrated = make(map[string]WeaponBalance, len(rows))
+	for _, row := range rows {
+		migrated[row.Weapon] = row
+	}
+	staff = migrated["staff"]
+	if staff.DamageScale != clockRollbackNewer.DamageScale || staff.CooldownScale != clockRollbackNewer.CooldownScale ||
+		staff.RoundsTracked != clockRollbackNewer.RoundsTracked || staff.Revision != clockRollbackNewer.Revision ||
+		!staff.UpdatedAt.Equal(clockRollbackNewer.UpdatedAt) {
+		t.Fatalf("Staff after clock rollback = %+v, want %+v", staff, clockRollbackNewer)
+	}
+	var currentVersions int
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM weapon_balance WHERE algorithm_version = $1`, weaponBalanceAlgorithmVersion).Scan(&currentVersions); err != nil {
+		t.Fatalf("count algorithm versions: %v", err)
+	}
+	if currentVersions != 2 {
+		t.Fatalf("current algorithm rows = %d, want 2", currentVersions)
+	}
+	if err := InsertWeaponBalanceHistory(ctx, &WeaponBalanceHistory{
+		Weapon: "staff", RoundsTracked: 12, DamageScale: 0.96, CooldownScale: 1.08,
+		AdjustmentScale: 0.05, Revision: 12, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("InsertWeaponBalanceHistory: %v", err)
+	}
+	history, err := ListWeaponBalanceHistory(ctx, 10)
+	if err != nil || len(history) != 1 || history[0].RoundsTracked != 12 || history[0].Revision != 12 {
+		t.Fatalf("current balance history read = (%+v, %v), want one current row", history, err)
+	}
+}
+
+func TestRecentWeaponPerformanceUsesPersistedRoundIdentityAcrossRestarts(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	samples := []struct {
+		id      string
+		round   int
+		kills   int
+		started time.Time
+	}{
+		{id: "old-run-98", round: 98, kills: 100, started: now},
+		{id: "old-run-99", round: 99, kills: 100, started: now.Add(time.Minute)},
+		// Simulate a restart plus a wall clock correction: these are persisted
+		// later, but have low local numbers and older timestamps.
+		{id: "new-run-1", round: 1, kills: 10, started: now.Add(-365 * 24 * time.Hour)},
+		{id: "new-run-2", round: 2, kills: 20, started: now.Add(-365*24*time.Hour + time.Minute)},
+	}
+	for _, sample := range samples {
+		if err := CreateRound(ctx, &Round{
+			ID: sample.id, RoundNumber: sample.round, StartedAt: sample.started,
+			BotsParticipated: 2, Status: "completed",
+		}); err != nil {
+			t.Fatalf("CreateRound(%s): %v", sample.id, err)
+		}
+		for bot := 0; bot < 2; bot++ {
+			botID := fmt.Sprintf("%s-bot-%d", sample.id, bot)
+			if _, err := Pool.Exec(ctx, `
+				INSERT INTO round_bot_stats
+					(round_id, round_number, bot_id, bot_name, weapon, kills, created_at)
+				VALUES ($1, $2, $3, $3, 'staff', $4, $5)`,
+				sample.id, sample.round, botID, sample.kills, sample.started); err != nil {
+				t.Fatalf("insert %s stats: %v", sample.id, err)
+			}
+		}
+	}
+	var oldOrder, restartedOrder int64
+	if err := Pool.QueryRow(ctx, `
+		SELECT
+			(SELECT persisted_order FROM rounds WHERE id = 'old-run-99'),
+			(SELECT persisted_order FROM rounds WHERE id = 'new-run-1')`).Scan(&oldOrder, &restartedOrder); err != nil {
+		t.Fatalf("read persisted round order: %v", err)
+	}
+	if restartedOrder <= oldOrder {
+		t.Fatalf("post-restart persisted order = %d, want greater than old run %d", restartedOrder, oldOrder)
+	}
+
+	rows, err := ListRecentWeaponPerformance(ctx, 2)
+	if err != nil {
+		t.Fatalf("ListRecentWeaponPerformance: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Weapon != "staff" || rows[0].Rounds != 2 || rows[0].Bots != 4 || rows[0].AvgKills != 15 {
+		t.Fatalf("recent performance = %+v, want only post-restart rounds 1-2 with four bots and avg kills 15", rows)
+	}
+}
+
+func TestRoundBotStatsSchemaBackfillsOnlyUnambiguousRoundIdentity(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	oldClock := now
+	newClock := now.Add(-365 * 24 * time.Hour)
+
+	if _, err := Pool.Exec(ctx, `
+		CREATE TABLE rounds (
+			id TEXT PRIMARY KEY,
+			round_number INT NOT NULL,
+			started_at TIMESTAMPTZ NOT NULL,
+			ended_at TIMESTAMPTZ,
+			bots_participated INT NOT NULL DEFAULT 0,
+			mvp_bot_id TEXT,
+			status TEXT NOT NULL DEFAULT 'active'
+		)`); err != nil {
+		t.Fatalf("create legacy rounds: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		INSERT INTO rounds (id, round_number, started_at, ended_at, status)
+		VALUES
+			('legacy-old', 1, $1, $1, 'completed'),
+			('legacy-restarted', 1, $2, NULL, 'active'),
+			('legacy-unique', 7, $2, NULL, 'active')`, oldClock, newClock); err != nil {
+		t.Fatalf("insert legacy rounds: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		CREATE TABLE round_bot_stats (
+			id SERIAL PRIMARY KEY,
+			round_number INT NOT NULL,
+			bot_id TEXT NOT NULL,
+			bot_name TEXT NOT NULL DEFAULT '',
+			weapon TEXT NOT NULL DEFAULT '',
+			kills INT NOT NULL DEFAULT 0,
+			deaths INT NOT NULL DEFAULT 0,
+			damage_dealt BIGINT NOT NULL DEFAULT 0,
+			damage_taken BIGINT NOT NULL DEFAULT 0,
+			longest_life_secs INT NOT NULL DEFAULT 0,
+			shots_fired INT NOT NULL DEFAULT 0,
+			shots_hit INT NOT NULL DEFAULT 0,
+			pickups INT NOT NULL DEFAULT 0,
+			distance DOUBLE PRECISION NOT NULL DEFAULT 0,
+			elo INT NOT NULL DEFAULT 1000,
+			won BOOLEAN NOT NULL DEFAULT false,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`); err != nil {
+		t.Fatalf("create legacy round stats: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		INSERT INTO round_bot_stats (round_number, bot_id, bot_name, weapon, kills, created_at)
+		VALUES
+			(1, 'legacy-old-bot', 'old', 'staff', 100, $1),
+			-- This row belongs to the restarted round, but its database timestamp
+			-- looks closer to the old application clock. It must remain unmapped.
+			(1, 'legacy-new-bot', 'new', 'staff', 7, $1),
+			-- A single candidate is safe even with clock skew and no ended_at.
+			(7, 'legacy-unique-bot', 'unique', 'sword', 3, $1)`, oldClock); err != nil {
+		t.Fatalf("insert legacy round stats: %v", err)
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := EnsureCoreSchema(ctx); err != nil {
+			t.Fatalf("EnsureCoreSchema migration attempt %d: %v", attempt, err)
+		}
+	}
+
+	mapped := map[string]string{}
+	rows, err := Pool.Query(ctx, `SELECT bot_id, COALESCE(round_id, '') FROM round_bot_stats ORDER BY id`)
+	if err != nil {
+		t.Fatalf("read migrated round identities: %v", err)
+	}
+	for rows.Next() {
+		var botID, roundID string
+		if err := rows.Scan(&botID, &roundID); err != nil {
+			t.Fatalf("scan migrated round identity: %v", err)
+		}
+		mapped[botID] = roundID
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate migrated round identities: %v", err)
+	}
+	rows.Close()
+	if mapped["legacy-old-bot"] != "" || mapped["legacy-new-bot"] != "" ||
+		mapped["legacy-unique-bot"] != "legacy-unique" {
+		t.Fatalf("migrated round identities = %v", mapped)
+	}
+	var validated bool
+	if err := Pool.QueryRow(ctx, `
+		SELECT convalidated
+		FROM pg_constraint
+		WHERE conrelid = 'round_bot_stats'::regclass
+		  AND conname = 'round_bot_stats_round_id_fkey'`).Scan(&validated); err != nil {
+		t.Fatalf("read round identity foreign key: %v", err)
+	}
+	if !validated {
+		t.Fatal("round_bot_stats round identity foreign key was not validated")
+	}
+	if err := InsertRoundBotStats(ctx, "missing-round", 9, "missing-bot", "Missing", "sword",
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 1000, false); err == nil {
+		t.Fatal("unknown round identity bypassed round_bot_stats foreign key")
+	}
+
+	performance, err := ListRecentWeaponPerformance(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListRecentWeaponPerformance: %v", err)
+	}
+	if len(performance) != 1 || performance[0].Weapon != "sword" || performance[0].Rounds != 1 ||
+		performance[0].Bots != 1 || performance[0].AvgKills != 3 {
+		t.Fatalf("post-migration recent performance = %+v, want only confidently mapped unique round", performance)
+	}
+}
+
+func TestWeaponKillStatsMergeDerivedDamageSources(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	now := time.Now().UTC()
+	for i, id := range []string{"kill-stats-killer", "kill-stats-victim"} {
+		keyID := "kill-stats-key-" + strconv.Itoa(i)
+		bot := &Bot{
+			ID: id, APIKeyID: keyID, Name: id, AvatarColor: "#123456",
+			DefaultWeapon: "staff", DefaultStats: JSONBStats{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
+			DefaultFallback: "aggressive", CreatedAt: now, UpdatedAt: now,
+		}
+		if err := CreateAPIKeyAndBot(ctx, keyID, "kill-stats-hash-"+strconv.Itoa(i), "arena_kill_stats_"+strconv.Itoa(i), "127.0.0.1", bot); err != nil {
+			t.Fatalf("CreateAPIKeyAndBot(%s): %v", id, err)
+		}
+	}
+
+	for i, kill := range []struct {
+		weapon string
+		damage int
+	}{
+		{weapon: "staff", damage: 10},
+		{weapon: "staff_burn", damage: 15},
+		{weapon: "grapple_slam", damage: 20},
+	} {
+		if err := InsertKillLog(ctx, &KillLog{
+			ID: "kill-stats-" + strconv.Itoa(i), KillerID: "kill-stats-killer", VictimID: "kill-stats-victim",
+			Weapon: kill.weapon, Damage: kill.damage, CreatedAt: now,
+		}); err != nil {
+			t.Fatalf("InsertKillLog(%s): %v", kill.weapon, err)
+		}
+	}
+
+	stats, err := ListWeaponKillStats(ctx)
+	if err != nil {
+		t.Fatalf("ListWeaponKillStats: %v", err)
+	}
+	want := []WeaponKillStats{
+		{Weapon: "grapple", Kills: 1, Kills24h: 1, Kills1h: 1, FinisherDamage: 20},
+		{Weapon: "staff", Kills: 2, Kills24h: 2, Kills1h: 2, FinisherDamage: 25},
+	}
+	if !reflect.DeepEqual(stats, want) {
+		t.Fatalf("weapon kill stats = %#v, want %#v", stats, want)
 	}
 }
 

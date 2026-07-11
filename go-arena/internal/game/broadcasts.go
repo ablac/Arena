@@ -131,11 +131,6 @@ func SendRoundEnd(bot *BotState, info RoundEndInfo, nextRoundIn float64) {
 // SendRoundStart notifies a bot that a new round has begun.
 // Terrain is available via GET /api/v1/arena/map (pre-generated during intermission).
 func SendRoundStart(bot *BotState, round RoundState, bots map[string]*BotState, arena *ArenaMap) {
-	allPositions := make(map[string]interface{}, len(bots))
-	for id, b := range bots {
-		allPositions[id] = posToGrid(b.Position)
-	}
-
 	gridPos := posToGrid(bot.Position)
 	cellSize := config.C.PathfindingCellSize
 	zoneCenter := posToGrid(arena.ZoneCenter)
@@ -148,7 +143,6 @@ func SendRoundStart(bot *BotState, round RoundState, bots map[string]*BotState, 
 		"round_modifier_label": round.Modifier.Label(),
 		"position":             [2]int{gridPos[0], gridPos[1]},
 		"bots_in_round":        len(bots),
-		"all_positions":        allPositions,
 		"safe_zone": map[string]interface{}{
 			"center":        [2]int{zoneCenter[0], zoneCenter[1]},
 			"radius":        int(math.Round(arena.ZoneRadius / cellSize)),

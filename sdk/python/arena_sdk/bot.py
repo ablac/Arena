@@ -189,12 +189,12 @@ class ArenaBot:
         """
         action: dict = {"action": "attack", "target": target_id}
         if target_position is not None:
-            action["direction"] = [target_position[0], target_position[1]]
+            action["target_position"] = [target_position[0], target_position[1]]
         return action
 
     def staff_attack(self, target_position: tuple | list) -> dict:
         """Returns a staff area attack at the given position [col, row]."""
-        return {"action": "attack", "direction": [target_position[0], target_position[1]]}
+        return {"action": "attack", "target_position": [target_position[0], target_position[1]]}
 
     def dodge(self, direction: dict | tuple | list) -> dict:
         """Returns a dodge action in the given direction."""

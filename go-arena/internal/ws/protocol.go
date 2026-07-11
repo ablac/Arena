@@ -1,9 +1,13 @@
 package ws
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math"
 
+	"arena-server/internal/config"
 	"arena-server/internal/game"
 )
 
@@ -56,6 +60,9 @@ var actionStringToType = map[string]game.ActionType{
 // typed message. It returns the message type string, the parsed message, and
 // any error encountered during parsing.
 func ParseBotMessage(data []byte) (msgType string, msg interface{}, err error) {
+	if err := rejectDuplicateJSONFields(data); err != nil {
+		return "", nil, fmt.Errorf("invalid JSON: %w", err)
+	}
 	var raw RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return "", nil, fmt.Errorf("invalid JSON: %w", err)
@@ -64,21 +71,21 @@ func ParseBotMessage(data []byte) (msgType string, msg interface{}, err error) {
 	switch raw.Type {
 	case "select_loadout":
 		var lm LoadoutMessage
-		if err := json.Unmarshal(data, &lm); err != nil {
+		if err := unmarshalStrict(data, &lm); err != nil {
 			return raw.Type, nil, fmt.Errorf("invalid loadout message: %w", err)
 		}
 		return raw.Type, &lm, nil
 
 	case "action":
 		var am ActionMessage
-		if err := json.Unmarshal(data, &am); err != nil {
+		if err := unmarshalStrict(data, &am); err != nil {
 			return raw.Type, nil, fmt.Errorf("invalid action message: %w", err)
 		}
 		return raw.Type, &am, nil
 
 	case "auth":
 		var auth AuthMessage
-		if err := json.Unmarshal(data, &auth); err != nil {
+		if err := unmarshalStrict(data, &auth); err != nil {
 			return raw.Type, nil, fmt.Errorf("invalid auth message: %w", err)
 		}
 		return raw.Type, &auth, nil
@@ -88,13 +95,98 @@ func ParseBotMessage(data []byte) (msgType string, msg interface{}, err error) {
 	}
 }
 
+func rejectDuplicateJSONFields(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := scanJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values are not allowed")
+		}
+		return err
+	}
+	return nil
+}
+
+func scanJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return fmt.Errorf("invalid JSON object key")
+			}
+			if _, exists := seen[key]; exists {
+				return fmt.Errorf("duplicate JSON field %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := scanJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim('}') {
+			return fmt.Errorf("invalid JSON object")
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim(']') {
+			return fmt.Errorf("invalid JSON array")
+		}
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
+	}
+	return nil
+}
+
+func unmarshalStrict(data []byte, target interface{}) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values are not allowed")
+		}
+		return err
+	}
+	return nil
+}
+
 // ActionMessageToAction converts a parsed ActionMessage into a game.Action
 // that the engine can process.
 func ActionMessageToAction(msg *ActionMessage) *game.Action {
-	actionType, ok := actionStringToType[msg.Action]
-	if !ok {
-		actionType = game.ActionIdle
+	if err := validateActionMessage(msg); err != nil {
+		return nil
 	}
+	actionType := actionStringToType[msg.Action]
 
 	action := &game.Action{
 		Type:           actionType,
@@ -109,4 +201,79 @@ func ActionMessageToAction(msg *ActionMessage) *game.Action {
 	}
 
 	return action
+}
+
+func validateActionMessage(msg *ActionMessage) error {
+	if msg == nil {
+		return fmt.Errorf("action message is required")
+	}
+	if msg.Tick <= 0 {
+		return fmt.Errorf("tick must be a positive server tick")
+	}
+	if _, ok := actionStringToType[msg.Action]; !ok {
+		return fmt.Errorf("unknown action %q", msg.Action)
+	}
+	if msg.Direction != nil {
+		if !finiteVector(*msg.Direction) || math.Abs(msg.Direction.X()) > 1 || math.Abs(msg.Direction.Y()) > 1 {
+			return fmt.Errorf("direction must contain finite components between -1 and 1")
+		}
+	}
+	if msg.TargetPosition != nil {
+		if err := validateTargetPosition(*msg.TargetPosition); err != nil {
+			return err
+		}
+	}
+
+	switch msg.Action {
+	case "move", "dodge":
+		if msg.Direction == nil || msg.Direction.Length() < 1e-10 {
+			return fmt.Errorf("%s requires a non-zero direction", msg.Action)
+		}
+	case "move_to", "use_gravity_well":
+		if msg.TargetPosition == nil {
+			return fmt.Errorf("%s requires target_position", msg.Action)
+		}
+	case "attack":
+		hasTarget := msg.Target != ""
+		hasPosition := msg.TargetPosition != nil
+		if hasTarget == hasPosition {
+			return fmt.Errorf("attack requires exactly one of target or target_position")
+		}
+	case "shove":
+		if msg.Target == "" {
+			return fmt.Errorf("shove requires target")
+		}
+	case "use_item":
+		if msg.ItemID == "" {
+			return fmt.Errorf("use_item requires item_id")
+		}
+	case "grapple":
+		hasTarget := msg.Target != ""
+		hasPosition := msg.TargetPosition != nil
+		if hasTarget == hasPosition {
+			return fmt.Errorf("grapple requires exactly one of target or target_position")
+		}
+	}
+	return nil
+}
+
+func finiteVector(v game.Vec2) bool {
+	return !math.IsNaN(v.X()) && !math.IsInf(v.X(), 0) &&
+		!math.IsNaN(v.Y()) && !math.IsInf(v.Y(), 0)
+}
+
+func validateTargetPosition(pos game.Vec2) error {
+	if !finiteVector(pos) {
+		return fmt.Errorf("target_position must contain finite coordinates")
+	}
+	maxScale := config.C.ArenaSizeMaxScale
+	if maxScale < 1 {
+		maxScale = 1
+	}
+	maxX := config.C.ArenaWidth*maxScale + config.C.PathfindingCellSize
+	maxY := config.C.ArenaHeight*maxScale + config.C.PathfindingCellSize
+	if pos.X() < 0 || pos.Y() < 0 || pos.X() > maxX || pos.Y() > maxY {
+		return fmt.Errorf("target_position is outside the maximum arena bounds")
+	}
+	return nil
 }

@@ -7,13 +7,13 @@ import (
 	"arena-server/internal/game"
 )
 
-// buildCavesTerrain generates a real caves mask and installs it as the demo
+// buildShapeTerrain generates a real map mask and installs it as the demo
 // bots' cached terrain, returning it for direct inspection.
-func buildCavesTerrain(t *testing.T, cols, rows int) *botTerrain {
+func buildShapeTerrain(t *testing.T, shape game.MapShape, cols, rows int) *botTerrain {
 	t.Helper()
-	mask := game.GenerateShapeMask(game.ShapeCaves, cols, rows)
+	mask := game.GenerateShapeMask(shape, cols, rows)
 	if mask == nil {
-		t.Fatal("expected a caves mask")
+		t.Fatalf("expected a %s mask", shape)
 	}
 	cells := make([][]byte, cols)
 	for x := range cells {
@@ -85,48 +85,62 @@ func randomOpenCell(rng *rand.Rand, t *botTerrain) [2]int {
 // generous step allowance (4x the true shortest path + 20); failing to reach
 // the goal means the pathfinder wandered or oscillated — exactly the
 // "demo bots struggle on caves" behavior.
-func TestCavesNavigationWalk(t *testing.T) {
-	rng := rand.New(rand.NewSource(42))
-	const maps = 10
-	const pairsPerMap = 30
-
-	attempts, reached := 0, 0
-	for m := 0; m < maps; m++ {
-		terrain := buildCavesTerrain(t, 100, 100)
-		for p := 0; p < pairsPerMap; p++ {
-			start := randomOpenCell(rng, terrain)
-			goal := randomOpenCell(rng, terrain)
-			best := shortestPathLen(terrain, start[0], start[1], goal[0], goal[1])
-			if best <= 0 {
-				continue // same cell or unreachable — not a navigation test
-			}
-			attempts++
-			budget := best*4 + 20
-			cur := start
-			ok := false
-			for step := 0; step < budget; step++ {
-				d := bfsStep(cur[0], cur[1], goal[0], goal[1], nil)
-				if d[0] == 0 && d[1] == 0 {
-					break // pathfinder gave up
-				}
-				cur = [2]int{cur[0] + d[0], cur[1] + d[1]}
-				if cur == goal {
-					ok = true
-					break
-				}
-			}
-			if ok {
-				reached++
-			} else {
-				t.Logf("map %d: failed %v -> %v (shortest %d steps)", m, start, goal, best)
-			}
-		}
+func TestShapeNavigationWalk(t *testing.T) {
+	shapes := []game.MapShape{
+		game.ShapeCaves,
+		game.ShapeDonut,
+		game.ShapeIslands,
+		game.ShapeRooms,
+		game.ShapeSpiral,
 	}
+	for _, shape := range shapes {
+		t.Run(string(shape), func(t *testing.T) {
+			rng := rand.New(rand.NewSource(42))
+			const maps = 6
+			const pairsPerMap = 30
 
-	rate := float64(reached) / float64(attempts)
-	t.Logf("caves navigation success: %d/%d (%.1f%%)", reached, attempts, rate*100)
-	if rate < 0.95 {
-		t.Errorf("caves navigation success rate %.1f%% — demo bots cannot reliably cross caves maps", rate*100)
+			attempts, reached := 0, 0
+			for m := 0; m < maps; m++ {
+				terrain := buildShapeTerrain(t, shape, 100, 100)
+				for p := 0; p < pairsPerMap; p++ {
+					start := randomOpenCell(rng, terrain)
+					goal := randomOpenCell(rng, terrain)
+					best := shortestPathLen(terrain, start[0], start[1], goal[0], goal[1])
+					if best <= 0 {
+						continue // same cell or unreachable — not a navigation test
+					}
+					attempts++
+					budget := best*4 + 20
+					cur := start
+					ok := false
+					for step := 0; step < budget; step++ {
+						d := bfsStep(cur[0], cur[1], goal[0], goal[1], nil)
+						if d[0] == 0 && d[1] == 0 {
+							break // pathfinder gave up
+						}
+						cur = [2]int{cur[0] + d[0], cur[1] + d[1]}
+						if cur == goal {
+							ok = true
+							break
+						}
+					}
+					if ok {
+						reached++
+					} else {
+						t.Logf("map %d: failed %v -> %v (shortest %d steps)", m, start, goal, best)
+					}
+				}
+			}
+
+			if attempts == 0 {
+				t.Fatal("shape generated no reachable navigation pairs")
+			}
+			rate := float64(reached) / float64(attempts)
+			t.Logf("%s navigation success: %d/%d (%.1f%%)", shape, reached, attempts, rate*100)
+			if rate < 0.95 {
+				t.Errorf("caves navigation success rate %.1f%% — demo bots cannot reliably cross caves maps", rate*100)
+			}
+		})
 	}
 }
 

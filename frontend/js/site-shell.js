@@ -88,16 +88,143 @@ function setupTelemetryCollapse() {
   if (!shell || !button) return;
 
   const KEY = 'arenaTelemetryCollapsed';
-  const setCollapsed = (collapsed) => {
-    shell.classList.toggle('telemetry-collapsed', collapsed);
-    button.setAttribute('aria-expanded', String(!collapsed));
-    button.textContent = collapsed ? 'Show feed' : 'Hide';
-    try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch { /* private mode */ }
-    requestArenaResize();
+  const MORPH_DURATION_MS = 180;
+  let finishFallbackMorph = null;
+  let activeViewTransition = null;
+  let nativeMorphCooldownUntil = 0;
+  let collapseGeneration = 0;
+  let intendedCollapsed = shell.classList.contains('telemetry-collapsed');
+
+  const runFallbackMorph = (applyState) => {
+    const sidebar = document.getElementById('arena-telemetry');
+    if (!sidebar || typeof sidebar.animate !== 'function') {
+      applyState();
+      requestArenaResize();
+      return;
+    }
+
+    const from = sidebar.getBoundingClientRect();
+    const oldShellClass = shell.className;
+    const oldOpacity = sidebar.style.opacity;
+    const computed = getComputedStyle(sidebar);
+    const wrapper = document.createElement('div');
+    const ghost = sidebar.cloneNode(true);
+
+    wrapper.className = oldShellClass;
+    wrapper.setAttribute('aria-hidden', 'true');
+    wrapper.style.display = 'contents';
+    wrapper.style.pointerEvents = 'none';
+    ghost.removeAttribute('id');
+    ghost.querySelectorAll('[id]').forEach((node) => node.removeAttribute('id'));
+    ghost.querySelectorAll('[data-telemetry-collapse]').forEach((node) => node.removeAttribute('data-telemetry-collapse'));
+    ghost.style.position = 'fixed';
+    ghost.style.inset = 'auto';
+    ghost.style.left = `${from.left}px`;
+    ghost.style.top = `${from.top}px`;
+    ghost.style.width = `${from.width}px`;
+    ghost.style.height = `${from.height}px`;
+    ghost.style.margin = '0';
+    ghost.style.zIndex = computed.zIndex;
+    ghost.style.viewTransitionName = 'none';
+    ghost.style.transformOrigin = 'top left';
+    ghost.style.willChange = 'transform, opacity';
+    wrapper.appendChild(ghost);
+
+    applyState();
+    const to = sidebar.getBoundingClientRect();
+    sidebar.style.opacity = '0';
+    document.body.appendChild(wrapper);
+
+    const dx = to.left - from.left;
+    const dy = to.top - from.top;
+    const scaleX = from.width > 0 ? to.width / from.width : 1;
+    const scaleY = from.height > 0 ? to.height / from.height : 1;
+    const timing = {
+      duration: MORPH_DURATION_MS,
+      easing: 'cubic-bezier(0.23, 1, 0.32, 1)',
+      fill: 'both',
+    };
+    const ghostAnimation = ghost.animate([
+      { opacity: 1, transform: 'translate(0, 0) scale(1)' },
+      { opacity: 0.2, transform: `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})` },
+    ], timing);
+    const sidebarAnimation = sidebar.animate([
+      { opacity: 0 },
+      { opacity: 0, offset: 0.3 },
+      { opacity: 1 },
+    ], timing);
+
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      sidebar.style.opacity = oldOpacity;
+      wrapper.remove();
+      finishFallbackMorph = null;
+      requestArenaResize();
+    };
+    finishFallbackMorph = () => {
+      ghostAnimation.cancel();
+      sidebarAnimation.cancel();
+      cleanup();
+    };
+    Promise.allSettled([ghostAnimation.finished, sidebarAnimation.finished]).then(cleanup);
+  };
+
+  const setCollapsed = (collapsed, animate = true) => {
+    intendedCollapsed = collapsed;
+    const generation = ++collapseGeneration;
+    finishFallbackMorph?.();
+    const interruptedTransition = activeViewTransition;
+    const now = performance.now();
+    const nativeTransitionSettling = interruptedTransition !== null || now < nativeMorphCooldownUntil;
+    interruptedTransition?.skipTransition?.();
+    activeViewTransition = null;
+
+    const applyState = () => {
+      // Native View Transition update callbacks are deferred. Ignore an older
+      // callback if another click/keypress has already changed the intent.
+      if (generation !== collapseGeneration) return;
+      shell.classList.toggle('telemetry-collapsed', collapsed);
+      button.setAttribute('aria-expanded', String(!collapsed));
+      button.textContent = collapsed ? 'Show feed' : 'Hide';
+      try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch { /* private mode */ }
+    };
+
+    // Starting another native transition while the previous update callback is
+    // pending is browser-dependent. On interruption, commit the newest intent
+    // synchronously; the generation guard above makes the older callback inert.
+    if (nativeTransitionSettling) {
+      nativeMorphCooldownUntil = now + MORPH_DURATION_MS;
+      applyState();
+      requestArenaResize();
+      return;
+    }
+
+    const skipMorph = !animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (skipMorph) {
+      applyState();
+      requestArenaResize();
+      return;
+    }
+
+    if (typeof document.startViewTransition !== 'function') {
+      runFallbackMorph(applyState);
+      return;
+    }
+
+    nativeMorphCooldownUntil = performance.now() + MORPH_DURATION_MS;
+    const transition = document.startViewTransition(applyState);
+    activeViewTransition = transition;
+    transition.ready.then(requestArenaResize, requestArenaResize);
+    transition.finished.then(() => {
+      if (activeViewTransition === transition) activeViewTransition = null;
+      requestArenaResize();
+    }, requestArenaResize);
   };
 
   button.addEventListener('click', () => {
-    setCollapsed(!shell.classList.contains('telemetry-collapsed'));
+    setCollapsed(!intendedCollapsed);
   });
 
   let saved = null;
@@ -107,7 +234,7 @@ function setupTelemetryCollapse() {
     // morph shut on every page load.
     const sidebar = document.getElementById('arena-telemetry');
     sidebar?.classList.add('no-transition');
-    setCollapsed(true);
+    setCollapsed(true, false);
     requestAnimationFrame(() => requestAnimationFrame(() => sidebar?.classList.remove('no-transition')));
   }
 }

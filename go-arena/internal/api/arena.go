@@ -41,9 +41,10 @@ func GetArenaStatus(engine *game.GameEngine) http.HandlerFunc {
 // If no terrain is active (e.g. lobby before first round), returns a message.
 func GetArenaMap(engine *game.GameEngine) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Snapshot the active map under the engine lock: the tick goroutine
-		// swaps these during round transitions.
-		terrain, mapShape, gameMode := engine.GetActiveMap()
+		// Snapshot terrain, phase-dependent features, and mode under one engine
+		// lock so a round transition cannot produce a hybrid response.
+		mapSnapshot := engine.GetArenaMapSnapshot()
+		terrain := mapSnapshot.Terrain
 		if terrain == nil {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
 				"status":  "no_map",
@@ -52,28 +53,27 @@ func GetArenaMap(engine *game.GameEngine) http.HandlerFunc {
 			return
 		}
 
-		snap := engine.GetArenaSnapshot()
-
-		// Get teleport pads, hazard zones, and capture pads from engine.
-		pads, zones, capturePads := engine.GetMapFeatures()
+		pads := mapSnapshot.TeleportPads
+		zones := mapSnapshot.HazardZones
+		capturePads := mapSnapshot.CapturePads
 
 		// Also provide detailed metadata for bots that want extra info
 		padViews := make([]map[string]interface{}, 0, len(pads))
 		for _, pad := range pads {
-			padViews = append(padViews, game.BuildTeleportPadView(pad, snap.Tick, true))
+			padViews = append(padViews, game.BuildTeleportPadView(pad, mapSnapshot.Tick, true))
 		}
 
 		zoneViews := make([]map[string]interface{}, 0, len(zones))
 		for _, zone := range zones {
-			zoneViews = append(zoneViews, game.BuildHazardZoneView(zone, true, snap.Modifier))
+			zoneViews = append(zoneViews, game.BuildHazardZoneView(zone, true, mapSnapshot.Modifier))
 		}
 
 		captureViews := make([]map[string]interface{}, 0, len(capturePads))
 		for _, pad := range capturePads {
-			captureViews = append(captureViews, game.BuildCapturePadView(pad, snap.Tick, true))
+			captureViews = append(captureViews, game.BuildCapturePadView(pad, mapSnapshot.Tick, true))
 		}
 
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		response := map[string]interface{}{
 			"status":    "ok",
 			"width":     terrain.Width,
 			"height":    terrain.Height,
@@ -81,12 +81,12 @@ func GetArenaMap(engine *game.GameEngine) http.HandlerFunc {
 			// Shape of this terrain. Non-square shapes are already carved
 			// into the terrain rows as '#' walls; this names the outline so
 			// bots and dashboards can adapt strategy per shape.
-			"map_shape":     string(mapShape),
-			"game_mode":     string(gameMode),
-			"terrain":       terrain.ToCompactJSONWithFeatures(pads, zones, capturePads),
-			"teleport_pads": padViews,
-			"capture_pads":  captureViews,
-			"hazard_zones":  zoneViews,
+			"map_shape":        string(mapSnapshot.MapShape),
+			"features_pending": mapSnapshot.FeaturesPending,
+			"terrain":          terrain.ToCompactJSONWithFeatures(pads, zones, capturePads),
+			"teleport_pads":    padViews,
+			"capture_pads":     captureViews,
+			"hazard_zones":     zoneViews,
 			"legend": map[string]string{
 				".": "ground (passable)",
 				"#": "wall (blocked)",
@@ -94,6 +94,10 @@ func GetArenaMap(engine *game.GameEngine) http.HandlerFunc {
 				"C": "capture pad objective",
 				"H": "hazard zone (damage when active)",
 			},
-		})
+		}
+		if !mapSnapshot.FeaturesPending {
+			response["game_mode"] = string(mapSnapshot.GameMode)
+		}
+		writeJSON(w, http.StatusOK, response)
 	}
 }

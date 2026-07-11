@@ -1,0 +1,388 @@
+package ws
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"arena-server/internal/config"
+	"arena-server/internal/game"
+
+	"github.com/gorilla/websocket"
+)
+
+const testBotFrameLimit = 192
+
+func TestBotHandlerLimitsOversizedAuthenticationFrameBeforeAuth(t *testing.T) {
+	previousLimit := config.C.WSMessageMaxBytes
+	previousTimeout := config.C.ConnectionTimeout
+	previousConnectRate := config.C.WSConnectRatePerMin
+	config.C.WSMessageMaxBytes = testBotFrameLimit
+	config.C.ConnectionTimeout = 1
+	config.C.WSConnectRatePerMin = 0
+	t.Cleanup(func() {
+		config.C.WSMessageMaxBytes = previousLimit
+		config.C.ConnectionTimeout = previousTimeout
+		config.C.WSConnectRatePerMin = previousConnectRate
+	})
+
+	server := httptest.NewServer(BotHandler(game.NewGameEngine()))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial bot handler: %v", err)
+	}
+	defer conn.Close()
+
+	payload := []byte(`{"type":"auth","api_key":"arena_` + strings.Repeat("x", testBotFrameLimit) + `"}`)
+	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+		t.Fatalf("write oversized auth frame: %v", err)
+	}
+	requireWebSocketCloseCode(t, conn, websocket.CloseMessageTooBig)
+}
+
+func TestLoadoutPhaseLimitsOversizedSelectionFrame(t *testing.T) {
+	cfg := config.C
+	cfg.WSMessageMaxBytes = testBotFrameLimit
+	cfg.LoadoutTimeoutSecs = 1
+	handlerErr := make(chan error, 1)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			handlerErr <- err
+			return
+		}
+		defer conn.Close()
+		bot := &game.BotState{
+			BotID:            "oversized-loadout",
+			Name:             "Oversized Loadout",
+			Weapon:           "sword",
+			Stats:            map[string]int{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
+			FallbackBehavior: "aggressive",
+		}
+		handlerErr <- handleLoadoutPhase(conn, bot, &cfg)
+	}))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial loadout harness: %v", err)
+	}
+	defer conn.Close()
+
+	payload := []byte(`{"type":"select_loadout","weapon":"sword","stats":{"hp":5,"speed":5,"attack":5,"defense":5},"fallback_behavior":"aggressive","padding":"` + strings.Repeat("x", testBotFrameLimit) + `"}`)
+	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+		t.Fatalf("write oversized loadout frame: %v", err)
+	}
+	requireWebSocketCloseCode(t, conn, websocket.CloseMessageTooBig)
+	if err := <-handlerErr; err == nil {
+		t.Fatal("oversized loadout frame did not fail the loadout phase")
+	}
+}
+
+func TestLoadoutReadTimeoutIsTerminal(t *testing.T) {
+	cfg := config.C
+	cfg.WSMessageMaxBytes = 1024
+	cfg.LoadoutTimeoutSecs = 0.02
+	handlerErr := make(chan error, 1)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			handlerErr <- err
+			return
+		}
+		defer conn.Close()
+		bot := &game.BotState{
+			BotID: "timeout-loadout", Name: "Timeout Loadout", Weapon: "sword",
+			Stats:            map[string]int{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
+			FallbackBehavior: "aggressive",
+		}
+		handlerErr <- handleLoadoutPhase(conn, bot, &cfg)
+	}))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial timeout harness: %v", err)
+	}
+	defer conn.Close()
+
+	select {
+	case err := <-handlerErr:
+		if err == nil || !strings.Contains(err.Error(), "timed out") {
+			t.Fatalf("loadout timeout error = %v, want terminal timeout", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("loadout timeout did not terminate negotiation")
+	}
+}
+
+func TestAdmissionBanRecheckRejectsPermanentBan(t *testing.T) {
+	tests := []struct {
+		name     string
+		ban      func(*game.GameEngine)
+		wantCode string
+	}{
+		{name: "key", ban: func(engine *game.GameEngine) { engine.BanKey("key-1") }, wantCode: "KEY_BANNED"},
+		{name: "ip", ban: func(engine *game.GameEngine) { engine.BanIP("203.0.113.10") }, wantCode: "IP_BANNED"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := game.NewGameEngine()
+			tt.ban(engine)
+			result := make(chan bool, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					result <- false
+					return
+				}
+				defer conn.Close()
+				result <- rejectPermanentlyBannedBot(engine, conn, "Bot", "bot-1", "203.0.113.10", "key-1")
+			}))
+			defer server.Close()
+
+			conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+			if err != nil {
+				t.Fatalf("dial ban harness: %v", err)
+			}
+			defer conn.Close()
+			var message struct {
+				Code string `json:"code"`
+			}
+			if err := conn.ReadJSON(&message); err != nil {
+				t.Fatalf("read ban rejection: %v", err)
+			}
+			handled := <-result
+			if !handled || message.Code != tt.wantCode {
+				t.Fatalf("ban rejection = handled %v code %q, want true/%q", handled, message.Code, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestStaleRuntimeSessionProtocolLockDisconnectsReplacement(t *testing.T) {
+	tracker := installActionStrikeTestTracker(t)
+	previousMaxBots := config.C.MaxBots
+	config.C.MaxBots = 10
+	t.Cleanup(func() { config.C.MaxBots = previousMaxBots })
+	engine := game.NewGameEngine()
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			close(ready)
+			return
+		}
+		defer conn.Close()
+		active := &game.BotState{
+			BotID: "bot-1", APIKeyID: "key-1", Name: "Active Bot",
+			Conn: conn, SendChan: make(chan []byte, 1),
+		}
+		if !engine.AddBot(active) {
+			close(ready)
+			return
+		}
+		close(ready)
+		<-release
+	}))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		close(release)
+		t.Fatalf("dial active-session harness: %v", err)
+	}
+	defer conn.Close()
+	<-ready
+	staleSession := &game.BotState{BotID: "bot-1", APIKeyID: "key-1", SendChan: make(chan []byte, 1)}
+	tracker.Record(staleSession.APIKeyID)
+	tracker.Record(staleSession.APIKeyID)
+	if !rejectBotViolation(engine, staleSession, "Invalid message", "INVALID_MESSAGE", nil) {
+		close(release)
+		t.Fatal("third stale-session strike did not lock the shared key")
+	}
+	<-staleSession.SendChan // structured lock response was still delivered to the offender
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, _, err := conn.ReadMessage(); err == nil {
+		close(release)
+		t.Fatal("active arena socket stayed open after shared key was locked")
+	}
+	close(release)
+}
+
+func TestAdmissionReceivesOneAuthoritativeLoadoutConfirmation(t *testing.T) {
+	withWSIntegrityConfig(t)
+	previousMaxBots := config.C.MaxBots
+	config.C.MaxBots = 10
+	t.Cleanup(func() { config.C.MaxBots = previousMaxBots })
+
+	tests := []struct {
+		name           string
+		setup          func(*game.GameEngine, string)
+		expectedWeapon string
+	}{
+		{
+			name:           "new connection confirms selected loadout",
+			expectedWeapon: "staff",
+		},
+		{
+			name: "active reconnect confirms preserved loadout",
+			setup: func(engine *game.GameEngine, botID string) {
+				engine.Round.Phase = game.PhaseActive
+				engine.Bots[botID] = &game.BotState{
+					BotID:            botID,
+					APIKeyID:         "key-1",
+					Name:             "Single Confirmation",
+					Weapon:           "sword",
+					Stats:            map[string]int{"hp": 7, "speed": 4, "attack": 5, "defense": 4},
+					FallbackBehavior: "aggressive",
+					HP:               72,
+					MaxHP:            120,
+					IsAlive:          true,
+					SendChan:         make(chan []byte, 4),
+				}
+			},
+			expectedWeapon: "sword",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := game.NewGameEngine()
+			botID := "single-confirmation-bot"
+			if tc.setup != nil {
+				tc.setup(engine, botID)
+			}
+			confirmations, queued := runAdmissionConfirmationHarness(t, engine, botID)
+			if queued != 0 {
+				t.Fatalf("admission queued %d extra message(s)", queued)
+			}
+			if len(confirmations) != 1 || confirmations[0].Weapon != tc.expectedWeapon {
+				t.Fatalf("admission confirmations = %+v, want one authoritative %s confirmation", confirmations, tc.expectedWeapon)
+			}
+		})
+	}
+}
+
+type loadoutConfirmation struct {
+	Type   string `json:"type"`
+	Weapon string `json:"weapon"`
+}
+
+func runAdmissionConfirmationHarness(t *testing.T, engine *game.GameEngine, botID string) ([]loadoutConfirmation, int) {
+	t.Helper()
+	type harnessResult struct {
+		err    error
+		queued int
+	}
+	resultCh := make(chan harnessResult, 1)
+	cfg := config.C
+	cfg.WSMessageMaxBytes = 1024
+	cfg.LoadoutTimeoutSecs = 1
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			resultCh <- harnessResult{err: err}
+			return
+		}
+		defer conn.Close()
+		bot := &game.BotState{
+			BotID:            botID,
+			APIKeyID:         "key-1",
+			Name:             "Single Confirmation",
+			Weapon:           "sword",
+			Stats:            map[string]int{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
+			FallbackBehavior: "aggressive",
+			SendChan:         make(chan []byte, 4),
+		}
+		if err := handleLoadoutPhase(conn, bot, &cfg); err != nil {
+			resultCh <- harnessResult{err: err}
+			return
+		}
+		if !engine.AddBot(bot) {
+			resultCh <- harnessResult{err: errors.New("bot admission failed")}
+			return
+		}
+		confirmation, current := engine.BuildLoadoutConfirmationForSession(bot.BotID, bot)
+		if !current {
+			resultCh <- harnessResult{err: errors.New("admitted session was replaced before confirmation")}
+			return
+		}
+		if err := conn.WriteJSON(confirmation); err != nil {
+			resultCh <- harnessResult{err: err, queued: len(bot.SendChan)}
+			return
+		}
+		resultCh <- harnessResult{queued: len(bot.SendChan)}
+		_ = conn.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+			time.Now().Add(time.Second),
+		)
+	}))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial admission harness: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set admission read deadline: %v", err)
+	}
+	if err := conn.WriteJSON(map[string]interface{}{
+		"type":              "select_loadout",
+		"weapon":            "staff",
+		"stats":             map[string]int{"hp": 1, "speed": 1, "attack": 8, "defense": 10},
+		"fallback_behavior": "aggressive",
+	}); err != nil {
+		t.Fatalf("write selected loadout: %v", err)
+	}
+
+	var confirmations []loadoutConfirmation
+	for {
+		_, payload, err := conn.ReadMessage()
+		if err != nil {
+			var closeErr *websocket.CloseError
+			if errors.As(err, &closeErr) && closeErr.Code == websocket.CloseNormalClosure {
+				break
+			}
+			t.Fatalf("read admission confirmation: %v", err)
+		}
+		var message loadoutConfirmation
+		if err := json.Unmarshal(payload, &message); err != nil {
+			t.Fatalf("decode admission message %q: %v", payload, err)
+		}
+		if message.Type == "loadout_confirmed" {
+			confirmations = append(confirmations, message)
+		}
+	}
+	result := <-resultCh
+	if result.err != nil {
+		t.Fatalf("admission harness failed: %v", result.err)
+	}
+	return confirmations, result.queued
+}
+
+func requireWebSocketCloseCode(t *testing.T, conn *websocket.Conn, want int) {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	_, payload, err := conn.ReadMessage()
+	if err == nil {
+		t.Fatalf("read application payload %q, want close code %d", payload, want)
+	}
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) || closeErr.Code != want {
+		t.Fatalf("read error = %v, want websocket close code %d", err, want)
+	}
+}

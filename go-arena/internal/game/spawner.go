@@ -21,6 +21,11 @@ func SpawnBotAt(bot *BotState, pos Vec2, grid *SpatialGrid, tickCount int) {
 	bot.HP = bot.MaxHP
 	bot.IsAlive = true
 	bot.CooldownRemaining = 0
+	bot.ShoveCooldown = 0
+	bot.PendingAction = nil
+	bot.LastActionResult = nil
+	bot.LastAcceptedServerTick = 0
+	bot.HasAcceptedServerTick = false
 
 	bot.ActiveEffects = nil
 	bot.DodgeCooldown = 0
@@ -34,8 +39,11 @@ func SpawnBotAt(bot *BotState, pos Vec2, grid *SpatialGrid, tickCount int) {
 
 	bot.GrappleCharges = config.C.GrappleChargesPerRound
 	bot.GrappleCooldown = 0
+	bot.MineCount = 0
+	bot.GravityWellCharge = 0
 	bot.BountyTokenBonus = 0
 	bot.TeleportHazardGraceTicks = 0
+	bot.TeleportCooldowns = make(map[string]int)
 	bot.TeleportTouchedPads = make(map[string]bool)
 
 	bot.RoundLifeStartTick = tickCount

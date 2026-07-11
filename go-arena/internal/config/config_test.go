@@ -2,6 +2,26 @@ package config
 
 import "testing"
 
+func TestResolveShoveSettingsUsesWholePositiveGridTiles(t *testing.T) {
+	tests := []struct {
+		name                     string
+		rangeIn, knockbackIn     float64
+		rangeWant, knockbackWant float64
+	}{
+		{name: "defaults remain exact", rangeIn: 1, knockbackIn: 2, rangeWant: 1, knockbackWant: 2},
+		{name: "fractional overrides round once", rangeIn: 1.6, knockbackIn: 3.4, rangeWant: 2, knockbackWant: 3},
+		{name: "nonpositive values use defaults", rangeIn: 0, knockbackIn: -2, rangeWant: DefaultShoveRangeTiles, knockbackWant: DefaultShoveKnockbackTiles},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rangeGot, knockbackGot := resolveShoveSettings(tt.rangeIn, tt.knockbackIn)
+			if rangeGot != tt.rangeWant || knockbackGot != tt.knockbackWant {
+				t.Fatalf("resolveShoveSettings(%v, %v) = (%v, %v), want (%v, %v)", tt.rangeIn, tt.knockbackIn, rangeGot, knockbackGot, tt.rangeWant, tt.knockbackWant)
+			}
+		})
+	}
+}
+
 func TestResolveEloSettings(t *testing.T) {
 	tests := []struct {
 		name                           string
@@ -47,5 +67,98 @@ func TestEloHelpersUseSameDefensiveBounds(t *testing.T) {
 	}
 	if got := ClampElo(99999); got != DefaultEloMax {
 		t.Fatalf("ClampElo(99999) = %d, want %d", got, DefaultEloMax)
+	}
+}
+
+func TestResolveWeaponAutoBalanceSettings(t *testing.T) {
+	tests := []struct {
+		name                             string
+		minDamage, maxDamage             float64
+		minCooldown, maxCooldown         float64
+		maxEvidenceRounds                int
+		wantMinDamage, wantMaxDamage     float64
+		wantMinCooldown, wantMaxCooldown float64
+		wantMaxEvidenceRounds            int
+	}{
+		{
+			name: "valid widened rails", minDamage: 0.65, maxDamage: 1.50,
+			minCooldown: 0.70, maxCooldown: 1.45, maxEvidenceRounds: 72,
+			wantMinDamage: 0.65, wantMaxDamage: 1.50,
+			wantMinCooldown: 0.70, wantMaxCooldown: 1.45, wantMaxEvidenceRounds: 72,
+		},
+		{
+			name: "inverted damage rail falls back", minDamage: 1.20, maxDamage: 0.80,
+			minCooldown: 0.75, maxCooldown: 1.35, maxEvidenceRounds: 48,
+			wantMinDamage: DefaultWeaponAutoBalanceMinDamageScale, wantMaxDamage: DefaultWeaponAutoBalanceMaxDamageScale,
+			wantMinCooldown: 0.75, wantMaxCooldown: 1.35, wantMaxEvidenceRounds: 48,
+		},
+		{
+			name: "rails must contain neutral", minDamage: 1.05, maxDamage: 1.50,
+			minCooldown: 0.20, maxCooldown: 0.90, maxEvidenceRounds: 1,
+			wantMinDamage: DefaultWeaponAutoBalanceMinDamageScale, wantMaxDamage: DefaultWeaponAutoBalanceMaxDamageScale,
+			wantMinCooldown: DefaultWeaponAutoBalanceMinCooldownScale, wantMaxCooldown: DefaultWeaponAutoBalanceMaxCooldownScale,
+			wantMaxEvidenceRounds: DefaultWeaponAutoBalanceMaxEvidenceRounds,
+		},
+		{
+			name: "absolute safety rails reject extreme values", minDamage: 0.01, maxDamage: 9,
+			minCooldown: 0.01, maxCooldown: 9, maxEvidenceRounds: 9999,
+			wantMinDamage: DefaultWeaponAutoBalanceMinDamageScale, wantMaxDamage: DefaultWeaponAutoBalanceMaxDamageScale,
+			wantMinCooldown: DefaultWeaponAutoBalanceMinCooldownScale, wantMaxCooldown: DefaultWeaponAutoBalanceMaxCooldownScale,
+			wantMaxEvidenceRounds: DefaultWeaponAutoBalanceMaxEvidenceRounds,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			minDamage, maxDamage, minCooldown, maxCooldown, maxEvidenceRounds := resolveWeaponAutoBalanceSettings(
+				tt.minDamage, tt.maxDamage, tt.minCooldown, tt.maxCooldown, tt.maxEvidenceRounds,
+			)
+			if minDamage != tt.wantMinDamage || maxDamage != tt.wantMaxDamage ||
+				minCooldown != tt.wantMinCooldown || maxCooldown != tt.wantMaxCooldown ||
+				maxEvidenceRounds != tt.wantMaxEvidenceRounds {
+				t.Fatalf("resolved balance settings = %.2f..%.2f / %.2f..%.2f / %d, want %.2f..%.2f / %.2f..%.2f / %d",
+					minDamage, maxDamage, minCooldown, maxCooldown, maxEvidenceRounds,
+					tt.wantMinDamage, tt.wantMaxDamage, tt.wantMinCooldown, tt.wantMaxCooldown, tt.wantMaxEvidenceRounds)
+			}
+		})
+	}
+}
+
+func TestWeaponAutoBalanceHelpersUseDefensiveDefaults(t *testing.T) {
+	previous := C
+	t.Cleanup(func() { C = previous })
+	C.WeaponAutoBalanceMinDamageScale = 2
+	C.WeaponAutoBalanceMaxDamageScale = 3
+	C.WeaponAutoBalanceMinCooldownScale = -1
+	C.WeaponAutoBalanceMaxCooldownScale = 4
+	C.WeaponAutoBalanceMaxEvidenceRounds = 0
+
+	minDamage, maxDamage := WeaponAutoBalanceDamageBounds()
+	minCooldown, maxCooldown := WeaponAutoBalanceCooldownBounds()
+	if minDamage != DefaultWeaponAutoBalanceMinDamageScale || maxDamage != DefaultWeaponAutoBalanceMaxDamageScale {
+		t.Fatalf("damage bounds = %.2f..%.2f", minDamage, maxDamage)
+	}
+	if minCooldown != DefaultWeaponAutoBalanceMinCooldownScale || maxCooldown != DefaultWeaponAutoBalanceMaxCooldownScale {
+		t.Fatalf("cooldown bounds = %.2f..%.2f", minCooldown, maxCooldown)
+	}
+	if got := WeaponAutoBalanceEvidenceLimit(6); got != DefaultWeaponAutoBalanceMaxEvidenceRounds {
+		t.Fatalf("evidence limit = %d, want %d", got, DefaultWeaponAutoBalanceMaxEvidenceRounds)
+	}
+}
+
+func TestWeaponAutoBalanceStepBounds(t *testing.T) {
+	previous := C
+	t.Cleanup(func() { C = previous })
+
+	C.WeaponAutoBalanceMinStep = 0.004
+	C.WeaponAutoBalanceStartStep = 0.04
+	if minStep, startStep := WeaponAutoBalanceStepBounds(); minStep != 0.004 || startStep != 0.04 {
+		t.Fatalf("valid step bounds = %.3f/%.3f, want 0.004/0.040", minStep, startStep)
+	}
+
+	C.WeaponAutoBalanceMinStep = -1
+	C.WeaponAutoBalanceStartStep = 9
+	if minStep, startStep := WeaponAutoBalanceStepBounds(); minStep != 0.005 || startStep != 0.05 {
+		t.Fatalf("defensive step bounds = %.3f/%.3f, want 0.005/0.050", minStep, startStep)
 	}
 }

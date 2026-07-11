@@ -4,18 +4,37 @@ import "arena-server/internal/config"
 
 // WeaponConfig defines the properties of a weapon type.
 type WeaponConfig struct {
-	Name      string
-	Damage    int
-	Range     float64 // float range (computed from GridRange * CellSize)
-	GridRange int     // range in grid tiles (Chebyshev distance)
-	Cooldown  float64 // seconds
-	Special   string  // "cleave", "projectile", "backstab", "bash", "knockback", "area"
-	Param     float64 // special-specific parameter
-	GridParam int     // special param in grid tiles (e.g. staff area radius)
+	Name        string
+	Damage      int     // rounded display/protocol damage
+	DamageExact float64 // exact adaptive damage used by combat
+	DamageScale float64 // adaptive multiplier used by derived weapon effects
+	Range       float64 // float range (computed from GridRange * CellSize)
+	GridRange   int     // range in grid tiles (Chebyshev distance)
+	Cooldown    float64 // seconds
+	Special     string  // "cleave", "projectile", "backstab", "bash", "knockback", "area"
+	Param       float64 // special-specific parameter
+	GridParam   int     // special param in grid tiles (e.g. staff area radius)
 }
 
 // WeaponConfigs maps weapon name to its effective runtime configuration.
 var WeaponConfigs map[string]WeaponConfig
+
+func weaponDamage(wc *WeaponConfig) float64 {
+	if wc == nil {
+		return 0
+	}
+	if finitePositive(wc.DamageExact) {
+		return wc.DamageExact
+	}
+	return float64(wc.Damage)
+}
+
+func weaponDamageScale(wc *WeaponConfig) float64 {
+	if wc != nil && finitePositive(wc.DamageScale) {
+		return wc.DamageScale
+	}
+	return 1
+}
 
 // GetAvailableWeapons returns the list of all weapon names.
 func GetAvailableWeapons() []string {
