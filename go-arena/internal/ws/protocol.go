@@ -186,6 +186,26 @@ func ActionMessageToAction(msg *ActionMessage) *game.Action {
 	if err := validateActionMessage(msg); err != nil {
 		return nil
 	}
+	return actionMessageToAction(msg)
+}
+
+// prepareActionForBot applies narrowly-scoped wire compatibility before the
+// normal action validation boundary. Historical staff clients sent both a bot
+// target and a target_position for an area attack; the game always preferred
+// the explicit position. Preserve that exact, non-privileged behavior without
+// relaxing the XOR rule for other weapons or grapple actions.
+func prepareActionForBot(bot *game.BotState, msg *ActionMessage) (*game.Action, error) {
+	if bot != nil && bot.Weapon == "staff" && msg != nil && msg.Action == "attack" &&
+		msg.Target != "" && msg.TargetPosition != nil {
+		msg.Target = ""
+	}
+	if err := validateActionMessage(msg); err != nil {
+		return nil, err
+	}
+	return actionMessageToAction(msg), nil
+}
+
+func actionMessageToAction(msg *ActionMessage) *game.Action {
 	actionType := actionStringToType[msg.Action]
 
 	action := &game.Action{

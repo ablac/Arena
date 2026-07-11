@@ -575,14 +575,14 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 				}
 				continue
 			}
-			if err := validateActionMessage(actionMsg); err != nil {
+			action, err := prepareActionForBot(bot, actionMsg)
+			if err != nil {
 				if rejectBotViolation(engine, bot, "Action rejected", "INVALID_ACTION", map[string]interface{}{"error": err.Error()}) {
 					closeForProtocolViolation(conn)
 					return
 				}
 				continue
 			}
-			action := ActionMessageToAction(actionMsg)
 			if err := engine.SubmitBotActionForSession(bot.BotID, bot, actionMsg.Tick, action); err != nil {
 				if errors.Is(err, game.ErrActionSessionReplaced) {
 					return
@@ -621,7 +621,15 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 }
 
 func rejectBotViolation(engine *game.GameEngine, bot *game.BotState, message, code string, details map[string]interface{}) bool {
+	violationCode := code
 	result := botViolationTracker.Record(bot.APIKeyID)
+	slog.Warn("bot protocol violation",
+		"bot", bot.Name,
+		"bot_id", bot.BotID,
+		"code", violationCode,
+		"strikes", result.Strikes,
+		"locked", result.Locked,
+	)
 	message, code, details = violationResponse(message, code, details, result)
 	game.SendStructuredError(bot, message, code, details)
 	disconnectProtocolLockedSession(engine, bot, result)
