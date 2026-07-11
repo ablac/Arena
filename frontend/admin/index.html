@@ -11,7 +11,7 @@
   --text:#c9d1d9;--text2:#8b949e;--accent:#58a6ff;--green:#3fb950;
   --red:#f85149;--orange:#d29922;--purple:#bc8cff;--cyan:#39d353;
 }
-body{font-family:'JetBrains Mono','Fira Code','Courier New',monospace;background:var(--bg);color:var(--text);font-size:13px;overflow:hidden;height:100vh}
+body{font-family:'JetBrains Mono','Fira Code','Courier New',monospace;background:var(--bg);color:var(--text);font-size:13px;overflow:hidden;height:100dvh}
 a{color:var(--accent);text-decoration:none}
 button{font-family:inherit;font-size:12px;cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--text);padding:4px 10px;border-radius:4px}
 button:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
@@ -20,13 +20,13 @@ input,select{font-family:inherit;font-size:12px;background:var(--bg);color:var(-
 input:focus,select:focus{border-color:var(--accent)}
 
 /* Layout */
-#login{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}
+#login{display:flex;align-items:center;justify-content:center;height:100dvh;flex-direction:column;gap:12px}
 #login h1{color:var(--accent);font-size:18px}
 #login input{width:300px;padding:8px 12px}
 #login button{padding:8px 24px}
 #login .error{color:var(--red);font-size:12px;min-height:16px}
 
-#app{display:none;height:100vh;flex-direction:column}
+#app{display:none;height:100dvh;flex-direction:column}
 #header{display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0}
 #header h1{font-size:14px;color:var(--accent)}
 #header .status{display:flex;gap:12px;align-items:center;font-size:11px;color:var(--text2)}
@@ -49,6 +49,7 @@ input:focus,select:focus{border-color:var(--accent)}
 .tab-direct{padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2);border-bottom:2px solid transparent;white-space:nowrap}
 .tab-direct:hover{color:var(--text)}
 .tab-direct.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-direct:focus-visible,.tab-item:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;color:var(--text)}
 
 #content{flex:1;overflow:auto;padding:12px}
 
@@ -627,8 +628,8 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(88,166,255,0.1
 #app.admin-shell{
   display:none;
   grid-template-columns:236px minmax(0,1fr);
-  grid-template-rows:100vh;
-  height:100vh;
+  grid-template-rows:100dvh;
+  height:100dvh;
   overflow:hidden;
   background:#070c12;
 }
@@ -946,9 +947,104 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   border-radius:8px;
   background:rgba(7,11,17,0.76);
 }
+#panel-cosmetics .ops-shell{max-width:1320px;margin:0;gap:14px}
+.cosmetics-admin-summary{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:10px;
+}
+.cosmetics-admin-metric{
+  display:grid;
+  gap:4px;
+  min-width:0;
+  padding:12px 14px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:var(--bg2);
+}
+.cosmetics-admin-metric span{color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:.12em}
+.cosmetics-admin-metric strong{color:var(--accent);font-size:18px;overflow-wrap:anywhere}
+.cosmetics-admin-layout{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 350px;
+  gap:14px;
+  align-items:start;
+}
+.cosmetics-admin-workbench,.cosmetics-admin-sidebar{display:grid;gap:14px;min-width:0}
+.cosmetics-admin-sidebar{position:sticky;top:10px}
+.cosmetics-admin-heading{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:14px;
+}
+.cosmetics-admin-heading h3{margin-bottom:4px}
+.cosmetics-admin-heading button{min-height:36px;flex:0 0 auto}
+.cosmetics-admin-list{
+  display:grid;
+  gap:7px;
+  min-height:44px;
+  margin-top:12px;
+}
+.cosmetics-admin-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:12px;
+  align-items:center;
+  min-width:0;
+  padding:10px 11px;
+  border:1px solid var(--border);
+  border-radius:7px;
+  background:var(--bg);
+}
+.cosmetics-admin-row-main{display:grid;gap:3px;min-width:0}
+.cosmetics-admin-row-title{color:var(--text);font-weight:800;overflow-wrap:anywhere}
+.cosmetics-admin-row-meta{color:var(--text2);font-size:11px;overflow-wrap:anywhere}
+.cosmetics-admin-row-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.cosmetics-admin-editor{
+  margin-top:12px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:var(--bg);
+}
+.cosmetics-admin-editor summary{
+  min-height:44px;
+  display:flex;
+  align-items:center;
+  padding:9px 12px;
+  color:var(--accent);
+  cursor:pointer;
+  font-weight:800;
+}
+.cosmetics-admin-editor[open] summary{border-bottom:1px solid var(--border)}
+.cosmetics-admin-form{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:12px;
+  padding:14px;
+}
+.cosmetics-admin-form label{display:grid;gap:5px;color:var(--text2);font-size:11px}
+.cosmetics-admin-form :is(input,select,textarea){width:100%;min-width:0;font-size:12px}
+.cosmetics-admin-form textarea{background:var(--bg);resize:vertical}
+.cosmetics-form-wide{grid-column:1/-1}
+.cosmetics-check{display:flex!important;grid-template-columns:auto minmax(0,1fr);align-items:center;min-height:36px}
+.cosmetics-check input{width:18px!important;height:18px}
+.cosmetics-admin-form fieldset{
+  min-width:0;
+  padding:10px;
+  border:1px solid var(--border);
+  border-radius:7px;
+}
+.cosmetics-admin-form legend{padding:0 5px;color:var(--text2);font-size:11px}
+.cosmetics-item-picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px}
+.cosmetics-item-picker label{display:flex;grid-template-columns:none;align-items:center;gap:7px;min-height:36px}
+.cosmetics-item-picker input{width:18px!important;height:18px}
+.cosmetics-form-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.cosmetics-admin-audit{display:grid;gap:7px;max-height:420px;margin-top:10px;overflow:auto;scrollbar-gutter:stable}
 @media(max-width:980px){
   #app.admin-shell{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
   .admin-sidebar{position:relative;max-height:260px}
+  .admin-sidebar :is(.tab-direct,.tab-item){min-height:44px}
   #header.admin-command-bar{grid-template-columns:1fr}
   .admin-actions{justify-content:flex-start}
   .admin-utility-actions{margin-left:0}
@@ -956,7 +1052,32 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   #panel-controls .ops-grid,
   #panel-controls .builder-layout,
   #panel-controls .map-workshop,
-  #panel-broadcasts .broadcast-layout{grid-template-columns:1fr}
+  #panel-broadcasts .broadcast-layout,
+  .cosmetics-admin-layout{grid-template-columns:1fr}
+  .cosmetics-admin-sidebar{position:static}
+  #panel-cosmetics button,
+  .cosmetics-check,
+  .cosmetics-item-picker label{min-height:44px}
+  .cosmetics-admin-form :is(input:not([type="checkbox"]),select,textarea){min-height:44px;font-size:16px}
+}
+@media(pointer:coarse){
+  #panel-cosmetics button,
+  .cosmetics-check,
+  .cosmetics-item-picker label{min-height:44px}
+  .cosmetics-admin-form :is(input:not([type="checkbox"]),select,textarea){min-height:44px;font-size:16px}
+}
+@media(max-width:640px){
+  .cosmetics-admin-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cosmetics-admin-heading{align-items:stretch;flex-direction:column}
+  .cosmetics-admin-heading button,
+  .cosmetics-admin-row-actions button,
+  .cosmetics-form-actions button{min-height:44px}
+  .cosmetics-admin-row{grid-template-columns:1fr}
+  .cosmetics-admin-row-actions{justify-content:flex-start}
+  .cosmetics-admin-form{grid-template-columns:1fr;padding:12px}
+  .cosmetics-form-wide{grid-column:auto}
+  .cosmetics-admin-form :is(input:not([type="checkbox"]),select,textarea){min-height:44px;font-size:16px}
+  .cosmetics-admin-form textarea{min-height:96px}
 }
 </style>
 <script src="sse-parser.js?v=20260710a"></script>
@@ -1036,6 +1157,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
       <div class="tab-dropdown">
         <div class="tab-item" data-tab="controls"><span class="tab-dot" style="background:var(--orange)"></span>Game Config</div>
         <div class="tab-item" data-tab="broadcasts">Site Broadcast</div>
+        <div class="tab-item" data-tab="cosmetics"><span class="tab-dot" style="background:var(--purple)"></span>Cosmetics Shop</div>
         <div class="tab-item" data-tab="rounds">Round History</div>
         <div class="tab-item" data-tab="leaderboard">Leaderboard</div>
         <div class="tab-item" data-tab="connlog">Connection Log</div>
@@ -1600,6 +1722,149 @@ tr:hover td{background:rgba(88,166,255,0.07)}
       </div>
     </div>
 
+    <!-- Cosmetics Shop Panel -->
+    <div class="panel" id="panel-cosmetics">
+      <div class="ops-shell cosmetics-admin-shell">
+        <section class="cosmetics-admin-summary" aria-label="Cosmetic catalog summary">
+          <div class="cosmetics-admin-metric"><span>Categories</span><strong id="cosmeticCategoryCount">--</strong></div>
+          <div class="cosmetics-admin-metric"><span>Packs</span><strong id="cosmeticPackCount">--</strong></div>
+          <div class="cosmetics-admin-metric"><span>Items</span><strong id="cosmeticItemCount">--</strong></div>
+          <div class="cosmetics-admin-metric"><span>Checkout</span><strong id="cosmeticCheckoutState">Disabled</strong></div>
+        </section>
+
+        <div class="cosmetics-admin-layout">
+          <div class="cosmetics-admin-workbench">
+            <section class="ops-card">
+              <div class="cosmetics-admin-heading">
+                <div>
+                  <h3>Catalog Categories</h3>
+                  <p class="muted">Organize the shop without changing any gameplay slot or renderer asset.</p>
+                </div>
+                <button type="button" onclick="startCosmeticCategoryCreate()">New category</button>
+              </div>
+              <div id="cosmeticCategoryList" class="cosmetics-admin-list" aria-live="polite">Loading categories...</div>
+              <details class="cosmetics-admin-editor" id="cosmeticCategoryEditor">
+                <summary>Add or edit category</summary>
+                <form id="cosmeticCategoryForm" class="cosmetics-admin-form" onsubmit="saveCosmeticCategory(event)">
+                  <label>Category ID<input id="cosmeticCategoryID" maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" required></label>
+                  <label>Name<input id="cosmeticCategoryName" maxlength="100" required></label>
+                  <label class="cosmetics-form-wide">Description<textarea id="cosmeticCategoryDescription" maxlength="500" rows="3"></textarea></label>
+                  <label>Sort order<input id="cosmeticCategorySort" type="number" min="0" max="1000000" value="0" required></label>
+                  <label class="cosmetics-check"><input id="cosmeticCategoryActive" type="checkbox" checked> Active in catalog</label>
+                  <div class="cosmetics-form-actions cosmetics-form-wide">
+                    <button class="btn-success" type="submit">Save category</button>
+                    <button type="button" onclick="resetCosmeticCategoryForm()">Clear</button>
+                  </div>
+                </form>
+              </details>
+              <div class="ctrl-result" id="cosmeticCategoryResult" role="status" aria-live="polite"></div>
+            </section>
+
+            <section class="ops-card">
+              <div class="cosmetics-admin-heading">
+                <div>
+                  <h3>Packs &amp; Pricing</h3>
+                  <p class="muted">Curate presentation-only bundles. Prices are stored in the currency's smallest unit; 99 means $0.99 USD.</p>
+                </div>
+                <button type="button" onclick="startCosmeticPackCreate()">New pack</button>
+              </div>
+              <div id="cosmeticPackList" class="cosmetics-admin-list" aria-live="polite">Loading packs...</div>
+              <details class="cosmetics-admin-editor" id="cosmeticPackEditor">
+                <summary>Add or edit pack</summary>
+                <form id="cosmeticPackForm" class="cosmetics-admin-form" onsubmit="saveCosmeticPack(event)">
+                  <label>Pack ID<input id="cosmeticPackID" maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" required></label>
+                  <label>Name<input id="cosmeticPackName" maxlength="100" required></label>
+                  <label>Category<select id="cosmeticPackCategory" required><option value="">Select category</option></select></label>
+                  <label>Price (minor unit)<input id="cosmeticPackPrice" type="number" min="0" max="1000000" step="1" inputmode="numeric" value="99" required></label>
+                  <label>Currency<input id="cosmeticPackCurrency" value="USD" maxlength="3" pattern="[A-Z]{3}" required></label>
+                  <label>Sort order<input id="cosmeticPackSort" type="number" min="0" max="1000000" value="0" required></label>
+                  <label class="cosmetics-form-wide">Description<textarea id="cosmeticPackDescription" maxlength="500" rows="3"></textarea></label>
+                  <fieldset class="cosmetics-form-wide">
+                    <legend>Pack contents</legend>
+                    <div id="cosmeticPackItems" class="cosmetics-item-picker">Load the catalog to choose items.</div>
+                  </fieldset>
+                  <label class="cosmetics-check"><input id="cosmeticPackFree" type="checkbox"> Free pack</label>
+                  <label class="cosmetics-check"><input id="cosmeticPackPurchasable" type="checkbox"> Sale-ready metadata</label>
+                  <label class="cosmetics-check"><input id="cosmeticPackActive" type="checkbox" checked> Active in catalog</label>
+                  <div class="cosmetics-form-actions cosmetics-form-wide">
+                    <button class="btn-success" type="submit">Save pack</button>
+                    <button type="button" onclick="resetCosmeticPackForm()">Clear</button>
+                  </div>
+                </form>
+              </details>
+              <div class="ctrl-result" id="cosmeticPackResult" role="status" aria-live="polite"></div>
+            </section>
+
+            <section class="ops-card">
+              <div class="cosmetics-admin-heading">
+                <div>
+                  <h3>Individual Items</h3>
+                  <p class="muted">Edit customer-facing names, categories, prices, rarity, ordering, and visibility. Slot and local asset key stay immutable after creation.</p>
+                </div>
+                <button type="button" onclick="startCosmeticItemCreate()">New item</button>
+              </div>
+              <div id="cosmeticItemList" class="cosmetics-admin-list cosmetics-item-list" aria-live="polite">Loading items...</div>
+              <details class="cosmetics-admin-editor" id="cosmeticItemEditor">
+                <summary>Add or edit item</summary>
+                <form id="cosmeticItemForm" class="cosmetics-admin-form" onsubmit="saveCosmeticItem(event)">
+                  <label>Item ID<input id="cosmeticItemID" maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" required></label>
+                  <label>Name<input id="cosmeticItemName" maxlength="100" required></label>
+                  <label>Category<select id="cosmeticItemCategory" required><option value="">Select category</option></select></label>
+                  <label>Slot<select id="cosmeticItemSlot" required><option value="bot_skin">Bot skin</option><option value="weapon_skin">Weapon finish</option><option value="attachment">Attachment</option></select></label>
+                  <label>Local asset key<input id="cosmeticItemAssetKey" maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" required></label>
+                  <label>Rarity<input id="cosmeticItemRarity" value="common" maxlength="32" pattern="[a-z][a-z0-9_-]*" required></label>
+                  <label>Price (minor unit)<input id="cosmeticItemPrice" type="number" min="0" max="1000000" step="1" inputmode="numeric" value="0" required></label>
+                  <label>Currency<input id="cosmeticItemCurrency" value="USD" maxlength="3" pattern="[A-Z]{3}" required></label>
+                  <label>Sort order<input id="cosmeticItemSort" type="number" min="0" max="1000000" value="0" required></label>
+                  <label class="cosmetics-form-wide">Description<textarea id="cosmeticItemDescription" maxlength="500" rows="3"></textarea></label>
+                  <label class="cosmetics-check"><input id="cosmeticItemFree" type="checkbox"> Free item</label>
+                  <label class="cosmetics-check"><input id="cosmeticItemPurchasable" type="checkbox"> Sale-ready metadata</label>
+                  <label class="cosmetics-check"><input id="cosmeticItemActive" type="checkbox" checked> Active in catalog</label>
+                  <div class="cosmetics-form-actions cosmetics-form-wide">
+                    <button class="btn-success" type="submit">Save item</button>
+                    <button type="button" onclick="resetCosmeticItemForm()">Clear</button>
+                  </div>
+                </form>
+              </details>
+              <div class="ctrl-result" id="cosmeticItemResult" role="status" aria-live="polite"></div>
+            </section>
+          </div>
+
+          <aside class="cosmetics-admin-sidebar">
+            <section class="ops-card">
+              <h3>Customer Licenses</h3>
+              <p class="muted">Grant ownership to the purchaser's email account. Bot assignment happens separately in the Bot Dashboard and never alters combat stats.</p>
+              <div class="form-stack" style="margin-top:10px">
+                <label>Customer email<input id="cosmeticGrantEmail" type="email" autocomplete="off" placeholder="purchaser@example.com"></label>
+                <label>Cosmetic<select id="cosmeticGrantItem"><option value="">Loading catalog...</option></select></label>
+                <label>Source<input id="cosmeticGrantSource" value="manual" maxlength="32"></label>
+                <label>External reference<input id="cosmeticGrantReference" placeholder="Order, line item, or support ticket ID" maxlength="160" required></label>
+                <div class="ops-command-row">
+                  <button class="btn-success" id="cosmeticGrantButton" onclick="grantCosmeticLicense()">Grant account license</button>
+                </div>
+                <label>License ID<input id="cosmeticRevokeLicense" placeholder="Exact license UUID"></label>
+                <div class="ops-command-row">
+                  <button class="btn-danger" id="cosmeticRevokeButton" onclick="revokeCosmeticLicense()">Revoke exact license</button>
+                </div>
+              </div>
+              <div class="ctrl-result" id="cosmeticGrantResult" role="status" aria-live="polite"></div>
+            </section>
+
+            <section class="ops-card">
+              <div class="cosmetics-admin-heading">
+                <div>
+                  <h3>Catalog Audit</h3>
+                  <p class="muted">Recent create, update, and delete operations.</p>
+                </div>
+                <button type="button" onclick="loadCosmeticCatalogAudit()">Refresh</button>
+              </div>
+              <div id="cosmeticCatalogAudit" class="cosmetics-admin-audit">Loading audit trail...</div>
+            </section>
+          </aside>
+        </div>
+      </div>
+    </div>
+
     <!-- Controls Panel -->
     <div class="panel" id="panel-controls">
       <div class="ops-shell">
@@ -1777,24 +2042,6 @@ tr:hover td{background:rgba(88,166,255,0.07)}
               <div class="ctrl-result" id="exportResult"></div>
             </section>
             <section class="ops-card">
-              <h3>Cosmetic Licenses</h3>
-              <p class="muted">Grant ownership to the purchaser's email account. Bot assignment happens separately in the Bot Dashboard and never alters combat stats.</p>
-              <div class="form-stack" style="margin-top:10px">
-                <label>Customer email<input id="cosmeticGrantEmail" type="email" autocomplete="off" placeholder="purchaser@example.com"></label>
-                <label>Cosmetic<select id="cosmeticGrantItem"><option value="">Loading catalog...</option></select></label>
-                <label>Source<input id="cosmeticGrantSource" value="manual" maxlength="32"></label>
-                <label>External reference<input id="cosmeticGrantReference" placeholder="Order, line item, or support ticket ID" maxlength="160" required></label>
-                <div class="ops-command-row">
-                  <button class="btn-success" id="cosmeticGrantButton" onclick="grantCosmeticLicense()">Grant account license</button>
-                </div>
-                <label>License ID<input id="cosmeticRevokeLicense" placeholder="Exact license UUID"></label>
-                <div class="ops-command-row">
-                  <button class="btn-danger" id="cosmeticRevokeButton" onclick="revokeCosmeticLicense()">Revoke exact license</button>
-                </div>
-              </div>
-              <div class="ctrl-result" id="cosmeticGrantResult"></div>
-            </section>
-            <section class="ops-card">
               <h3 style="color:var(--red)">Destructive Data</h3>
               <div class="ops-command-row">
                 <button class="btn-danger" onclick="resetLeaderboard()">Reset Leaderboard</button>
@@ -1905,6 +2152,7 @@ const PANEL_META = {
   leaderboard: ['Operate', 'Leaderboard', 'Rank bot performance across selectable periods.'],
   connlog: ['Observe', 'Connection Log', 'Historical connection stream for dashboard review.'],
   broadcasts: ['Tune + Publish', 'Site Broadcast', 'Publish, clear, and review site-wide visitor notices.'],
+  cosmetics: ['Tune + Publish', 'Cosmetics Shop', 'Manage categories, packs, prices, catalog visibility, and exact customer licenses.'],
   controls: ['Tune', 'Operations Console', 'Configure gameplay, demo bots, maps, and release updates.']
 };
 
@@ -2164,7 +2412,10 @@ function addLogEntry(logType, evt) {
 // ========== Tabs ==========
 function switchTab(tabName, sourceItem=null) {
   // Clear all active states
-  document.querySelectorAll('.tab-direct,.tab-item').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-direct,.tab-item').forEach(t => {
+    t.classList.remove('active');
+    t.removeAttribute('aria-current');
+  });
   document.querySelectorAll('.tab-group-label').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
 
@@ -2172,7 +2423,10 @@ function switchTab(tabName, sourceItem=null) {
   const item = sourceItem ||
                document.querySelector(`.tab-item[data-tab="${tabName}"]`) ||
                document.querySelector(`.tab-direct[data-tab="${tabName}"]`);
-  if (item) item.classList.add('active');
+  if (item) {
+    item.classList.add('active');
+    item.setAttribute('aria-current', 'page');
+  }
 
   // Highlight parent group label
   const group = item?.closest('.tab-group');
@@ -2193,6 +2447,7 @@ function switchTab(tabName, sourceItem=null) {
   if (currentTab === 'ratelimits') refreshRateLimits();
   if (currentTab === 'controls') { loadOpsConsole(); }
   if (currentTab === 'broadcasts') { loadBroadcasts(); }
+  if (currentTab === 'cosmetics') { loadCosmeticsAdmin(); }
   if (currentTab === 'rounds') refreshRounds();
   if (currentTab === 'killfeed') renderKillFeedStats();
   if (currentTab === 'balance') refreshBalance();
@@ -2203,18 +2458,30 @@ function switchTab(tabName, sourceItem=null) {
   if (currentTab === 'controls') renderConfigHistory();
 }
 
+function setupAdminTab(tab, closeDropdown=false) {
+  tab.setAttribute('role', 'button');
+  tab.setAttribute('tabindex', '0');
+  tab.setAttribute('aria-controls', 'panel-' + tab.dataset.tab);
+  const activate = event => {
+    switchTab(tab.dataset.tab, tab);
+    if (closeDropdown) event.stopPropagation();
+  };
+  tab.addEventListener('click', activate);
+  tab.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    activate(event);
+  });
+}
+
 // Direct tab clicks
 document.querySelectorAll('.tab-direct').forEach(tab => {
-  tab.addEventListener('click', () => switchTab(tab.dataset.tab, tab));
+  setupAdminTab(tab);
 });
 
 // Dropdown item clicks
 document.querySelectorAll('.tab-item').forEach(item => {
-  item.addEventListener('click', (e) => {
-    switchTab(item.dataset.tab, item);
-    // Close dropdown after click
-    e.stopPropagation();
-  });
+  setupAdminTab(item, true);
 });
 
 // ========== Overview ==========
@@ -3615,6 +3882,7 @@ const OPS_CONFIG_FIELDS = OPS_CONFIG_GROUPS.flatMap(g => g.fields);
 let opsDemoTemplates = [];
 let opsSelectedDemoTemplate = '';
 let opsMapSettings = null;
+let cosmeticAdminCatalog = {categories:[], packs:[], items:[], checkout_enabled:false};
 let activeConfigGroup = 'all';
 
 async function loadOpsConsole() {
@@ -4309,6 +4577,384 @@ async function resetLeaderboard() {
     el.textContent = 'Reset failed: ' + (e.message || 'unknown error');
     el.style.color = 'var(--red)';
     toast('Leaderboard reset failed: ' + (e.message || 'unknown error'), 'error');
+  }
+}
+
+async function loadCosmeticsAdmin() {
+  const lists = ['cosmeticCategoryList','cosmeticPackList','cosmeticItemList'];
+  try {
+    const data = await api('/cosmetics/catalog');
+    cosmeticAdminCatalog = {
+      categories: Array.isArray(data.categories) ? data.categories : [],
+      packs: Array.isArray(data.packs) ? data.packs : [],
+      items: Array.isArray(data.items) ? data.items : [],
+      checkout_enabled: data.checkout_enabled === true,
+    };
+    renderCosmeticAdminCatalog();
+  } catch (e) {
+    lists.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = 'Catalog unavailable: ' + (e.message || 'unknown error');
+    });
+    toast('Cosmetic catalog failed to load', 'error');
+  }
+  await Promise.allSettled([loadCosmeticCatalog(), loadCosmeticCatalogAudit()]);
+}
+
+function cosmeticPriceLabel(entry) {
+  if (entry?.is_free) return 'Free';
+  const cents = Number(entry?.price_cents || 0);
+  const currency = String(entry?.currency || 'USD').toUpperCase();
+  try {
+    return new Intl.NumberFormat(undefined, {style:'currency', currency}).format(cents / 100);
+  } catch (_) {
+    return currency + ' ' + (cents / 100).toFixed(2);
+  }
+}
+
+function cosmeticCatalogState(entry) {
+  if (entry?.is_active !== true) return 'inactive';
+  if (entry?.is_free === true) return 'free';
+  if (entry?.is_purchasable === true) return 'sale-ready';
+  return 'preview';
+}
+
+function renderCosmeticAdminCatalog() {
+  const categories = cosmeticAdminCatalog.categories;
+  const packs = cosmeticAdminCatalog.packs;
+  const items = cosmeticAdminCatalog.items;
+  // A category/item mutation can refresh the catalog while another editor is
+  // open. Capture that editor's unsaved relationships before replacing its
+  // select options and pack checkboxes.
+  const packEditorOpen = document.getElementById('cosmeticPackEditor').open;
+  const itemEditorOpen = document.getElementById('cosmeticItemEditor').open;
+  const packCategorySelect = document.getElementById('cosmeticPackCategory');
+  const itemCategorySelect = document.getElementById('cosmeticItemCategory');
+  const preservedPackCategory = packEditorOpen ? packCategorySelect.value : '';
+  const preservedItemCategory = itemEditorOpen ? itemCategorySelect.value : '';
+  const preservedPackItemIDs = packEditorOpen
+    ? Array.from(document.querySelectorAll('[data-cosmetic-pack-item]:checked')).map(input => input.value)
+    : [];
+  document.getElementById('cosmeticCategoryCount').textContent = String(categories.length);
+  document.getElementById('cosmeticPackCount').textContent = String(packs.length);
+  document.getElementById('cosmeticItemCount').textContent = String(items.length);
+  const checkout = document.getElementById('cosmeticCheckoutState');
+  checkout.textContent = cosmeticAdminCatalog.checkout_enabled ? 'Enabled' : 'Disabled';
+  checkout.style.color = cosmeticAdminCatalog.checkout_enabled ? 'var(--green)' : 'var(--orange)';
+
+  const categoryList = document.getElementById('cosmeticCategoryList');
+  categoryList.innerHTML = categories.length ? categories.map(category => `
+    <article class="cosmetics-admin-row">
+      <div class="cosmetics-admin-row-main">
+        <div class="cosmetics-admin-row-title">${esc(category.name || category.id)}</div>
+        <div class="cosmetics-admin-row-meta">${esc(category.id)} · order ${Number(category.sort_order || 0)} · ${category.is_active ? 'active' : 'inactive'}</div>
+      </div>
+      <div class="cosmetics-admin-row-actions">
+        <button type="button" onclick="editCosmeticCategory('${escAttr(category.id)}')">Edit</button>
+        <button type="button" class="btn-danger" onclick="deleteCosmeticCategory('${escAttr(category.id)}')">Delete</button>
+      </div>
+    </article>`).join('') : '<div class="muted">No catalog categories.</div>';
+
+  const packList = document.getElementById('cosmeticPackList');
+  packList.innerHTML = packs.length ? packs.map(pack => {
+    const count = Array.isArray(pack.item_ids) ? pack.item_ids.length : (Array.isArray(pack.items) ? pack.items.length : 0);
+    return `
+      <article class="cosmetics-admin-row">
+        <div class="cosmetics-admin-row-main">
+          <div class="cosmetics-admin-row-title">${esc(pack.name || pack.id)} <span style="color:var(--orange)">${esc(cosmeticPriceLabel(pack))}</span></div>
+          <div class="cosmetics-admin-row-meta">${esc(pack.category_id || '')} · ${count} items · ${cosmeticCatalogState(pack)} · order ${Number(pack.sort_order || 0)}</div>
+        </div>
+        <div class="cosmetics-admin-row-actions">
+          <button type="button" onclick="editCosmeticPack('${escAttr(pack.id)}')">Edit</button>
+          <button type="button" class="btn-danger" onclick="deleteCosmeticPack('${escAttr(pack.id)}')">Delete</button>
+        </div>
+      </article>`;
+  }).join('') : '<div class="muted">No cosmetic packs.</div>';
+
+  const itemList = document.getElementById('cosmeticItemList');
+  itemList.innerHTML = items.length ? items.map(item => `
+    <article class="cosmetics-admin-row">
+      <div class="cosmetics-admin-row-main">
+        <div class="cosmetics-admin-row-title">${esc(item.name || item.id)} <span style="color:var(--orange)">${esc(cosmeticPriceLabel(item))}</span></div>
+        <div class="cosmetics-admin-row-meta">${esc(item.slot || '')} · ${esc(item.category_id || '')} · ${esc(item.rarity || 'common')} · ${cosmeticCatalogState(item)}</div>
+      </div>
+      <div class="cosmetics-admin-row-actions">
+        <button type="button" onclick="editCosmeticItem('${escAttr(item.id)}')">Edit</button>
+        <button type="button" class="btn-danger" onclick="deleteCosmeticItem('${escAttr(item.id)}')">Delete</button>
+      </div>
+    </article>`).join('') : '<div class="muted">No individual cosmetic items.</div>';
+
+  const categoryOptions = '<option value="">Select category</option>' + categories.map(category =>
+    `<option value="${escAttr(category.id)}">${esc(category.name || category.id)}${category.is_active ? '' : ' (inactive)'}</option>`
+  ).join('');
+  packCategorySelect.innerHTML = categoryOptions;
+  itemCategorySelect.innerHTML = categoryOptions;
+  if (packEditorOpen && categories.some(category => category.id === preservedPackCategory)) {
+    packCategorySelect.value = preservedPackCategory;
+  }
+  if (itemEditorOpen && categories.some(category => category.id === preservedItemCategory)) {
+    itemCategorySelect.value = preservedItemCategory;
+  }
+  renderCosmeticPackItemPicker(preservedPackItemIDs);
+}
+
+function renderCosmeticPackItemPicker(selectedIDs) {
+  const selected = new Set(selectedIDs || []);
+  const root = document.getElementById('cosmeticPackItems');
+  const items = cosmeticAdminCatalog.items;
+  root.innerHTML = items.length ? items.map(item => `
+    <label>
+      <input type="checkbox" data-cosmetic-pack-item value="${escAttr(item.id)}" ${selected.has(item.id) ? 'checked' : ''}>
+      <span>${esc(item.name || item.id)} <span class="muted">(${esc(item.slot || '')})</span></span>
+    </label>`).join('') : '<span class="muted">Create an item before building a pack.</span>';
+}
+
+function setCosmeticFormBusy(form, busy) {
+  const submit = form?.querySelector('button[type="submit"]');
+  if (submit) submit.disabled = busy;
+}
+
+function resetCosmeticCategoryForm() {
+  const form = document.getElementById('cosmeticCategoryForm');
+  form.reset();
+  document.getElementById('cosmeticCategoryID').readOnly = false;
+}
+
+function startCosmeticCategoryCreate() {
+  resetCosmeticCategoryForm();
+  document.getElementById('cosmeticCategoryEditor').open = true;
+  document.getElementById('cosmeticCategoryID').focus();
+}
+
+function editCosmeticCategory(id) {
+  const category = cosmeticAdminCatalog.categories.find(entry => entry.id === id);
+  if (!category) return;
+  document.getElementById('cosmeticCategoryID').value = category.id;
+  document.getElementById('cosmeticCategoryID').readOnly = true;
+  document.getElementById('cosmeticCategoryName').value = category.name || '';
+  document.getElementById('cosmeticCategoryDescription').value = category.description || '';
+  document.getElementById('cosmeticCategorySort').value = Number(category.sort_order || 0);
+  document.getElementById('cosmeticCategoryActive').checked = category.is_active === true;
+  document.getElementById('cosmeticCategoryEditor').open = true;
+}
+
+async function saveCosmeticCategory(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (form.querySelector('button[type="submit"]')?.disabled) return;
+  const id = document.getElementById('cosmeticCategoryID').value.trim();
+  const payload = {
+    name: document.getElementById('cosmeticCategoryName').value.trim(),
+    description: document.getElementById('cosmeticCategoryDescription').value.trim(),
+    sort_order: Number(document.getElementById('cosmeticCategorySort').value || 0),
+    is_active: document.getElementById('cosmeticCategoryActive').checked,
+  };
+  const result = document.getElementById('cosmeticCategoryResult');
+  setCosmeticFormBusy(form, true);
+  try {
+    await api('/cosmetics/categories/' + encodeURIComponent(id), {method:'PUT', body:JSON.stringify(payload)});
+    result.textContent = 'Category saved: ' + id;
+    result.style.color = 'var(--green)';
+    toast('Cosmetic category saved', 'success');
+    logAudit('COSMETIC_CATEGORY_SAVE', id);
+    resetCosmeticCategoryForm();
+    await loadCosmeticsAdmin();
+  } catch (e) {
+    result.textContent = 'Category save failed: ' + (e.message || 'unknown error');
+    result.style.color = 'var(--red)';
+  } finally {
+    setCosmeticFormBusy(form, false);
+  }
+}
+
+function resetCosmeticPackForm() {
+  const form = document.getElementById('cosmeticPackForm');
+  form.reset();
+  document.getElementById('cosmeticPackID').readOnly = false;
+  document.getElementById('cosmeticPackPrice').value = 99;
+  document.getElementById('cosmeticPackCurrency').value = 'USD';
+  renderCosmeticPackItemPicker([]);
+}
+
+function startCosmeticPackCreate() {
+  resetCosmeticPackForm();
+  document.getElementById('cosmeticPackEditor').open = true;
+  document.getElementById('cosmeticPackID').focus();
+}
+
+function editCosmeticPack(id) {
+  const pack = cosmeticAdminCatalog.packs.find(entry => entry.id === id);
+  if (!pack) return;
+  document.getElementById('cosmeticPackID').value = pack.id;
+  document.getElementById('cosmeticPackID').readOnly = true;
+  document.getElementById('cosmeticPackName').value = pack.name || '';
+  document.getElementById('cosmeticPackCategory').value = pack.category_id || '';
+  document.getElementById('cosmeticPackPrice').value = Number(pack.price_cents || 0);
+  document.getElementById('cosmeticPackCurrency').value = String(pack.currency || 'USD').toUpperCase();
+  document.getElementById('cosmeticPackSort').value = Number(pack.sort_order || 0);
+  document.getElementById('cosmeticPackDescription').value = pack.description || '';
+  document.getElementById('cosmeticPackFree').checked = pack.is_free === true;
+  document.getElementById('cosmeticPackPurchasable').checked = pack.is_purchasable === true;
+  document.getElementById('cosmeticPackActive').checked = pack.is_active === true;
+  renderCosmeticPackItemPicker(Array.isArray(pack.item_ids) ? pack.item_ids : (pack.items || []).map(item => item.id));
+  document.getElementById('cosmeticPackEditor').open = true;
+}
+
+async function saveCosmeticPack(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (form.querySelector('button[type="submit"]')?.disabled) return;
+  const id = document.getElementById('cosmeticPackID').value.trim();
+  const isFree = document.getElementById('cosmeticPackFree').checked;
+  const payload = {
+    name: document.getElementById('cosmeticPackName').value.trim(),
+    category_id: document.getElementById('cosmeticPackCategory').value,
+    description: document.getElementById('cosmeticPackDescription').value.trim(),
+    price_cents: isFree ? 0 : Number(document.getElementById('cosmeticPackPrice').value || 0),
+    currency: document.getElementById('cosmeticPackCurrency').value.trim().toUpperCase(),
+    sort_order: Number(document.getElementById('cosmeticPackSort').value || 0),
+    item_ids: Array.from(document.querySelectorAll('[data-cosmetic-pack-item]:checked')).map(input => input.value),
+    is_free: isFree,
+    is_purchasable: !isFree && document.getElementById('cosmeticPackPurchasable').checked,
+    is_active: document.getElementById('cosmeticPackActive').checked,
+  };
+  const result = document.getElementById('cosmeticPackResult');
+  setCosmeticFormBusy(form, true);
+  try {
+    await api('/cosmetics/packs/' + encodeURIComponent(id), {method:'PUT', body:JSON.stringify(payload)});
+    result.textContent = 'Pack saved: ' + id + ' at ' + cosmeticPriceLabel(payload);
+    result.style.color = 'var(--green)';
+    toast('Cosmetic pack saved', 'success');
+    logAudit('COSMETIC_PACK_SAVE', id);
+    resetCosmeticPackForm();
+    await loadCosmeticsAdmin();
+  } catch (e) {
+    result.textContent = 'Pack save failed: ' + (e.message || 'unknown error');
+    result.style.color = 'var(--red)';
+  } finally {
+    setCosmeticFormBusy(form, false);
+  }
+}
+
+function resetCosmeticItemForm() {
+  const form = document.getElementById('cosmeticItemForm');
+  form.reset();
+  document.getElementById('cosmeticItemID').readOnly = false;
+  document.getElementById('cosmeticItemSlot').disabled = false;
+  document.getElementById('cosmeticItemAssetKey').readOnly = false;
+  document.getElementById('cosmeticItemCurrency').value = 'USD';
+  document.getElementById('cosmeticItemRarity').value = 'common';
+}
+
+function startCosmeticItemCreate() {
+  resetCosmeticItemForm();
+  document.getElementById('cosmeticItemEditor').open = true;
+  document.getElementById('cosmeticItemID').focus();
+}
+
+function editCosmeticItem(id) {
+  const item = cosmeticAdminCatalog.items.find(entry => entry.id === id);
+  if (!item) return;
+  document.getElementById('cosmeticItemID').value = item.id;
+  document.getElementById('cosmeticItemID').readOnly = true;
+  document.getElementById('cosmeticItemName').value = item.name || '';
+  document.getElementById('cosmeticItemCategory').value = item.category_id || '';
+  document.getElementById('cosmeticItemSlot').value = item.slot || 'bot_skin';
+  document.getElementById('cosmeticItemSlot').disabled = true;
+  document.getElementById('cosmeticItemAssetKey').value = item.asset_key || '';
+  document.getElementById('cosmeticItemAssetKey').readOnly = true;
+  document.getElementById('cosmeticItemRarity').value = item.rarity || 'common';
+  document.getElementById('cosmeticItemPrice').value = Number(item.price_cents || 0);
+  document.getElementById('cosmeticItemCurrency').value = String(item.currency || 'USD').toUpperCase();
+  document.getElementById('cosmeticItemSort').value = Number(item.sort_order || 0);
+  document.getElementById('cosmeticItemDescription').value = item.description || '';
+  document.getElementById('cosmeticItemFree').checked = item.is_free === true;
+  document.getElementById('cosmeticItemPurchasable').checked = item.is_purchasable === true;
+  document.getElementById('cosmeticItemActive').checked = item.is_active === true;
+  document.getElementById('cosmeticItemEditor').open = true;
+}
+
+async function saveCosmeticItem(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (form.querySelector('button[type="submit"]')?.disabled) return;
+  const id = document.getElementById('cosmeticItemID').value.trim();
+  const isFree = document.getElementById('cosmeticItemFree').checked;
+  const payload = {
+    name: document.getElementById('cosmeticItemName').value.trim(),
+    category_id: document.getElementById('cosmeticItemCategory').value,
+    description: document.getElementById('cosmeticItemDescription').value.trim(),
+    slot: document.getElementById('cosmeticItemSlot').value,
+    asset_key: document.getElementById('cosmeticItemAssetKey').value.trim(),
+    rarity: document.getElementById('cosmeticItemRarity').value.trim(),
+    price_cents: isFree ? 0 : Number(document.getElementById('cosmeticItemPrice').value || 0),
+    currency: document.getElementById('cosmeticItemCurrency').value.trim().toUpperCase(),
+    sort_order: Number(document.getElementById('cosmeticItemSort').value || 0),
+    is_free: isFree,
+    is_purchasable: !isFree && document.getElementById('cosmeticItemPurchasable').checked,
+    is_active: document.getElementById('cosmeticItemActive').checked,
+  };
+  const result = document.getElementById('cosmeticItemResult');
+  setCosmeticFormBusy(form, true);
+  try {
+    await api('/cosmetics/items/' + encodeURIComponent(id), {method:'PUT', body:JSON.stringify(payload)});
+    result.textContent = 'Item saved: ' + id;
+    result.style.color = 'var(--green)';
+    toast('Cosmetic item saved', 'success');
+    logAudit('COSMETIC_ITEM_SAVE', id);
+    resetCosmeticItemForm();
+    await loadCosmeticsAdmin();
+  } catch (e) {
+    result.textContent = 'Item save failed: ' + (e.message || 'unknown error');
+    result.style.color = 'var(--red)';
+  } finally {
+    setCosmeticFormBusy(form, false);
+  }
+}
+
+async function deleteCosmeticEntity(kind, id, resultID) {
+  if (!confirm('Delete cosmetic ' + kind + ' "' + id + '"? Referenced or required fallback records will be protected by the server.')) return;
+  const result = document.getElementById(resultID);
+  const collection = {category:'categories', pack:'packs', item:'items'}[kind];
+  try {
+    const data = await api('/cosmetics/' + collection + '/' + encodeURIComponent(id), {method:'DELETE'});
+    if (data?.deleted !== true) {
+      result.textContent = prettyLabel(kind) + ' was not deleted: ' + id;
+      result.style.color = 'var(--orange)';
+      toast('Cosmetic ' + kind + ' was unchanged', 'info');
+      await loadCosmeticsAdmin();
+      return;
+    }
+    result.textContent = prettyLabel(kind) + ' deleted: ' + id;
+    result.style.color = 'var(--green)';
+    toast('Cosmetic ' + kind + ' deleted', 'success');
+    logAudit('COSMETIC_' + kind.toUpperCase() + '_DELETE', id);
+    await loadCosmeticsAdmin();
+  } catch (e) {
+    result.textContent = prettyLabel(kind) + ' delete failed: ' + (e.message || 'unknown error');
+    result.style.color = 'var(--red)';
+  }
+}
+
+function deleteCosmeticCategory(id) { return deleteCosmeticEntity('category', id, 'cosmeticCategoryResult'); }
+function deleteCosmeticPack(id) { return deleteCosmeticEntity('pack', id, 'cosmeticPackResult'); }
+function deleteCosmeticItem(id) { return deleteCosmeticEntity('item', id, 'cosmeticItemResult'); }
+
+async function loadCosmeticCatalogAudit() {
+  const root = document.getElementById('cosmeticCatalogAudit');
+  if (!root) return;
+  try {
+    const data = await api('/cosmetics/audit?limit=50');
+    const events = Array.isArray(data.events) ? data.events : [];
+    root.innerHTML = events.length ? events.map(event => `
+      <article class="cosmetics-admin-row">
+        <div class="cosmetics-admin-row-main">
+          <div class="cosmetics-admin-row-title">${esc(prettyLabel(event.action || 'change'))} ${esc(event.entity_type || 'catalog')} · ${esc(event.entity_id || '')}</div>
+          <div class="cosmetics-admin-row-meta">${esc(event.actor || 'admin-api')} · ${esc(fmtTime(event.created_at || new Date().toISOString()))}</div>
+        </div>
+      </article>`).join('') : '<div class="muted">No catalog changes recorded yet.</div>';
+  } catch (e) {
+    root.textContent = 'Audit unavailable: ' + (e.message || 'unknown error');
   }
 }
 

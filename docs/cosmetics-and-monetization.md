@@ -90,9 +90,47 @@ The implementation enforces this in several places:
 | `weapon_skin` | Standard Weapon Finish | Solar Flare, Void Edge |
 | `attachment` | None, Signal Antenna | Orbital Halo |
 
-Preview items carry planned prices, but `is_purchasable` and the public
-`checkout_enabled` value remain false. The public page labels them Coming soon
-and sends owners to the Bot Dashboard instead of asking for an API key.
+The launch catalog is organized into `chassis`, `weapon-finishes`,
+`attachments`, and `starter-packs`. Two curated packs expose the intended
+launch price without enabling payment:
+
+| Pack | Contents | Planned price |
+| --- | --- | --- |
+| Neon Signal Pack | Neon Grid, Solar Flare, Signal Antenna | $0.99 USD |
+| Void Orbit Pack | Carbon Armor, Void Edge, Orbital Halo | $0.99 USD |
+
+Individual preview items retain reference price metadata, but are not directly
+purchasable. Pack rows can be marked sale-ready by an administrator while the
+public `checkout_enabled` value remains false. The public page therefore labels
+every paid offer Coming soon and never invents a checkout or payment endpoint.
+
+## Asset source and intake policy
+
+The starter cosmetics are fixed, local procedural visuals already rendered by
+Arena. This catalog/admin work does not import a third-party archive or load
+remote art at runtime.
+
+Good CC0 candidates for later reviewed drops include Kenney's
+[Rune Pack](https://kenney.nl/assets/rune-pack) for decals,
+[Particle Pack](https://kenney.nl/assets/particle-pack) for aura/trail source
+art, and [Space Shooter Extension](https://kenney.nl/assets/space-shooter-extension)
+for attachment silhouettes. Kenney's [support page](https://kenney.nl/support)
+states that game assets on its asset pages are CC0 and may be used commercially
+without required attribution. Preserve the exact source page and license record
+with every imported batch even when attribution is optional.
+
+Before an external asset becomes a catalog item:
+
+1. Download it from the recorded upstream page and retain the license snapshot.
+2. Reject executables, scripts, remote URLs, and files outside the reviewed
+   image/model formats.
+3. Normalize dimensions, transparency, naming, and texture size offline.
+4. Map it to a fixed local `asset_key`; catalog rows must not select arbitrary
+   files or URLs.
+5. Test GPU memory, draw calls, mobile fidelity, color contrast, and cleanup on
+   round/map changes before enabling it.
+6. Sell the Arena license to use the curated cosmetic, not the upstream source
+   archive, attribution, authorship, or exclusivity.
 
 ## API
 
@@ -144,6 +182,27 @@ curl -X POST \
   https://YOUR_ARENA_HOST/api/v1/admin/cosmetics/grants
 ```
 
+Catalog administration uses the same protected admin authentication as the
+rest of the control center. The admin dashboard gives it a dedicated Cosmetics
+Shop section rather than placing it in Game Config.
+
+```text
+GET    /api/v1/admin/cosmetics/catalog
+PUT    /api/v1/admin/cosmetics/categories/{category_id}
+DELETE /api/v1/admin/cosmetics/categories/{category_id}
+PUT    /api/v1/admin/cosmetics/items/{item_id}
+DELETE /api/v1/admin/cosmetics/items/{item_id}
+PUT    /api/v1/admin/cosmetics/packs/{pack_id}
+DELETE /api/v1/admin/cosmetics/packs/{pack_id}
+GET    /api/v1/admin/cosmetics/audit?limit=50
+```
+
+Admin catalog reads include inactive records. Item `slot` and `asset_key` are
+immutable after creation so a price/name edit cannot silently turn an owned
+license into a different visual. Category, item, and pack mutations are
+transactional, validate bounded IDs/prices/currencies, and record before/after
+audit snapshots.
+
 Revocation targets one exact copy and soft-revokes it:
 
 ```bash
@@ -165,6 +224,18 @@ account_bot_links
 
 cosmetic_items
   catalog identity, slot, allowlisted asset key, price metadata, sale flags
+
+cosmetic_categories
+  ordered admin-managed group metadata; inactive categories stay out of public reads
+
+cosmetic_packs
+  ordered bundle metadata and planned minor-unit price
+
+cosmetic_pack_items
+  exact ordered membership of allowlisted catalog items in each pack
+
+cosmetic_catalog_audit
+  actor, action, entity identity, and before/after catalog snapshots
 
 cosmetic_licenses
   one row per purchased copy, account owner, source/reference, lifecycle status
