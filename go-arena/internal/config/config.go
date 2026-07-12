@@ -247,10 +247,13 @@ type Config struct {
 	RateLimitBotConfigPerMin int `envconfig:"ARENA_RATE_LIMIT_BOT_CONFIG_PER_MIN" default:"120"`
 
 	// Security
-	APIKeyPrefix             string `envconfig:"ARENA_API_KEY_PREFIX" default:"arena_"`
-	BcryptRounds             int    `envconfig:"ARENA_BCRYPT_ROUNDS" default:"12"`
-	RateLimitRPM             int    `envconfig:"ARENA_RATE_LIMIT_RPM" default:"1200"`
-	RateLimitRegisterPerHour int    `envconfig:"ARENA_RATE_LIMIT_REGISTER_PER_HOUR" default:"500"`
+	APIKeyPrefix                string `envconfig:"ARENA_API_KEY_PREFIX" default:"arena_"`
+	BcryptRounds                int    `envconfig:"ARENA_BCRYPT_ROUNDS" default:"12"`
+	TrustedProxyCIDRs           string `envconfig:"ARENA_TRUSTED_PROXY_CIDRS" default:"127.0.0.1/32,::1/128"`
+	TrustedCloudflareProxyCIDRs string `envconfig:"ARENA_TRUSTED_CLOUDFLARE_PROXY_CIDRS" default:""`
+	RateLimitRPM                int    `envconfig:"ARENA_RATE_LIMIT_RPM" default:"1200"`
+	RateLimitRegisterRPM        int    `envconfig:"ARENA_RATE_LIMIT_REGISTER_RPM" default:"10"`
+	RateLimitRegisterPerHour    int    `envconfig:"ARENA_RATE_LIMIT_REGISTER_PER_HOUR" default:"500"`
 
 	// ELO
 	EloKFactor  float64 `envconfig:"ARENA_ELO_K_FACTOR" default:"32"`

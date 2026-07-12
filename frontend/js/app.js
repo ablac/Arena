@@ -5,11 +5,12 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260712a';
+import { ArenaEngine } from './renderer/engine.js?v=20260712d';
 import { HudRenderer } from './renderer/hud.js?v=20260711b';
 import { Minimap } from './renderer/minimap.js?v=20260710d';
 import { SpectatorSocket } from './spectator-ws.js';
 import { initLeaderboardWidget } from './leaderboard.js?v=20260710f';
+import { initKeyGenerator } from './key-generator.js?v=20260712a';
 import { isEnabled, onSettingsChange } from './settings.js';
 import { initSettingsPanel } from './settings-panel.js';
 import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';
@@ -147,6 +148,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Leaderboard
   initLeaderboardWidgets();
+
+  const keygenEl = document.getElementById('keygen-card');
+  if (keygenEl) {
+    initKeyGenerator(keygenEl);
+  }
 
   hud.onSelectBot = (botID) => {
     arenaEngine.selectBot(botID);

@@ -1,10 +1,11 @@
 'use strict';
 
 import { apiPath, appPath } from './paths.js?v=20260710a';
-import { CosmeticShopPreview } from './shop-preview.js?v=20260712a';
+import { CosmeticShopPreview } from './shop-preview.js?v=20260712d';
 
 const PAGE_SIZE = 24;
 const SUPPORTED_SLOTS = new Set(['bot_skin', 'weapon_skin', 'attachment']);
+const SUPPORTED_WEAPONS = new Set(['sword', 'bow', 'spear', 'daggers', 'staff', 'shield', 'grapple']);
 const DEFAULT_LOADOUT = Object.freeze({
   bot_skin: 'standard',
   weapon_skin: 'standard',
@@ -108,6 +109,9 @@ export function initCosmeticsShop(root, options = {}) {
   const requestedPackID = options.requestedPackID
     ?? new URLSearchParams(window.location.search).get('pack')
     ?? '';
+  const requestedWeapon = options.requestedWeapon
+    ?? new URLSearchParams(window.location.search).get('weapon')
+    ?? 'sword';
 
   const elements = {
     canvas: root.querySelector('#shop-preview-canvas'),
@@ -130,6 +134,7 @@ export function initCosmeticsShop(root, options = {}) {
     rotateLeft: root.querySelector('[data-shop-rotate-left]'),
     rotateRight: root.querySelector('[data-shop-rotate-right]'),
     resetView: root.querySelector('[data-shop-reset-view]'),
+    chassisPicker: root.querySelector('[data-shop-chassis-picker]'),
     subscription: root.querySelector('[data-shop-subscription]'),
     subscriptionPrice: root.querySelector('[data-shop-subscription-price]'),
     subscriptionAction: root.querySelector('[data-shop-subscription-action]'),
@@ -147,6 +152,7 @@ export function initCosmeticsShop(root, options = {}) {
     visible: PAGE_SIZE,
     selectedPackID: '',
     selectedItemID: '',
+    weapon: SUPPORTED_WEAPONS.has(requestedWeapon) ? requestedWeapon : 'sword',
     preview: null,
     previewPromise: null,
     previewGeneration: 0,
@@ -244,6 +250,7 @@ export function initCosmeticsShop(root, options = {}) {
     try {
       const preview = await ensurePreview();
       if (!preview || generation !== state.previewGeneration || state.destroyed) return;
+      if (typeof preview.setCharacter === 'function') preview.setCharacter({weapon: state.weapon});
       preview.setLoadout(loadout);
       if (elements.previewStatus) {
         elements.previewStatus.textContent = `${label} shown on the Arena bot.`;
@@ -265,6 +272,9 @@ export function initCosmeticsShop(root, options = {}) {
     if (!pack) {
       if (elements.previewLabel) elements.previewLabel.textContent = 'Select a cosmetic pack';
       if (state.preview) {
+        if (typeof state.preview.setCharacter === 'function') {
+          state.preview.setCharacter({weapon: state.weapon});
+        }
         state.preview.setLoadout({...DEFAULT_LOADOUT});
         elements.canvas.dataset.previewSignature = 'standard:no-pack-selected';
         elements.canvas.dataset.previewState = 'ready';
@@ -463,6 +473,22 @@ export function initCosmeticsShop(root, options = {}) {
     previewCurrentSelection();
   };
 
+  const selectCharacter = weapon => {
+    const normalized = SUPPORTED_WEAPONS.has(weapon) ? weapon : 'sword';
+    if (state.weapon === normalized && state.preview) return;
+    state.weapon = normalized;
+    for (const input of elements.chassisPicker?.querySelectorAll('input[type="radio"]') || []) {
+      input.checked = input.value === normalized;
+    }
+    if (options.updateURL !== false && window.history?.replaceState) {
+      const url = new URL(window.location.href);
+      if (normalized === 'sword') url.searchParams.delete('weapon');
+      else url.searchParams.set('weapon', normalized);
+      window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+    }
+    previewCurrentSelection();
+  };
+
   const populateCategories = () => {
     if (!elements.category) return;
     const used = new Set(allPacks().map(pack => pack.category_id).filter(Boolean));
@@ -557,6 +583,11 @@ export function initCosmeticsShop(root, options = {}) {
   listen(elements.rotateLeft, 'click', () => state.preview?.rotateBy?.(-Math.PI / 8));
   listen(elements.rotateRight, 'click', () => state.preview?.rotateBy?.(Math.PI / 8));
   listen(elements.resetView, 'click', () => state.preview?.resetRotation?.());
+  listen(elements.chassisPicker, 'change', event => {
+    if (event.target?.matches?.('input[type="radio"][name="shop-chassis"]')) {
+      selectCharacter(event.target.value);
+    }
+  });
 
   const dispose = () => {
     if (state.destroyed) return;
@@ -575,16 +606,21 @@ export function initCosmeticsShop(root, options = {}) {
   });
 
   loadCatalog();
+  for (const input of elements.chassisPicker?.querySelectorAll('input[type="radio"]') || []) {
+    input.checked = input.value === state.weapon;
+  }
   return {
     selectPack,
     selectItem,
     previewPack,
+    selectCharacter,
     dispose,
     snapshot: () => ({
       packCount: allPacks().length,
       filteredCount: filteredPacks().length,
       selectedPackID: state.selectedPackID,
       selectedItemID: state.selectedItemID,
+      weapon: state.weapon,
       previewSignature: elements.canvas.dataset.previewSignature || '',
       subscriptionEnabled: state.subscriptionOffer?.enabled === true,
     }),

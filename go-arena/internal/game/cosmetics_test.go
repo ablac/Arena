@@ -64,3 +64,19 @@ func TestBuildSpectatorStateIncludesCosmeticsWithoutChangingMechanics(t *testing
 		t.Fatalf("cosmetics changed gameplay view: weapon=%v hp=%v", view["weapon"], view["hp"])
 	}
 }
+
+func TestBuildSpectatorStateIncludesLastActionTickForAnimationEdges(t *testing.T) {
+	arena := NewArenaMap()
+	bot := &BotState{
+		BotID: "bot-action", Name: "Action Bot", Position: Vec2{10, 20},
+		HP: 100, MaxHP: 100, IsAlive: true, Weapon: "grapple",
+		LastActionTick: 42, LastActionResult: &ActionResult{Action: "grapple", Success: true},
+	}
+	state := BuildSpectatorState(
+		map[string]*BotState{bot.BotID: bot}, arena, nil, NewKillFeed(10), 50, 0, nil, RoundModifierNone,
+	)
+
+	if got := state.Bots[0]["last_action_tick"]; got != 42 {
+		t.Fatalf("last_action_tick = %v, want 42 so persistent action strings do not retrigger visuals", got)
+	}
+}

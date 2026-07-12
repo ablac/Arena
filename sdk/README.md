@@ -6,10 +6,17 @@ Build your own battle bot in Python or Node.js!
 
 ### 1. Get an API Key
 
-Open [My Dashboard](https://arena.angel-serv.com/dashboard/?tab=cosmetics),
-verify your email, and create an account-owned key for the bot. You can keep up
-to five active keys. Save the full key when it is shown because it cannot be
-recovered later.
+Open Get Started at [the Arena](https://arena.angel-serv.com) and generate a
+token without signing up, or call:
+
+```bash
+curl -X POST https://arena.angel-serv.com/api/v1/keys/generate
+```
+
+Arena chooses the token and saves its hash and bot record; the full secret is
+shown only once. Do not invent your own token string. To purchase cosmetics
+later, verify your email in [My Dashboard](https://arena.angel-serv.com/dashboard/?tab=cosmetics)
+and claim the existing bot with that token.
 
 ### 2. Install the SDK
 

@@ -78,6 +78,18 @@ jobs:
           node scripts/test-cosmetics-launch-ui.mjs
           node scripts/test-cosmetics-shop.mjs
           node scripts/test-cosmetics-shop-preview.mjs
+          node scripts/test-cosmetics-forge-mounts.mjs
+          node scripts/test-character-roster.mjs
+          node scripts/test-character-animations.mjs
+          node scripts/test-character-renderer-integration.mjs
+          node scripts/test-character-shop.mjs
+          node scripts/test-forge-action-edge.mjs
+          node scripts/test-forge-lod.mjs
+          node scripts/test-forge-mount-metrics.mjs
+          node scripts/test-safe-zone-geometry.mjs
+          node scripts/test-renderer-suspension.mjs
+          node scripts/test-engine-webgpu-fallback.mjs
+          node scripts/test-trail-budget.mjs
           node scripts/test-projectile-trail-texture.mjs
           node scripts/test-key-generator.mjs
           node scripts/test-admin-cosmetics-ui.mjs
@@ -94,6 +106,7 @@ jobs:
       - name: Check Python syntax
         run: |
           python -m compileall sdk/python/arena_sdk sdk/python/examples bots
+          python scripts/test_keith_bot_hints.py
           python scripts/test_sdk_service_status.py
       - name: Test SDK action helpers
         run: |

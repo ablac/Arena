@@ -703,6 +703,71 @@ func TestPickActionWaitsForSafeSpearBrace(t *testing.T) {
 	}
 }
 
+func TestGuardStrategiesKeepPatrollingInsideTheirZone(t *testing.T) {
+	for _, strategy := range []string{"defensive", "territorial"} {
+		t.Run(strategy, func(t *testing.T) {
+			setTerrain(t, 40, 40, nil)
+			position := [2]float64{20, 20}
+			center := [2]float64{20, 20}
+			stationaryTicks := 0
+			maxStationaryTicks := 0
+
+			for tick := 1; tick <= 240; tick++ {
+				msg := map[string]interface{}{
+					"type":       "tick",
+					"tick":       float64(tick),
+					"round_tick": float64(tick),
+					"your_state": map[string]interface{}{
+						"position":              []interface{}{position[0], position[1]},
+						"hp":                    float64(100),
+						"max_hp":                float64(100),
+						"weapon_ready":          false,
+						"dodge_cooldown":        float64(20),
+						"shove_cooldown":        float64(20),
+						"in_safe_zone":          true,
+						"distance_to_zone_edge": float64(10),
+					},
+					"safe_zone": map[string]interface{}{
+						"center":        []interface{}{center[0], center[1]},
+						"radius":        float64(10),
+						"target_center": []interface{}{center[0], center[1]},
+						"target_radius": float64(5),
+					},
+					"nearby_entities": []interface{}{
+						map[string]interface{}{
+							"type": "bot", "id": "far-enemy",
+							"position": []interface{}{float64(33), float64(33)},
+							"hp":       float64(100), "max_hp": float64(100),
+							"weapon": "sword", "is_alive": true,
+							"has_los": true, "can_attack": false,
+						},
+					},
+				}
+
+				action := PickAction(strategy, msg, "sword", 1, "guard-"+strategy)
+				if action.Action == "move" && action.Direction != nil {
+					position[0] += action.Direction[0]
+					position[1] += action.Direction[1]
+					stationaryTicks = 0
+				} else {
+					stationaryTicks++
+					if stationaryTicks > maxStationaryTicks {
+						maxStationaryTicks = stationaryTicks
+					}
+				}
+
+				if got := chebyshev(position, center); got > 5 {
+					t.Fatalf("tick %d moved outside guarded target zone: position=%v distance=%v action=%+v", tick, position, got, action)
+				}
+			}
+
+			if maxStationaryTicks > 0 {
+				t.Fatalf("guard stopped for %d consecutive ticks; position=%v", maxStationaryTicks, position)
+			}
+		})
+	}
+}
+
 func cacheTeleportTestMap(t *testing.T, pads []interface{}, hazards []interface{}) {
 	t.Helper()
 	oldBudget := config.C.StatBudget

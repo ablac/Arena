@@ -696,13 +696,13 @@
     <div class="cosmetic-layout">
       <section class="cosmetic-sidebar">
         <h3>Linked bots</h3>
-        <p>Linking proves that you control a bot. It does not transfer cosmetic ownership to the key.</p>
+        <p>Claim a bot you started anonymously by proving its server-issued token. Linking does not transfer cosmetic ownership to the token.</p>
         <ul class="linked-bot-list">${botRows}</ul>
         <form id="linkBotForm" class="link-bot-form">
-          <label for="linkBotKey">Link another bot</label>
+          <label for="linkBotKey">Claim or link an existing bot</label>
           <input type="password" id="linkBotKey" name="api_key" placeholder="arena_..." autocomplete="off" spellcheck="false" required>
           <button type="submit"${view.linkBusy ? ' disabled' : ''}>${view.linkBusy ? 'Linking...' : 'Verify & link bot'}</button>
-          <small>The key is sent once to prove control, then cleared from this form. The purchase remains with ${escapeHTML(email)}.</small>
+          <small>Paste the token Arena generated for that bot. It is sent once to prove control, then cleared from this form. Purchases remain with ${escapeHTML(email)}.</small>
         </form>
       </section>
       <section class="cosmetic-inventory">

@@ -6,11 +6,36 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260712a';
-import { updateBotAnim, triggerAttack, triggerDodge, triggerShove, meleeContactDelay } from './animations.js?v=20260707c';
-import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance, triggerSwordsmanHit } from './swordsman-anims.js?v=20260712a';
-import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260712a';
+import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260712c';
+import {
+  forgeContactDelay,
+  updateForgeCharacter,
+  triggerForgeAttack,
+  triggerForgeDodge,
+  triggerForgeHit,
+  triggerForgeShove,
+} from './character-anims.js?v=20260712c';
+import {updateForgeCharacterLOD} from './character-rig.js?v=20260712c';
+import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260712c';
 import { isEnabled } from '../settings.js';
+
+export function cooldownActionStarted(action, previousAction, cooldown, previousCooldown, expectedAction) {
+  const current = Number.isFinite(cooldown) ? cooldown : 0;
+  const previous = Number.isFinite(previousCooldown) ? previousCooldown : 0;
+  return action === expectedAction && (
+    current > previous + 0.35 ||
+    (previousAction !== expectedAction && current > 0.05)
+  );
+}
+
+export function actionTickStarted(action, expectedAction, actionTick, previousActionTick, fallbackStarted) {
+  if (action !== expectedAction) return false;
+  const currentKnown = Number.isFinite(actionTick) && actionTick > 0;
+  if (currentKnown && Number.isFinite(previousActionTick)) {
+    return actionTick !== previousActionTick;
+  }
+  return fallbackStarted === true;
+}
 
 export class BotRenderer {
   /** @param {BABYLON.Scene} scene */
@@ -19,6 +44,9 @@ export class BotRenderer {
     /** @type {Map<string, Object>} */
     this.entries = new Map();
     this._lastFrame = performance.now();
+    this._motionQuery = typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)')
+      : null;
     /** @type {Function|null} callback(attackerX, attackerZ, targetX, targetZ, color, weapon) */
     this.onAttack = null;
     /** @type {Function|null} callback(x, z, color) */
@@ -30,6 +58,13 @@ export class BotRenderer {
     this.onSelectionChange = null;
     this.selectedBotId = null;
     this._initSelectionPanel();
+  }
+
+  _disposeTaunt(entry) {
+    if (!entry?.tauntBubble) return;
+    entry.tauntBubble.dispose();
+    entry.tauntBubble = null;
+    entry.tauntText = null;
   }
 
   _initSelectionPanel() {
@@ -64,6 +99,7 @@ export class BotRenderer {
 
   update(bots) {
     const seen = new Set();
+    const now = performance.now();
 
     // Build position lookup lazily — only when an attack needs it
     let posMap = null;
@@ -78,8 +114,18 @@ export class BotRenderer {
     for (const bot of bots) {
       seen.add(bot.bot_id);
       let entry = this.entries.get(bot.bot_id);
+      const weaponType = bot.weapon || 'sword';
 
-      if (!entry) {
+      // A bot may change its configured loadout between rounds. The old
+      // renderer kept the first mesh forever, so the server could report a
+      // bow while spectators still saw a sword. Rebuild only at that explicit
+      // chassis boundary; normal snapshots continue reusing the entry.
+      if (entry?.profile?.weapon !== weaponType) {
+        if (entry) {
+          this._disposeTaunt(entry);
+          disposeBotCosmetics(entry);
+          disposeBotEntry(entry);
+        }
         entry = createBotEntry(bot, this.scene);
         this.entries.set(bot.bot_id, entry);
       }
@@ -87,7 +133,6 @@ export class BotRenderer {
       applyBotCosmetics(entry, bot, this.scene);
 
       // Entity interpolation: store last two server positions + timing.
-      const now = performance.now();
       if (!entry._interpReady) {
         // First appearance — snap immediately.
         entry.root.position.x = bot.position[0];
@@ -127,7 +172,7 @@ export class BotRenderer {
           if (other.is_alive && other.target_id === bot.bot_id) {
             entry._hitFromX = other.position[0];
             entry._hitFromZ = other.position[1];
-            entry._hitFromT = performance.now();
+            entry._hitFromT = now;
             break;
           }
         }
@@ -135,7 +180,7 @@ export class BotRenderer {
         // death anim completing (anim clock), so a throttled tab cannot
         // hide the corpse mid-fall nor strand it forever.
         entry._corpseUntil = isEnabled('deathEffects', 'directionalDeath')
-          ? performance.now() + 3000 : 0;
+          ? now + 3000 : 0;
       }
       // Visibility. The corpse window keeps a freshly-dead body visible so
       // the death choreography can actually be seen (it used to run on a
@@ -158,19 +203,17 @@ export class BotRenderer {
           // Directional reaction: face the recoil AWAY from the attacker when
           // the hit source is fresh (set by the engine's contact-synced effect
           // path or event handlers); otherwise assume a frontal hit.
-          const fresh = entry._hitFromT && (performance.now() - entry._hitFromT) < 400;
+          const fresh = entry._hitFromT && (now - entry._hitFromT) < 400;
           entry._hitYaw = fresh
             ? Math.atan2(entry._hitFromX - bot.position[0], entry._hitFromZ - bot.position[1])
             : entry.root.rotation.y;
-          if (entry.isSwordsman) {
-            triggerSwordsmanHit(entry.anim, entry._hitYaw, entry._flinch);
-          }
+          triggerForgeHit(entry.anim, entry._flinch);
         }
         entry._lastHp = bot.hp;
         const hpRatio = bot.hp / bot.max_hp;
         entry.hpFill.width = Math.max(0.01, hpRatio);
         setHpColor(entry.hpFill, hpRatio);
-        // Wound level drives the idle slump in updateBotAnim: 0 healthy,
+        // Wound level drives the Forge idle slump: 0 healthy,
         // 1 wounded (<35%), 2 critical (<15%). Recomputed on every HP change,
         // so a heal or respawn (HP back up) clears it automatically.
         if (entry.anim) {
@@ -179,28 +222,21 @@ export class BotRenderer {
       }
 
       // Status effect visuals (dodge transparency, stun tint)
-      this._updateStatusEffects(entry, bot);
+      this._updateStatusEffects(entry, bot, now);
 
-      // Attack detection BEFORE animation so triggerAttack takes effect this frame
-      const weaponType = bot.weapon || 'sword';
+      // Attack detection precedes animation so the new pose starts this frame.
       const botAction = bot.action || bot.last_action; // server sends last_action
+      const liveActionTick = Number(bot.last_action_tick);
+      const prevActionTick = entry._lastActionTick;
       const liveCooldown = Number(bot.cooldown_remaining || 0);
       const prevCooldown = Number(entry._lastCooldown ?? 0);
-      const attackJustStarted =
-        botAction === 'attack' &&
-        bot.is_alive &&
-        entry._wasAlive &&
-        (
-          liveCooldown > prevCooldown + 0.35 ||
-          (entry._lastAction !== 'attack' && liveCooldown > 0.05)
-        );
+      const attackJustStarted = bot.is_alive && entry._wasAlive && actionTickStarted(
+        botAction, 'attack', liveActionTick, prevActionTick,
+        cooldownActionStarted(botAction, entry._lastAction, liveCooldown, prevCooldown, 'attack'),
+      );
 
       if (attackJustStarted) {
-        if (entry.isSwordsman) {
-          triggerSwordsmanAttack(entry.anim, liveCooldown);
-        } else {
-          triggerAttack(entry.anim, weaponType, liveCooldown);
-        }
+        triggerForgeAttack(entry.anim, weaponType, liveCooldown);
 
         // Face toward target (smoothed via anim.targetRotY)
         const explicitTargetPos = Array.isArray(bot.target_position) ? bot.target_position : null;
@@ -215,10 +251,7 @@ export class BotRenderer {
           // engine land impact effects and the victim reaction at the moment
           // the swing visually connects instead of at swing start.
           if (this.onAttack) {
-            const dur = liveCooldown > 0.16 ? liveCooldown : 0.5;
-            const contactDelay = entry.isSwordsman
-              ? 0.55 * dur // contact keyframe t in the swordsman choreography
-              : meleeContactDelay(weaponType, liveCooldown);
+            const contactDelay = forgeContactDelay(weaponType, liveCooldown);
             this.onAttack(bot.position[0], bot.position[1],
                           targetPos[0], targetPos[1], bot.avatar_color, weaponType, {
                             targetId: bot.target_id || null,
@@ -230,13 +263,12 @@ export class BotRenderer {
       }
 
       // Shove detection
-      if (botAction === 'shove' && bot.is_alive && entry._wasAlive) {
-        // The generic shove drives the WEAPON_ANIMS phase machine, which the
-        // swordsman rig does not run: on a SwordsmanAnimState it sets
-        // attackTimer=0 with no keyframes, wedging the timer at 0 and gating
-        // all future swings. Swordsmen keep the facing turn and shove ring
-        // but skip the generic trigger.
-        if (!entry.isSwordsman) triggerShove(entry.anim);
+      const shoveJustStarted = bot.is_alive && entry._wasAlive && actionTickStarted(
+        botAction, 'shove', liveActionTick, prevActionTick,
+        botAction === 'shove' && entry._lastAction !== 'shove',
+      );
+      if (shoveJustStarted) {
+        triggerForgeShove(entry.anim);
 
         const targetPos = bot.target_id ? getPosMap().get(bot.target_id) : null;
         if (targetPos) {
@@ -252,29 +284,41 @@ export class BotRenderer {
         }
       }
 
-      // Grapple detection
-      if (botAction === 'grapple' && bot.is_alive && entry._wasAlive) {
-        const targetPos = bot.target_id ? getPosMap().get(bot.target_id) : null;
-        if (targetPos && this.onGrapple) {
-          this.onGrapple(bot.position[0], bot.position[1], targetPos[0], targetPos[1]);
+      // Grapple detection. LastActionResult remains "grapple" across many
+      // snapshots, so the cooldown edge prevents replaying the pose/effect.
+      const liveGrappleCooldown = Number(bot.grapple_cooldown || 0);
+      const prevGrappleCooldown = Number(entry._lastGrappleCooldown ?? 0);
+      const grappleJustStarted = bot.is_alive && entry._wasAlive && actionTickStarted(
+        botAction, 'grapple', liveActionTick, prevActionTick,
+        cooldownActionStarted(
+          botAction, entry._lastAction,
+          liveGrappleCooldown, prevGrappleCooldown, 'grapple',
+        ),
+      );
+      if (grappleJustStarted) {
+        const explicitTargetPos = Array.isArray(bot.target_position) ? bot.target_position : null;
+        const targetPos = explicitTargetPos || (bot.target_id ? getPosMap().get(bot.target_id) : null);
+        if (targetPos) {
+          const adx = targetPos[0] - bot.position[0];
+          const adz = targetPos[1] - bot.position[1];
+          if (adx !== 0 || adz !== 0) entry.anim.targetRotY = Math.atan2(adx, adz);
+          triggerForgeAttack(entry.anim, 'grapple', 0.52, true);
+          if (this.onGrapple) {
+            this.onGrapple(bot.position[0], bot.position[1], targetPos[0], targetPos[1]);
+          }
         }
       }
 
       // Dodge detection
-      if (botAction === 'dodge' && bot.is_alive && entry._wasAlive) {
-        if (entry.isSwordsman) {
-          triggerSwordsmanDodge(entry.anim, entry.anim.moveAngle);
-        } else {
-          triggerDodge(entry.anim, entry.anim.moveAngle);
-        }
+      const dodgeJustStarted = bot.is_alive && entry._wasAlive && actionTickStarted(
+        botAction, 'dodge', liveActionTick, prevActionTick,
+        botAction === 'dodge' && bot.is_dodging && !entry._lastDodging,
+      );
+      if (dodgeJustStarted) {
+        triggerForgeDodge(entry.anim, entry.anim.moveAngle);
         if (this.onDodge) {
           this.onDodge(bot.position[0], bot.position[1], bot.avatar_color);
         }
-      }
-
-      // Swordsman stance update based on HP
-      if (entry.isSwordsman && bot.hp != null && bot.max_hp > 0) {
-        updateSwordsmanStance(entry.anim, bot.hp / bot.max_hp);
       }
 
       // Death flash
@@ -284,25 +328,20 @@ export class BotRenderer {
         // and zero the hit-reaction rotations so a respawn stands straight.
         entry._flinchT = 0;
         entry.root.scaling.setAll(1);
-        if (!entry.isSwordsman) {
-          if (entry.head) { entry.head.rotation.x = 0; entry.head.rotation.z = 0; }
-          if (entry.body) { entry.body.rotation.x = 0; entry.body.rotation.z = 0; }
-        }
       }
       entry._wasAlive = bot.is_alive;
       entry.isAlive = bot.is_alive;
       entry._lastCooldown = liveCooldown;
+      entry._lastGrappleCooldown = liveGrappleCooldown;
+      entry._lastActionTick = Number.isFinite(liveActionTick) ? liveActionTick : null;
       entry._lastAction = botAction;
+      entry._lastDodging = !!bot.is_dodging;
     }
 
     for (const [id, entry] of this.entries) {
       if (!seen.has(id)) {
         if (this.selectedBotId === id) this.clearSelection();
-        if (entry.tauntBubble) {
-          entry.tauntBubble.dispose();
-          entry.tauntBubble = null;
-          entry.tauntText = null;
-        }
+        this._disposeTaunt(entry);
         disposeBotCosmetics(entry);
         disposeBotEntry(entry);
         this.entries.delete(id);
@@ -310,6 +349,23 @@ export class BotRenderer {
     }
 
     this._refreshSelectionPanel();
+  }
+
+  /** Snap to the newest authoritative positions after frame suspension. */
+  resume() {
+    const now = performance.now();
+    this._lastFrame = now;
+    for (const [, entry] of this.entries) {
+      if (!entry._interpReady || !Array.isArray(entry.currPos)) continue;
+      const x = entry.currPos[0];
+      const z = entry.currPos[1];
+      entry.root.position.x = x;
+      entry.root.position.z = z;
+      entry.prevPos = [x, z];
+      entry._interpStart = now;
+      entry._poseX = x;
+      entry._poseZ = z;
+    }
   }
 
   /**
@@ -325,6 +381,12 @@ export class BotRenderer {
       if (entry.tauntBubble && entry.tauntBubble.isVisible &&
           (!entry.isAlive || now >= entry.tauntHideAt)) {
         entry.tauntBubble.isVisible = false;
+      }
+      // A completed corpse is both hidden and immutable until the next server
+      // respawn snapshot. Do not keep sampling poses for it every display frame.
+      if (!entry.isAlive && entry.anim?.deathTimer >= 0.88 &&
+          typeof entry.root.isEnabled === 'function' && !entry.root.isEnabled()) {
+        continue;
       }
       if (!entry._interpReady) continue;
       if (entry.isAlive) {
@@ -343,70 +405,43 @@ export class BotRenderer {
           entry.anim.targetRotY = Math.atan2(vx, vz);
         }
       }
-      // Tick animations every frame for smooth playback
-      if (entry.isSwordsman) {
-        updateSwordsmanAnim(entry, dt);
-      } else {
-        updateBotAnim(
-          entry.anim, entry.root, entry.weapon,
-          entry.root.position.x, entry.root.position.z,
-          entry.isAlive, dt, entry.bodyMat, entry
-        );
-      }
+      // Tick the one production character system every frame. Far bots keep
+      // their state clocks current without rewriting disabled articulated joints.
+      const farLOD = updateForgeCharacterLOD(entry, this.scene.activeCamera);
+      updateForgeCharacter(entry, dt, this._motionQuery?.matches === true, !farLOD);
 
-      // Damage flinch: a quick squash on the root, decaying to rest. The root
-      // scale is free MOST of the time, but updateBotAnim (which takes entry.root
-      // as its body param) does drive root scaling during dodge, death, and
-      // respawn; swordsmen never touch the root at all. So write the flinch only
-      // when that shared channel is otherwise free, and yield to the anim when it
-      // owns the scale. This keeps the two from fighting and stops any residual
-      // from compounding. Runs after the anim tick so a free-channel write wins.
+      // Damage flinch: Forge leaves root scaling free for this short squash.
       if (entry._flinchT > 0) {
         entry._flinchT -= dt;
-        const a = entry.anim;
-        const animOwnsScale = !entry.isSwordsman && a &&
-          (a.dodgeTimer >= 0 || a.deathTimer >= 0 || a.respawnTimer >= 0);
-        if (animOwnsScale) {
-          // Anim is driving root scaling this frame; the flinch sits it out.
-          // It resumes on a later free frame if any time is left.
-        } else if (entry._flinchT <= 0 || !isEnabled('hitReactions', 'damageFlinch')) {
+        if (entry._flinchT <= 0 || !isEnabled('hitReactions', 'damageFlinch')) {
           entry._flinchT = 0;
           entry.root.scaling.setAll(1); // release to rest
-          if (!entry.isSwordsman) {
-            // Rest the directional reaction channels exactly at zero.
-            if (entry.head) { entry.head.rotation.x = 0; entry.head.rotation.z = 0; }
-            if (entry.body) { entry.body.rotation.x = 0; entry.body.rotation.z = 0; }
-          }
         } else {
           const k = entry._flinchT / 0.18; // 1 at impact -> 0 at rest
           entry.root.scaling.setAll(1 - 0.14 * entry._flinch * k);
-          if (!entry.isSwordsman && entry.head && entry.body) {
-            // Directional head snap + torso lean AWAY from the attacker.
-            // head and this body child mesh are uncontended channels
-            // (updateBotAnim poses entry.root, never these two). Two trig
-            // calls per flinching bot, zero allocations.
-            const rel = (entry._hitYaw ?? entry.root.rotation.y) - entry.root.rotation.y;
-            const amp = entry._flinch * k;
-            entry.head.rotation.x = -0.5 * amp * Math.cos(rel);
-            entry.head.rotation.z = 0.35 * amp * Math.sin(rel);
-            entry.body.rotation.x = -0.25 * amp * Math.cos(rel);
-            entry.body.rotation.z = 0.18 * amp * Math.sin(rel);
-          }
         }
       }
     }
   }
 
   /** @private Apply visual indicators for dodge (invulnerability) and stun. */
-  _updateStatusEffects(entry, bot) {
+  _updateStatusEffects(entry, bot, now = performance.now()) {
     // Dodge / invulnerability — semi-transparent. While the bot is dead the
     // death fade in the anim tick owns alpha; writing 1 here every server
     // tick keeps corpses opaque and fights that fade, so steer alpha only
     // for live bots.
-    if (bot.is_dodging) {
-      entry.bodyMat.alpha = 0.5;
-      entry.headMat.alpha = 0.5;
-    } else if (bot.is_alive) {
+    // Forge uses shared graphite materials, so per-bot material alpha cannot
+    // cover the full chassis. Mesh visibility is the per-instance channel and
+    // also keeps the low-detail proxy visually consistent.
+    if (bot.is_alive) {
+      const visibility = bot.is_dodging ? 0.5 : 1;
+      if (entry._forgeStatusVisibility !== visibility) {
+        for (const mesh of entry._forgeMeshes || []) mesh.visibility = visibility;
+        if (entry.lowDetail) entry.lowDetail.visibility = visibility;
+        entry._forgeStatusVisibility = visibility;
+      }
+      // Avoid multiplying mesh visibility by material alpha on the accent
+      // pieces that own one of the rig's mutable per-bot materials.
       entry.bodyMat.alpha = 1;
       entry.headMat.alpha = 1;
     }
@@ -429,7 +464,7 @@ export class BotRenderer {
       if (wounded || entry._stunActive || entry._woundedActive) {
         const dim = wounded ? 0.6 : 1;
         // ~1.2Hz sine from the wall clock (0..1), scaled into a red add.
-        const redBoost = critical ? (Math.sin(performance.now() * 0.00754) * 0.5 + 0.5) * 0.5 : 0;
+        const redBoost = critical ? (Math.sin(now * 0.00754) * 0.5 + 0.5) * 0.5 : 0;
         const bc = entry.bodyMat.diffuseColor;
         entry.bodyMat.emissiveColor.set(
           Math.min(bc.r * 0.35 * dim + redBoost, 1), bc.g * 0.35 * dim, bc.b * 0.35 * dim);
