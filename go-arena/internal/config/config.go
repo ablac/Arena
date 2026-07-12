@@ -1,8 +1,13 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
 	"math"
+	"net"
+	"net/mail"
+	"net/url"
+	"strings"
 
 	"github.com/kelseyhightower/envconfig"
 )
@@ -375,8 +380,36 @@ type Config struct {
 	CustomerOIDCSessionTTL   int    `envconfig:"ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS" default:"24"`
 	CustomerBotLinkRPM       int    `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
 
+	// Native customer email auth is an alternative to customer OIDC. It sends
+	// one-time passwordless links through the deployment's transactional SMTP
+	// service and reuses the same customer session/CSRF boundary as OIDC.
+	CustomerEmailAuthEnabled         bool   `envconfig:"ARENA_CUSTOMER_EMAIL_AUTH_ENABLED" default:"false"`
+	CustomerEmailSignInURL           string `envconfig:"ARENA_CUSTOMER_EMAIL_SIGN_IN_URL" default:""`
+	CustomerEmailTokenTTLMinutes     int    `envconfig:"ARENA_CUSTOMER_EMAIL_TOKEN_TTL_MINUTES" default:"15"`
+	CustomerEmailSendCooldownSeconds int    `envconfig:"ARENA_CUSTOMER_EMAIL_SEND_COOLDOWN_SECONDS" default:"60"`
+	CustomerEmailSendRPM             int    `envconfig:"ARENA_CUSTOMER_EMAIL_SEND_RPM" default:"5"`
+	SMTPHost                         string `envconfig:"ARENA_SMTP_HOST" default:""`
+	SMTPPort                         int    `envconfig:"ARENA_SMTP_PORT" default:"465"`
+	SMTPTLSMode                      string `envconfig:"ARENA_SMTP_TLS_MODE" default:"implicit"`
+	SMTPTLSServerName                string `envconfig:"ARENA_SMTP_TLS_SERVER_NAME" default:""`
+	SMTPUsername                     string `envconfig:"ARENA_SMTP_USERNAME" default:""`
+	SMTPPassword                     string `envconfig:"ARENA_SMTP_PASSWORD" default:""`
+	SMTPFrom                         string `envconfig:"ARENA_SMTP_FROM" default:""`
+
+	// Cosmetics checkout is disabled by default. Enabling it requires the
+	// verified customer auth provider, durable database state, and a complete
+	// Stripe configuration; ValidateCosmeticsCheckoutConfig enforces that
+	// launch boundary before the server starts.
+	CosmeticsCheckoutEnabled bool   `envconfig:"ARENA_COSMETICS_CHECKOUT_ENABLED" default:"false"`
+	StripeSecretKey          string `envconfig:"ARENA_STRIPE_SECRET_KEY" default:""`
+	StripeWebhookSecrets     string `envconfig:"ARENA_STRIPE_WEBHOOK_SECRETS" default:""`
+	StripeSuccessURL         string `envconfig:"ARENA_STRIPE_SUCCESS_URL" default:""`
+	StripeCancelURL          string `envconfig:"ARENA_STRIPE_CANCEL_URL" default:""`
+	StripeAutomaticTax       bool   `envconfig:"ARENA_STRIPE_AUTOMATIC_TAX" default:"false"`
+	CosmeticsCheckoutRPM     int    `envconfig:"ARENA_COSMETICS_CHECKOUT_RPM" default:"10"`
+
 	// Developer lobby chat. Off by default; posting requires a signed-in
-	// customer session, so enabling chat without customer OIDC yields a
+	// customer session, so enabling chat without customer auth yields a
 	// read-only lobby. ChatAliveLock blocks posting while any bot linked to
 	// the poster's account is alive in an active round, so chat cannot be
 	// used to coordinate live bots (the spectator stream is delayed for the
@@ -562,6 +595,153 @@ func StartingElo() int {
 	return startingElo
 }
 
+// ValidateCosmeticsCheckoutConfig keeps the payment surface fail-closed. It
+// intentionally does nothing while checkout is disabled so development and
+// existing non-commerce deployments retain their current defaults.
+func ValidateCosmeticsCheckoutConfig(cfg Config) error {
+	if !cfg.CosmeticsCheckoutEnabled {
+		return nil
+	}
+	oidcReady := cfg.CustomerOIDCEnabled &&
+		strings.TrimSpace(cfg.CustomerOIDCIssuer) != "" &&
+		strings.TrimSpace(cfg.CustomerOIDCClientID) != "" &&
+		strings.TrimSpace(cfg.CustomerOIDCClientSecret) != "" &&
+		strings.TrimSpace(cfg.CustomerOIDCRedirectURI) != "" &&
+		cfg.CustomerOIDCSessionTTL > 0
+	emailReady := cfg.CustomerEmailAuthEnabled && ValidateCustomerEmailAuthConfig(cfg) == nil
+	if !oidcReady && !emailReady {
+		return fmt.Errorf("cosmetics checkout requires fully configured customer OIDC or native verified-email auth")
+	}
+	if cfg.DBOptional {
+		return fmt.Errorf("cosmetics checkout requires the database; ARENA_DB_OPTIONAL must be false")
+	}
+	if strings.TrimSpace(cfg.StripeSecretKey) == "" {
+		return fmt.Errorf("ARENA_STRIPE_SECRET_KEY is required when cosmetics checkout is enabled")
+	}
+	if len(ParseStripeWebhookSecrets(cfg.StripeWebhookSecrets)) == 0 {
+		return fmt.Errorf("ARENA_STRIPE_WEBHOOK_SECRETS must contain at least one secret")
+	}
+	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_SUCCESS_URL", cfg.StripeSuccessURL); err != nil {
+		return err
+	}
+	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_CANCEL_URL", cfg.StripeCancelURL); err != nil {
+		return err
+	}
+	if cfg.CosmeticsCheckoutRPM <= 0 {
+		return fmt.Errorf("ARENA_COSMETICS_CHECKOUT_RPM must be positive")
+	}
+	return nil
+}
+
+// ValidateCustomerEmailAuthConfig keeps passwordless registration fail-closed.
+// The SMTP credential is a send-only app password and transport encryption is
+// mandatory, including when the service is reached over a private address.
+func ValidateCustomerEmailAuthConfig(cfg Config) error {
+	if !cfg.CustomerEmailAuthEnabled {
+		return nil
+	}
+	if cfg.DBOptional {
+		return fmt.Errorf("native customer email auth requires the database; ARENA_DB_OPTIONAL must be false")
+	}
+	if err := validateCustomerEmailSignInURL(cfg.CustomerEmailSignInURL); err != nil {
+		return err
+	}
+	if cfg.CustomerOIDCSessionTTL <= 0 {
+		return fmt.Errorf("ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS must be positive for customer sessions")
+	}
+	if cfg.CustomerEmailTokenTTLMinutes < 5 || cfg.CustomerEmailTokenTTLMinutes > 60 {
+		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_TOKEN_TTL_MINUTES must be between 5 and 60")
+	}
+	if cfg.CustomerEmailSendCooldownSeconds < 10 || cfg.CustomerEmailSendCooldownSeconds > 3600 {
+		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SEND_COOLDOWN_SECONDS must be between 10 and 3600")
+	}
+	if cfg.CustomerEmailSendRPM <= 0 || cfg.CustomerEmailSendRPM > 60 {
+		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SEND_RPM must be between 1 and 60")
+	}
+	if strings.TrimSpace(cfg.SMTPHost) == "" {
+		return fmt.Errorf("ARENA_SMTP_HOST is required")
+	}
+	if cfg.SMTPPort <= 0 || cfg.SMTPPort > 65535 {
+		return fmt.Errorf("ARENA_SMTP_PORT must be between 1 and 65535")
+	}
+	mode := strings.ToLower(strings.TrimSpace(cfg.SMTPTLSMode))
+	if mode != "implicit" && mode != "starttls" {
+		return fmt.Errorf("ARENA_SMTP_TLS_MODE must be implicit or starttls")
+	}
+	if strings.TrimSpace(cfg.SMTPTLSServerName) == "" {
+		return fmt.Errorf("ARENA_SMTP_TLS_SERVER_NAME is required")
+	}
+	username, err := mail.ParseAddress(strings.TrimSpace(cfg.SMTPUsername))
+	if err != nil || username.Address != strings.TrimSpace(cfg.SMTPUsername) {
+		return fmt.Errorf("ARENA_SMTP_USERNAME must be a mailbox address")
+	}
+	if strings.TrimSpace(cfg.SMTPPassword) == "" {
+		return fmt.Errorf("ARENA_SMTP_PASSWORD is required")
+	}
+	from, err := mail.ParseAddress(strings.TrimSpace(cfg.SMTPFrom))
+	if err != nil || from.Address == "" || !strings.EqualFold(from.Address, username.Address) {
+		return fmt.Errorf("ARENA_SMTP_FROM must use the authenticated ARENA_SMTP_USERNAME mailbox")
+	}
+	return nil
+}
+
+func validateCustomerEmailSignInURL(raw string) error {
+	value := strings.TrimSpace(raw)
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SIGN_IN_URL must be an absolute HTTPS Dashboard URL")
+	}
+	cleanPath := strings.TrimSuffix(parsed.EscapedPath(), "/")
+	if cleanPath != "/dashboard" && cleanPath != "/arena/dashboard" {
+		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SIGN_IN_URL must point to /dashboard/ or /arena/dashboard/")
+	}
+	if strings.EqualFold(parsed.Scheme, "https") {
+		return nil
+	}
+	if strings.EqualFold(parsed.Scheme, "http") && isLoopbackCheckoutHost(parsed.Hostname()) {
+		return nil
+	}
+	return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SIGN_IN_URL must use HTTPS (HTTP is allowed only for loopback hosts)")
+}
+
+// ParseStripeWebhookSecrets converts the comma-separated rotation list into
+// the ordered secrets accepted by the Stripe adapter. Config retains the raw
+// string so Config remains comparable for the existing live-staging checks.
+func ParseStripeWebhookSecrets(raw string) []string {
+	values := strings.Split(raw, ",")
+	secrets := make([]string, 0, len(values))
+	for _, value := range values {
+		if secret := strings.TrimSpace(value); secret != "" {
+			secrets = append(secrets, secret)
+		}
+	}
+	return secrets
+}
+
+func validateCosmeticsCheckoutURL(name, raw string) error {
+	value := strings.TrimSpace(raw)
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("%s must be an absolute HTTPS URL", name)
+	}
+	if strings.EqualFold(parsed.Scheme, "https") {
+		return nil
+	}
+	if strings.EqualFold(parsed.Scheme, "http") && isLoopbackCheckoutHost(parsed.Hostname()) {
+		return nil
+	}
+	return fmt.Errorf("%s must use HTTPS (HTTP is allowed only for loopback hosts)", name)
+}
+
+func isLoopbackCheckoutHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func Load() {
 	if err := envconfig.Process("", &C); err != nil {
 		slog.Error("failed to load config", "error", err)
@@ -607,6 +787,14 @@ func Load() {
 			"cooldown_rails", []float64{C.WeaponAutoBalanceMinCooldownScale, C.WeaponAutoBalanceMaxCooldownScale},
 			"max_evidence_rounds", C.WeaponAutoBalanceMaxEvidenceRounds,
 		)
+	}
+	if err := ValidateCustomerEmailAuthConfig(C); err != nil {
+		slog.Error("invalid customer email auth configuration", "error", err)
+		panic(err)
+	}
+	if err := ValidateCosmeticsCheckoutConfig(C); err != nil {
+		slog.Error("invalid cosmetics checkout configuration", "error", err)
+		panic(err)
 	}
 	slog.Info("config loaded",
 		"host", C.ServerHost,

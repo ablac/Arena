@@ -11,7 +11,7 @@ import { Minimap } from './renderer/minimap.js?v=20260710d';
 import { SpectatorSocket } from './spectator-ws.js';
 import { initLeaderboardWidget } from './leaderboard.js?v=20260710f';
 import { initKeyGenerator } from './key-generator.js?v=20260710f';
-import { initCosmeticsPanel } from './cosmetics-panel.js?v=20260711a';
+import { initCosmeticsPanel } from './cosmetics-panel.js?v=20260711b';
 import { isEnabled, onSettingsChange } from './settings.js';
 import { initSettingsPanel } from './settings-panel.js';
 import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';

@@ -27,8 +27,12 @@
     return {
       authenticated,
       login_enabled: source.login_enabled === true || authenticated,
+      email_login_enabled: source.email_login_enabled === true,
+      oidc_login_enabled: source.oidc_login_enabled === true,
       login_url: cleanText(source.login_url),
       logout_url: cleanText(source.logout_url),
+      email_start_url: cleanText(source.email_start_url),
+      email_verify_url: cleanText(source.email_verify_url),
       account: {
         id: cleanText(rawAccount.id),
         email,
@@ -106,6 +110,16 @@
     };
   }
 
+  function normalizeCatalog(payload) {
+    const source = payload && typeof payload === 'object' ? payload : {};
+    return {
+      checkout_enabled: source.checkout_enabled === true,
+      categories: Array.isArray(source.categories) ? source.categories : [],
+      items: Array.isArray(source.items) ? source.items : [],
+      packs: Array.isArray(source.packs) ? source.packs.filter(pack => pack && typeof pack === 'object') : [],
+    };
+  }
+
   function assignmentIntent(snapshot, licenseID, botID) {
     const state = normalizeSnapshot(snapshot);
     if (!state.account.email || state.account.email_verified !== true) {
@@ -143,6 +157,8 @@
     const routes = {
       session: '/account/session',
       cosmetics: '/account/cosmetics',
+      checkout: '/account/cosmetics/checkout',
+      orders: '/account/cosmetics/orders',
       bots: '/account/bots',
       bot: `/account/bots/${encoded}`,
       equip: `/account/bots/${encoded}/cosmetics`,
@@ -150,6 +166,21 @@
     };
     if (!Object.hasOwn(routes, name)) throw new Error(`unknown account route: ${name}`);
     return routes[name];
+  }
+
+  function checkoutIntent(rawCatalog, packID) {
+    const catalog = normalizeCatalog(rawCatalog);
+    const normalizedID = cleanText(packID);
+    if (!catalog.checkout_enabled) return {ok: false, reason: 'checkout-disabled'};
+    if (!normalizedID) return {ok: false, reason: 'pack-not-found'};
+    const pack = catalog.packs.find(entry => cleanText(entry.id) === normalizedID);
+    if (!pack) return {ok: false, reason: 'pack-not-found'};
+    if (pack.is_purchasable !== true) return {ok: false, reason: 'pack-not-purchasable'};
+    return {
+      ok: true,
+      path: accountRoute('checkout'),
+      body: {pack_id: normalizedID, quantity: 1},
+    };
   }
 
   function requestHeaders(method, csrfToken, hasBody) {
@@ -215,6 +246,199 @@
     </article>`;
   }
 
+  function formatPrice(item) {
+    if (item?.is_free === true) return 'Free';
+    const rawCents = Number(item?.price_cents || 0);
+    const cents = Number.isFinite(rawCents) && rawCents >= 0 ? Math.round(rawCents) : 0;
+    const currency = cleanText(item?.currency) || 'USD';
+    try {
+      return new Intl.NumberFormat(undefined, {style: 'currency', currency}).format(cents / 100);
+    } catch (_) {
+      return `$${(cents / 100).toFixed(2)}`;
+    }
+  }
+
+  function shopSwatch(pack) {
+    const firstItem = Array.isArray(pack?.items) ? pack.items[0] : null;
+    const helper = root.ArenaCosmeticThemes;
+    if (!helper || typeof helper.swatchStyle !== 'function') return '';
+    return helper.swatchStyle(cleanText(firstItem?.asset_key));
+  }
+
+  function renderShopPack(pack, catalog, checkoutState) {
+    const packID = cleanText(pack.id);
+    const pending = checkoutState?.status === 'pending' && checkoutState.packID === packID;
+    const purchasable = catalog.checkout_enabled && pack.is_purchasable === true;
+    const items = Array.isArray(pack.items) ? pack.items.slice(0, 3) : [];
+    const contents = items.length
+      ? items.map(item => `<span>${escapeHTML(item.name || item.id || 'Cosmetic')}</span>`).join('')
+      : '<span>Three-piece set</span>';
+    const swatch = shopSwatch(pack);
+    const swatchAttribute = swatch ? ` style="background:${escapeHTML(swatch)}"` : '';
+    const action = purchasable
+      ? `<button type="button" class="sm cosmetic-shop-buy" data-pack-checkout="${escapeHTML(packID)}"${pending ? ' disabled' : ''}>${pending ? 'Opening checkout...' : `Buy ${escapeHTML(formatPrice(pack))}`}</button>`
+      : '<span class="cosmetic-shop-state">Checkout coming soon</span>';
+    return `<article class="cosmetic-shop-pack" data-shop-pack="${escapeHTML(packID)}">
+      <div class="cosmetic-shop-swatch" aria-hidden="true"${swatchAttribute}></div>
+      <div class="cosmetic-shop-pack-copy">
+        <div class="cosmetic-kicker">Coordinated set</div>
+        <h3>${escapeHTML(pack.name || packID || 'Arena set')}</h3>
+        <p>${escapeHTML(pack.description || 'Three presentation-only cosmetics with no gameplay advantage.')}</p>
+        <div class="cosmetic-shop-contents">${contents}</div>
+      </div>
+      <div class="cosmetic-shop-offer"><strong>${escapeHTML(formatPrice(pack))}</strong>${action}</div>
+    </article>`;
+  }
+
+  function renderSetShop(view) {
+    const catalog = view.catalog ? normalizeCatalog(view.catalog) : null;
+    const query = cleanText(view.shopQuery);
+    const checkoutState = view.checkoutState || {status: 'idle', packID: '', message: ''};
+    let feedback = '';
+    if (checkoutState.status === 'success') {
+      feedback = `<div class="tip" role="status"><b>Checkout returned.</b> Payment is still processing. New licenses appear only after Arena verifies Stripe's signed payment event.</div>`;
+    } else if (checkoutState.status === 'cancelled') {
+      feedback = `<div class="tip" role="status"><b>Checkout cancelled.</b> Your collection was not changed.</div>`;
+    } else if (checkoutState.status === 'error') {
+      feedback = `<div class="tip warn" role="alert"><b>Checkout could not start:</b> ${escapeHTML(checkoutState.message || 'Try again in a moment.')}</div>`;
+    } else if (checkoutState.status === 'disabled') {
+      feedback = `<div class="tip" role="status"><b>Checkout is not open yet.</b> Preview the sets now and return when sales are enabled.</div>`;
+    }
+
+    if (view.catalogError) {
+      return `<section class="cosmetic-shop" aria-labelledby="cosmetic-shop-title">
+        <div class="cosmetic-inventory-head"><div><div class="cosmetic-kicker">Set shop</div><h2 id="cosmetic-shop-title">Cosmetic sets</h2></div></div>
+        ${feedback}<div class="tip warn" role="alert"><b>Shop unavailable:</b> ${escapeHTML(view.catalogError)}</div>
+      </section>`;
+    }
+    if (!catalog) {
+      return `<section class="cosmetic-shop" aria-labelledby="cosmetic-shop-title">
+        <div class="cosmetic-inventory-head"><div><div class="cosmetic-kicker">Set shop</div><h2 id="cosmetic-shop-title">Cosmetic sets</h2></div></div>
+        ${feedback}<div class="cosmetic-loading">Loading cosmetic sets...</div>
+      </section>`;
+    }
+
+    const normalizedQuery = query.toLowerCase();
+    const matches = catalog.packs.filter(pack => {
+      if (!normalizedQuery) return true;
+      const itemText = (Array.isArray(pack.items) ? pack.items : []).flatMap(item => [item.id, item.name, item.description]);
+      return [pack.id, pack.name, pack.description, ...itemText]
+        .filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery);
+    });
+    const visible = matches.slice(0, 12);
+    const summary = matches.length
+      ? `Showing ${visible.length} of ${matches.length} sets`
+      : 'No cosmetic sets match';
+    const packs = visible.length
+      ? visible.map(pack => renderShopPack(pack, catalog, checkoutState)).join('')
+      : `<div class="cosmetic-empty cosmetic-empty-inventory">No cosmetic sets match "${escapeHTML(query)}". Try a theme, set number, or item name.</div>`;
+
+    return `<section class="cosmetic-shop" aria-labelledby="cosmetic-shop-title">
+      <div class="cosmetic-inventory-head">
+        <div><div class="cosmetic-kicker">Set shop</div><h2 id="cosmetic-shop-title">Cosmetic sets</h2></div>
+        <span>${escapeHTML(summary)}</span>
+      </div>
+      <p class="cosmetic-rule">Every set is visual only. Purchases belong to this verified email account, then each license can be assigned to one linked bot.</p>
+      ${feedback}
+      <label class="cosmetic-shop-search" for="accountCosmeticSearch">Find a set
+        <input type="search" id="accountCosmeticSearch" data-account-shop-search value="${escapeHTML(query)}" placeholder="Search name, number, or item" autocomplete="off">
+      </label>
+      <div class="cosmetic-shop-grid">${packs}</div>
+    </section>`;
+  }
+
+  function formatOrderUSD(rawCents) {
+    const amount = Number(rawCents);
+    const cents = Number.isFinite(amount) && amount >= 0 ? Math.round(amount) : 0;
+    try {
+      return new Intl.NumberFormat('en-US', {style: 'currency', currency: 'USD'}).format(cents / 100);
+    } catch (_) {
+      return `$${(cents / 100).toFixed(2)}`;
+    }
+  }
+
+  function orderStatusMeta(rawStatus) {
+    const status = cleanText(rawStatus).toLowerCase() || 'created';
+    const labels = {
+      created: 'Checkout pending',
+      checkout_pending: 'Checkout pending',
+      processing: 'Processing',
+      paid: 'Paid',
+      refund_review: 'Refund review',
+      refunded: 'Refunded',
+      disputed: 'Disputed',
+      expired: 'Expired',
+      payment_failed: 'Failed',
+      failed: 'Failed',
+    };
+    const warnings = new Set(['refund_review', 'refunded', 'disputed', 'expired', 'payment_failed', 'failed']);
+    return {
+      status,
+      label: labels[status] || 'Unknown',
+      className: status === 'paid' ? ' is-paid' : (warnings.has(status) ? ' is-warning' : ''),
+    };
+  }
+
+  function orderCreatedTime(rawTime) {
+    const raw = cleanText(rawTime);
+    const date = new Date(raw);
+    if (!raw || Number.isNaN(date.getTime())) return {iso: '', label: 'Time unavailable'};
+    return {
+      iso: date.toISOString(),
+      label: date.toLocaleString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+      }),
+    };
+  }
+
+  function renderPurchaseOrder(rawOrder) {
+    const order = rawOrder && typeof rawOrder === 'object' ? rawOrder : {};
+    const status = orderStatusMeta(order.status);
+    const rawQuantity = Number(order.quantity);
+    const quantity = Number.isFinite(rawQuantity) && rawQuantity >= 0 ? Math.floor(rawQuantity) : 0;
+    const rawFulfilled = Number(order.fulfilled_license_count);
+    const fulfilled = Number.isFinite(rawFulfilled) && rawFulfilled >= 0 ? Math.floor(rawFulfilled) : 0;
+    const orderID = cleanText(order.id) || 'Unknown order';
+    const packName = cleanText(order.pack_name || order.pack_id) || 'Unknown pack';
+    const created = orderCreatedTime(order.created_at);
+    const createdHTML = created.iso
+      ? `<time datetime="${escapeHTML(created.iso)}">${escapeHTML(created.label)}</time>`
+      : escapeHTML(created.label);
+    return `<article class="cosmetic-purchase" data-purchase-order="${escapeHTML(orderID)}" data-order-status="${escapeHTML(status.status)}">
+      <div class="cosmetic-purchase-head">
+        <div><div class="cosmetic-kicker">Order <code>${escapeHTML(orderID)}</code></div><h3>${escapeHTML(packName)}</h3></div>
+        <span class="cosmetic-purchase-status${status.className}">${escapeHTML(status.label)}</span>
+      </div>
+      <div class="cosmetic-purchase-facts"><span>Quantity ${quantity}</span><span>${fulfilled} ${fulfilled === 1 ? 'license' : 'licenses'} fulfilled</span>${createdHTML}</div>
+      <div class="cosmetic-purchase-money">
+        <span>Expected <strong>${escapeHTML(formatOrderUSD(order.expected_subtotal_cents))}</strong></span>
+        <span>Received <strong>${escapeHTML(formatOrderUSD(order.amount_received_cents))}</strong></span>
+        <span>Refunded <strong>${escapeHTML(formatOrderUSD(order.amount_refunded_cents))}</strong></span>
+      </div>
+    </article>`;
+  }
+
+  function renderRecentPurchases(view) {
+    let body = '';
+    if (view.ordersError) {
+      body = `<div class="tip warn" role="alert"><b>Recent purchases unavailable:</b> ${escapeHTML(view.ordersError)} Owned cosmetics and the shop are unaffected.</div>`;
+    } else if (!Array.isArray(view.orders)) {
+      body = '<div class="cosmetic-loading" aria-busy="true">Loading recent purchases...</div>';
+    } else if (!view.orders.length) {
+      body = '<div class="cosmetic-empty cosmetic-empty-inventory">No purchases yet.</div>';
+    } else {
+      body = `<div class="cosmetic-purchase-list">${view.orders.slice(0, 20).map(renderPurchaseOrder).join('')}</div>`;
+    }
+    return `<section class="cosmetic-purchases" aria-labelledby="cosmetic-purchases-title">
+      <div class="cosmetic-inventory-head">
+        <div><div class="cosmetic-kicker">Account ledger</div><h2 id="cosmetic-purchases-title">Recent purchases</h2></div>
+        <span>Latest 20</span>
+      </div>
+      <p class="cosmetic-rule">Statuses come from Arena's signed payment ledger. Returning from checkout does not mark an order paid.</p>
+      ${body}
+    </section>`;
+  }
+
   function renderPanel(rawSnapshot, options) {
     const snapshot = normalizeSnapshot(rawSnapshot);
     const view = options && typeof options === 'object' ? options : {};
@@ -252,6 +476,8 @@
     </div>
     ${view.error ? `<div class="tip warn" role="alert"><b>Could not update cosmetics:</b> ${escapeHTML(view.error)}</div>` : ''}
     ${view.notice ? `<div class="tip good" role="status"><b>Saved:</b> ${escapeHTML(view.notice)}</div>` : ''}
+    ${renderSetShop(view)}
+    ${renderRecentPurchases(view)}
     <div class="cosmetic-layout">
       <section class="cosmetic-sidebar">
         <h3>Linked bots</h3>
@@ -278,7 +504,9 @@
   root.ArenaAccountCosmetics = Object.freeze({
     accountRoute,
     assignmentIntent,
+    checkoutIntent,
     escapeHTML,
+    normalizeCatalog,
     normalizeSession,
     normalizeSnapshot,
     renderPanel,

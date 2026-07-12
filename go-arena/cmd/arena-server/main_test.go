@@ -88,6 +88,25 @@ func TestManagedSchemaPreflightRequiresCosmeticCatalogAdministration(t *testing.
 	}
 }
 
+func TestManagedSchemaPreflightRequiresCosmeticCommerceLedger(t *testing.T) {
+	for _, required := range []string{
+		"('cosmetic_orders', 'account_id')",
+		"('cosmetic_orders', 'pack_description')",
+		"('cosmetic_orders', 'expected_subtotal_cents')",
+		"('cosmetic_orders', 'cumulative_charge_refunded_cents')",
+		"('cosmetic_orders', 'stripe_checkout_session_id')",
+		"('cosmetic_orders', 'stripe_payment_intent_id')",
+		"('cosmetic_order_items', 'item_id')",
+		"('cosmetic_order_licenses', 'license_id')",
+		"('cosmetic_payment_events', 'payload_hash')",
+		"('cosmetic_order_refunds', 'refund_id')",
+	} {
+		if !strings.Contains(managedSchemaPreflightQuery, required) {
+			t.Errorf("managed schema preflight is missing %s", required)
+		}
+	}
+}
+
 func TestRuntimePrivilegeStatementsAreScopedAndRoleValidated(t *testing.T) {
 	statements, err := runtimePrivilegeStatements("arena_app")
 	if err != nil {

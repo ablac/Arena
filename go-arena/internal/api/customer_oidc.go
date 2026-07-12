@@ -46,9 +46,14 @@ type customerOIDCTransaction struct {
 }
 
 type CustomerOIDCHandler struct {
-	oauth2Config *oauth2.Config
-	verifier     *oidc.IDTokenVerifier
-	issuer       string
+	oauth2Config      *oauth2.Config
+	verifier          *oidc.IDTokenVerifier
+	issuer            string
+	emailStore        customerEmailStore
+	emailSender       customerEmailSender
+	emailSignInURL    string
+	emailTokenTTL     time.Duration
+	emailSendCooldown time.Duration
 
 	sessions map[string]*CustomerSession
 	states   map[string]customerOIDCTransaction
@@ -57,38 +62,58 @@ type CustomerOIDCHandler struct {
 
 type customerSessionContextKey struct{}
 
+func customerAccountAuthEnabled(handler *CustomerOIDCHandler) bool {
+	return handler != nil && (handler.oauth2Config != nil || (handler.emailSender != nil && handler.emailStore != nil))
+}
+
 func NewCustomerOIDCHandler() *CustomerOIDCHandler {
 	cfg := &config.C
-	if !cfg.CustomerOIDCEnabled {
-		return nil
-	}
-	if cfg.CustomerOIDCIssuer == "" || cfg.CustomerOIDCClientID == "" ||
-		cfg.CustomerOIDCClientSecret == "" || cfg.CustomerOIDCRedirectURI == "" {
-		slog.Warn("customer OIDC enabled but missing required config")
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	provider, err := oidc.NewProvider(ctx, cfg.CustomerOIDCIssuer)
-	if err != nil {
-		slog.Error("failed to initialise customer OIDC provider", "issuer", cfg.CustomerOIDCIssuer, "error", err)
+	if !cfg.CustomerOIDCEnabled && !cfg.CustomerEmailAuthEnabled {
 		return nil
 	}
 	h := &CustomerOIDCHandler{
-		oauth2Config: &oauth2.Config{
-			ClientID:     cfg.CustomerOIDCClientID,
-			ClientSecret: cfg.CustomerOIDCClientSecret,
-			RedirectURL:  cfg.CustomerOIDCRedirectURI,
-			Endpoint:     provider.Endpoint(),
-			Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
-		},
-		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.CustomerOIDCClientID}),
-		issuer:   cfg.CustomerOIDCIssuer,
 		sessions: make(map[string]*CustomerSession),
 		states:   make(map[string]customerOIDCTransaction),
 	}
+	if cfg.CustomerEmailAuthEnabled {
+		if err := configureCustomerEmailAuth(h, *cfg); err != nil {
+			slog.Error("failed to initialise native customer email auth", "error", err)
+			if !cfg.CustomerOIDCEnabled {
+				return nil
+			}
+		}
+	}
+	if cfg.CustomerOIDCEnabled {
+		if cfg.CustomerOIDCIssuer == "" || cfg.CustomerOIDCClientID == "" ||
+			cfg.CustomerOIDCClientSecret == "" || cfg.CustomerOIDCRedirectURI == "" {
+			slog.Warn("customer OIDC enabled but missing required config")
+			if h.emailSender == nil {
+				return nil
+			}
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			provider, err := oidc.NewProvider(ctx, cfg.CustomerOIDCIssuer)
+			cancel()
+			if err != nil {
+				slog.Error("failed to initialise customer OIDC provider", "issuer", cfg.CustomerOIDCIssuer, "error", err)
+				if h.emailSender == nil {
+					return nil
+				}
+			} else {
+				h.oauth2Config = &oauth2.Config{
+					ClientID:     cfg.CustomerOIDCClientID,
+					ClientSecret: cfg.CustomerOIDCClientSecret,
+					RedirectURL:  cfg.CustomerOIDCRedirectURI,
+					Endpoint:     provider.Endpoint(),
+					Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+				}
+				h.verifier = provider.Verifier(&oidc.Config{ClientID: cfg.CustomerOIDCClientID})
+				h.issuer = cfg.CustomerOIDCIssuer
+				slog.Info("customer OIDC auth initialised", "issuer", cfg.CustomerOIDCIssuer)
+			}
+		}
+	}
 	go h.cleanupLoop()
-	slog.Info("customer OIDC auth initialised", "issuer", cfg.CustomerOIDCIssuer)
 	return h
 }
 
@@ -133,6 +158,10 @@ func safeCustomerReturnTo(r *http.Request) string {
 
 func (h *CustomerOIDCHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	setCustomerNoStore(w)
+	if h == nil || h.oauth2Config == nil {
+		writeError(w, http.StatusServiceUnavailable, "customer OIDC login is not configured")
+		return
+	}
 	state := generateToken(32)
 	browserBinding := generateToken(32)
 	pkceVerifier := generateToken(32)
@@ -165,6 +194,10 @@ func (h *CustomerOIDCHandler) LoginHandler(w http.ResponseWriter, r *http.Reques
 
 func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	setCustomerNoStore(w)
+	if h == nil || h.oauth2Config == nil || h.verifier == nil {
+		writeError(w, http.StatusServiceUnavailable, "customer OIDC login is not configured")
+		return
+	}
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	stateCookie, cookieErr := r.Cookie(customerStateCookieName)
 	var txn customerOIDCTransaction
@@ -249,17 +282,30 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 		http.Error(w, "unable to verify customer account", http.StatusInternalServerError)
 		return
 	}
+	h.establishCustomerSession(w, r, account, idToken.Subject)
+	slog.Info("customer OIDC login", "account_id", account.ID, "email", account.Email)
+	http.Redirect(w, r, txn.ReturnTo, http.StatusFound)
+}
+
+func customerAccountAPIPath(r *http.Request, suffix string) string {
+	if strings.HasPrefix(r.URL.Path, "/arena/") {
+		return "/arena/api/v1/account" + suffix
+	}
+	return "/api/v1/account" + suffix
+}
+
+func (h *CustomerOIDCHandler) establishCustomerSession(w http.ResponseWriter, r *http.Request, account *db.CustomerAccount, subject string) *CustomerSession {
 	ttl := time.Duration(config.C.CustomerOIDCSessionTTL) * time.Hour
 	if ttl <= 0 {
 		ttl = 24 * time.Hour
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	sessionID := generateToken(32)
 	session := &CustomerSession{
 		AccountID:       account.ID,
 		Email:           account.Email,
 		Name:            account.DisplayName,
-		Subject:         idToken.Subject,
+		Subject:         subject,
 		EmailVerifiedAt: account.EmailVerifiedAt,
 		CSRFToken:       generateToken(32),
 		CreatedAt:       now,
@@ -277,8 +323,7 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 		Secure:   secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 	})
-	slog.Info("customer OIDC login", "account_id", account.ID, "email", account.Email)
-	http.Redirect(w, r, txn.ReturnTo, http.StatusFound)
+	return session
 }
 
 func clearCustomerCookie(w http.ResponseWriter, r *http.Request, name string) {
@@ -321,17 +366,25 @@ func (h *CustomerOIDCHandler) GetSession(r *http.Request) *CustomerSession {
 func (h *CustomerOIDCHandler) SessionInfoHandler(w http.ResponseWriter, r *http.Request) {
 	setCustomerNoStore(w)
 	session := h.GetSession(r)
+	oidcEnabled := h != nil && h.oauth2Config != nil
+	emailEnabled := h != nil && h.emailSender != nil && h.emailStore != nil
 	if session == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"authenticated": false,
-			"login_enabled": true,
-			"login_url":     customerAPIDashboardPath(r, "/login"),
+			"authenticated":       false,
+			"login_enabled":       oidcEnabled || emailEnabled,
+			"oidc_login_enabled":  oidcEnabled,
+			"email_login_enabled": emailEnabled,
+			"login_url":           customerAPIDashboardPath(r, "/login"),
+			"email_start_url":     customerAccountAPIPath(r, "/email/start"),
+			"email_verify_url":    customerAccountAPIPath(r, "/email/verify"),
 		})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated": true,
-		"login_enabled": true,
+		"authenticated":       true,
+		"login_enabled":       oidcEnabled || emailEnabled,
+		"oidc_login_enabled":  oidcEnabled,
+		"email_login_enabled": emailEnabled,
 		"account": map[string]any{
 			"id":                session.AccountID,
 			"email":             session.Email,
@@ -340,19 +393,23 @@ func (h *CustomerOIDCHandler) SessionInfoHandler(w http.ResponseWriter, r *http.
 			"email_verified":    session.EmailVerifiedAt != nil,
 			"email_verified_at": session.EmailVerifiedAt,
 		},
-		"csrf_token": session.CSRFToken,
-		"created_at": session.CreatedAt,
-		"expires_at": session.ExpiresAt,
-		"login_url":  customerAPIDashboardPath(r, "/login"),
-		"logout_url": customerAPIDashboardPath(r, "/logout"),
+		"csrf_token":       session.CSRFToken,
+		"created_at":       session.CreatedAt,
+		"expires_at":       session.ExpiresAt,
+		"login_url":        customerAPIDashboardPath(r, "/login"),
+		"logout_url":       customerAPIDashboardPath(r, "/logout"),
+		"email_start_url":  customerAccountAPIPath(r, "/email/start"),
+		"email_verify_url": customerAccountAPIPath(r, "/email/verify"),
 	})
 }
 
 func CustomerSessionUnavailableHandler(w http.ResponseWriter, r *http.Request) {
 	setCustomerNoStore(w)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated": false,
-		"login_enabled": false,
+		"authenticated":       false,
+		"login_enabled":       false,
+		"oidc_login_enabled":  false,
+		"email_login_enabled": false,
 	})
 }
 

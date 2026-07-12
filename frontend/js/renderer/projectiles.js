@@ -13,16 +13,13 @@ const CONFIGS = {
 
 let _counter = 0;
 
-const TRAIL_TEX_DATA = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsSAAALEgHS3X78AAAAxklEQVRYhe2WwQ3CMAxFz2YwAmNwAmMwAmMwAmOwAhM0AiNwAhM0wggqjN0vSZIl/1N7pS1+8gNR5tZ4vYgA4G6v1j4qAABvABeAK8w+3lW0hQfW9a4uGQBM5j8AyGGbGwCd5uB1Vg4g2h8A8lJf2A3wSEmQ4T4kz1y5iD5Sbnx8AaY2mN+G2R8B5V7n6qVq5d3AYQ5xjM1XoI2fJ0Q3i3xL6Y4K3bYQmY2ot7b8Tf1k9U4A1uZyD2a7J4Qf8bqg8dgfQDG2h7U+Lf6HwAAAABJRU5ErkJggg==';
-
 export class ProjectileRenderer {
   /** @param {BABYLON.Scene} scene */
   constructor(scene) {
     this.scene = scene;
     /** @type {Array<BABYLON.Animatable>} */
     this.activeAnimatables = [];
-    // Trail texture is shared by every projectile: decoding the base64 PNG
-    // and uploading it to the GPU per shot was pure churn.
+    // Trail texture is shared by every projectile and generated locally.
     this._trailTex = null;
   }
 
@@ -37,7 +34,26 @@ export class ProjectileRenderer {
   _getTrailTexture() {
     const B = window.BABYLON;
     if (this._isTrailTextureDisposed()) {
-      this._trailTex = new B.Texture(TRAIL_TEX_DATA, this.scene, false, false, B.Texture.BILINEAR_SAMPLINGMODE);
+      const texture = new B.DynamicTexture(
+        'projectileTrailTexture',
+        {width: 32, height: 32},
+        this.scene,
+        false,
+        B.Texture.BILINEAR_SAMPLINGMODE,
+      );
+      const context = texture.getContext();
+      context.clearRect(0, 0, 32, 32);
+      const glow = context.createRadialGradient(16, 16, 0, 16, 16, 16);
+      glow.addColorStop(0, 'rgba(255,255,255,1)');
+      glow.addColorStop(0.32, 'rgba(255,255,255,.9)');
+      glow.addColorStop(1, 'rgba(255,255,255,0)');
+      context.fillStyle = glow;
+      context.fillRect(0, 0, 32, 32);
+      texture.hasAlpha = true;
+      texture.wrapU = B.Texture.CLAMP_ADDRESSMODE;
+      texture.wrapV = B.Texture.CLAMP_ADDRESSMODE;
+      texture.update(false);
+      this._trailTex = texture;
     }
     return this._trailTex;
   }

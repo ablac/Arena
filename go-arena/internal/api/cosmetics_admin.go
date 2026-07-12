@@ -72,15 +72,8 @@ func (h *CosmeticsHandler) AdminCatalog(w http.ResponseWriter, r *http.Request) 
 		writeCosmeticCatalogError(w, err, "failed to load cosmetic catalog")
 		return
 	}
-	hasPurchasableEntry := false
-	for _, item := range catalog.Items {
-		hasPurchasableEntry = hasPurchasableEntry || item.IsPurchasable
-	}
-	for _, pack := range catalog.Packs {
-		hasPurchasableEntry = hasPurchasableEntry || pack.IsPurchasable
-	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"checkout_enabled": h.checkoutEnabled && hasPurchasableEntry,
+		"checkout_enabled": h.checkoutEnabled && cosmeticCatalogHasPurchasablePack(catalog),
 		"categories":       catalog.Categories,
 		"packs":            catalog.Packs,
 		"items":            catalog.Items,
@@ -110,7 +103,9 @@ func (h *CosmeticsHandler) UpsertAdminCategory(w http.ResponseWriter, r *http.Re
 		writeCosmeticCatalogError(w, err, "failed to save cosmetic category")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"category": result})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"category": result, "live_refreshed": h.refreshConnectedBotVisuals(r.Context()),
+	})
 }
 
 func (h *CosmeticsHandler) DeleteAdminCategory(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +143,9 @@ func (h *CosmeticsHandler) UpsertAdminItem(w http.ResponseWriter, r *http.Reques
 		writeCosmeticCatalogError(w, err, "failed to save cosmetic item")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"item": result, "gameplay": "unchanged"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"item": result, "gameplay": "unchanged", "live_refreshed": h.refreshConnectedBotVisuals(r.Context()),
+	})
 }
 
 func (h *CosmeticsHandler) DeleteAdminItem(w http.ResponseWriter, r *http.Request) {
@@ -239,7 +236,13 @@ func (h *CosmeticsHandler) deleteAdminCatalogEntity(w http.ResponseWriter, r *ht
 		writeCosmeticCatalogError(w, err, "failed to delete cosmetic "+entityType)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"deleted": deleted, "id": entityID})
+	liveRefreshed := 0
+	if deleted && (entityType == "category" || entityType == "item") {
+		liveRefreshed = h.refreshConnectedBotVisuals(r.Context())
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"deleted": deleted, "id": entityID, "live_refreshed": liveRefreshed,
+	})
 }
 
 func decodeStrictCosmeticAdminJSON(r *http.Request, destination interface{}) error {
@@ -266,6 +269,8 @@ func cosmeticAdminActor(r *http.Request) string {
 
 func writeCosmeticCatalogError(w http.ResponseWriter, err error, fallback string) {
 	switch {
+	case errors.Is(err, db.ErrCosmeticCatalogBuiltin):
+		writeError(w, http.StatusConflict, "built-in cosmetic entries cannot be deleted; deactivate them instead")
 	case errors.Is(err, db.ErrCosmeticCatalogInvalid):
 		writeError(w, http.StatusBadRequest, "invalid cosmetic catalog metadata")
 	case errors.Is(err, db.ErrCosmeticCatalogConflict):
