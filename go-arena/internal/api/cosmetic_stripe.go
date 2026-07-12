@@ -398,6 +398,11 @@ func (p *StripeCosmeticPaymentProvider) RetrieveCosmeticSubscription(ctx context
 			}
 		}
 	}
+	if subscription.CancelAt > 0 {
+		state.CancelAtPeriodEnd = true
+		cancelAt := time.Unix(subscription.CancelAt, 0).UTC()
+		state.CurrentPeriodEnd = &cancelAt
+	}
 	if !state.Terminal && !validStripeCosmeticSubscriptionBilling(activeItems) {
 		state.Status = db.CosmeticSubscriptionStatusBillingMismatch
 	}
@@ -527,6 +532,7 @@ type stripeSubscriptionWebhookObject struct {
 	ID                string             `json:"id"`
 	Customer          stripeExpandableID `json:"customer"`
 	Status            string             `json:"status"`
+	CancelAt          int64              `json:"cancel_at"`
 	CancelAtPeriodEnd bool               `json:"cancel_at_period_end"`
 	CurrentPeriodEnd  int64              `json:"current_period_end"`
 	Metadata          map[string]string  `json:"metadata"`
@@ -638,6 +644,11 @@ func normalizeStripeCosmeticPaymentEvent(event stripe.Event) (*CosmeticPaymentEv
 		if object.CurrentPeriodEnd > 0 {
 			periodEnd := time.Unix(object.CurrentPeriodEnd, 0).UTC()
 			result.CurrentPeriodEnd = &periodEnd
+		}
+		if object.CancelAt > 0 {
+			result.CancelAtPeriodEnd = true
+			cancelAt := time.Unix(object.CancelAt, 0).UTC()
+			result.CurrentPeriodEnd = &cancelAt
 		}
 		result.ProviderCreatedAt = time.Unix(event.Created, 0).UTC()
 
