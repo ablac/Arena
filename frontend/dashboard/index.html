@@ -457,7 +457,19 @@ tr:hover td{background:rgba(71,215,255,.035)}
   letter-spacing:.13em;
   text-transform:uppercase;
 }
-.login-choice .account-sign-in{width:100%;margin-top:auto}
+.login-choice .account-sign-in{width:100%}
+.account-email-form{display:grid;gap:10px;margin-top:auto}
+.account-email-form[hidden],.account-auth-divider[hidden],.account-email-setup[hidden]{display:none}
+.account-email-form label{display:grid;gap:5px;color:#a9b8c9;font:600 9px/1.3 'IBM Plex Mono',monospace;letter-spacing:.08em;text-transform:uppercase}
+.account-email-form input{width:100%!important;margin:0!important;min-height:44px;font-size:16px!important}
+.account-email-form button{width:100%;min-height:44px}
+.account-email-status,.account-email-setup{min-height:16px;color:#91a6bd;font:500 10px/1.5 'IBM Plex Mono',monospace}
+.account-email-status.is-success{color:#58e58f}.account-email-status.is-error{color:#ff9a92}
+.account-email-confirm{display:grid;gap:10px;padding:14px;border:1px solid rgba(71,215,255,.22);border-radius:16px;background:rgba(71,215,255,.06)}
+.account-email-confirm[hidden]{display:none}.account-email-confirm h3{margin:0;color:#ecf4ff;font-size:15px}.account-email-confirm p{margin:0!important}
+.account-email-confirm button{width:100%;min-height:44px}
+.account-auth-divider{display:flex;align-items:center;gap:8px;color:#61768d;font:600 9px/1 'IBM Plex Mono',monospace;text-transform:uppercase}
+.account-auth-divider::before,.account-auth-divider::after{content:'';height:1px;flex:1;background:rgba(126,166,207,.14)}
 .login-choice.secondary input{width:100%!important;margin:0!important}
 .login-choice.secondary button{align-self:flex-start}
 .login-privacy{font:400 10px/1.55 'IBM Plex Mono',monospace;color:#91a6bd}
@@ -492,7 +504,7 @@ tr:hover td{background:rgba(71,215,255,.035)}
   white-space:nowrap;
 }
 .cosmetic-layout{display:grid;grid-template-columns:minmax(240px,300px) minmax(0,1fr);gap:16px;align-items:start}
-.cosmetic-sidebar,.cosmetic-inventory{padding:18px;border:1px solid rgba(126,166,207,.14);border-radius:22px;background:rgba(6,12,20,.55)}
+.cosmetic-sidebar,.cosmetic-inventory{min-width:0;padding:18px;border:1px solid rgba(126,166,207,.14);border-radius:22px;background:rgba(6,12,20,.55)}
 .cosmetic-sidebar>h3,.cosmetic-group>h3{margin:0 0 6px;color:#ecf4ff;font-size:13px}
 .linked-bot-list{display:flex;flex-direction:column;gap:7px;margin:14px 0 16px;padding:0;list-style:none}
 .linked-bot-list li{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px;border:1px solid rgba(126,166,207,.12);border-radius:14px;background:rgba(255,255,255,.025)}
@@ -511,7 +523,7 @@ tr:hover td{background:rgba(71,215,255,.035)}
 .cosmetic-rule{margin:5px 0 17px;padding:10px 12px;border-left:2px solid #47d7ff;background:rgba(71,215,255,.05)}
 .cosmetic-group+.cosmetic-group{margin-top:20px}
 .cosmetic-license-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
-.cosmetic-license{padding:14px;border:1px solid rgba(126,166,207,.13);border-radius:18px;background:linear-gradient(180deg,rgba(14,25,38,.76),rgba(9,16,25,.66))}
+.cosmetic-license{min-width:0;padding:14px;border:1px solid rgba(126,166,207,.13);border-radius:18px;background:linear-gradient(180deg,rgba(14,25,38,.76),rgba(9,16,25,.66))}
 .cosmetic-license-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .cosmetic-license h3{margin:4px 0 0;color:#ecf4ff;font-size:14px;letter-spacing:-.02em}
 .cosmetic-license p{min-height:34px;margin:8px 0}
@@ -527,7 +539,39 @@ button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.5;tra
 .cosmetic-empty{color:#91a6bd!important;font-size:10px!important;line-height:1.55}
 .cosmetic-empty-inventory{padding:24px;text-align:center;border:1px dashed rgba(126,166,207,.18);border-radius:16px}
 .cosmetic-loading{padding:40px;text-align:center;color:#91a6bd;font:500 11px/1.5 'IBM Plex Mono',monospace}
-@media (max-width:760px){.login-shell,.cosmetic-layout{grid-template-columns:1fr}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.cosmetic-license-grid{grid-template-columns:1fr}}
+.cosmetic-shop{margin-bottom:16px;padding:18px;border:1px solid rgba(240,192,64,.18);border-radius:22px;background:rgba(6,12,20,.55)}
+.cosmetic-shop-search{display:grid;gap:7px;margin-bottom:13px;color:#ecf4ff;font-size:11px;font-weight:700}
+.cosmetic-shop-search input{min-height:44px;width:100%;font-size:16px}
+.cosmetic-shop-grid{display:grid;gap:9px;content-visibility:auto}
+.cosmetic-shop-pack{display:grid;grid-template-columns:88px minmax(0,1fr) auto;gap:14px;align-items:center;min-width:0;padding:12px;border:1px solid rgba(126,166,207,.14);border-radius:17px;background:rgba(9,16,25,.74)}
+.cosmetic-shop-swatch{width:88px;aspect-ratio:1;border:1px solid rgba(255,255,255,.13);border-radius:14px;background:linear-gradient(135deg,#24364a,#0c141f);box-shadow:inset 0 0 0 5px rgba(4,9,15,.28)}
+.cosmetic-shop-pack-copy{min-width:0}
+.cosmetic-shop-pack-copy h3{margin:4px 0;color:#ecf4ff;font-size:14px;letter-spacing:-.02em}
+.cosmetic-shop-pack-copy p{display:-webkit-box;margin:0 0 8px;overflow:hidden;color:#91a6bd;font-size:10px;line-height:1.45;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+.cosmetic-shop-contents{display:flex;gap:5px;flex-wrap:wrap}
+.cosmetic-shop-contents span{padding:4px 7px;border:1px solid rgba(126,166,207,.12);border-radius:999px;color:#a9b8c9;font:500 8px/1.2 'IBM Plex Mono',monospace}
+.cosmetic-shop-offer{display:grid;gap:8px;justify-items:end;min-width:132px}
+.cosmetic-shop-offer>strong{color:#f0c040;font:700 13px/1 'IBM Plex Mono',monospace}
+.cosmetic-shop-state{color:#91a6bd;font:500 9px/1.3 'IBM Plex Mono',monospace;text-align:end}
+.cosmetic-shop-buy{min-height:44px;border-color:rgba(240,192,64,.35);color:#f0c040}
+.cosmetic-shop-buy:hover{border-color:#f0c040;background:rgba(240,192,64,.12);color:#ffe08b}
+.cosmetic-purchases{margin-bottom:16px;padding:18px;border:1px solid rgba(126,166,207,.14);border-radius:22px;background:rgba(6,12,20,.55)}
+.cosmetic-purchase-list{display:grid;gap:9px}
+.cosmetic-purchase{min-width:0;padding:13px;border:1px solid rgba(126,166,207,.13);border-radius:17px;background:rgba(9,16,25,.74)}
+.cosmetic-purchase-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.cosmetic-purchase-head>div{min-width:0}
+.cosmetic-purchase-head h3{margin:4px 0 0;overflow-wrap:anywhere;color:#ecf4ff;font-size:14px;letter-spacing:-.02em}
+.cosmetic-purchase-head code{overflow-wrap:anywhere;color:#a9b8c9;font:500 9px/1.3 'IBM Plex Mono',monospace}
+.cosmetic-purchase-status{display:inline-flex;align-items:center;min-height:23px;padding:0 8px;border:1px solid rgba(126,166,207,.22);border-radius:999px;color:#a9b8c9;font:600 8px/1 'IBM Plex Mono',monospace;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+.cosmetic-purchase-status.is-paid{border-color:rgba(88,229,143,.28);background:rgba(88,229,143,.08);color:#58e58f}
+.cosmetic-purchase-status.is-warning{border-color:rgba(255,154,146,.28);background:rgba(255,123,114,.08);color:#ff9a92}
+.cosmetic-purchase-facts,.cosmetic-purchase-money{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px;color:#91a6bd;font:500 9px/1.4 'IBM Plex Mono',monospace}
+.cosmetic-purchase-facts span,.cosmetic-purchase-facts time,.cosmetic-purchase-money span{padding:5px 7px;border:1px solid rgba(126,166,207,.1);border-radius:9px;background:rgba(255,255,255,.02)}
+.cosmetic-purchase-money strong{color:#ecf4ff}
+:is(.tbtn,.cosmetic-shop-buy,.cosmetic-shop-search input):focus-visible{outline:2px solid #7ee4ff;outline-offset:3px}
+@media (max-width:760px){.login-shell{grid-template-columns:1fr}.cosmetic-layout{grid-template-columns:minmax(0,1fr)}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.linked-bot-list li{align-items:flex-start;flex-wrap:wrap}.linked-bot-actions{flex-wrap:wrap}.cosmetic-license-grid{grid-template-columns:minmax(0,1fr)}.cosmetic-license-actions select{flex-basis:100%;min-width:0;width:100%}.cosmetic-shop-pack{grid-template-columns:68px minmax(0,1fr)}.cosmetic-shop-swatch{width:68px}.cosmetic-shop-offer{grid-column:1/-1;grid-template-columns:1fr auto;align-items:center;justify-items:start;width:100%}.cosmetic-shop-offer .cosmetic-shop-buy{justify-self:end}}
+@media (pointer:coarse){.cosmetic-shop button,.tbtn{min-height:44px}.cosmetic-shop-search input{font-size:16px}}
+@media (prefers-reduced-motion:reduce){.cosmetic-shop *{scroll-behavior:auto!important;transition-duration:.01ms!important}}
 </style>
 </head>
 <body>
@@ -544,9 +588,28 @@ if (window.self !== window.top) {
   <div class="login-shell">
     <section class="login-choice primary">
       <div class="choice-kicker">Recommended</div>
-      <h2>Cosmetics &amp; linked bots</h2>
-      <p>Sign in to manage the cosmetic licenses purchased by your email. Assign, remove, or move each license between your bots at any time.</p>
-      <button class="account-sign-in" id="accountSignInButton" type="button" disabled>Checking email sign-in...</button>
+      <h2>Create or sign in</h2>
+      <p>Use a one-time email link to create your verified Arena account or return to it. No password is stored by Arena.</p>
+      <form class="account-email-form" id="accountEmailForm" hidden novalidate>
+        <label>Email
+          <input id="accountEmailInput" type="email" autocomplete="email" inputmode="email" maxlength="254" placeholder="pilot@example.com" required>
+        </label>
+        <label>Display name <span aria-hidden="true">(optional)</span>
+          <input id="accountDisplayNameInput" type="text" autocomplete="name" maxlength="200" placeholder="Pilot name">
+        </label>
+        <button id="accountEmailSubmit" type="submit" disabled>Email me a sign-in link</button>
+        <div class="account-email-status" id="accountEmailStatus" role="status" aria-live="polite"></div>
+      </form>
+      <div class="account-email-confirm" id="accountEmailConfirm" hidden>
+        <div class="choice-kicker">Email link opened</div>
+        <h3>Finish signing in</h3>
+        <p>Continue only if you requested this Arena account link. This click consumes it once.</p>
+        <button id="accountEmailConfirmButton" type="button">Continue to Arena</button>
+        <div class="account-email-status" id="accountEmailConfirmStatus" role="status" aria-live="polite"></div>
+      </div>
+      <div class="account-email-setup" id="accountEmailSetup" role="status">Checking account registration...</div>
+      <div class="account-auth-divider" id="accountAuthDivider" hidden>or</div>
+      <button class="account-sign-in" id="accountSignInButton" type="button" hidden disabled>Continue with SSO</button>
       <div class="login-privacy">One cosmetic license can be used by one bot at a time. Linking a key never makes that key the owner.</div>
     </section>
     <section class="login-choice secondary">
@@ -571,18 +634,18 @@ if (window.self !== window.top) {
     <span id="arenaPhase"></span>
   </div>
   <div class="tabs-shell">
-    <div class="tabs">
-      <div class="tbtn" data-tab="cosmetics" data-view="private" data-auth="account">Cosmetics</div>
-      <div class="tbtn active" data-tab="overview" data-view="private" data-auth="bot">Overview</div>
-      <div class="tbtn" data-tab="compare" data-view="private" data-auth="bot">Compare Bots</div>
-      <div class="tbtn" data-tab="allbots" data-view="private" data-auth="bot">All My Bots</div>
-      <div class="tbtn" data-tab="simulator" data-view="public">Stat Simulator</div>
-      <div class="tbtn" data-tab="weapons" data-view="public">Weapons</div>
-      <div class="tbtn" data-tab="skills" data-view="public">Skills</div>
-      <div class="tbtn" data-tab="builds" data-view="public">Build Templates</div>
-      <div class="tbtn" data-tab="mapviewer" data-view="public">Map Viewer</div>
-      <div class="tbtn" data-tab="metareport" data-view="public">Meta Report</div>
-      <div class="tbtn" data-tab="strategy" data-view="public">Strategy</div>
+    <div class="tabs" role="tablist" aria-label="Dashboard sections">
+      <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-cosmetics" data-tab="cosmetics" data-view="private" data-auth="account">Cosmetics</button>
+      <button type="button" class="tbtn active" role="tab" aria-selected="true" aria-controls="tab-overview" data-tab="overview" data-view="private" data-auth="bot">Overview</button>
+      <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-compare" data-tab="compare" data-view="private" data-auth="bot">Compare Bots</button>
+      <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-allbots" data-tab="allbots" data-view="private" data-auth="bot">All My Bots</button>
+      <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-simulator" data-tab="simulator" data-view="public">Stat Simulator</button>
+      <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-weapons" data-tab="weapons" data-view="public">Weapons</button>
+      <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-skills" data-tab="skills" data-view="public">Skills</button>
+      <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-builds" data-tab="builds" data-view="public">Build Templates</button>
+      <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-mapviewer" data-tab="mapviewer" data-view="public">Map Viewer</button>
+      <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-metareport" data-tab="metareport" data-view="public">Meta Report</button>
+      <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-strategy" data-tab="strategy" data-view="public">Strategy</button>
     </div>
     <div class="tabs-toolbar" data-view="private">
       <span class="account-toolbar-identity" id="accountToolbarIdentity"></span>
@@ -680,7 +743,8 @@ if (window.self !== window.top) {
   </div>
 </div>
 
-<script src="./account-cosmetics.js?v=20260710a"></script>
+<script src="../js/cosmetic-themes.js?v=20260711b"></script>
+<script src="./account-cosmetics.js?v=20260711d"></script>
 <script>
 const WEAPON_META = {
   sword:{name:'Sword',badge:'SWD',role:'Balanced frontline weapon.',desc:'Reliable melee with cleave pressure when fights stack up.',build:'hp:5 speed:5 attack:5 defense:5',strongVs:'Daggers, shield',counter:'Bow, staff'},
@@ -805,17 +869,34 @@ let stats = null;
 let accountSession = {
   authenticated:false,
   login_enabled:false,
+  email_login_enabled:false,
+  oidc_login_enabled:false,
   login_url:'',
   logout_url:'',
+  email_start_url:'',
+  email_verify_url:'',
   account:{id:'',email:'',email_verified:false,name:''},
   csrf_token:'',
 };
 let accountSnapshot = null;
+let accountCatalog = null;
+let accountCatalogError = '';
+let accountOrders = null;
+let accountOrdersError = '';
 let accountBusyLicenseID = '';
 let accountViewError = '';
 let accountViewNotice = '';
 let accountRefreshSequence = 0;
-const DASHBOARD_VIEW = new URLSearchParams(window.location.search).get('view') === 'public' ? 'public' : 'private';
+const DASHBOARD_PARAMS = new URLSearchParams(window.location.search);
+let pendingCustomerEmailToken = takeCustomerEmailTokenFromHash();
+let accountShopQuery = DASHBOARD_PARAMS.get('pack') || '';
+const checkoutReturn = String(DASHBOARD_PARAMS.get('checkout') || DASHBOARD_PARAMS.get('checkout_status') || '').toLowerCase();
+let accountCheckoutState = checkoutReturn === 'success'
+  ? {status:'success',packID:'',message:''}
+  : ['cancel','cancelled','canceled'].includes(checkoutReturn)
+    ? {status:'cancelled',packID:'',message:''}
+    : {status:'idle',packID:'',message:''};
+const DASHBOARD_VIEW = DASHBOARD_PARAMS.get('view') === 'public' ? 'public' : 'private';
 function dashboardAPIBase(pathname, paths) {
   if (paths && typeof paths.apiBase === 'function') {
     return paths.apiBase(pathname);
@@ -868,9 +949,125 @@ function accountReturnPath() {
   return location.pathname + location.search;
 }
 
+function safeCustomerEmailRedirectPath(raw) {
+  const fallback = accountReturnPath();
+  if (typeof raw !== 'string') return fallback;
+  const candidate = raw.trim();
+  if (!candidate.startsWith('/') || candidate.startsWith('//') || candidate.includes('\\')) return fallback;
+  try {
+    const parsed = new URL(candidate, location.origin);
+    const path = parsed.pathname;
+    const dashboardPath = path === '/dashboard' || path.startsWith('/dashboard/') ||
+      path === '/arena/dashboard' || path.startsWith('/arena/dashboard/');
+    if (parsed.origin !== location.origin || parsed.hash || !dashboardPath) return fallback;
+    return path + parsed.search;
+  } catch (error) {
+    return fallback;
+  }
+}
+
 function navigateAccount(url) {
   if (window.top !== window.self) window.top.location.assign(url);
   else location.assign(url);
+}
+
+function takeCustomerEmailTokenFromHash() {
+  const rawHash = String(window.location.hash || '');
+  if (!rawHash.startsWith('#')) return '';
+  const params = new URLSearchParams(rawHash.slice(1));
+  const token = String(params.get('email_token') || '').trim();
+  if (!token) return '';
+  params.delete('email_token');
+  const remaining = params.toString();
+  const cleanURL = location.pathname + location.search + (remaining ? '#'+remaining : '');
+  history.replaceState(null, '', cleanURL);
+  return token;
+}
+
+async function emailAuthRequest(path, body) {
+  const endpoint = path.startsWith('/api/v1/') || path.startsWith('/arena/api/v1/')
+    ? path
+    : getBase()+path;
+  const response = await fetch(endpoint, {
+    method:'POST',
+    credentials:'same-origin',
+    cache:'no-store',
+    headers:{Accept:'application/json','Content-Type':'application/json'},
+    body:JSON.stringify(body),
+  });
+  const text = await response.text();
+  let payload = null;
+  if (text) {
+    try { payload = JSON.parse(text); }
+    catch (e) { payload = {message:text}; }
+  }
+  if (!response.ok) throw new Error(payload?.error || payload?.message || `Request failed (${response.status})`);
+  return payload;
+}
+
+async function startCustomerEmailAuth(event) {
+  event.preventDefault();
+  const form = document.getElementById('accountEmailForm');
+  const emailInput = document.getElementById('accountEmailInput');
+  const nameInput = document.getElementById('accountDisplayNameInput');
+  const submit = document.getElementById('accountEmailSubmit');
+  const status = document.getElementById('accountEmailStatus');
+  if (!accountSession.email_login_enabled) {
+    status.className = 'account-email-status is-error';
+    status.textContent = 'Email registration is not configured on this Arena yet.';
+    return;
+  }
+  if (!form.reportValidity()) return;
+  submit.disabled = true;
+  submit.textContent = 'Sending secure link...';
+  status.className = 'account-email-status';
+  status.textContent = '';
+  try {
+    const payload = await emailAuthRequest(accountSession.email_start_url || '/account/email/start', {
+      email:emailInput.value.trim(),
+      display_name:nameInput.value.trim(),
+      return_to:accountReturnPath(),
+    });
+    status.className = 'account-email-status is-success';
+    status.textContent = payload?.message || 'If that address can receive Arena mail, a sign-in link will arrive shortly.';
+  } catch (error) {
+    status.className = 'account-email-status is-error';
+    status.textContent = error.message || 'The sign-in email could not be sent. Try again shortly.';
+  } finally {
+    submit.disabled = !accountSession.email_login_enabled;
+    submit.textContent = 'Email me a sign-in link';
+  }
+}
+
+async function confirmCustomerEmailToken() {
+  const button = document.getElementById('accountEmailConfirmButton');
+  const status = document.getElementById('accountEmailConfirmStatus');
+  if (!pendingCustomerEmailToken || !accountSession.email_login_enabled) {
+    status.className = 'account-email-status is-error';
+    status.textContent = 'This sign-in link is unavailable. Request a new one.';
+    return;
+  }
+  button.disabled = true;
+  button.textContent = 'Verifying secure link...';
+  status.className = 'account-email-status';
+  status.textContent = '';
+  try {
+    const payload = await emailAuthRequest(accountSession.email_verify_url || '/account/email/verify', {token:pendingCustomerEmailToken});
+    const redirectTo = safeCustomerEmailRedirectPath(payload?.redirect_to);
+    pendingCustomerEmailToken = '';
+    document.getElementById('accountEmailConfirm').hidden = true;
+    if (redirectTo !== accountReturnPath()) {
+      navigateAccount(redirectTo);
+      return;
+    }
+    await initializeAccountMode();
+  } catch (error) {
+    status.className = 'account-email-status is-error';
+    status.textContent = error.message || 'This sign-in link is invalid or expired. Request a new one.';
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Continue to Arena';
+  }
 }
 
 function startAccountLogin() {
@@ -883,8 +1080,8 @@ function startAccountLogin() {
     initializeAccountMode();
     return;
   }
-  if (!accountSession.login_enabled) {
-    document.getElementById('loginError').textContent = 'Email account sign-in is not configured on this Arena yet.';
+  if (!accountSession.oidc_login_enabled) {
+    document.getElementById('loginError').textContent = 'SSO sign-in is not configured on this Arena.';
     return;
   }
   const loginURL = accountSession.login_url || getBase()+'/dashboard/login';
@@ -908,8 +1105,23 @@ function updateAccountLoginUI() {
   const button = document.getElementById('accountSignInButton');
   if (!button) return;
   delete button.dataset.retrySession;
-  button.disabled = !accountSession.login_enabled;
-  button.textContent = accountSession.login_enabled ? 'Sign in with email' : 'Email sign-in setup pending';
+  const emailEnabled = accountSession.email_login_enabled === true;
+  const oidcEnabled = accountSession.oidc_login_enabled === true;
+  const form = document.getElementById('accountEmailForm');
+  const submit = document.getElementById('accountEmailSubmit');
+  const setup = document.getElementById('accountEmailSetup');
+  const confirm = document.getElementById('accountEmailConfirm');
+  const divider = document.getElementById('accountAuthDivider');
+  const confirmingEmail = emailEnabled && Boolean(pendingCustomerEmailToken);
+  form.hidden = !emailEnabled || confirmingEmail;
+  confirm.hidden = !confirmingEmail;
+  submit.disabled = !emailEnabled;
+  setup.hidden = emailEnabled || oidcEnabled || confirmingEmail;
+  setup.textContent = 'Email account registration is not configured on this Arena yet.';
+  button.hidden = !oidcEnabled || confirmingEmail;
+  button.disabled = !oidcEnabled;
+  button.textContent = 'Continue with SSO';
+  divider.hidden = !(emailEnabled && oidcEnabled) || confirmingEmail;
 }
 
 function updatePrivateAuthUI() {
@@ -948,17 +1160,53 @@ function renderAccountCosmetics() {
     busyLicenseID: accountBusyLicenseID,
     error: accountViewError,
     notice: accountViewNotice,
+    catalog: accountCatalog,
+    catalogError: accountCatalogError,
+    shopQuery: accountShopQuery,
+    checkoutState: accountCheckoutState,
+    orders: accountOrders,
+    ordersError: accountOrdersError,
   });
 }
 
 async function refreshAccountCosmetics(notice='') {
   const requestID = ++accountRefreshSequence;
+  accountOrders = null;
+  accountOrdersError = '';
+  const ordersRequest = accountRequest(window.ArenaAccountCosmetics.accountRoute('orders')+'?limit=20')
+    .then(payload => {
+      if (requestID !== accountRefreshSequence) return;
+      if (!payload || typeof payload !== 'object' || !Array.isArray(payload.orders)) {
+        throw new Error('The purchase history service returned an invalid response.');
+      }
+      accountOrders = payload.orders.slice(0, 20);
+      accountOrdersError = '';
+      renderAccountCosmetics();
+    })
+    .catch(error => {
+      if (requestID !== accountRefreshSequence) return;
+      accountOrders = null;
+      accountOrdersError = error?.message || 'Purchase history could not be loaded.';
+      renderAccountCosmetics();
+    });
+  if (accountSnapshot) renderAccountCosmetics();
   try {
-    const payload = await accountRequest(window.ArenaAccountCosmetics.accountRoute('cosmetics'));
+    const [inventoryResult, catalogResult] = await Promise.allSettled([
+      accountRequest(window.ArenaAccountCosmetics.accountRoute('cosmetics')),
+      accountRequest('/cosmetics/catalog'),
+    ]);
     if (requestID !== accountRefreshSequence) return;
+    if (inventoryResult.status !== 'fulfilled') throw inventoryResult.reason;
+    const payload = inventoryResult.value;
     if (!payload || typeof payload !== 'object') throw new Error('The cosmetics service returned an invalid response.');
     if (!payload.account) payload.account = accountSession.account;
     accountSnapshot = window.ArenaAccountCosmetics.normalizeSnapshot(payload);
+    if (catalogResult.status === 'fulfilled') {
+      accountCatalog = window.ArenaAccountCosmetics.normalizeCatalog(catalogResult.value);
+      accountCatalogError = '';
+    } else {
+      accountCatalogError = catalogResult.reason?.message || 'The set catalog could not be loaded. Your owned cosmetics remain available.';
+    }
     accountViewError = '';
     accountViewNotice = notice;
   } catch (e) {
@@ -967,6 +1215,7 @@ async function refreshAccountCosmetics(notice='') {
     accountViewNotice = '';
   }
   renderAccountCosmetics();
+  await ordersRequest;
 }
 
 async function handleAccountPanelSubmit(event) {
@@ -993,6 +1242,38 @@ async function handleAccountPanelSubmit(event) {
       currentSubmit.disabled = false;
       currentSubmit.textContent = 'Verify & link bot';
     }
+  }
+}
+
+async function startCosmeticCheckout(packID) {
+  const intent = window.ArenaAccountCosmetics.checkoutIntent(accountCatalog, packID);
+  if (!intent.ok) {
+    accountCheckoutState = {
+      status: intent.reason === 'checkout-disabled' ? 'disabled' : 'error',
+      packID,
+      message: intent.reason === 'pack-not-purchasable'
+        ? 'That set is not currently available for purchase.'
+        : 'Checkout is not available for that set.',
+    };
+    renderAccountCosmetics();
+    return;
+  }
+  if (accountCheckoutState.status === 'pending') return;
+  accountCheckoutState = {status:'pending',packID,message:''};
+  renderAccountCosmetics();
+  try {
+    const data = await accountRequest(intent.path, {
+      method:'POST',
+      body:JSON.stringify(intent.body),
+    });
+    const rawCheckoutURL = String(data?.checkout_url || '').trim();
+    if (!rawCheckoutURL) throw new Error('The checkout service did not return a redirect.');
+    const checkoutURL = new URL(rawCheckoutURL, window.location.href);
+    if (!['http:','https:'].includes(checkoutURL.protocol)) throw new Error('The checkout service returned an unsafe redirect.');
+    window.location.assign(checkoutURL.href);
+  } catch (error) {
+    accountCheckoutState = {status:'error',packID,message:error.message || 'Try again in a moment.'};
+    renderAccountCosmetics();
   }
 }
 
@@ -1096,6 +1377,11 @@ async function unlinkAccountBot(botID) {
 }
 
 function handleAccountPanelClick(event) {
+  const checkoutButton = event.target.closest('[data-pack-checkout]');
+  if (checkoutButton) {
+    startCosmeticCheckout(checkoutButton.dataset.packCheckout);
+    return;
+  }
   const retryButton = event.target.closest('[data-account-retry]');
   if (retryButton) {
     accountViewError = '';
@@ -1125,6 +1411,18 @@ function handleAccountPanelClick(event) {
   if (unlinkButton) unlinkAccountBot(unlinkButton.dataset.botUnlink);
 }
 
+function handleAccountPanelInput(event) {
+  const search = event.target.closest('[data-account-shop-search]');
+  if (!search) return;
+  accountShopQuery = search.value;
+  renderAccountCosmetics();
+  const refreshedSearch = document.querySelector('[data-account-shop-search]');
+  if (refreshedSearch) {
+    refreshedSearch.focus();
+    refreshedSearch.setSelectionRange(accountShopQuery.length, accountShopQuery.length);
+  }
+}
+
 function handleAccountPanelChange(event) {
   const select = event.target.closest('[data-license-target]');
   if (!select) return;
@@ -1134,25 +1432,39 @@ function handleAccountPanelChange(event) {
 }
 
 function bindAccountCosmeticsUI() {
+  document.getElementById('accountEmailForm').addEventListener('submit', startCustomerEmailAuth);
+  document.getElementById('accountEmailConfirmButton').addEventListener('click', confirmCustomerEmailToken);
   document.getElementById('accountSignInButton').addEventListener('click', startAccountLogin);
   document.getElementById('accountLogoutBtn').addEventListener('click', signOutAccount);
   const panel = document.getElementById('accountCosmeticsPanel');
   panel.addEventListener('submit', handleAccountPanelSubmit);
   panel.addEventListener('click', handleAccountPanelClick);
   panel.addEventListener('change', handleAccountPanelChange);
+  panel.addEventListener('input', handleAccountPanelInput);
 }
 
 async function initializeAccountMode() {
   if (DASHBOARD_VIEW !== 'private') return false;
   try {
-    const payload = await accountRequest(window.ArenaAccountCosmetics.accountRoute('session'), {allowUnauthorized:true});
+    let payload = await accountRequest(window.ArenaAccountCosmetics.accountRoute('session'), {allowUnauthorized:true});
     if (!payload) return false;
-    const normalized = window.ArenaAccountCosmetics.normalizeSession(payload);
+    let normalized = window.ArenaAccountCosmetics.normalizeSession(payload);
     accountSession = {
       ...normalized,
       csrf_token: payload.csrf_token || payload.account?.csrf_token || '',
     };
     updateAccountLoginUI();
+    if (pendingCustomerEmailToken) {
+      if (!normalized.email_login_enabled) {
+        pendingCustomerEmailToken = '';
+        updateAccountLoginUI();
+        document.getElementById('loginError').textContent = 'This Arena is not configured to accept email sign-in links.';
+      } else {
+        document.getElementById('login').style.display='flex';
+        document.getElementById('app').style.display='none';
+        return false;
+      }
+    }
     if (!hasVerifiedAccount()) {
       if (normalized.authenticated) document.getElementById('loginError').textContent = 'Your identity provider did not supply a verified email address.';
       return false;
@@ -1175,7 +1487,12 @@ async function initializeAccountMode() {
     return true;
   } catch (e) {
     accountSession.login_enabled = false;
+    accountSession.email_login_enabled = false;
+    accountSession.oidc_login_enabled = false;
+    document.getElementById('accountEmailForm').hidden = true;
+    document.getElementById('accountEmailSetup').hidden = true;
     const button = document.getElementById('accountSignInButton');
+    button.hidden = false;
     button.disabled = false;
     button.dataset.retrySession = 'true';
     button.textContent = 'Retry email sign-in check';
@@ -1257,13 +1574,21 @@ function buildBotSwitcher() {
 
 // ========== Tabs ==========
 function activateTab(tabName) {
-  document.querySelectorAll('.tbtn').forEach(t=>t.classList.remove('active'));
-  document.querySelectorAll('.tpanel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tbtn').forEach(t => {
+    const active = t.dataset.tab === tabName;
+    t.classList.toggle('active', active);
+    t.setAttribute('aria-selected', active ? 'true' : 'false');
+    t.tabIndex = active ? 0 : -1;
+  });
+  document.querySelectorAll('.tpanel').forEach(p => {
+    const active = p.id === 'tab-'+tabName;
+    p.classList.toggle('active', active);
+    p.setAttribute('role', 'tabpanel');
+    p.setAttribute('aria-hidden', active ? 'false' : 'true');
+  });
   const button = document.querySelector(`.tbtn[data-tab="${tabName}"]`);
   const panel = document.getElementById('tab-'+tabName);
   if (!button || !panel || button.style.display === 'none') return;
-  button.classList.add('active');
-  panel.classList.add('active');
   if (tabName==='weapons') renderWeapons();
   if (tabName==='simulator') initSim();
   if (tabName==='skills') renderSkills();
@@ -1275,7 +1600,22 @@ function activateTab(tabName) {
   if (tabName==='metareport') loadMetaReport();
 }
 
-document.querySelectorAll('.tbtn').forEach(b => b.addEventListener('click', () => activateTab(b.dataset.tab)));
+document.querySelectorAll('.tbtn').forEach(button => {
+  button.addEventListener('click', () => activateTab(button.dataset.tab));
+  button.addEventListener('keydown', event => {
+    if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+    const tabs = [...document.querySelectorAll(`.tbtn[data-view="${DASHBOARD_VIEW}"]`)]
+      .filter(tab => tab.style.display !== 'none');
+    if (!tabs.length) return;
+    const current = Math.max(0, tabs.indexOf(button));
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? tabs.length - 1
+        : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+    event.preventDefault();
+    activateTab(tabs[next].dataset.tab);
+    tabs[next].focus();
+  });
+});
 
 function initDashboardMode() {
   const isPublic = DASHBOARD_VIEW === 'public';

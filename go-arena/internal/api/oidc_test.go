@@ -2,12 +2,14 @@ package api
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 
 	"arena-server/internal/config"
+	"arena-server/internal/game"
 
 	"golang.org/x/oauth2"
 )
@@ -116,5 +118,31 @@ func TestAdminOIDCConfigurationFailsClosedWithoutAllowlist(t *testing.T) {
 	config.C.OIDCAdminEmails = ""
 	if handler := NewOIDCHandler(); handler != nil {
 		t.Fatal("admin OIDC initialized without an explicit verified-email allowlist")
+	}
+}
+
+func TestAdminSessionRoutesQuietlyReportOIDCDisabled(t *testing.T) {
+	previous := config.C
+	t.Cleanup(func() { config.C = previous })
+	config.C.OIDCEnabled = false
+	config.C.CustomerOIDCEnabled = false
+	router := NewRouter(game.NewGameEngine())
+
+	for _, path := range []string{"/api/v1/admin/session", "/arena/api/v1/admin/session"} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("GET %s status=%d body=%s, want 200", path, recorder.Code, recorder.Body.String())
+		}
+		var payload struct {
+			Authenticated bool `json:"authenticated"`
+			LoginEnabled  bool `json:"login_enabled"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("GET %s response: %v", path, err)
+		}
+		if payload.Authenticated || payload.LoginEnabled {
+			t.Fatalf("GET %s payload=%+v, want disabled unauthenticated session", path, payload)
+		}
 	}
 }

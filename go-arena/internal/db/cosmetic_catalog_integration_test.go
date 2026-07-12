@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func TestPostgresCosmeticCatalogAdministrationAndPublicProjection(t *testing.T) 
 	}
 	item := CosmeticItem{
 		ID: "attachment-event-crown", Name: "Event Crown", Description: "Presentation only.",
-		CategoryID: category.ID, Slot: CosmeticSlotAttachment, AssetKey: "event_crown", Rarity: "rare",
+		CategoryID: category.ID, Slot: CosmeticSlotAttachment, AssetKey: "arena_set_902_event_crown", Rarity: "rare",
 		PriceCents: 99, Currency: "USD", IsPurchasable: true, IsActive: true, SortOrder: 10,
 	}
 	if _, err := UpsertCosmeticCatalogItem(ctx, item, "integration-admin"); err != nil {
@@ -71,6 +72,111 @@ func TestPostgresCosmeticCatalogAdministrationAndPublicProjection(t *testing.T) 
 	}
 	if cosmeticPackByID(adminCatalog.Packs, pack.ID) == nil || cosmeticItemByID(adminCatalog.Items, item.ID) == nil {
 		t.Fatal("admin catalog omitted inactive entries")
+	}
+}
+
+func TestPostgresInactiveCosmeticCategorySuspendsGrantEquipAndRendering(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	category := CosmeticCategory{ID: "retired-collection", Name: "Retired Collection", IsActive: true, SortOrder: 500}
+	if _, err := UpsertCosmeticCategory(ctx, category, "integration-admin"); err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+	item := CosmeticItem{
+		ID: "retired-attachment", Name: "Retired Attachment", CategoryID: category.ID,
+		Slot: CosmeticSlotAttachment, AssetKey: "arena_set_906_retired_attachment", Rarity: "rare",
+		PriceCents: 99, Currency: "USD", IsActive: true, SortOrder: 10,
+	}
+	if _, err := UpsertCosmeticCatalogItem(ctx, item, "integration-admin"); err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+
+	bot := createCustomerCosmeticsTestBot(t, ctx, "inactive-category")
+	legacyBot := createCustomerCosmeticsTestBot(t, ctx, "inactive-category-legacy")
+	if created, err := GrantCosmeticEntitlement(ctx, legacyBot.ID, item.ID, "manual", "inactive-legacy-existing"); err != nil || !created {
+		t.Fatalf("grant active legacy entitlement = (%v, %v), want created", created, err)
+	}
+	license, created, err := GrantCosmeticLicense(ctx, "inactive-owner@example.com", item.ID, "manual", "inactive-license")
+	if err != nil || !created {
+		t.Fatalf("grant active category item = (%+v, %v, %v)", license, created, err)
+	}
+	account, err := UpsertVerifiedCustomerAccount(ctx, "inactive-owner@example.com", "https://id.example", "inactive-owner", "Inactive Owner")
+	if err != nil {
+		t.Fatalf("verify owner: %v", err)
+	}
+	if _, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID); err != nil {
+		t.Fatalf("link bot: %v", err)
+	}
+	if _, err := AssignCosmeticLicense(ctx, account.ID, license.ID, &bot.ID); err != nil {
+		t.Fatalf("assign license: %v", err)
+	}
+	if _, err := EquipCustomerCosmeticLicense(ctx, account.ID, bot.ID, license.ID); err != nil {
+		t.Fatalf("equip active category item: %v", err)
+	}
+	equipped, err := GetEquippedCosmetics(ctx, bot.ID)
+	if err != nil || equipped[CosmeticSlotAttachment] != item.AssetKey {
+		t.Fatalf("active equipped assets = (%v, %v), want %q", equipped, err, item.AssetKey)
+	}
+	batch, err := GetEquippedCosmeticsForBots(ctx, []string{bot.ID, legacyBot.ID, bot.ID})
+	if err != nil || len(batch) != 2 || batch[bot.ID][CosmeticSlotAttachment] != item.AssetKey ||
+		batch[legacyBot.ID][CosmeticSlotAttachment] != "none" {
+		t.Fatalf("batched equipped assets = (%v, %v)", batch, err)
+	}
+
+	category.IsActive = false
+	if _, err := UpsertCosmeticCategory(ctx, category, "integration-admin"); err != nil {
+		t.Fatalf("deactivate category: %v", err)
+	}
+	licenses, err := ListCustomerCosmeticLicenses(ctx, account.ID)
+	if err != nil || len(licenses) != 1 {
+		t.Fatalf("durable licenses after category deactivate = (%+v, %v)", licenses, err)
+	}
+	if licenses[0].Item.IsActive {
+		t.Fatal("license item remained effectively active while its category was inactive")
+	}
+	botItems, err := ListBotCosmetics(ctx, bot.ID)
+	if err != nil {
+		t.Fatalf("ListBotCosmetics inactive category: %v", err)
+	}
+	for _, got := range botItems {
+		if got.ID == item.ID {
+			t.Fatalf("bot inventory exposed item %q from an inactive category", item.ID)
+		}
+	}
+	equipped, err = GetEquippedCosmetics(ctx, bot.ID)
+	if err != nil || equipped[CosmeticSlotAttachment] != "none" {
+		t.Fatalf("inactive equipped assets = (%v, %v), want attachment fallback", equipped, err)
+	}
+	if _, err := EquipCosmetic(ctx, bot.ID, item.Slot, item.ID); !errors.Is(err, ErrCosmeticInactive) {
+		t.Fatalf("bot-key equip inactive category error = %v, want ErrCosmeticInactive", err)
+	}
+	if _, err := EquipCustomerCosmeticLicense(ctx, account.ID, bot.ID, license.ID); !errors.Is(err, ErrCosmeticInactive) {
+		t.Fatalf("account equip inactive category error = %v, want ErrCosmeticInactive", err)
+	}
+	replayed, replayCreated, err := GrantCosmeticLicense(ctx, "inactive-owner@example.com", item.ID, "manual", "inactive-license")
+	if err != nil || replayCreated || replayed.ID != license.ID {
+		t.Fatalf("inactive category idempotent license replay = (%+v, %v, %v), want existing license", replayed, replayCreated, err)
+	}
+	if created, err := GrantCosmeticEntitlement(ctx, legacyBot.ID, item.ID, "manual", "inactive-legacy-existing"); err != nil || created {
+		t.Fatalf("inactive category idempotent legacy replay = (%v, %v), want existing entitlement", created, err)
+	}
+	if _, _, err := GrantCosmeticLicense(ctx, "other-owner@example.com", item.ID, "manual", "inactive-second-license"); !errors.Is(err, ErrCosmeticInactive) {
+		t.Fatalf("account grant inactive category error = %v, want ErrCosmeticInactive", err)
+	}
+	if _, err := GrantCosmeticEntitlement(ctx, bot.ID, item.ID, "manual", "inactive-legacy-license"); !errors.Is(err, ErrCosmeticInactive) {
+		t.Fatalf("legacy grant inactive category error = %v, want ErrCosmeticInactive", err)
+	}
+
+	category.IsActive = true
+	if _, err := UpsertCosmeticCategory(ctx, category, "integration-admin"); err != nil {
+		t.Fatalf("reactivate category: %v", err)
+	}
+	equipped, err = GetEquippedCosmetics(ctx, bot.ID)
+	if err != nil || equipped[CosmeticSlotAttachment] != item.AssetKey {
+		t.Fatalf("reactivated equipped assets = (%v, %v), want %q", equipped, err, item.AssetKey)
 	}
 }
 
@@ -130,7 +236,7 @@ func TestPostgresCosmeticCatalogRejectsBrokenReferencesAndImmutableRenderIdentit
 	}
 
 	item := DefaultCosmeticCatalog()[0]
-	item.AssetKey = "changed_identity"
+	item.AssetKey = "arena_set_904_changed_identity"
 	if _, err := UpsertCosmeticCatalogItem(ctx, item, "integration-admin"); !errors.Is(err, ErrCosmeticCatalogConflict) {
 		t.Fatalf("render identity change error = %v, want ErrCosmeticCatalogConflict", err)
 	}
@@ -168,6 +274,81 @@ func TestPostgresCosmeticStarterPackAdminEditsSurviveSchemaRepair(t *testing.T) 
 	}
 }
 
+func TestPostgresBuiltinCatalogEntriesAreEditableButNotDeletable(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	catalog, err := GetAdminCosmeticCatalog(ctx)
+	if err != nil {
+		t.Fatalf("GetAdminCosmeticCatalog: %v", err)
+	}
+	if item := cosmeticItemByID(catalog.Items, "skin-neon-grid"); item == nil || !item.IsBuiltin {
+		t.Fatalf("seed item built-in state = %+v, want true", item)
+	}
+	pack := cosmeticPackByID(catalog.Packs, "neon-signal-pack")
+	if pack == nil || !pack.IsBuiltin {
+		t.Fatalf("seed pack built-in state = %+v, want true", pack)
+	}
+
+	pack.PriceCents = 149
+	updated, err := UpsertCosmeticPack(ctx, *pack, "integration-admin")
+	if err != nil {
+		t.Fatalf("edit built-in pack: %v", err)
+	}
+	if !updated.IsBuiltin {
+		t.Fatal("editing a built-in pack cleared its built-in state")
+	}
+	if deleted, err := DeleteCosmeticPack(ctx, pack.ID, "integration-admin"); deleted ||
+		!errors.Is(err, ErrCosmeticCatalogConflict) || !strings.Contains(err.Error(), "built-in") {
+		t.Fatalf("delete built-in pack = (%v, %v), want clear catalog conflict", deleted, err)
+	}
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("schema repair after rejected delete: %v", err)
+	}
+	catalog, err = GetAdminCosmeticCatalog(ctx)
+	if err != nil {
+		t.Fatalf("GetAdminCosmeticCatalog after repair: %v", err)
+	}
+	if got := cosmeticPackByID(catalog.Packs, pack.ID); got == nil || got.PriceCents != 149 || !got.IsBuiltin {
+		t.Fatalf("built-in pack after repair = %+v, want edited price and built-in state", got)
+	}
+
+	category := CosmeticCategory{ID: "operator-collection", Name: "Operator Collection", IsActive: true}
+	createdCategory, err := UpsertCosmeticCategory(ctx, category, "integration-admin")
+	if err != nil || createdCategory.IsBuiltin {
+		t.Fatalf("admin category = (%+v, %v), want non-built-in", createdCategory, err)
+	}
+	item := CosmeticItem{
+		ID: "operator-attachment", Name: "Operator Attachment", CategoryID: category.ID,
+		Slot: CosmeticSlotAttachment, AssetKey: "arena_set_905_operator_attachment", Rarity: "rare",
+		Currency: "USD", IsFree: true, IsActive: true,
+	}
+	createdItem, err := UpsertCosmeticCatalogItem(ctx, item, "integration-admin")
+	if err != nil || createdItem.IsBuiltin {
+		t.Fatalf("admin item = (%+v, %v), want non-built-in", createdItem, err)
+	}
+	operatorPack := CosmeticPack{
+		ID: "operator-pack", CategoryID: category.ID, Name: "Operator Pack",
+		PriceCents: 99, Currency: "USD", IsPurchasable: true, IsActive: true,
+		ItemIDs: []string{item.ID},
+	}
+	createdPack, err := UpsertCosmeticPack(ctx, operatorPack, "integration-admin")
+	if err != nil || createdPack.IsBuiltin {
+		t.Fatalf("admin pack = (%+v, %v), want non-built-in", createdPack, err)
+	}
+	if deleted, err := DeleteCosmeticPack(ctx, operatorPack.ID, "integration-admin"); err != nil || !deleted {
+		t.Fatalf("delete admin pack = (%v, %v), want success", deleted, err)
+	}
+	if deleted, err := DeleteCosmeticCatalogItem(ctx, item.ID, "integration-admin"); err != nil || !deleted {
+		t.Fatalf("delete admin item = (%v, %v), want success", deleted, err)
+	}
+	if deleted, err := DeleteCosmeticCategory(ctx, category.ID, "integration-admin"); err != nil || !deleted {
+		t.Fatalf("delete admin category = (%v, %v), want success", deleted, err)
+	}
+}
+
 func TestPostgresConcurrentFallbackChangesCannotRemoveLastFreeSlotItem(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {
@@ -175,7 +356,7 @@ func TestPostgresConcurrentFallbackChangesCannotRemoveLastFreeSlotItem(t *testin
 	}
 	second := CosmeticItem{
 		ID: "skin-second-free", Name: "Second Free Chassis", CategoryID: "chassis",
-		Slot: CosmeticSlotBotSkin, AssetKey: "second_free", Rarity: "common",
+		Slot: CosmeticSlotBotSkin, AssetKey: "arena_set_903_second_free", Rarity: "common",
 		Currency: "USD", IsFree: true, IsActive: true, SortOrder: 99,
 	}
 	if _, err := UpsertCosmeticCatalogItem(ctx, second, "integration-admin"); err != nil {

@@ -124,13 +124,6 @@ func (h *CosmeticsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "cosmetics catalog is unavailable")
 		return
 	}
-	hasPurchasableEntry := false
-	for _, item := range catalog.Items {
-		hasPurchasableEntry = hasPurchasableEntry || item.IsPurchasable
-	}
-	for _, pack := range catalog.Packs {
-		hasPurchasableEntry = hasPurchasableEntry || pack.IsPurchasable
-	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"categories": catalog.Categories,
 		"packs":      catalog.Packs,
@@ -138,8 +131,56 @@ func (h *CosmeticsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 		// A catalog sale flag is not enough to make payments safe. This remains
 		// false until a verified checkout/webhook provider is wired into the
 		// handler, even if an operator stages purchasable catalog entries.
-		"checkout_enabled": h.checkoutEnabled && hasPurchasableEntry,
+		"checkout_enabled": h.checkoutEnabled && cosmeticCatalogHasPurchasablePack(catalog),
 	})
+}
+
+// cosmeticCatalogHasPurchasablePack mirrors the launch checkout contract: only
+// whole packs can be sold, and every category/item dependency must be active.
+// This also keeps Admin's all-record projection from advertising checkout when
+// the public projection has no offer that CreateCosmeticOrder can accept.
+func cosmeticCatalogHasPurchasablePack(catalog *db.CosmeticCatalog) bool {
+	if catalog == nil {
+		return false
+	}
+	activeCategories := make(map[string]bool, len(catalog.Categories))
+	for _, category := range catalog.Categories {
+		activeCategories[category.ID] = category.IsActive
+	}
+	activeItems := make(map[string]bool, len(catalog.Items))
+	for _, item := range catalog.Items {
+		activeItems[item.ID] = item.IsActive && activeCategories[item.CategoryID]
+	}
+	for _, pack := range catalog.Packs {
+		if !pack.IsActive || !pack.IsPurchasable || pack.IsFree || pack.PriceCents <= 0 ||
+			!strings.EqualFold(pack.Currency, "USD") || !activeCategories[pack.CategoryID] {
+			continue
+		}
+		itemIDs := pack.ItemIDs
+		if len(itemIDs) == 0 && len(pack.Items) > 0 {
+			itemIDs = make([]string, 0, len(pack.Items))
+			for _, item := range pack.Items {
+				itemIDs = append(itemIDs, item.ID)
+				if _, exists := activeItems[item.ID]; !exists {
+					activeItems[item.ID] = item.IsActive && activeCategories[item.CategoryID]
+				}
+			}
+		}
+		if len(itemIDs) == 0 {
+			continue
+		}
+		allActive := true
+		for _, itemID := range itemIDs {
+			if !activeItems[itemID] {
+				allActive = false
+				break
+			}
+		}
+		if allActive {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *CosmeticsHandler) BotInventory(w http.ResponseWriter, r *http.Request) {
@@ -343,6 +384,27 @@ func (h *CosmeticsHandler) refreshBotVisuals(ctx context.Context, botID *string)
 		return false
 	}
 	return h.engine.UpdateBotCosmetics(*botID, equipped)
+}
+
+// refreshConnectedBotVisuals invalidates the engine's presentation-only cache
+// after an administrator changes item/category availability. DB resolution is
+// authoritative; failures leave that bot unchanged and are repaired by its
+// next equip/reconnect instead of making the catalog mutation itself fail.
+func (h *CosmeticsHandler) refreshConnectedBotVisuals(ctx context.Context) int {
+	if h.engine == nil {
+		return 0
+	}
+	refreshed := 0
+	for _, botID := range h.engine.ConnectedBotIDs() {
+		equipped, err := h.store.Equipped(ctx, botID)
+		if err != nil {
+			continue
+		}
+		if h.engine.UpdateBotCosmetics(botID, equipped) {
+			refreshed++
+		}
+	}
+	return refreshed
 }
 
 func customerSession(r *http.Request) (*CustomerSession, bool) {

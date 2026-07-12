@@ -27,6 +27,22 @@ var EventHook func(action, botName, botID, ip, apiKeyID, errMsg string)
 // WSMessageHook is a callback for WS message logging.
 var WSMessageHook func(botID, botName, action string, data map[string]interface{})
 
+type botCosmeticsLoader func(context.Context, string) (map[string]string, error)
+
+// refreshAdmittedBotCosmetics closes the gap between the pre-admission DB read
+// and AddBot. A terminal payment reversal can commit while loadout negotiation
+// is in progress, before the bot is visible to the commerce refresh snapshot.
+// Re-reading after admission guarantees either this read or that snapshot sees
+// the committed state. On a read failure, clear to standard visuals rather than
+// retain a potentially revoked paid loadout.
+func refreshAdmittedBotCosmetics(ctx context.Context, engine *game.GameEngine, botID string, load botCosmeticsLoader) (bool, error) {
+	cosmetics, err := load(ctx, botID)
+	if err != nil {
+		cosmetics = map[string]string{}
+	}
+	return engine.UpdateBotCosmetics(botID, cosmetics), err
+}
+
 // upgrader is the shared WebSocket upgrader for bot connections.
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:    4096,
@@ -303,6 +319,13 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			if EventHook != nil {
 				EventHook("server_full", bot.Name, bot.BotID, ip, bot.APIKeyID, "server at capacity")
 			}
+			return
+		}
+		current, refreshErr := refreshAdmittedBotCosmetics(ctx, engine, bot.BotID, db.GetEquippedCosmetics)
+		if refreshErr != nil {
+			slog.Warn("failed to refresh cosmetics at bot admission; using standard visuals", "error", refreshErr, "bot_id", bot.BotID)
+		}
+		if !current {
 			return
 		}
 		// Close the final check/AddBot interleaving window: if a ban or protocol

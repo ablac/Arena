@@ -16,6 +16,7 @@ import (
 var (
 	ErrCosmeticCatalogInvalid   = errors.New("invalid cosmetic catalog metadata")
 	ErrCosmeticCatalogConflict  = errors.New("cosmetic catalog change conflicts with existing data")
+	ErrCosmeticCatalogBuiltin   = fmt.Errorf("%w: built-in catalog entries cannot be deleted; deactivate instead", ErrCosmeticCatalogConflict)
 	ErrCosmeticCategoryNotFound = errors.New("cosmetic category not found")
 	ErrCosmeticPackNotFound     = errors.New("cosmetic pack not found")
 )
@@ -30,6 +31,7 @@ type CosmeticCategory struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	IsActive    bool   `json:"is_active"`
+	IsBuiltin   bool   `json:"is_builtin"`
 	SortOrder   int    `json:"sort_order"`
 }
 
@@ -43,6 +45,7 @@ type CosmeticPack struct {
 	IsFree        bool           `json:"is_free"`
 	IsPurchasable bool           `json:"is_purchasable"`
 	IsActive      bool           `json:"is_active"`
+	IsBuiltin     bool           `json:"is_builtin"`
 	SortOrder     int            `json:"sort_order"`
 	ItemIDs       []string       `json:"item_ids,omitempty"`
 	Items         []CosmeticItem `json:"items"`
@@ -65,14 +68,33 @@ type CosmeticCatalogAudit struct {
 	CreatedAt  time.Time       `json:"created_at"`
 }
 
-var starterCosmeticCategories = []CosmeticCategory{
+var launchCosmeticCategories = []CosmeticCategory{
 	{ID: "chassis", Name: "Chassis", Description: "Presentation-only bot body finishes.", IsActive: true, SortOrder: 10},
 	{ID: "weapon-finishes", Name: "Weapon Finishes", Description: "Presentation-only weapon materials.", IsActive: true, SortOrder: 20},
 	{ID: "attachments", Name: "Attachments", Description: "Presentation-only bot accessories.", IsActive: true, SortOrder: 30},
 	{ID: "starter-packs", Name: "Starter Packs", Description: "Curated cosmetic bundles using Arena's built-in procedural visuals.", IsActive: true, SortOrder: 40},
+	{ID: "elemental-sets", Name: "Elemental Sets", Description: "Fire, ice, storm, earth, and ocean-inspired Arena sets.", IsActive: true, SortOrder: 50},
+	{ID: "cosmic-sets", Name: "Cosmic Sets", Description: "Orbital, stellar, and deep-space Arena sets.", IsActive: true, SortOrder: 60},
+	{ID: "cyber-sets", Name: "Cyber Sets", Description: "Neon, synthetic, and digital Arena sets.", IsActive: true, SortOrder: 70},
+	{ID: "wild-sets", Name: "Wild Sets", Description: "Terrain and wildlife-inspired Arena sets.", IsActive: true, SortOrder: 80},
+	{ID: "arcane-sets", Name: "Arcane Sets", Description: "Runic, mystical, and relic-inspired Arena sets.", IsActive: true, SortOrder: 90},
+	{ID: "industrial-sets", Name: "Industrial Sets", Description: "Foundry, alloy, and machine-inspired Arena sets.", IsActive: true, SortOrder: 100},
+	{ID: "royal-sets", Name: "Royal Sets", Description: "Regal heraldry and precious-metal Arena sets.", IsActive: true, SortOrder: 110},
+	{ID: "abyssal-sets", Name: "Abyssal Sets", Description: "Void, shadow, and night-inspired Arena sets.", IsActive: true, SortOrder: 120},
+	{ID: "apex-sets", Name: "Apex Sets", Description: "The rarest capstone Arena sets.", IsActive: true, SortOrder: 130},
 }
 
-var starterCosmeticPacks = []CosmeticPack{
+var starterCosmeticCategories = buildStarterCosmeticCategories()
+
+func buildStarterCosmeticCategories() []CosmeticCategory {
+	categories := append([]CosmeticCategory(nil), launchCosmeticCategories...)
+	for index := range categories {
+		categories[index].IsBuiltin = true
+	}
+	return categories
+}
+
+var legacyStarterCosmeticPacks = []CosmeticPack{
 	{
 		ID: "neon-signal-pack", CategoryID: "starter-packs", Name: "Neon Signal Pack",
 		Description: "Neon Grid chassis, Solar Flare weapon finish, and Signal Antenna.",
@@ -85,6 +107,154 @@ var starterCosmeticPacks = []CosmeticPack{
 		PriceCents:  99, Currency: "USD", IsPurchasable: true, IsActive: true, SortOrder: 20,
 		ItemIDs: []string{"skin-carbon-armor", "weapon-void-edge", "attachment-orbital-halo"},
 	},
+}
+
+type launchSetSeed struct {
+	Name           string
+	Slug           string
+	CollectionID   string
+	CollectionName string
+}
+
+var launchSetSeeds = []launchSetSeed{
+	{Name: "Ember Vanguard", Slug: "ember_vanguard", CollectionID: "elemental-sets", CollectionName: "Elemental Sets"},
+	{Name: "Glacier Circuit", Slug: "glacier_circuit", CollectionID: "elemental-sets", CollectionName: "Elemental Sets"},
+	{Name: "Storm Herald", Slug: "storm_herald", CollectionID: "elemental-sets", CollectionName: "Elemental Sets"},
+	{Name: "Terra Forge", Slug: "terra_forge", CollectionID: "elemental-sets", CollectionName: "Elemental Sets"},
+	{Name: "Tidal Crown", Slug: "tidal_crown", CollectionID: "elemental-sets", CollectionName: "Elemental Sets"},
+	{Name: "Solar Bloom", Slug: "solar_bloom", CollectionID: "elemental-sets", CollectionName: "Elemental Sets"},
+	{Name: "Ashen Pulse", Slug: "ashen_pulse", CollectionID: "elemental-sets", CollectionName: "Elemental Sets"},
+	{Name: "Frost Warden", Slug: "frost_warden", CollectionID: "elemental-sets", CollectionName: "Elemental Sets"},
+	{Name: "Thunder Vale", Slug: "thunder_vale", CollectionID: "elemental-sets", CollectionName: "Elemental Sets"},
+	{Name: "Magma Coil", Slug: "magma_coil", CollectionID: "elemental-sets", CollectionName: "Elemental Sets"},
+	{Name: "Verdant Spark", Slug: "verdant_spark", CollectionID: "elemental-sets", CollectionName: "Elemental Sets"},
+	{Name: "Tempest Alloy", Slug: "tempest_alloy", CollectionID: "elemental-sets", CollectionName: "Elemental Sets"},
+	{Name: "Lunar Relay", Slug: "lunar_relay", CollectionID: "cosmic-sets", CollectionName: "Cosmic Sets"},
+	{Name: "Nova Sentinel", Slug: "nova_sentinel", CollectionID: "cosmic-sets", CollectionName: "Cosmic Sets"},
+	{Name: "Eclipse Runner", Slug: "eclipse_runner", CollectionID: "cosmic-sets", CollectionName: "Cosmic Sets"},
+	{Name: "Comet Ward", Slug: "comet_ward", CollectionID: "cosmic-sets", CollectionName: "Cosmic Sets"},
+	{Name: "Nebula Drift", Slug: "nebula_drift", CollectionID: "cosmic-sets", CollectionName: "Cosmic Sets"},
+	{Name: "Pulsar Knight", Slug: "pulsar_knight", CollectionID: "cosmic-sets", CollectionName: "Cosmic Sets"},
+	{Name: "Orbit Breaker", Slug: "orbit_breaker", CollectionID: "cosmic-sets", CollectionName: "Cosmic Sets"},
+	{Name: "Starlight Vector", Slug: "starlight_vector", CollectionID: "cosmic-sets", CollectionName: "Cosmic Sets"},
+	{Name: "Meteor Echo", Slug: "meteor_echo", CollectionID: "cosmic-sets", CollectionName: "Cosmic Sets"},
+	{Name: "Quasar Guard", Slug: "quasar_guard", CollectionID: "cosmic-sets", CollectionName: "Cosmic Sets"},
+	{Name: "Zenith Voyager", Slug: "zenith_voyager", CollectionID: "cosmic-sets", CollectionName: "Cosmic Sets"},
+	{Name: "Astral Beacon", Slug: "astral_beacon", CollectionID: "cosmic-sets", CollectionName: "Cosmic Sets"},
+	{Name: "Neon Cipher", Slug: "neon_cipher", CollectionID: "cyber-sets", CollectionName: "Cyber Sets"},
+	{Name: "Chrome Phantom", Slug: "chrome_phantom", CollectionID: "cyber-sets", CollectionName: "Cyber Sets"},
+	{Name: "Quantum Grid", Slug: "quantum_grid", CollectionID: "cyber-sets", CollectionName: "Cyber Sets"},
+	{Name: "Vector Glitch", Slug: "vector_glitch", CollectionID: "cyber-sets", CollectionName: "Cyber Sets"},
+	{Name: "Circuit Ronin", Slug: "circuit_ronin", CollectionID: "cyber-sets", CollectionName: "Cyber Sets"},
+	{Name: "Pixel Reaver", Slug: "pixel_reaver", CollectionID: "cyber-sets", CollectionName: "Cyber Sets"},
+	{Name: "Data Wraith", Slug: "data_wraith", CollectionID: "cyber-sets", CollectionName: "Cyber Sets"},
+	{Name: "Synth Marshal", Slug: "synth_marshal", CollectionID: "cyber-sets", CollectionName: "Cyber Sets"},
+	{Name: "Kernel Flux", Slug: "kernel_flux", CollectionID: "cyber-sets", CollectionName: "Cyber Sets"},
+	{Name: "Prism Protocol", Slug: "prism_protocol", CollectionID: "cyber-sets", CollectionName: "Cyber Sets"},
+	{Name: "Holo Striker", Slug: "holo_striker", CollectionID: "cyber-sets", CollectionName: "Cyber Sets"},
+	{Name: "Binary Halo", Slug: "binary_halo", CollectionID: "cyber-sets", CollectionName: "Cyber Sets"},
+	{Name: "Ironwood Fang", Slug: "ironwood_fang", CollectionID: "wild-sets", CollectionName: "Wild Sets"},
+	{Name: "Coral Stalker", Slug: "coral_stalker", CollectionID: "wild-sets", CollectionName: "Wild Sets"},
+	{Name: "Desert Viper", Slug: "desert_viper", CollectionID: "wild-sets", CollectionName: "Wild Sets"},
+	{Name: "Alpine Rook", Slug: "alpine_rook", CollectionID: "wild-sets", CollectionName: "Wild Sets"},
+	{Name: "Jungle Static", Slug: "jungle_static", CollectionID: "wild-sets", CollectionName: "Wild Sets"},
+	{Name: "Arctic Lynx", Slug: "arctic_lynx", CollectionID: "wild-sets", CollectionName: "Wild Sets"},
+	{Name: "Canyon Hawk", Slug: "canyon_hawk", CollectionID: "wild-sets", CollectionName: "Wild Sets"},
+	{Name: "Moss Titan", Slug: "moss_titan", CollectionID: "wild-sets", CollectionName: "Wild Sets"},
+	{Name: "Dune Jackal", Slug: "dune_jackal", CollectionID: "wild-sets", CollectionName: "Wild Sets"},
+	{Name: "Reef Specter", Slug: "reef_specter", CollectionID: "wild-sets", CollectionName: "Wild Sets"},
+	{Name: "Redwood Guard", Slug: "redwood_guard", CollectionID: "wild-sets", CollectionName: "Wild Sets"},
+	{Name: "Savannah Bolt", Slug: "savannah_bolt", CollectionID: "wild-sets", CollectionName: "Wild Sets"},
+	{Name: "Rune Keeper", Slug: "rune_keeper", CollectionID: "arcane-sets", CollectionName: "Arcane Sets"},
+	{Name: "Mystic Anvil", Slug: "mystic_anvil", CollectionID: "arcane-sets", CollectionName: "Arcane Sets"},
+	{Name: "Aether Shard", Slug: "aether_shard", CollectionID: "arcane-sets", CollectionName: "Arcane Sets"},
+	{Name: "Hex Lantern", Slug: "hex_lantern", CollectionID: "arcane-sets", CollectionName: "Arcane Sets"},
+	{Name: "Mana Crest", Slug: "mana_crest", CollectionID: "arcane-sets", CollectionName: "Arcane Sets"},
+	{Name: "Oracle Veil", Slug: "oracle_veil", CollectionID: "arcane-sets", CollectionName: "Arcane Sets"},
+	{Name: "Wisp Binder", Slug: "wisp_binder", CollectionID: "arcane-sets", CollectionName: "Arcane Sets"},
+	{Name: "Sigil Knight", Slug: "sigil_knight", CollectionID: "arcane-sets", CollectionName: "Arcane Sets"},
+	{Name: "Arcane Torrent", Slug: "arcane_torrent", CollectionID: "arcane-sets", CollectionName: "Arcane Sets"},
+	{Name: "Spellforge Echo", Slug: "spellforge_echo", CollectionID: "arcane-sets", CollectionName: "Arcane Sets"},
+	{Name: "Relic Pulse", Slug: "relic_pulse", CollectionID: "arcane-sets", CollectionName: "Arcane Sets"},
+	{Name: "Enigma Ward", Slug: "enigma_ward", CollectionID: "arcane-sets", CollectionName: "Arcane Sets"},
+	{Name: "Foundry Core", Slug: "foundry_core", CollectionID: "industrial-sets", CollectionName: "Industrial Sets"},
+	{Name: "Brass Marauder", Slug: "brass_marauder", CollectionID: "industrial-sets", CollectionName: "Industrial Sets"},
+	{Name: "Cobalt Rivet", Slug: "cobalt_rivet", CollectionID: "industrial-sets", CollectionName: "Industrial Sets"},
+	{Name: "Diesel Crown", Slug: "diesel_crown", CollectionID: "industrial-sets", CollectionName: "Industrial Sets"},
+	{Name: "Copper Bastion", Slug: "copper_bastion", CollectionID: "industrial-sets", CollectionName: "Industrial Sets"},
+	{Name: "Steel Nomad", Slug: "steel_nomad", CollectionID: "industrial-sets", CollectionName: "Industrial Sets"},
+	{Name: "Reactor Hound", Slug: "reactor_hound", CollectionID: "industrial-sets", CollectionName: "Industrial Sets"},
+	{Name: "Piston Shade", Slug: "piston_shade", CollectionID: "industrial-sets", CollectionName: "Industrial Sets"},
+	{Name: "Titanium Grit", Slug: "titanium_grit", CollectionID: "industrial-sets", CollectionName: "Industrial Sets"},
+	{Name: "Gearstorm Unit", Slug: "gearstorm_unit", CollectionID: "industrial-sets", CollectionName: "Industrial Sets"},
+	{Name: "Chrome Foundry", Slug: "chrome_foundry", CollectionID: "industrial-sets", CollectionName: "Industrial Sets"},
+	{Name: "Alloy Rampart", Slug: "alloy_rampart", CollectionID: "industrial-sets", CollectionName: "Industrial Sets"},
+	{Name: "Crimson Regent", Slug: "crimson_regent", CollectionID: "royal-sets", CollectionName: "Royal Sets"},
+	{Name: "Sapphire Oath", Slug: "sapphire_oath", CollectionID: "royal-sets", CollectionName: "Royal Sets"},
+	{Name: "Golden Banner", Slug: "golden_banner", CollectionID: "royal-sets", CollectionName: "Royal Sets"},
+	{Name: "Ivory Marshal", Slug: "ivory_marshal", CollectionID: "royal-sets", CollectionName: "Royal Sets"},
+	{Name: "Onyx Sovereign", Slug: "onyx_sovereign", CollectionID: "royal-sets", CollectionName: "Royal Sets"},
+	{Name: "Emerald Order", Slug: "emerald_order", CollectionID: "royal-sets", CollectionName: "Royal Sets"},
+	{Name: "Ruby Vanguard", Slug: "ruby_vanguard", CollectionID: "royal-sets", CollectionName: "Royal Sets"},
+	{Name: "Silver Dynasty", Slug: "silver_dynasty", CollectionID: "royal-sets", CollectionName: "Royal Sets"},
+	{Name: "Amethyst Crown", Slug: "amethyst_crown", CollectionID: "royal-sets", CollectionName: "Royal Sets"},
+	{Name: "Royal Sentinel", Slug: "royal_sentinel", CollectionID: "royal-sets", CollectionName: "Royal Sets"},
+	{Name: "Platinum Crest", Slug: "platinum_crest", CollectionID: "royal-sets", CollectionName: "Royal Sets"},
+	{Name: "Obsidian Court", Slug: "obsidian_court", CollectionID: "royal-sets", CollectionName: "Royal Sets"},
+	{Name: "Void Harrow", Slug: "void_harrow", CollectionID: "abyssal-sets", CollectionName: "Abyssal Sets"},
+	{Name: "Umbral Fang", Slug: "umbral_fang", CollectionID: "abyssal-sets", CollectionName: "Abyssal Sets"},
+	{Name: "Nightfall Engine", Slug: "nightfall_engine", CollectionID: "abyssal-sets", CollectionName: "Abyssal Sets"},
+	{Name: "Abyss Walker", Slug: "abyss_walker", CollectionID: "abyssal-sets", CollectionName: "Abyssal Sets"},
+	{Name: "Shadow Torrent", Slug: "shadow_torrent", CollectionID: "abyssal-sets", CollectionName: "Abyssal Sets"},
+	{Name: "Darkstar Reign", Slug: "darkstar_reign", CollectionID: "abyssal-sets", CollectionName: "Abyssal Sets"},
+	{Name: "Phantom Rift", Slug: "phantom_rift", CollectionID: "abyssal-sets", CollectionName: "Abyssal Sets"},
+	{Name: "Blackout Crown", Slug: "blackout_crown", CollectionID: "abyssal-sets", CollectionName: "Abyssal Sets"},
+	{Name: "Dread Signal", Slug: "dread_signal", CollectionID: "abyssal-sets", CollectionName: "Abyssal Sets"},
+	{Name: "Null Specter", Slug: "null_specter", CollectionID: "abyssal-sets", CollectionName: "Abyssal Sets"},
+	{Name: "Eventide Warden", Slug: "eventide_warden", CollectionID: "abyssal-sets", CollectionName: "Abyssal Sets"},
+	{Name: "Midnight Ruin", Slug: "midnight_ruin", CollectionID: "abyssal-sets", CollectionName: "Abyssal Sets"},
+	{Name: "Apex Radiance", Slug: "apex_radiance", CollectionID: "apex-sets", CollectionName: "Apex Sets"},
+	{Name: "Omega Paragon", Slug: "omega_paragon", CollectionID: "apex-sets", CollectionName: "Apex Sets"},
+}
+
+var starterCosmeticPacks = buildStarterCosmeticPacks()
+
+func launchSetEconomy(number int) (rarity string, itemPrice, packPrice int) {
+	switch {
+	case number <= 26:
+		return "uncommon", 99, 199
+	case number <= 50:
+		return "rare", 149, 299
+	case number <= 74:
+		return "epic", 199, 399
+	case number <= 94:
+		return "legendary", 249, 499
+	default:
+		return "mythic", 349, 699
+	}
+}
+
+func buildStarterCosmeticPacks() []CosmeticPack {
+	packs := append([]CosmeticPack(nil), legacyStarterCosmeticPacks...)
+	for index, seed := range launchSetSeeds {
+		number := index + 3
+		idSlug := strings.ReplaceAll(seed.Slug, "_", "-")
+		_, _, packPrice := launchSetEconomy(number)
+		packs = append(packs, CosmeticPack{
+			ID: fmt.Sprintf("arena-set-%03d-%s-pack", number, idSlug), CategoryID: seed.CollectionID,
+			Name: seed.Name + " Set", Description: "A coordinated three-piece " + seed.Name + " cosmetic set with no gameplay effects.",
+			PriceCents: packPrice, Currency: "USD", IsPurchasable: true, IsActive: true, SortOrder: number * 10,
+			ItemIDs: []string{
+				fmt.Sprintf("skin-arena-set-%03d-%s", number, idSlug),
+				fmt.Sprintf("weapon-arena-set-%03d-%s", number, idSlug),
+				fmt.Sprintf("attachment-arena-set-%03d-%s", number, idSlug),
+			},
+		})
+	}
+	for index := range packs {
+		packs[index].IsBuiltin = true
+	}
+	return packs
 }
 
 func DefaultCosmeticCatalogData() CosmeticCatalog {
@@ -121,6 +291,7 @@ func ValidateCosmeticItem(item CosmeticItem) error {
 	if !cosmeticCatalogIDPattern.MatchString(item.ID) || !cosmeticCatalogIDPattern.MatchString(item.CategoryID) ||
 		strings.TrimSpace(item.Name) == "" || len(item.Name) > 100 || len(item.Description) > 500 ||
 		!IsValidCosmeticSlot(item.Slot) || !cosmeticAssetKeyPattern.MatchString(item.AssetKey) ||
+		!IsSupportedCosmeticAsset(item.Slot, item.AssetKey) ||
 		!cosmeticRarityPattern.MatchString(item.Rarity) || !validCosmeticPrice(item.PriceCents, item.Currency, item.IsFree, item.IsPurchasable) ||
 		item.SortOrder < 0 || item.SortOrder > 1_000_000 {
 		return ErrCosmeticCatalogInvalid
@@ -152,7 +323,11 @@ func ValidateCosmeticPack(pack CosmeticPack) error {
 }
 
 func validCosmeticPrice(priceCents int, currency string, isFree, isPurchasable bool) bool {
-	if priceCents < 0 || priceCents > 1_000_000 || !cosmeticCurrencyPattern.MatchString(currency) {
+	// The launch storefront and Admin price fields use two-decimal minor units.
+	// Keep the catalog USD-only until every display and refund path has a shared
+	// ISO-4217 exponent table; accepting JPY/KRW here would charge a different
+	// amount from the one Arena displays.
+	if priceCents < 0 || priceCents > 1_000_000 || currency != "USD" {
 		return false
 	}
 	if isFree {
@@ -200,7 +375,7 @@ func listCosmeticCatalogData(ctx context.Context, includeInactive bool) (*Cosmet
 	}
 
 	categoryRows, err := Pool.Query(ctx, `
-		SELECT id, name, description, is_active, sort_order
+		SELECT id, name, description, is_active, is_builtin, sort_order
 		FROM cosmetic_categories `+categoryWhere+`
 		ORDER BY sort_order, name, id`)
 	if err != nil {
@@ -208,7 +383,7 @@ func listCosmeticCatalogData(ctx context.Context, includeInactive bool) (*Cosmet
 	}
 	for categoryRows.Next() {
 		var category CosmeticCategory
-		if err := categoryRows.Scan(&category.ID, &category.Name, &category.Description, &category.IsActive, &category.SortOrder); err != nil {
+		if err := categoryRows.Scan(&category.ID, &category.Name, &category.Description, &category.IsActive, &category.IsBuiltin, &category.SortOrder); err != nil {
 			categoryRows.Close()
 			return nil, fmt.Errorf("scan cosmetic category: %w", err)
 		}
@@ -222,7 +397,7 @@ func listCosmeticCatalogData(ctx context.Context, includeInactive bool) (*Cosmet
 
 	itemRows, err := Pool.Query(ctx, `
 		SELECT i.id, i.name, i.description, i.category_id, i.slot, i.asset_key, i.rarity,
-		       i.price_cents, i.currency, i.is_free, i.is_purchasable, i.is_active, i.sort_order
+		       i.price_cents, i.currency, i.is_free, i.is_purchasable, i.is_active, i.is_builtin, i.sort_order
 		FROM cosmetic_items i
 		JOIN cosmetic_categories c ON c.id = i.category_id `+itemWhere+`
 		ORDER BY c.sort_order, i.sort_order, i.name, i.id`)
@@ -245,7 +420,7 @@ func listCosmeticCatalogData(ctx context.Context, includeInactive bool) (*Cosmet
 
 	packRows, err := Pool.Query(ctx, `
 		SELECT p.id, p.category_id, p.name, p.description, p.price_cents, p.currency,
-		       p.is_free, p.is_purchasable, p.is_active, p.sort_order
+		       p.is_free, p.is_purchasable, p.is_active, p.is_builtin, p.sort_order
 		FROM cosmetic_packs p
 		JOIN cosmetic_categories c ON c.id = p.category_id `+packWhere+`
 		ORDER BY c.sort_order, p.sort_order, p.name, p.id`)
@@ -256,7 +431,7 @@ func listCosmeticCatalogData(ctx context.Context, includeInactive bool) (*Cosmet
 	for packRows.Next() {
 		var pack CosmeticPack
 		if err := packRows.Scan(&pack.ID, &pack.CategoryID, &pack.Name, &pack.Description,
-			&pack.PriceCents, &pack.Currency, &pack.IsFree, &pack.IsPurchasable, &pack.IsActive, &pack.SortOrder); err != nil {
+			&pack.PriceCents, &pack.Currency, &pack.IsFree, &pack.IsPurchasable, &pack.IsActive, &pack.IsBuiltin, &pack.SortOrder); err != nil {
 			packRows.Close()
 			return nil, fmt.Errorf("scan cosmetic pack: %w", err)
 		}
@@ -277,7 +452,7 @@ func listCosmeticCatalogData(ctx context.Context, includeInactive bool) (*Cosmet
 	}
 	membershipRows, err := Pool.Query(ctx, `
 		SELECT pi.pack_id, i.id, i.name, i.description, i.category_id, i.slot, i.asset_key, i.rarity,
-		       i.price_cents, i.currency, i.is_free, i.is_purchasable, i.is_active, i.sort_order
+		       i.price_cents, i.currency, i.is_free, i.is_purchasable, i.is_active, i.is_builtin, i.sort_order
 		FROM cosmetic_pack_items pi
 		JOIN cosmetic_items i ON i.id = pi.item_id
 		JOIN cosmetic_categories c ON c.id = i.category_id `+membershipWhere+`
@@ -290,7 +465,7 @@ func listCosmeticCatalogData(ctx context.Context, includeInactive bool) (*Cosmet
 		var item CosmeticItem
 		if err := membershipRows.Scan(&packID, &item.ID, &item.Name, &item.Description, &item.CategoryID,
 			&item.Slot, &item.AssetKey, &item.Rarity, &item.PriceCents, &item.Currency, &item.IsFree,
-			&item.IsPurchasable, &item.IsActive, &item.SortOrder); err != nil {
+			&item.IsPurchasable, &item.IsActive, &item.IsBuiltin, &item.SortOrder); err != nil {
 			membershipRows.Close()
 			return nil, fmt.Errorf("scan cosmetic pack item: %w", err)
 		}
@@ -313,7 +488,7 @@ type cosmeticItemScanner interface {
 
 func scanCosmeticItem(row cosmeticItemScanner, item *CosmeticItem) error {
 	return row.Scan(&item.ID, &item.Name, &item.Description, &item.CategoryID, &item.Slot, &item.AssetKey,
-		&item.Rarity, &item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable, &item.IsActive, &item.SortOrder)
+		&item.Rarity, &item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable, &item.IsActive, &item.IsBuiltin, &item.SortOrder)
 }
 
 func UpsertCosmeticCategory(ctx context.Context, category CosmeticCategory, actor string) (*CosmeticCategory, error) {
@@ -338,13 +513,14 @@ func UpsertCosmeticCategory(ctx context.Context, category CosmeticCategory, acto
 	if err != nil {
 		return nil, fmt.Errorf("read cosmetic category before update: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO cosmetic_categories (id, name, description, is_active, sort_order)
 		VALUES ($1,$2,$3,$4,$5)
 		ON CONFLICT (id) DO UPDATE SET
 			name = EXCLUDED.name, description = EXCLUDED.description,
-			is_active = EXCLUDED.is_active, sort_order = EXCLUDED.sort_order, updated_at = NOW()`,
-		category.ID, strings.TrimSpace(category.Name), strings.TrimSpace(category.Description), category.IsActive, category.SortOrder); err != nil {
+			is_active = EXCLUDED.is_active, sort_order = EXCLUDED.sort_order, updated_at = NOW()
+		RETURNING is_builtin`,
+		category.ID, strings.TrimSpace(category.Name), strings.TrimSpace(category.Description), category.IsActive, category.SortOrder).Scan(&category.IsBuiltin); err != nil {
 		return nil, fmt.Errorf("upsert cosmetic category: %w", mapCosmeticCatalogMutationError(err))
 	}
 	if err := requireAllCosmeticSlotFallbacks(ctx, tx); err != nil {
@@ -407,7 +583,7 @@ func UpsertCosmeticCatalogItem(ctx context.Context, item CosmeticItem, actor str
 			return nil, fmt.Errorf("%w: slot and asset_key are immutable", ErrCosmeticCatalogConflict)
 		}
 	}
-	if _, err := tx.Exec(ctx, `
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO cosmetic_items
 			(id, name, description, category_id, slot, asset_key, rarity, price_cents, currency,
 			 is_free, is_purchasable, is_active, sort_order)
@@ -416,9 +592,10 @@ func UpsertCosmeticCatalogItem(ctx context.Context, item CosmeticItem, actor str
 			name = EXCLUDED.name, description = EXCLUDED.description, category_id = EXCLUDED.category_id,
 			rarity = EXCLUDED.rarity, price_cents = EXCLUDED.price_cents, currency = EXCLUDED.currency,
 			is_free = EXCLUDED.is_free, is_purchasable = EXCLUDED.is_purchasable,
-			is_active = EXCLUDED.is_active, sort_order = EXCLUDED.sort_order, updated_at = NOW()`,
+			is_active = EXCLUDED.is_active, sort_order = EXCLUDED.sort_order, updated_at = NOW()
+		RETURNING is_builtin`,
 		item.ID, strings.TrimSpace(item.Name), strings.TrimSpace(item.Description), item.CategoryID, item.Slot,
-		item.AssetKey, item.Rarity, item.PriceCents, item.Currency, item.IsFree, item.IsPurchasable, item.IsActive, item.SortOrder); err != nil {
+		item.AssetKey, item.Rarity, item.PriceCents, item.Currency, item.IsFree, item.IsPurchasable, item.IsActive, item.SortOrder).Scan(&item.IsBuiltin); err != nil {
 		return nil, fmt.Errorf("upsert cosmetic item: %w", mapCosmeticCatalogMutationError(err))
 	}
 	if err := requireCosmeticSlotFallback(ctx, tx, item.Slot); err != nil {
@@ -478,7 +655,7 @@ func UpsertCosmeticPack(ctx context.Context, pack CosmeticPack, actor string) (*
 	if err != nil {
 		return nil, fmt.Errorf("read cosmetic pack before update: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO cosmetic_packs
 			(id, category_id, name, description, price_cents, currency, is_free, is_purchasable, is_active, sort_order)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
@@ -486,9 +663,10 @@ func UpsertCosmeticPack(ctx context.Context, pack CosmeticPack, actor string) (*
 			category_id = EXCLUDED.category_id, name = EXCLUDED.name, description = EXCLUDED.description,
 			price_cents = EXCLUDED.price_cents, currency = EXCLUDED.currency, is_free = EXCLUDED.is_free,
 			is_purchasable = EXCLUDED.is_purchasable, is_active = EXCLUDED.is_active,
-			sort_order = EXCLUDED.sort_order, updated_at = NOW()`,
+			sort_order = EXCLUDED.sort_order, updated_at = NOW()
+		RETURNING is_builtin`,
 		pack.ID, pack.CategoryID, strings.TrimSpace(pack.Name), strings.TrimSpace(pack.Description),
-		pack.PriceCents, pack.Currency, pack.IsFree, pack.IsPurchasable, pack.IsActive, pack.SortOrder); err != nil {
+		pack.PriceCents, pack.Currency, pack.IsFree, pack.IsPurchasable, pack.IsActive, pack.SortOrder).Scan(&pack.IsBuiltin); err != nil {
 		return nil, fmt.Errorf("upsert cosmetic pack: %w", mapCosmeticCatalogMutationError(err))
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM cosmetic_pack_items WHERE pack_id = $1`, pack.ID); err != nil {
@@ -582,6 +760,13 @@ func deleteCosmeticCatalogEntity(ctx context.Context, entityType, entityID, acto
 			return false, ErrCosmeticPackNotFound
 		}
 	}
+	isBuiltin, err := cosmeticCatalogEntityIsBuiltin(ctx, tx, entityType, entityID)
+	if err != nil {
+		return false, fmt.Errorf("read cosmetic %s built-in state: %w", entityType, err)
+	}
+	if isBuiltin {
+		return false, ErrCosmeticCatalogBuiltin
+	}
 	var statement string
 	var fallbackSlot string
 	switch entityType {
@@ -616,6 +801,25 @@ func deleteCosmeticCatalogEntity(ctx context.Context, entityType, entityID, acto
 		return false, fmt.Errorf("delete cosmetic %s commit: %w", entityType, err)
 	}
 	return result.RowsAffected() == 1, nil
+}
+
+func cosmeticCatalogEntityIsBuiltin(ctx context.Context, tx pgx.Tx, entityType, entityID string) (bool, error) {
+	var query string
+	switch entityType {
+	case "category":
+		query = `SELECT is_builtin FROM cosmetic_categories WHERE id = $1`
+	case "item":
+		query = `SELECT is_builtin FROM cosmetic_items WHERE id = $1`
+	case "pack":
+		query = `SELECT is_builtin FROM cosmetic_packs WHERE id = $1`
+	default:
+		return false, ErrCosmeticCatalogInvalid
+	}
+	var isBuiltin bool
+	if err := tx.QueryRow(ctx, query, entityID).Scan(&isBuiltin); err != nil {
+		return false, err
+	}
+	return isBuiltin, nil
 }
 
 func lockCosmeticCatalogEntity(ctx context.Context, tx pgx.Tx, entityType, entityID string) error {

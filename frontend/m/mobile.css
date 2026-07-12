@@ -263,6 +263,24 @@ body {
 
 #fab-autopan, #fab-minimap { font-size: 0.68rem; letter-spacing: 0.05em; }
 
+.fab-shop {
+  width: auto;
+  min-width: 64px;
+  padding-inline: 12px;
+  border-radius: 999px;
+  color: var(--accent-gold);
+  border-color: rgba(255, 206, 84, 0.4);
+  background: rgba(255, 206, 84, 0.1);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-decoration: none;
+}
+
+.fab-shop:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 3px;
+}
+
 .fab.active {
   color: var(--accent-blue);
   border-color: rgba(71, 215, 255, 0.45);
