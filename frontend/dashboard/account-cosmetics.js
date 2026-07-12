@@ -107,7 +107,68 @@
       bots,
       licenses: licensesSource.map(normalizeLicense).filter(license => license.id),
       checkout_enabled: source.checkout_enabled === true,
+      subscription: source.subscription && typeof source.subscription === 'object'
+        ? normalizeSubscription(source.subscription)
+        : null,
+      subscription_offer: normalizeSubscriptionOffer(source.subscription_offer),
     };
+  }
+
+  function normalizeSubscriptionOffer(payload) {
+    const source = payload && typeof payload === 'object' ? payload : {};
+    const rawPrice = Number(source.price_cents);
+    const rawLimit = Number(source.max_api_keys);
+    return {
+      enabled: source.enabled === true,
+      price_cents: Number.isFinite(rawPrice) && rawPrice >= 0 ? Math.round(rawPrice) : 1999,
+      currency: cleanText(source.currency).toUpperCase() || 'USD',
+      interval: cleanText(source.interval).toLowerCase() || 'month',
+      includes_future_sets: source.includes_future_sets === true,
+      max_api_keys: Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(5, Math.floor(rawLimit)) : 5,
+    };
+  }
+
+  function normalizeSubscription(payload) {
+    const source = payload && typeof payload === 'object' ? payload : {};
+    const offer = normalizeSubscriptionOffer({...source, enabled: true});
+    return {
+      id: cleanText(source.id),
+      status: cleanText(source.status).toLowerCase() || 'unknown',
+      has_access: source.has_access === true,
+      cancel_at_period_end: source.cancel_at_period_end === true,
+      current_period_end: cleanText(source.current_period_end),
+      can_manage: source.can_manage === true,
+      price_cents: offer.price_cents,
+      currency: offer.currency,
+      interval: offer.interval,
+      includes_future_sets: offer.includes_future_sets,
+      max_api_keys: offer.max_api_keys,
+      created_at: cleanText(source.created_at),
+      updated_at: cleanText(source.updated_at),
+    };
+  }
+
+  function normalizeKeyCollection(payload) {
+    const source = payload && typeof payload === 'object' ? payload : {};
+    const keys = Array.isArray(source.keys) ? source.keys.map(raw => {
+      const key = raw && typeof raw === 'object' ? raw : {};
+      return {
+        id: cleanText(key.id || key.key_id),
+        key_prefix: cleanText(key.key_prefix || key.api_key_prefix),
+        bot_id: cleanText(key.bot_id),
+        bot_name: cleanText(key.bot_name || key.name) || 'Unnamed bot',
+        created_at: cleanText(key.created_at),
+        last_used_at: cleanText(key.last_used_at),
+        is_active: key.is_active !== false,
+      };
+    }).filter(key => key.id) : [];
+    const rawLimit = Number(source.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(5, Math.floor(rawLimit)) : 5;
+    const rawCount = Number(source.active_count);
+    const activeCount = Number.isFinite(rawCount) && rawCount >= 0
+      ? Math.floor(rawCount)
+      : keys.filter(key => key.is_active).length;
+    return {keys, active_count: activeCount, limit};
   }
 
   function normalizeCatalog(payload) {
@@ -117,6 +178,7 @@
       categories: Array.isArray(source.categories) ? source.categories : [],
       items: Array.isArray(source.items) ? source.items : [],
       packs: Array.isArray(source.packs) ? source.packs.filter(pack => pack && typeof pack === 'object') : [],
+      subscription_offer: normalizeSubscriptionOffer(source.subscription_offer),
     };
   }
 
@@ -159,6 +221,10 @@
       cosmetics: '/account/cosmetics',
       checkout: '/account/cosmetics/checkout',
       orders: '/account/cosmetics/orders',
+      subscriptionCheckout: '/account/cosmetics/subscription/checkout',
+      subscriptionPortal: '/account/cosmetics/subscription/portal',
+      keys: '/account/keys',
+      key: `/account/keys/${encoded}`,
       bots: '/account/bots',
       bot: `/account/bots/${encoded}`,
       equip: `/account/bots/${encoded}/cosmetics`,
@@ -181,6 +247,42 @@
       path: accountRoute('checkout'),
       body: {pack_id: normalizedID, quantity: 1},
     };
+  }
+
+  function subscriptionIntent(rawOffer, rawSubscription) {
+    const offer = normalizeSubscriptionOffer(rawOffer);
+    const subscription = rawSubscription && typeof rawSubscription === 'object'
+      ? normalizeSubscription(rawSubscription)
+      : null;
+    const checkoutStatuses = new Set(['created', 'checkout_pending', 'canceled', 'expired']);
+    if (subscription?.can_manage) {
+      return {ok: true, kind: 'portal', path: accountRoute('subscriptionPortal')};
+    }
+    if (subscription && checkoutStatuses.has(subscription.status)) {
+      if (!offer.enabled) return {ok: false, reason: 'subscription-disabled'};
+      return {ok: true, kind: 'checkout', path: accountRoute('subscriptionCheckout')};
+    }
+    if (subscription) return {ok: false, reason: 'subscription-unmanageable'};
+    if (!offer.enabled) return {ok: false, reason: 'subscription-disabled'};
+    return {ok: true, kind: 'checkout', path: accountRoute('subscriptionCheckout')};
+  }
+
+  function keyCreateIntent(rawBotName, rawCollection) {
+    if (!rawCollection || typeof rawCollection !== 'object') {
+      return {ok: false, reason: 'keys-unavailable'};
+    }
+    const collection = normalizeKeyCollection(rawCollection);
+    const botName = cleanText(rawBotName);
+    if (!botName) return {ok: false, reason: 'bot-name-required'};
+    if (botName.length > 80) return {ok: false, reason: 'bot-name-too-long'};
+    if (collection.active_count >= collection.limit) return {ok: false, reason: 'key-limit-reached'};
+    return {ok: true, path: accountRoute('keys'), body: {bot_name: botName}};
+  }
+
+  function keyRevokeIntent(rawKeyID) {
+    const keyID = cleanText(rawKeyID);
+    if (!keyID) return {ok: false, reason: 'key-not-found'};
+    return {ok: true, path: accountRoute('key', keyID)};
   }
 
   function requestHeaders(method, csrfToken, hasBody) {
@@ -256,6 +358,117 @@
     } catch (_) {
       return `$${(cents / 100).toFixed(2)}`;
     }
+  }
+
+  function subscriptionPeriodLabel(rawTime) {
+    const raw = cleanText(rawTime);
+    const date = new Date(raw);
+    if (!raw || Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
+  }
+
+  function renderAllAccessPlan(snapshot, view) {
+    const catalogOffer = view.catalog ? normalizeCatalog(view.catalog).subscription_offer : null;
+    const offer = snapshot.subscription_offer.enabled ? snapshot.subscription_offer : (catalogOffer || snapshot.subscription_offer);
+    const subscription = snapshot.subscription;
+    const intent = subscriptionIntent(offer, subscription);
+    const periodEnd = subscriptionPeriodLabel(subscription?.current_period_end);
+    let status = 'Available';
+    let statusClass = '';
+    if (subscription?.has_access) {
+      status = subscription.cancel_at_period_end
+        ? (periodEnd ? `Access active until ${periodEnd}` : 'Access active until period end')
+        : 'Access active';
+      statusClass = ' is-active';
+    } else if (subscription) {
+      if (subscription.status === 'billing_mismatch') status = 'Billing needs attention';
+      else if (['created', 'checkout_pending'].includes(subscription.status)) status = 'Checkout pending';
+      else if (['past_due', 'unpaid', 'paused'].includes(subscription.status)) status = 'Access paused';
+      else status = 'Access ended';
+      statusClass = ' is-warning';
+    }
+    const action = intent.ok && intent.kind === 'portal'
+      ? '<button type="button" class="sm all-access-action" data-subscription-portal>Manage subscription</button>'
+      : intent.ok
+        ? '<button type="button" class="sm all-access-action" data-subscription-checkout>Subscribe for $19.99 / month</button>'
+        : '<span class="all-access-unavailable">Subscription checkout is not open yet</span>';
+    const pending = view.subscriptionState?.status === 'pending';
+    const feedback = view.subscriptionState?.status === 'error'
+      ? `<p class="all-access-feedback is-error" role="alert">${escapeHTML(view.subscriptionState.message || 'Subscription management is temporarily unavailable.')}</p>`
+      : '';
+    return `<section class="all-access-plan" aria-labelledby="all-access-title">
+      <div class="all-access-copy">
+        <div class="cosmetic-kicker">Monthly collection pass</div>
+        <h2 id="all-access-title">All Access</h2>
+        <p>Every current and future cosmetic set, with up to 5 active API keys.</p>
+        <p class="all-access-removal">Cancellation keeps access through the paid period. When service ends, subscription cosmetics are removed from your account and any bots using them.</p>
+      </div>
+      <div class="all-access-offer">
+        <span class="all-access-status${statusClass}">${escapeHTML(status)}</span>
+        <strong>${escapeHTML(formatPrice(offer))}<small> / ${escapeHTML(offer.interval || 'month')}</small></strong>
+        <div${pending ? ' aria-busy="true"' : ''}>${pending ? '<button type="button" class="sm all-access-action" disabled>Opening...</button>' : action}</div>
+        ${feedback}
+      </div>
+    </section>`;
+  }
+
+  function keyDateLabel(rawTime) {
+    const raw = cleanText(rawTime);
+    const date = new Date(raw);
+    if (!raw || Number.isNaN(date.getTime())) return 'Never used';
+    return date.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
+  }
+
+  function renderAccountKeys(view) {
+    const keysReady = Boolean(view.keys && typeof view.keys === 'object' && !view.keysError);
+    const collection = normalizeKeyCollection(view.keys);
+    const atLimit = keysReady && collection.active_count >= collection.limit;
+    const busyKeyID = cleanText(view.busyKeyID);
+    let body = '';
+    if (view.keysError) {
+      body = `<div class="tip warn" role="alert"><b>API keys unavailable:</b> ${escapeHTML(view.keysError)} <button type="button" class="sm" data-account-keys-retry>Retry</button></div>`;
+    } else if (!view.keys) {
+      body = '<div class="cosmetic-loading" aria-busy="true">Loading account API keys...</div>';
+    } else if (!collection.keys.length) {
+      body = '<div class="cosmetic-empty cosmetic-empty-inventory">No API keys yet. Name a bot to create the first one.</div>';
+    } else {
+      body = `<div class="account-key-list">${collection.keys.map(key => {
+        const active = key.is_active;
+        const used = key.last_used_at ? `Last used ${keyDateLabel(key.last_used_at)}` : 'Never used';
+        return `<article class="account-key-row" data-account-key-id="${escapeHTML(key.id)}">
+          <div><strong>${escapeHTML(key.bot_name)}</strong><code>${escapeHTML(key.key_prefix || key.id.slice(0, 10))}...</code></div>
+          <div class="account-key-meta"><span>${active ? 'Active' : 'Revoked'}</span><span>${escapeHTML(used)}</span></div>
+          ${active ? `<button type="button" class="sm danger" data-account-key-revoke="${escapeHTML(key.id)}"${busyKeyID === key.id ? ' disabled' : ''}>${busyKeyID === key.id ? 'Revoking...' : 'Revoke key'}</button>` : ''}
+        </article>`;
+      }).join('')}</div>`;
+    }
+    const generated = view.generatedKey && typeof view.generatedKey === 'object' ? view.generatedKey : null;
+    const generatedValue = cleanText(generated?.api_key);
+    const generatedPanel = generatedValue
+      ? `<div class="account-generated-key" role="status">
+          <div><strong>Copy this key now</strong><span>It cannot be recovered after you clear it.</span></div>
+          <div class="account-generated-key-field">
+            <input id="accountGeneratedKey" type="text" value="${escapeHTML(generatedValue)}" readonly autocomplete="off" spellcheck="false" aria-label="New API key">
+            <button type="button" class="sm" data-account-key-copy>Copy key</button>
+            <button type="button" class="sm" data-account-key-clear>Clear key</button>
+          </div>
+        </div>`
+      : '';
+    return `<section class="account-key-manager" aria-labelledby="account-keys-title">
+      <div class="cosmetic-inventory-head">
+        <div><div class="cosmetic-kicker">Account credentials</div><h2 id="account-keys-title">API keys</h2></div>
+        <span>${collection.active_count} of ${collection.limit} active</span>
+      </div>
+      <p class="cosmetic-rule">Keys are generated and stored against this verified email account. You can keep up to 5 active keys and revoke any one without affecting purchases.</p>
+      ${generatedPanel}
+      <form id="accountKeyForm" class="account-key-form">
+        <label for="accountKeyBotName">Bot name</label>
+        <input id="accountKeyBotName" name="bot_name" maxlength="80" autocomplete="off" placeholder="My Arena bot" required${!keysReady || atLimit ? ' disabled' : ''}>
+        <button type="submit" id="accountKeyCreate"${!keysReady || atLimit || view.keyCreateBusy ? ' disabled' : ''}>${view.keyCreateBusy ? 'Creating key...' : 'Create API key'}</button>
+        <small>${!keysReady ? 'Wait for account key usage to load before creating a key.' : atLimit ? 'Revoke an active key before creating another.' : 'The full key is shown once. Store it before clearing this screen.'}</small>
+      </form>
+      ${body}
+    </section>`;
   }
 
   function shopSwatch(pack) {
@@ -476,6 +689,8 @@
     </div>
     ${view.error ? `<div class="tip warn" role="alert"><b>Could not update cosmetics:</b> ${escapeHTML(view.error)}</div>` : ''}
     ${view.notice ? `<div class="tip good" role="status"><b>Saved:</b> ${escapeHTML(view.notice)}</div>` : ''}
+    ${renderAllAccessPlan(snapshot, view)}
+    ${renderAccountKeys(view)}
     ${renderSetShop(view)}
     ${renderRecentPurchases(view)}
     <div class="cosmetic-layout">
@@ -506,11 +721,17 @@
     assignmentIntent,
     checkoutIntent,
     escapeHTML,
+    keyCreateIntent,
+    keyRevokeIntent,
     normalizeCatalog,
+    normalizeKeyCollection,
     normalizeSession,
     normalizeSnapshot,
+    normalizeSubscription,
+    normalizeSubscriptionOffer,
     renderPanel,
     requestHeaders,
     slotLabel,
+    subscriptionIntent,
   });
 })(typeof globalThis !== 'undefined' ? globalThis : window);

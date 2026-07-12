@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"arena-server/internal/config"
@@ -21,6 +22,24 @@ const (
 	cosmeticWebhookMaxBytes = 1 << 20
 	cosmeticCheckoutTimeout = 15 * time.Second
 )
+
+var cosmeticSubscriptionObservationNanos atomic.Int64
+
+func nextCosmeticSubscriptionObservationTime() time.Time {
+	// PostgreSQL timestamptz persists microseconds. Generate monotonic values at
+	// that same resolution so distinct local observations cannot collapse to an
+	// equal stored timestamp and be misclassified after a concurrent commit.
+	now := time.Now().UTC().Truncate(time.Microsecond).UnixNano()
+	for {
+		previous := cosmeticSubscriptionObservationNanos.Load()
+		if now <= previous {
+			now = previous + int64(time.Microsecond)
+		}
+		if cosmeticSubscriptionObservationNanos.CompareAndSwap(previous, now) {
+			return time.Unix(0, now).UTC()
+		}
+	}
+}
 
 var cosmeticCheckoutPackIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,79}$`)
 
@@ -66,13 +85,15 @@ func (databaseCosmeticCommerceStore) EquippedForBots(ctx context.Context, botIDs
 
 // CosmeticCommerceHandler keeps authenticated order creation, provider IO, and
 // signature-verified fulfillment separate from the catalog/equip handler.
-// Webhook processing remains available when new sales are paused, provided the
-// operator keeps the signing secret configured.
+// Webhook reconciliation and the billing portal remain available when new
+// sales are paused, provided the operator retains the webhook secret, Stripe
+// API key, and portal return URL required by config validation.
 type CosmeticCommerceHandler struct {
-	store           cosmeticCommerceStore
-	provider        CosmeticPaymentProvider
-	checkoutEnabled bool
-	engine          *game.GameEngine
+	store             cosmeticCommerceStore
+	subscriptionStore cosmeticSubscriptionStore
+	provider          CosmeticPaymentProvider
+	checkoutEnabled   bool
+	engine            *game.GameEngine
 }
 
 func NewCosmeticCommerceHandler(engine *game.GameEngine) *CosmeticCommerceHandler {
@@ -84,14 +105,16 @@ func NewCosmeticCommerceHandler(engine *game.GameEngine) *CosmeticCommerceHandle
 			secrets,
 			config.C.StripeSuccessURL,
 			config.C.StripeCancelURL,
+			config.C.StripePortalReturnURL,
 			config.C.StripeAutomaticTax,
 		)
 	}
 	return &CosmeticCommerceHandler{
-		store:           databaseCosmeticCommerceStore{},
-		provider:        provider,
-		checkoutEnabled: config.C.CosmeticsCheckoutEnabled && provider != nil,
-		engine:          engine,
+		store:             databaseCosmeticCommerceStore{},
+		subscriptionStore: databaseCosmeticSubscriptionStore{},
+		provider:          provider,
+		checkoutEnabled:   config.C.CosmeticsCheckoutEnabled && provider != nil,
+		engine:            engine,
 	}
 }
 
@@ -210,7 +233,11 @@ func validHostedCheckoutSession(session *CosmeticCheckoutSession) bool {
 		strings.TrimSpace(session.URL) == "" || len(session.URL) > 2048 {
 		return false
 	}
-	parsed, err := url.Parse(session.URL)
+	return validHostedHTTPSURL(session.URL)
+}
+
+func validHostedHTTPSURL(raw string) bool {
+	parsed, err := url.Parse(raw)
 	return err == nil && strings.EqualFold(parsed.Scheme, "https") && parsed.Hostname() != "" && parsed.User == nil
 }
 
@@ -242,6 +269,10 @@ func (h *CosmeticCommerceHandler) StripeWebhook(w http.ResponseWriter, r *http.R
 	}
 	if event == nil {
 		writeError(w, http.StatusBadRequest, "invalid payment webhook")
+		return
+	}
+	if event.Kind == CosmeticPaymentKindSubscription {
+		h.subscriptionWebhook(w, r, *event)
 		return
 	}
 	input, err := databaseCosmeticPaymentEvent(*event)
@@ -289,6 +320,85 @@ func (h *CosmeticCommerceHandler) StripeWebhook(w http.ResponseWriter, r *http.R
 	})
 }
 
+func (h *CosmeticCommerceHandler) subscriptionWebhook(w http.ResponseWriter, r *http.Request, event CosmeticPaymentEvent) {
+	if h.subscriptionStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "cosmetic subscription ledger is unavailable")
+		return
+	}
+	if cosmeticSubscriptionEventNeedsProviderReconciliation(event) {
+		retriever, ok := h.provider.(cosmeticSubscriptionStateRetriever)
+		if !ok || strings.TrimSpace(event.ProviderSubscriptionID) == "" {
+			writeError(w, http.StatusServiceUnavailable, "subscription provider reconciliation is unavailable")
+			return
+		}
+		// Capture before Retrieve so concurrent requests have a stable local
+		// observation order even if the earlier request returns more slowly.
+		observedAt := nextCosmeticSubscriptionObservationTime()
+		providerCtx, cancel := context.WithTimeout(r.Context(), cosmeticCheckoutTimeout)
+		state, retrieveErr := retriever.RetrieveCosmeticSubscription(providerCtx, event.ProviderSubscriptionID)
+		cancel()
+		if retrieveErr != nil || state == nil || state.ID != event.ProviderSubscriptionID || state.CustomerID == "" {
+			slog.Error("failed to reconcile cosmetic subscription from provider", "event_id", event.ID,
+				"provider_subscription_id", event.ProviderSubscriptionID, "error", retrieveErr)
+			writeError(w, http.StatusServiceUnavailable, "subscription provider reconciliation failed")
+			return
+		}
+		event.CustomerID = state.CustomerID
+		event.SubscriptionStatus = state.Status
+		event.CancelAtPeriodEnd = state.CancelAtPeriodEnd
+		event.CurrentPeriodEnd = state.CurrentPeriodEnd
+		event.Terminal = state.Terminal
+		event.ProviderStateObservedAt = observedAt
+	}
+	input, err := databaseCosmeticSubscriptionEvent(event)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "unsupported subscription webhook")
+		return
+	}
+	result, err := h.subscriptionStore.Process(r.Context(), input)
+	if err != nil {
+		switch {
+		case errors.Is(err, db.ErrCosmeticSubscriptionMismatch),
+			errors.Is(err, db.ErrCosmeticSubscriptionEventInvalid),
+			errors.Is(err, db.ErrCosmeticSubscriptionEventConflict),
+			errors.Is(err, db.ErrCosmeticSubscriptionNotFound):
+			writeError(w, http.StatusUnprocessableEntity, "payment event did not match a cosmetic subscription")
+		case errors.Is(err, db.ErrNoDatabase):
+			writeError(w, http.StatusServiceUnavailable, "cosmetic subscription ledger is unavailable")
+		default:
+			slog.Error("failed to process cosmetic subscription event", "event_id", event.ID, "event_type", event.Type, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to process subscription event")
+		}
+		return
+	}
+	if result == nil || result.Subscription == nil {
+		writeError(w, http.StatusInternalServerError, "failed to process subscription event")
+		return
+	}
+	liveRefreshed := 0
+	if !result.Subscription.HasAccess {
+		liveRefreshed, err = h.refreshConnectedBotVisuals(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "subscription event requires retry")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"received": true, "applied": result.Applied, "duplicate": result.Duplicate,
+		"licenses_created": result.LicensesCreated, "licenses_revoked": result.LicensesRevoked,
+		"live_refreshed": liveRefreshed, "subscription": result.Subscription,
+	})
+}
+
+func cosmeticSubscriptionEventNeedsProviderReconciliation(event CosmeticPaymentEvent) bool {
+	if event.Type != CosmeticPaymentEventSubscriptionCreated && event.Type != CosmeticPaymentEventSubscriptionUpdated {
+		return false
+	}
+	status := strings.ToLower(strings.TrimSpace(event.SubscriptionStatus))
+	return !event.Terminal && status != db.CosmeticSubscriptionStatusCanceled &&
+		status != db.CosmeticSubscriptionStatusExpired && status != "incomplete_expired"
+}
+
 // refreshTerminalBotVisuals repairs the engine's presentation-only cache after
 // the committed order transaction deletes refunded/chargeback loadouts. The
 // connected set is bounded and includes waiting bots; refreshing every member
@@ -297,6 +407,13 @@ func (h *CosmeticCommerceHandler) StripeWebhook(w http.ResponseWriter, r *http.R
 func (h *CosmeticCommerceHandler) refreshTerminalBotVisuals(ctx context.Context, order *db.CosmeticOrder) (int, error) {
 	if h == nil || h.engine == nil || h.store == nil || order == nil ||
 		(order.Status != db.CosmeticOrderStatusRefunded && order.Status != db.CosmeticOrderStatusDisputed) {
+		return 0, nil
+	}
+	return h.refreshConnectedBotVisuals(ctx)
+}
+
+func (h *CosmeticCommerceHandler) refreshConnectedBotVisuals(ctx context.Context) (int, error) {
+	if h == nil || h.engine == nil || h.store == nil {
 		return 0, nil
 	}
 	botIDs := h.engine.ConnectedBotIDs()

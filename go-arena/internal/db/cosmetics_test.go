@@ -125,6 +125,27 @@ func TestLaunchCosmeticCatalogHasOneHundredCompleteSets(t *testing.T) {
 	}
 }
 
+func TestEveryPurchasableCosmeticSetUsesFixedOneNinetyNinePrice(t *testing.T) {
+	catalog := DefaultCosmeticCatalogData()
+	for _, pack := range catalog.Packs {
+		if !pack.IsPurchasable || pack.IsFree {
+			continue
+		}
+		if pack.PriceCents != 199 || pack.Currency != "USD" {
+			t.Errorf("purchasable pack %q price = %d %s, want 199 USD", pack.ID, pack.PriceCents, pack.Currency)
+		}
+	}
+
+	nonStandard := CosmeticPack{
+		ID: "future-set", CategoryID: "starter-packs", Name: "Future Set",
+		PriceCents: 299, Currency: "USD", IsPurchasable: true, IsActive: true,
+		ItemIDs: []string{"skin-neon-grid"},
+	}
+	if err := ValidateCosmeticPack(nonStandard); !errors.Is(err, ErrCosmeticCatalogInvalid) {
+		t.Fatalf("future purchasable set with non-standard price error = %v, want ErrCosmeticCatalogInvalid", err)
+	}
+}
+
 func TestLaunchCosmeticLegacyIDsRemainStable(t *testing.T) {
 	catalog := DefaultCosmeticCatalogData()
 	legacyItems := []string{
@@ -288,7 +309,7 @@ func TestCosmeticCatalogMetadataValidation(t *testing.T) {
 
 	validPack := CosmeticPack{
 		ID: "test-pack", Name: "Test Pack", CategoryID: "starter-packs",
-		PriceCents: 99, Currency: "USD", IsPurchasable: true, IsActive: true,
+		PriceCents: CosmeticPackPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true,
 		ItemIDs: []string{"attachment-test"},
 	}
 	if err := ValidateCosmeticPack(validPack); err != nil {
@@ -311,9 +332,9 @@ func TestCosmeticCatalogMetadataValidation(t *testing.T) {
 	}
 
 	invalidPacks := []CosmeticPack{
-		{ID: "empty-pack", Name: "Empty", PriceCents: 99, Currency: "USD", IsPurchasable: true, IsActive: true},
-		{ID: "duplicate-pack", Name: "Duplicate", PriceCents: 99, Currency: "USD", IsPurchasable: true, IsActive: true, ItemIDs: []string{"one", "one"}},
-		{ID: "non-usd-pack", Name: "Non USD", CategoryID: "starter-packs", PriceCents: 99, Currency: "JPY", IsPurchasable: true, IsActive: true, ItemIDs: []string{"one"}},
+		{ID: "empty-pack", Name: "Empty", PriceCents: CosmeticPackPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true},
+		{ID: "duplicate-pack", Name: "Duplicate", PriceCents: CosmeticPackPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true, ItemIDs: []string{"one", "one"}},
+		{ID: "non-usd-pack", Name: "Non USD", CategoryID: "starter-packs", PriceCents: CosmeticPackPriceCents, Currency: "JPY", IsPurchasable: true, IsActive: true, ItemIDs: []string{"one"}},
 	}
 	for _, pack := range invalidPacks {
 		if err := ValidateCosmeticPack(pack); err == nil {

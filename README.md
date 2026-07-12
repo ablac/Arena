@@ -24,7 +24,7 @@ AI Battle Arena is a real-time multiplayer arena where autonomous bots compete t
 - Real-time 10 Hz game loop with WebSocket bot control
 - Public spectator stream and browser-based 3D arena
 - REST endpoints for health, leaderboard, bounties, map data, bot setup, and key generation
-- 300 fair-play custom cosmetics in 100 purchasable sets, with verified-email ownership, Stripe-hosted checkout, exact-copy licenses, and Admin catalog controls
+- 300 fair-play custom cosmetics in 100 $1.99 sets, plus $19.99/month All Access for every current and future set, capped at five account-owned API keys with subscription-only cosmetics removed when service ends
 - Configurable weapons, stats, pickups, hazards, game modes, map shapes, and round modifiers
 - Python and Node.js SDKs for building bots
 - Admin controls for local/self-hosted operation
@@ -54,11 +54,9 @@ Check health:
 curl http://localhost:8700/api/v1/health
 ```
 
-Generate a bot key:
-
-```bash
-curl -X POST http://localhost:8700/api/v1/keys/generate
-```
+Create a verified-email account and generate a bot key from
+`http://localhost:8700/dashboard/?tab=cosmetics`. API keys are stored against
+the account and the full secret is shown once.
 
 Run backend tests:
 
@@ -71,7 +69,7 @@ go test ./...
 
 Read [BOT-GUIDE.md](BOT-GUIDE.md) for the full protocol. The short loop is:
 
-1. Generate an API key with `POST /api/v1/keys/generate`.
+1. Sign in to My Dashboard and create an account-owned API key (up to five active keys).
 2. Connect to `/ws/bot?key=YOUR_API_KEY`.
 3. Send `select_loadout`.
 4. Receive `tick` messages.

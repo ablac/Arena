@@ -30,9 +30,11 @@ assert.ok(cosmeticsPanel.indexOf('id="cosmeticItemEditor"') < cosmeticsPanel.ind
   'the item editor must appear before the bounded 300-item list');
 assert.match(cosmeticsPanel, /Built-in cosmetics are code-seeded[\s\S]*deactivate/i,
   'built-in catalog entries need deactivate-versus-delete guidance');
-assert.match(cosmeticsPanel, /id="cosmeticPackPrice"[^>]*min="0"[^>]*max="1000000"/, 'pack price must match the backend upper bound');
+assert.match(cosmeticsPanel, /id="cosmeticPackPrice"[^>]*value="199"[^>]*readonly/, 'sale-ready set price must be fixed at $1.99');
 assert.match(cosmeticsPanel, /id="cosmeticItemPrice"[^>]*min="0"[^>]*max="1000000"/, 'item price must match the backend upper bound');
 assert.doesNotMatch(cosmeticsPanel, /max="100000000"/, 'catalog forms must not accept prices the API always rejects');
+const savePack = html.slice(html.indexOf('async function saveCosmeticPack'), html.indexOf('async function deleteCosmeticPack'));
+assert.match(savePack, /price_cents:\s*isFree\s*\?\s*0\s*:\s*199/, 'Admin must submit the fixed $1.99 sale price instead of browser input');
 assert.doesNotMatch(cosmeticsPanel, /<main class="cosmetics-admin-workbench"/, 'the cosmetics workbench must not nest a second main landmark');
 for (const orderID of ['cosmeticOrderSearch', 'cosmeticOrderStatusFilter', 'cosmeticOrderRefresh',
   'cosmeticOrderStatus', 'cosmeticOrderList']) {

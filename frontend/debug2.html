@@ -54,10 +54,6 @@ try {
   const { initLeaderboard } = await import('./js/leaderboard.js');
   log('✅ leaderboard.js imported');
 } catch(e) { log('❌ leaderboard.js import failed: ' + e.message); }
-try {
-  const { initKeyGenerator } = await import('./js/key-generator.js');
-  log('✅ key-generator.js imported');
-} catch(e) { log('❌ key-generator.js import failed: ' + e.message); }
 log('--- All imports done ---');
 </script>
 </body></html>

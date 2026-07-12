@@ -66,9 +66,11 @@ type CosmeticLicense struct {
 }
 
 type CustomerCosmeticsInventory struct {
-	Account  CustomerAccount   `json:"account"`
-	Bots     []AccountBot      `json:"bots"`
-	Licenses []CosmeticLicense `json:"licenses"`
+	Account           CustomerAccount           `json:"account"`
+	Bots              []AccountBot              `json:"bots"`
+	Licenses          []CosmeticLicense         `json:"licenses"`
+	Subscription      *CosmeticSubscription     `json:"subscription"`
+	SubscriptionOffer CosmeticSubscriptionOffer `json:"subscription_offer"`
 }
 
 type CosmeticAssignmentChange struct {
@@ -303,11 +305,12 @@ func LinkBotToCustomerAccount(ctx context.Context, accountID, botID string) (*Ac
 	}
 
 	var bot AccountBot
+	var apiKeyID string
 	if err := tx.QueryRow(ctx, `
-		SELECT b.id, b.name, k.key_prefix, k.is_active, NOW()
+		SELECT b.id, b.name, b.api_key_id, k.key_prefix, k.is_active, NOW()
 		FROM bots b JOIN api_keys k ON k.id = b.api_key_id
 		WHERE b.id = $1
-		FOR UPDATE OF b FOR SHARE OF k`, botID).Scan(&bot.BotID, &bot.Name, &bot.KeyPrefix, &bot.KeyIsActive, &bot.LinkedAt); err != nil {
+		FOR UPDATE OF b FOR SHARE OF k`, botID).Scan(&bot.BotID, &bot.Name, &apiKeyID, &bot.KeyPrefix, &bot.KeyIsActive, &bot.LinkedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrCosmeticBotNotFound
 		}
@@ -315,6 +318,37 @@ func LinkBotToCustomerAccount(ctx context.Context, accountID, botID string) (*Ac
 	}
 	if !bot.KeyIsActive {
 		return nil, ErrCustomerBotKeyInactive
+	}
+
+	var owningAccountID string
+	ownershipErr := tx.QueryRow(ctx, `
+		SELECT account_id FROM account_api_keys WHERE api_key_id = $1 FOR UPDATE`, apiKeyID).Scan(&owningAccountID)
+	if ownershipErr == nil && owningAccountID != accountID {
+		return nil, ErrCustomerAPIKeyAlreadyOwned
+	}
+	if ownershipErr != nil && !errors.Is(ownershipErr, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("LinkBotToCustomerAccount key ownership: %w", ownershipErr)
+	}
+	if errors.Is(ownershipErr, pgx.ErrNoRows) {
+		activeCount, totalCount, err := accountAPIKeyCapacity(ctx, tx, accountID)
+		if err != nil {
+			return nil, err
+		}
+		if activeCount >= MaxActiveAccountAPIKeys {
+			return nil, ErrCustomerAPIKeyLimit
+		}
+		if totalCount >= MaxAccountAPIKeyHistory {
+			return nil, ErrCustomerAPIKeyHistoryLimit
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO account_api_keys (account_id, api_key_id, linked_at)
+			VALUES ($1, $2, NOW())`, accountID, apiKeyID); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				return nil, ErrCustomerAPIKeyAlreadyOwned
+			}
+			return nil, fmt.Errorf("LinkBotToCustomerAccount key ownership insert: %w", err)
+		}
 	}
 
 	var existingAccountID string
@@ -541,6 +575,12 @@ func ListCustomerCosmeticLicenses(ctx context.Context, accountID string) ([]Cosm
 }
 
 func GetCustomerCosmeticsInventory(ctx context.Context, accountID string) (*CustomerCosmeticsInventory, error) {
+	// Subscription access is materialized as ordinary per-item licenses. This
+	// idempotent sync makes newly published sets available before the Dashboard
+	// renders inventory, without weakening the existing assignment constraints.
+	if _, err := SyncCustomerCosmeticSubscriptionLicenses(ctx, accountID); err != nil {
+		return nil, err
+	}
 	account, err := GetCustomerAccount(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -553,7 +593,11 @@ func GetCustomerCosmeticsInventory(ctx context.Context, accountID string) (*Cust
 	if err != nil {
 		return nil, err
 	}
-	return &CustomerCosmeticsInventory{Account: *account, Bots: bots, Licenses: licenses}, nil
+	subscription, err := GetCustomerCosmeticSubscription(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	return &CustomerCosmeticsInventory{Account: *account, Bots: bots, Licenses: licenses, Subscription: subscription}, nil
 }
 
 // GrantCosmeticLicense is the email-owned payment/manual fulfillment seam.

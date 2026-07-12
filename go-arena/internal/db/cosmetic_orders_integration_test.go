@@ -79,8 +79,8 @@ func TestPostgresCosmeticOrderSnapshotsServerPriceAndFulfillsQuantityExactlyOnce
 	if err != nil {
 		t.Fatalf("CreateCosmeticOrder: %v", err)
 	}
-	if order.AccountEmail != account.Email || order.PackDescription == "" || order.UnitPriceCents != 99 ||
-		order.ExpectedSubtotalCents != 198 || order.Quantity != 2 || len(order.Items) != 3 {
+	if order.AccountEmail != account.Email || order.PackDescription == "" || order.UnitPriceCents != CosmeticPackPriceCents ||
+		order.ExpectedSubtotalCents != 398 || order.Quantity != 2 || len(order.Items) != 3 {
 		t.Fatalf("server order snapshot = %+v", order)
 	}
 	for position, item := range order.Items {
@@ -90,9 +90,9 @@ func TestPostgresCosmeticOrderSnapshotsServerPriceAndFulfillsQuantityExactlyOnce
 	}
 
 	pack := cosmeticPackByID(DefaultCosmeticCatalogData().Packs, "neon-signal-pack")
-	pack.PriceCents = 499
+	pack.Description = "Changed after the order snapshot."
 	if _, err := UpsertCosmeticPack(ctx, *pack, "price-editor"); err != nil {
-		t.Fatalf("change live pack price after snapshot: %v", err)
+		t.Fatalf("change live pack metadata after snapshot: %v", err)
 	}
 	order, err = AttachCosmeticOrderCheckout(ctx, account.ID, order.ID, "cs_snapshot")
 	if err != nil {
@@ -103,13 +103,13 @@ func TestPostgresCosmeticOrderSnapshotsServerPriceAndFulfillsQuantityExactlyOnce
 		t.Fatalf("idempotent checkout attach = (%+v, %v)", attachedAgain, err)
 	}
 
-	paidInput := paidCommerceEvent(order, "evt_snapshot_paid", commerceEventHash("b"), 218)
+	paidInput := paidCommerceEvent(order, "evt_snapshot_paid", commerceEventHash("b"), 418)
 	result, err := ProcessCosmeticPaymentEvent(ctx, paidInput)
 	if err != nil {
 		t.Fatalf("ProcessCosmeticPaymentEvent: %v", err)
 	}
 	if !result.Applied || result.Duplicate || result.LicensesCreated != 6 || result.Order.Status != CosmeticOrderStatusPaid ||
-		result.Order.AmountReceivedCents != 218 || result.Order.ExpectedSubtotalCents != 198 {
+		result.Order.AmountReceivedCents != 418 || result.Order.ExpectedSubtotalCents != 398 {
 		t.Fatalf("paid result = %+v", result)
 	}
 	if got := countOrderLicenses(t, ctx, order.ID); got != 6 {
@@ -144,7 +144,7 @@ func TestPostgresCosmeticOrderSnapshotsServerPriceAndFulfillsQuantityExactlyOnce
 	}
 
 	customerOrders, err := ListCustomerCosmeticOrders(ctx, account.ID, 20)
-	if err != nil || len(customerOrders) != 1 || customerOrders[0].UnitPriceCents != 99 || customerOrders[0].FulfilledLicenseCount != 6 {
+	if err != nil || len(customerOrders) != 1 || customerOrders[0].UnitPriceCents != CosmeticPackPriceCents || customerOrders[0].FulfilledLicenseCount != 6 {
 		t.Fatalf("customer orders = (%+v, %v)", customerOrders, err)
 	}
 	isolated, err := ListCustomerCosmeticOrders(ctx, other.ID, 20)
@@ -248,7 +248,7 @@ func TestPostgresCosmeticRefundLifecycleRevokesOnlyMappedCopies(t *testing.T) {
 	}
 	account := createCommerceTestAccount(t, ctx, "refund")
 	order := createAttachedCommerceOrder(t, ctx, account, 2, "refund")
-	order = fulfillCommerceOrder(t, ctx, order, 218, "refund")
+	order = fulfillCommerceOrder(t, ctx, order, 418, "refund")
 
 	var mappedLicenseID, mappedItemID string
 	if err := Pool.QueryRow(ctx, `
@@ -313,9 +313,9 @@ func TestPostgresCosmeticRefundLifecycleRevokesOnlyMappedCopies(t *testing.T) {
 	full.EventType = CosmeticStripeRefundUpdated
 	full.PayloadHash = commerceEventHash("9")
 	full.RefundID = "re_full"
-	full.RefundAmountCents = 168
+	full.RefundAmountCents = 368
 	result, err = ProcessCosmeticPaymentEvent(ctx, full)
-	if err != nil || result.Order.Status != CosmeticOrderStatusRefunded || result.Order.AmountRefundedCents != 218 {
+	if err != nil || result.Order.Status != CosmeticOrderStatusRefunded || result.Order.AmountRefundedCents != 418 {
 		t.Fatalf("full refund = (%+v, %v)", result, err)
 	}
 	var refundEventTypes int
@@ -346,7 +346,7 @@ func TestPostgresCosmeticRefundLifecycleRevokesOnlyMappedCopies(t *testing.T) {
 	if err != nil || !duplicate.Duplicate || duplicate.Applied {
 		t.Fatalf("duplicate full refund = (%+v, %v)", duplicate, err)
 	}
-	delayedPaid := paidCommerceEvent(order, "evt_paid_after_refund", commerceEventHash("8"), 218)
+	delayedPaid := paidCommerceEvent(order, "evt_paid_after_refund", commerceEventHash("8"), 418)
 	if _, err := ProcessCosmeticPaymentEvent(ctx, delayedPaid); !errors.Is(err, ErrCosmeticOrderTerminal) {
 		t.Fatalf("paid after refund error = %v, want terminal", err)
 	}
@@ -361,7 +361,7 @@ func TestPostgresCosmeticChargeRefundUsesCumulativeAmountWithoutDoubleCounting(t
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
 	account := createCommerceTestAccount(t, ctx, "charge-refund")
-	order := fulfillCommerceOrder(t, ctx, createAttachedCommerceOrder(t, ctx, account, 2, "charge-refund"), 198, "charge-refund")
+	order := fulfillCommerceOrder(t, ctx, createAttachedCommerceOrder(t, ctx, account, 2, "charge-refund"), 398, "charge-refund")
 
 	individual := CosmeticPaymentEventInput{
 		Provider: "stripe", EventID: "evt_individual_refund", EventType: CosmeticStripeRefundUpdated, PayloadHash: commerceEventHash("7"),
@@ -381,9 +381,9 @@ func TestPostgresCosmeticChargeRefundUsesCumulativeAmountWithoutDoubleCounting(t
 	}
 	charge.EventID = "evt_charge_refund_full"
 	charge.PayloadHash = commerceEventHash("5")
-	charge.CumulativeRefundedCents = 198
+	charge.CumulativeRefundedCents = 398
 	result, err = ProcessCosmeticPaymentEvent(ctx, charge)
-	if err != nil || result.Order.AmountRefundedCents != 198 || result.Order.Status != CosmeticOrderStatusRefunded {
+	if err != nil || result.Order.AmountRefundedCents != 398 || result.Order.Status != CosmeticOrderStatusRefunded {
 		t.Fatalf("cumulative full refund = (%+v, %v)", result, err)
 	}
 }
@@ -394,7 +394,7 @@ func TestPostgresCosmeticRefundTerminalStateDoesNotRegressOnOutOfOrderEvent(t *t
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
 	account := createCommerceTestAccount(t, ctx, "refund-out-of-order")
-	order := fulfillCommerceOrder(t, ctx, createAttachedCommerceOrder(t, ctx, account, 1, "refund-out-of-order"), 99, "refund-out-of-order")
+	order := fulfillCommerceOrder(t, ctx, createAttachedCommerceOrder(t, ctx, account, 1, "refund-out-of-order"), CosmeticPackPriceCents, "refund-out-of-order")
 
 	succeeded := CosmeticPaymentEventInput{
 		Provider: "stripe", EventID: "evt_refund_succeeded_first", EventType: CosmeticStripeRefundUpdated, PayloadHash: commerceEventHash("2"),
@@ -436,7 +436,7 @@ func TestPostgresCosmeticDisputeIsTerminalAndRevokesMappedLicenses(t *testing.T)
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
 	account := createCommerceTestAccount(t, ctx, "dispute")
-	order := fulfillCommerceOrder(t, ctx, createAttachedCommerceOrder(t, ctx, account, 1, "dispute"), 99, "dispute")
+	order := fulfillCommerceOrder(t, ctx, createAttachedCommerceOrder(t, ctx, account, 1, "dispute"), CosmeticPackPriceCents, "dispute")
 	dispute := CosmeticPaymentEventInput{
 		Provider: "stripe", EventID: "evt_dispute", EventType: CosmeticStripeDisputeCreated, PayloadHash: commerceEventHash("4"),
 		PaymentIntentID: order.PaymentIntentID, Currency: "USD",
@@ -451,7 +451,7 @@ func TestPostgresCosmeticDisputeIsTerminalAndRevokesMappedLicenses(t *testing.T)
 		WHERE ol.order_id = $1 AND l.status = 'chargeback'`, order.ID).Scan(&chargebacks); err != nil || chargebacks != 3 {
 		t.Fatalf("chargeback licenses = (%d, %v), want 3", chargebacks, err)
 	}
-	delayedPaid := paidCommerceEvent(order, "evt_paid_after_dispute", commerceEventHash("3"), 99)
+	delayedPaid := paidCommerceEvent(order, "evt_paid_after_dispute", commerceEventHash("3"), CosmeticPackPriceCents)
 	if _, err := ProcessCosmeticPaymentEvent(ctx, delayedPaid); !errors.Is(err, ErrCosmeticOrderTerminal) {
 		t.Fatalf("paid after dispute error = %v", err)
 	}
@@ -497,7 +497,7 @@ func TestPostgresCosmeticCheckoutFailureAndExpiryDoNotDowngradePaidOrders(t *tes
 		t.Fatalf("expired order = (%+v, %v)", result, err)
 	}
 
-	paidOrder := fulfillCommerceOrder(t, ctx, createAttachedCommerceOrder(t, ctx, account, 1, "paid-stable"), 99, "paid-stable")
+	paidOrder := fulfillCommerceOrder(t, ctx, createAttachedCommerceOrder(t, ctx, account, 1, "paid-stable"), CosmeticPackPriceCents, "paid-stable")
 	lateFailure := CosmeticPaymentEventInput{
 		Provider: "stripe", EventID: "evt_late_failure", EventType: CosmeticStripeCheckoutAsyncPaymentFailed, PayloadHash: commerceEventHash("1"),
 		OrderID: paidOrder.ID, AccountID: account.ID, CheckoutSessionID: paidOrder.CheckoutSessionID,
@@ -635,6 +635,15 @@ func TestPostgresCosmeticOrderRejectsInvalidQuantityAndUnavailablePack(t *testin
 	}
 	if _, err := Pool.Exec(ctx, `UPDATE cosmetic_packs SET currency = 'USD' WHERE id = 'neon-signal-pack'`); err != nil {
 		t.Fatalf("restore launch currency: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `UPDATE cosmetic_packs SET price_cents = 299 WHERE id = 'neon-signal-pack'`); err != nil {
+		t.Fatalf("simulate stale non-$1.99 pack: %v", err)
+	}
+	if _, err := CreateCosmeticOrder(ctx, account.ID, "neon-signal-pack", 1); !errors.Is(err, ErrCosmeticOrderPackUnavailable) {
+		t.Fatalf("stale non-$1.99 pack order error = %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `UPDATE cosmetic_packs SET price_cents = $1 WHERE id = 'neon-signal-pack'`, CosmeticPackPriceCents); err != nil {
+		t.Fatalf("restore launch price: %v", err)
 	}
 	pack := cosmeticPackByID(DefaultCosmeticCatalogData().Packs, "neon-signal-pack")
 	pack.IsActive = false

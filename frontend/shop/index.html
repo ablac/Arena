@@ -10,10 +10,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/arena.css?v=20260707c">
-  <link rel="stylesheet" href="../css/shop.css?v=20260712a">
+  <link rel="stylesheet" href="../css/shop.css?v=20260712c">
   <script defer src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
   <script defer src="../js/cosmetic-themes.js?v=20260711b"></script>
-  <script type="module" src="../js/cosmetics-shop.js?v=20260712a"></script>
+  <script type="module" src="../js/cosmetics-shop.js?v=20260712c"></script>
 </head>
 <body class="shop-page">
   <a class="shop-skip-link" href="#cosmetic-shop">Skip to the cosmetic shop</a>
@@ -55,6 +55,20 @@
         <li>Each purchased item copy can be assigned to one bot at a time.</li>
         <li>Items from the same pack can be assigned to different bots.</li>
       </ul>
+    </section>
+
+    <section class="shop-all-access" data-shop-subscription aria-labelledby="shop-all-access-title">
+      <div class="shop-all-access-copy">
+        <p class="shop-kicker">Monthly collection pass</p>
+        <h2 id="shop-all-access-title">All Access</h2>
+        <p>Get every current and future cosmetic set, plus up to 5 active API keys, for one monthly price.</p>
+        <p class="shop-all-access-removal">Cancellation keeps access through the paid period. When service ends, subscription cosmetics are removed from your account and any bots using them.</p>
+      </div>
+      <div class="shop-all-access-offer">
+        <p data-shop-subscription-state role="status">Checking All Access availability...</p>
+        <strong data-shop-subscription-price>$19.99 / month</strong>
+        <a class="btn btn-gold" data-shop-subscription-action href="../dashboard/?tab=cosmetics&amp;plan=all-access" aria-disabled="true" hidden>View All Access in Dashboard</a>
+      </div>
     </section>
 
     <section class="shop-toolbar" role="search" aria-label="Filter cosmetic packs">

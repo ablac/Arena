@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"arena-server/internal/db"
+
 	stripe "github.com/stripe/stripe-go/v86"
 	"github.com/stripe/stripe-go/v86/webhook"
 )
@@ -17,6 +19,28 @@ type recordingStripeCheckoutCreator struct {
 	params  *stripe.CheckoutSessionCreateParams
 	session *stripe.CheckoutSession
 	err     error
+}
+
+type recordingStripeCheckoutRetriever struct {
+	id      string
+	session *stripe.CheckoutSession
+	err     error
+}
+
+func (r *recordingStripeCheckoutRetriever) Retrieve(_ context.Context, id string, _ *stripe.CheckoutSessionRetrieveParams) (*stripe.CheckoutSession, error) {
+	r.id = id
+	return r.session, r.err
+}
+
+type recordingStripeSubscriptionRetriever struct {
+	id           string
+	subscription *stripe.Subscription
+	err          error
+}
+
+func (r *recordingStripeSubscriptionRetriever) Retrieve(_ context.Context, id string, _ *stripe.SubscriptionRetrieveParams) (*stripe.Subscription, error) {
+	r.id = id
+	return r.subscription, r.err
 }
 
 func (c *recordingStripeCheckoutCreator) Create(_ context.Context, params *stripe.CheckoutSessionCreateParams) (*stripe.CheckoutSession, error) {
@@ -106,6 +130,144 @@ func TestStripeCosmeticPaymentProviderBuildsServerControlledCheckout(t *testing.
 	if stripe.StringValue(line.PriceData.ProductData.Name) != "Neon Founders Set" ||
 		stripe.StringValue(line.PriceData.ProductData.Description) != "A launch set of presentation-only cosmetics." {
 		t.Fatalf("checkout product = %#v", line.PriceData.ProductData)
+	}
+}
+
+func TestStripeCosmeticPaymentProviderBuildsFixedMonthlySubscriptionCheckout(t *testing.T) {
+	creator := &recordingStripeCheckoutCreator{session: &stripe.CheckoutSession{
+		ID: "cs_subscription", URL: "https://checkout.stripe.test/c/pay/cs_subscription", ExpiresAt: 1_900_000_000,
+	}}
+	provider := newStripeCosmeticPaymentProviderWithCreator(
+		creator, []string{"whsec_current"},
+		"https://arena.example/dashboard?checkout=success",
+		"https://arena.example/dashboard?checkout=cancelled", true,
+	)
+
+	got, err := provider.CreateSubscriptionCheckoutSession(context.Background(), CosmeticSubscriptionCheckoutRequest{
+		SubscriptionID: "subscription-record", AccountID: "account-456", CustomerEmail: "owner@example.com",
+	})
+	if err != nil {
+		t.Fatalf("CreateSubscriptionCheckoutSession() error = %v", err)
+	}
+	if got == nil || got.ID != "cs_subscription" || got.URL == "" {
+		t.Fatalf("subscription checkout result = %#v", got)
+	}
+	params := creator.params
+	if params == nil || stripe.StringValue(params.Mode) != string(stripe.CheckoutSessionModeSubscription) {
+		t.Fatalf("subscription Checkout mode = %#v", params)
+	}
+	if stripe.StringValue(params.ClientReferenceID) != "subscription-record" ||
+		stripe.StringValue(params.CustomerEmail) != "owner@example.com" {
+		t.Fatalf("subscription Checkout identity = %#v", params)
+	}
+	wantMetadata := map[string]string{
+		"commerce_kind": "cosmetic_subscription", "subscription_id": "subscription-record", "account_id": "account-456",
+	}
+	if !reflect.DeepEqual(params.Metadata, wantMetadata) || params.SubscriptionData == nil ||
+		!reflect.DeepEqual(params.SubscriptionData.Metadata, wantMetadata) {
+		t.Fatalf("subscription metadata = session %#v subscription %#v", params.Metadata, params.SubscriptionData)
+	}
+	if params.IdempotencyKey == nil || *params.IdempotencyKey != "cosmetics_subscription_subscription-record" {
+		t.Fatalf("subscription idempotency key = %v", params.IdempotencyKey)
+	}
+	if len(params.LineItems) != 1 || params.LineItems[0].PriceData == nil || params.LineItems[0].PriceData.Recurring == nil {
+		t.Fatalf("subscription line item = %#v", params.LineItems)
+	}
+	price := params.LineItems[0].PriceData
+	if stripe.Int64Value(params.LineItems[0].Quantity) != 1 || stripe.Int64Value(price.UnitAmount) != db.CosmeticSubscriptionPriceCents ||
+		stripe.StringValue(price.Currency) != "usd" || stripe.StringValue(price.Recurring.Interval) != "month" ||
+		stripe.Int64Value(price.Recurring.IntervalCount) != 1 {
+		t.Fatalf("subscription price = %#v", price)
+	}
+}
+
+func validRetrievedStripeCosmeticSubscription() *stripe.Subscription {
+	return &stripe.Subscription{
+		ID: "sub_authoritative", Customer: &stripe.Customer{ID: "cus_authoritative"},
+		Status: stripe.SubscriptionStatusActive,
+		Items: &stripe.SubscriptionItemList{Data: []*stripe.SubscriptionItem{{
+			ID: "si_cosmetics", Quantity: 1, CurrentPeriodEnd: 1_900_000_000,
+			Price: &stripe.Price{
+				UnitAmount: db.CosmeticSubscriptionPriceCents, Currency: stripe.Currency("usd"),
+				Recurring: &stripe.PriceRecurring{Interval: stripe.PriceRecurringIntervalMonth, IntervalCount: 1},
+			},
+		}}},
+	}
+}
+
+func TestStripeCosmeticPaymentProviderRetrievesAuthoritativeSubscriptionAndValidatesBilling(t *testing.T) {
+	tests := []struct {
+		name       string
+		mutate     func(*stripe.Subscription)
+		wantStatus string
+		terminal   bool
+	}{
+		{name: "valid active", wantStatus: db.CosmeticSubscriptionStatusActive},
+		{name: "incomplete expired", mutate: func(subscription *stripe.Subscription) {
+			subscription.Status = stripe.SubscriptionStatusIncompleteExpired
+		}, wantStatus: db.CosmeticSubscriptionStatusExpired, terminal: true},
+		{name: "wrong quantity", mutate: func(subscription *stripe.Subscription) {
+			subscription.Items.Data[0].Quantity = 2
+		}, wantStatus: db.CosmeticSubscriptionStatusBillingMismatch},
+		{name: "wrong amount", mutate: func(subscription *stripe.Subscription) {
+			subscription.Items.Data[0].Price.UnitAmount = 1
+		}, wantStatus: db.CosmeticSubscriptionStatusBillingMismatch},
+		{name: "wrong currency", mutate: func(subscription *stripe.Subscription) {
+			subscription.Items.Data[0].Price.Currency = stripe.Currency("eur")
+		}, wantStatus: db.CosmeticSubscriptionStatusBillingMismatch},
+		{name: "wrong interval", mutate: func(subscription *stripe.Subscription) {
+			subscription.Items.Data[0].Price.Recurring.Interval = stripe.PriceRecurringIntervalYear
+		}, wantStatus: db.CosmeticSubscriptionStatusBillingMismatch},
+		{name: "wrong interval count", mutate: func(subscription *stripe.Subscription) {
+			subscription.Items.Data[0].Price.Recurring.IntervalCount = 2
+		}, wantStatus: db.CosmeticSubscriptionStatusBillingMismatch},
+		{name: "multiple items", mutate: func(subscription *stripe.Subscription) {
+			subscription.Items.Data = append(subscription.Items.Data, &stripe.SubscriptionItem{
+				ID: "si_extra", Quantity: 1, Price: subscription.Items.Data[0].Price,
+			})
+		}, wantStatus: db.CosmeticSubscriptionStatusBillingMismatch},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			subscription := validRetrievedStripeCosmeticSubscription()
+			if test.mutate != nil {
+				test.mutate(subscription)
+			}
+			retriever := &recordingStripeSubscriptionRetriever{subscription: subscription}
+			provider := newStripeCosmeticPaymentProviderWithCreator(nil, nil, "", "", false)
+			provider.subscriptionRetriever = retriever
+			state, err := provider.RetrieveCosmeticSubscription(context.Background(), subscription.ID)
+			if err != nil {
+				t.Fatalf("RetrieveCosmeticSubscription: %v", err)
+			}
+			if retriever.id != subscription.ID || state == nil || state.ID != subscription.ID ||
+				state.CustomerID != "cus_authoritative" || state.Status != test.wantStatus || state.Terminal != test.terminal {
+				t.Fatalf("authoritative subscription = %+v; retrieved ID=%q", state, retriever.id)
+			}
+			if state.CurrentPeriodEnd == nil || state.CurrentPeriodEnd.Unix() != 1_900_000_000 {
+				t.Fatalf("authoritative current period end = %v", state.CurrentPeriodEnd)
+			}
+		})
+	}
+}
+
+func TestStripeCosmeticPaymentProviderRetrievesOpenCheckoutURLWithoutPersistingIt(t *testing.T) {
+	retriever := &recordingStripeCheckoutRetriever{session: &stripe.CheckoutSession{
+		ID: "cs_resume", URL: "https://checkout.stripe.com/c/pay/cs_resume",
+		Status: stripe.CheckoutSessionStatusOpen, Mode: stripe.CheckoutSessionModeSubscription, ExpiresAt: 1_900_000_000,
+		Metadata: map[string]string{"subscription_id": "subscription-record", "account_id": "account-1"},
+	}}
+	provider := newStripeCosmeticPaymentProviderWithCreator(nil, nil, "", "", false)
+	provider.checkoutRetriever = retriever
+	session, err := provider.RetrieveSubscriptionCheckoutSession(context.Background(), "cs_resume")
+	if err != nil {
+		t.Fatalf("RetrieveSubscriptionCheckoutSession: %v", err)
+	}
+	if retriever.id != "cs_resume" || session == nil || session.ID != "cs_resume" ||
+		session.Status != CosmeticCheckoutSessionStatusOpen || session.URL == "" || session.Mode != "subscription" ||
+		session.SubscriptionID != "subscription-record" || session.AccountID != "account-1" ||
+		session.ExpiresAt.Unix() != 1_900_000_000 {
+		t.Fatalf("retrieved checkout session = %+v", session)
 	}
 }
 
@@ -256,6 +418,78 @@ func TestStripeCosmeticPaymentProviderNormalizesSupportedEvents(t *testing.T) {
 			tt.want.PayloadSHA256 = hex.EncodeToString(sum[:])
 			if !reflect.DeepEqual(*got, tt.want) {
 				t.Fatalf("ParseWebhook() = %#v, want %#v", *got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStripeCosmeticPaymentProviderNormalizesSubscriptionEvents(t *testing.T) {
+	provider := newStripeCosmeticPaymentProviderWithCreator(nil, []string{"whsec_current"}, "", "", false)
+	periodEnd := time.Now().UTC().Add(30 * 24 * time.Hour).Unix()
+	tests := []struct {
+		name       string
+		stripeType stripe.EventType
+		object     map[string]interface{}
+		wantType   CosmeticPaymentEventType
+		wantStatus string
+		terminal   bool
+	}{
+		{
+			name: "subscription checkout", stripeType: stripe.EventTypeCheckoutSessionCompleted,
+			object: map[string]interface{}{
+				"id": "cs_subscription", "mode": "subscription", "customer": "cus_subscription", "subscription": "sub_subscription",
+				"metadata": map[string]string{"commerce_kind": "cosmetic_subscription", "subscription_id": "subscription-record", "account_id": "account-subscription"},
+			},
+			wantType: CosmeticPaymentEventSubscriptionCheckoutCompleted,
+		},
+		{
+			name: "subscription active", stripeType: stripe.EventTypeCustomerSubscriptionUpdated,
+			object: map[string]interface{}{
+				"id": "sub_subscription", "customer": map[string]string{"id": "cus_subscription"}, "status": "active",
+				"cancel_at_period_end": true, "current_period_end": periodEnd,
+				"metadata": map[string]string{"commerce_kind": "cosmetic_subscription", "subscription_id": "subscription-record", "account_id": "account-subscription"},
+			},
+			wantType: CosmeticPaymentEventSubscriptionUpdated, wantStatus: "active",
+		},
+		{
+			name: "subscription incomplete expired", stripeType: stripe.EventTypeCustomerSubscriptionUpdated,
+			object: map[string]interface{}{
+				"id": "sub_subscription", "customer": "cus_subscription", "status": "incomplete_expired",
+				"metadata": map[string]string{"commerce_kind": "cosmetic_subscription", "subscription_id": "subscription-record", "account_id": "account-subscription"},
+			},
+			wantType: CosmeticPaymentEventSubscriptionUpdated, wantStatus: db.CosmeticSubscriptionStatusExpired, terminal: true,
+		},
+		{
+			name: "subscription deleted", stripeType: stripe.EventTypeCustomerSubscriptionDeleted,
+			object: map[string]interface{}{
+				"id": "sub_subscription", "customer": "cus_subscription", "status": "canceled",
+				"metadata": map[string]string{"commerce_kind": "cosmetic_subscription", "subscription_id": "subscription-record", "account_id": "account-subscription"},
+			},
+			wantType: CosmeticPaymentEventSubscriptionDeleted, wantStatus: db.CosmeticSubscriptionStatusCanceled, terminal: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := stripeEventPayload(t, "evt_"+tt.name, tt.stripeType, tt.object)
+			header := signedStripePayload(payload, "whsec_current", time.Now())
+			event, err := provider.ParseWebhook(payload, header)
+			if err != nil {
+				t.Fatalf("ParseWebhook() error = %v", err)
+			}
+			if event.Kind != CosmeticPaymentKindSubscription || event.Type != tt.wantType ||
+				event.SubscriptionID != "subscription-record" || event.AccountID != "account-subscription" ||
+				event.CustomerID != "cus_subscription" || event.ProviderSubscriptionID != "sub_subscription" ||
+				event.Terminal != tt.terminal || event.ProviderCreatedAt.IsZero() {
+				t.Fatalf("subscription webhook normalized as %#v", event)
+			}
+			if tt.wantStatus != "" && event.SubscriptionStatus != tt.wantStatus {
+				t.Fatalf("subscription status = %q, want %q", event.SubscriptionStatus, tt.wantStatus)
+			}
+			if tt.name == "subscription active" {
+				if event.SubscriptionStatus != "active" || !event.CancelAtPeriodEnd || event.CurrentPeriodEnd == nil ||
+					event.CurrentPeriodEnd.Unix() != periodEnd {
+					t.Fatalf("active subscription state = %#v", event)
+				}
 			}
 		})
 	}

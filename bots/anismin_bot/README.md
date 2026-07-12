@@ -5,10 +5,8 @@ Self-improving AI Battle Arena bot. Zero tokens, pure algorithmic carnage.
 ## Setup
 
 ```bash
-# Get an API key
-curl -X POST https://arena.angel-serv.com/api/v1/keys/generate \
-  -H "Content-Type: application/json" \
-  -d '{"bot_name":"Anismin", "avatar_color":"#00d4ff"}'
+# Create an account-owned API key for Anismin in My Dashboard:
+# https://arena.angel-serv.com/dashboard/?tab=cosmetics
 
 # Run
 ARENA_API_KEY=arena_your_key_here python3 anismin_bot.py

@@ -58,9 +58,9 @@ fetches or renders the link therefore cannot consume it. Request responses are
 generic and do not disclose whether an account already exists.
 
 Angel-serv runs Stalwart for transactional mail. Provision a dedicated regular
-user `noreply@angel-serv.com`, then give Arena a server-generated app password
-limited to `authenticate` and `emailSend`; do not reuse a recovery, admin, IMAP,
-or personal mailbox credential. Configure the production container with:
+user `noreply@angel-serv.com`, then give Arena a high-entropy credential used
+only by this transactional sender; do not reuse a recovery, admin, or personal
+mailbox credential. Configure the production container with:
 
 ```dotenv
 ARENA_CUSTOMER_EMAIL_AUTH_ENABLED=true
@@ -142,14 +142,14 @@ Void Orbit packs remain sets 001 and 002; sets 003-100 add 294 custom pieces
 across Elemental, Cosmic, Cyber, Wild, Arcane, Industrial, Royal, Abyssal, and
 Apex collections.
 
-| Set range | Rarity | Pieces per set | Pack price |
-| --- | --- | ---: | ---: |
-| 001-002 | Launch | 3 | $0.99 USD |
-| 003-026 | Uncommon | 3 | $1.99 USD |
-| 027-050 | Rare | 3 | $2.99 USD |
-| 051-074 | Epic | 3 | $3.99 USD |
-| 075-094 | Legendary | 3 | $4.99 USD |
-| 095-100 | Mythic | 3 | $6.99 USD |
+Every coordinated set costs **$1.99 USD** regardless of rarity. Rarity remains
+presentation and catalog metadata; it does not change the one-time set price.
+
+All Access costs **$19.99 USD per month** and grants every current cosmetic set,
+every set published later while access remains active, and up to five active
+account-owned API keys. Cancellation keeps access through the paid period. When
+service ends, subscription-provided licenses are removed from the account and
+from bots using them. Separately purchased $1.99 sets remain owned.
 
 Only whole sets are purchasable at launch. Individual pieces keep reference
 price and rarity metadata for Admin/search displays but cannot create an
@@ -213,6 +213,11 @@ POST   /api/v1/account/email/verify
 GET    /api/v1/account/cosmetics
 GET    /api/v1/account/cosmetics/orders
 POST   /api/v1/account/cosmetics/checkout
+POST   /api/v1/account/cosmetics/subscription/checkout
+POST   /api/v1/account/cosmetics/subscription/portal
+GET    /api/v1/account/keys
+POST   /api/v1/account/keys
+DELETE /api/v1/account/keys/{key_id}
 POST   /api/v1/account/bots
 DELETE /api/v1/account/bots/{bot_id}
 PUT    /api/v1/account/cosmetic-licenses/{license_id}/assignment
@@ -226,6 +231,17 @@ Linking submits `{"api_key":"arena_..."}`. Assignment submits
 price: `{"pack_id":"arena-set-003-ember-vanguard-pack","quantity":1}`. Arena
 creates a pending order from the current server-side pack snapshot, then returns
 the HTTPS `checkout_url` for Stripe-hosted Checkout.
+
+Account key creation submits `{"bot_name":"MyBot"}` and returns the full
+`api_key` once alongside safe key metadata, `active_count`, and the server limit.
+The Dashboard never stores the plaintext key after the user clears it. Arena
+keeps every issued-key record linked to the verified account, including revoked
+keys: five may be active, creation is limited to 10 per account per hour,
+revocation to 20 per account per hour, and the lifetime history is capped at
+100 records pending a support review. Both account and per-IP mutation limits
+are enforced before expensive key verification or bcrypt work. All Access
+checkout and customer-portal requests return HTTPS `checkout_url` and
+`portal_url` redirects respectively.
 
 Stripe posts signed events to the public provider endpoint; this route does not
 use a customer cookie or CSRF token because it authenticates the exact raw body
@@ -315,6 +331,10 @@ customer_email_verifications
 account_bot_links
   bots proven by API-key possession; each bot links to at most one account
 
+account_api_keys
+  durable account ownership for bcrypt-hashed API keys; unlinking a bot does not
+  erase ownership or bypass the five-active-key cap
+
 cosmetic_items
   catalog identity, slot, allowlisted asset key, price metadata, sale flags
 
@@ -322,7 +342,7 @@ cosmetic_categories
   ordered admin-managed group metadata; inactive categories stay out of public reads
 
 cosmetic_packs
-  ordered bundle metadata and planned minor-unit price
+  ordered bundle metadata with a fixed 199 USD-minor-unit sale price
 
 cosmetic_pack_items
   exact ordered membership of allowlisted catalog items in each pack
@@ -357,6 +377,16 @@ cosmetic_payment_events
 
 cosmetic_order_refunds
   per-refund amount and lifecycle used to compute cumulative refund state
+
+cosmetic_subscriptions
+  fixed 1999 USD/month account snapshot, provider IDs, status, period end, and
+  stale-event ordering watermark
+
+cosmetic_subscription_licenses
+  exact subscription + item mapping to the ordinary per-item license it created
+
+cosmetic_subscription_events
+  signed provider event ID/hash and idempotent processing state
 ```
 
 PostgreSQL composite foreign keys enforce that an assignment and paid loadout
@@ -386,6 +416,24 @@ signature before acting on an event; see [Stripe webhooks](https://docs.stripe.c
   becomes terminal. Late paid events never restore refunded/disputed copies.
 - Failed or canceled refund updates recompute from successful refund records;
   `charge.refunded` cumulative totals do not double-count individual events.
+- Subscription Checkout uses a server-owned recurring `1999 USD/month` amount.
+  `active` and `trialing` events materialize one license for every active set
+  item, including future items on the next inventory sync. A scheduled
+  `cancel_at_period_end` keeps access while Stripe still reports `active`.
+  `past_due`, `unpaid`, `paused`, canceled, and deleted states remove only the
+  mapped subscription licenses and their loadouts; purchased/manual copies are
+  untouched. Stripe's `incomplete_expired` state is projected as terminal
+  `expired`, so it can never leave inaccessible billing in a resumable state.
+- For nonterminal `customer.subscription.created` and `.updated` webhooks,
+  Arena retrieves the current Subscription before changing access. Exactly one
+  nondeleted item with quantity 1, `1999 USD`, and a one-month recurring interval
+  is required. Any plan drift becomes recoverable `billing_mismatch`: access is
+  removed while the customer can still open Billing Portal, and a later valid
+  provider state restores access. Provider-observation timestamps order these
+  reconciliations even when Stripe events share a one-second `created` value.
+- Signed terminal cancellation/deletion payloads remain directly actionable
+  during a transient Stripe API outage. Terminal-state dominance prevents any
+  later nonterminal delivery from restoring ended access.
 
 Review Stripe's [refund behavior](https://docs.stripe.com/refunds?locale=en-GB)
 and set a customer-facing refund/support policy before enabling live mode.
@@ -405,6 +453,9 @@ refund.updated
 refund.failed
 charge.refunded
 charge.dispute.created
+customer.subscription.created
+customer.subscription.updated
+customer.subscription.deleted
 ```
 
 Configure either native verified-email auth or the dedicated customer OIDC
@@ -418,14 +469,20 @@ ARENA_STRIPE_SECRET_KEY=sk_live_replace_me
 ARENA_STRIPE_WEBHOOK_SECRETS=whsec_current,whsec_previous
 ARENA_STRIPE_SUCCESS_URL=https://YOUR_ARENA_HOST/dashboard/?tab=cosmetics&checkout=success&session_id={CHECKOUT_SESSION_ID}
 ARENA_STRIPE_CANCEL_URL=https://YOUR_ARENA_HOST/dashboard/?tab=cosmetics&checkout=cancel
+ARENA_STRIPE_PORTAL_RETURN_URL=https://YOUR_ARENA_HOST/dashboard/?tab=cosmetics
 ARENA_STRIPE_AUTOMATIC_TAX=false
 ```
 
 The comma-separated webhook list supports zero-downtime secret rotation. Keep
-the old secret until Stripe no longer delivers events signed with it. Keep
-webhook verification configured even during a sales pause so already-created
-orders can finish safely. For an `/arena` deployment, use the prefixed dashboard
-and webhook paths.
+the old secret until Stripe no longer delivers events signed with it. During a
+sales pause, retain the webhook secrets, Stripe API key, and Billing Portal
+return URL while any subscriptions exist. Arena retrieves Stripe's authoritative
+state for nonterminal subscription events before changing access and keeps
+cancellation self-service available while new checkout is disabled; startup
+fails closed when that retained configuration is incomplete. This lets existing
+orders finish and cancellations, delinquency, plan corrections, and renewals
+reconcile safely. For an `/arena` deployment, use the prefixed dashboard and
+webhook paths.
 
 Before switching from `sk_test_...` to live credentials:
 

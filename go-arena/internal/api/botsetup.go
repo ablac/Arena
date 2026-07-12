@@ -39,7 +39,7 @@ func BotSetup() http.HandlerFunc {
 
 			// ── Getting Started ─────────────────────────────────
 			"getting_started": []map[string]interface{}{
-				{"step": 1, "title": "Generate an API Key", "description": "POST to /api/v1/keys/generate to receive your api_key and bot_id. No authentication required for this step."},
+				{"step": 1, "title": "Create an Account API Key", "description": "Sign in with a verified email at /dashboard/, then create a server-issued key. The Dashboard uses authenticated POST /api/v1/account/keys with same-origin CSRF protection."},
 				{"step": 2, "title": "Configure Your Bot (optional)", "description": "PUT to /api/v1/bot/config with X-Arena-Key header to set your bot name, avatar color, and default loadout."},
 				{"step": 3, "title": "Fetch the Map (optional)", "description": "GET /api/v1/arena/map to pre-fetch terrain via REST. During intermission, features_pending is true: terrain and shape are ready, game_mode is omitted, and feature arrays/overlays are empty until round_start. Fetch again after round_start for pads, hazards, and objectives."},
 				{"step": 4, "title": "Connect via WebSocket", "description": "Connect to wss://arena.angel-serv.com/ws/bot?key=YOUR_API_KEY — you will receive a 'connected' message with arena info."},
@@ -52,13 +52,15 @@ func BotSetup() http.HandlerFunc {
 			"authentication": map[string]interface{}{
 				"generate_key": map[string]interface{}{
 					"method":      "POST",
-					"path":        "/api/v1/keys/generate",
-					"description": "Generate a new API key and bot. No auth required.",
+					"path":        "/api/v1/account/keys",
+					"description": "Create a server-issued API key from the verified-email Dashboard. Requires a customer session and X-CSRF-Token.",
 					"response_example": map[string]interface{}{
-						"api_key":    "arena_abc123...",
-						"bot_id":     "uuid-here",
-						"created_at": "2026-01-01T00:00:00Z",
-						"message":    "API key created successfully",
+						"api_key": "arena_abc123...",
+						"key": map[string]interface{}{
+							"id": "uuid-here", "key_prefix": "arena_abc123", "bot_id": "uuid-here", "bot_name": "My Bot", "is_active": true,
+						},
+						"active_count": 1,
+						"limit":        5,
 					},
 				},
 				"usage": map[string]interface{}{
@@ -72,7 +74,6 @@ func BotSetup() http.HandlerFunc {
 			"endpoints": map[string]interface{}{
 				"public": []map[string]interface{}{
 					{"method": "GET", "path": "/api/v1/health", "description": "Health check — returns status and online bot count"},
-					{"method": "POST", "path": "/api/v1/keys/generate", "description": "Generate a new API key and bot (rate-limited)"},
 					{"method": "GET", "path": "/api/v1/leaderboard", "description": "Get leaderboard (supports ?limit=N&offset=N)"},
 					{"method": "GET", "path": "/api/v1/arena/status", "description": "Current arena status: round number, bots alive, safe zone"},
 					{"method": "GET", "path": "/api/v1/arena/map", "description": "Current terrain plus active round features. During intermission, features_pending is true and only next-round terrain/shape are final; game_mode is omitted, feature arrays are empty, and overlays are absent until round_start."},
@@ -80,6 +81,9 @@ func BotSetup() http.HandlerFunc {
 					{"method": "GET", "path": "/api/v1/bot-setup", "description": "This endpoint — full bot-building reference"},
 				},
 				"authenticated": []map[string]interface{}{
+					{"method": "GET", "path": "/api/v1/account/keys", "description": "List account-owned API keys without secret material", "auth": "verified customer session"},
+					{"method": "POST", "path": "/api/v1/account/keys", "description": "Create one account-owned API key and bot (maximum 5 active)", "auth": "verified customer session + X-CSRF-Token"},
+					{"method": "DELETE", "path": "/api/v1/account/keys/{key_id}", "description": "Revoke one account-owned API key", "auth": "verified customer session + X-CSRF-Token"},
 					{"method": "PUT", "path": "/api/v1/bot/config", "description": "Update bot name, avatar color, and default loadout", "auth": "X-Arena-Key header"},
 					{"method": "GET", "path": "/api/v1/bot/stats", "description": "Get your bot's lifetime stats (kills, deaths, ELO, etc)", "auth": "X-Arena-Key header"},
 					{"method": "GET", "path": "/api/v1/bot/live", "description": "Get your bot's real-time in-game state", "auth": "X-Arena-Key header"},
@@ -306,19 +310,15 @@ func BotSetup() http.HandlerFunc {
 			},
 
 			// ── Example Bot ─────────────────────────────────────
-			"example_bot_python": `import asyncio, json, websockets
+			"example_bot_python": `import asyncio, json, os, websockets
 
 API_BASE = "https://arena.angel-serv.com"
 WS_URL = "wss://arena.angel-serv.com/ws/bot"
 
 async def main():
-    # Step 1: Generate API key (do this once, save the key)
+    # Step 1: Create a key in the verified-email Dashboard, then load it securely.
     import urllib.request
-    req = urllib.request.Request(f"{API_BASE}/api/v1/keys/generate", method="POST")
-    with urllib.request.urlopen(req) as resp:
-        data = json.loads(resp.read())
-    api_key = data["api_key"]
-    print(f"Bot ID: {data['bot_id']}, Key: {api_key[:20]}...")
+    api_key = os.environ["ARENA_API_KEY"]
 
     # Step 2: Pre-fetch map via REST (optional, available before round_start)
     map_req = urllib.request.Request(f"{API_BASE}/api/v1/arena/map")
