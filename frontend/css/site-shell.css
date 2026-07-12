@@ -450,6 +450,14 @@ summary {
   order: -1;
 }
 
+.site-command-dock a.onboarding-rail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  text-decoration: none;
+}
+
 .onboarding-overlay {
   z-index: 80;
 }
@@ -716,7 +724,10 @@ body.site-cinema-mode .arena-controls {
     gap: 5px;
   }
 
-  .mobile-command-actions button {
+  .mobile-command-actions :is(button, a) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     min-height: 38px;
     padding: 7px 10px;
     border: 1px solid rgba(126, 166, 207, 0.2);
@@ -724,6 +735,7 @@ body.site-cinema-mode .arena-controls {
     background: rgba(4, 10, 17, 0.72);
     color: var(--text-primary);
     font: 600 0.68rem var(--font-sans);
+    text-decoration: none;
   }
 
   .arena-shell-head {
@@ -1268,7 +1280,7 @@ body.site-cinema-mode .arena-controls {
     max-width: 72px;
   }
 
-  .mobile-command-actions button {
+  .mobile-command-actions :is(button, a) {
     padding-inline: 8px;
     font-size: 0.64rem;
   }

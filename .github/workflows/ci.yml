@@ -73,10 +73,11 @@ jobs:
           node scripts/test-dashboard-account-cosmetics.mjs
           node scripts/test-dashboard-email-auth.mjs
           node scripts/test-dashboard-cosmetics-checkout.mjs
-          node scripts/test-cosmetics-ui.mjs
           node scripts/test-cosmetic-themes.mjs
           node scripts/test-cosmetics-renderer.mjs
           node scripts/test-cosmetics-launch-ui.mjs
+          node scripts/test-cosmetics-shop.mjs
+          node scripts/test-cosmetics-shop-preview.mjs
           node scripts/test-projectile-trail-texture.mjs
           node scripts/test-key-generator.mjs
           node scripts/test-admin-cosmetics-ui.mjs
