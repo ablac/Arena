@@ -251,6 +251,24 @@ func TestStripeCosmeticPaymentProviderRetrievesAuthoritativeSubscriptionAndValid
 	}
 }
 
+func TestStripeCosmeticPaymentProviderRetrievesCancelAtScheduledCancellation(t *testing.T) {
+	cancelAt := time.Now().UTC().Add(30 * 24 * time.Hour).Unix()
+	subscription := validRetrievedStripeCosmeticSubscription()
+	subscription.CancelAt = cancelAt
+	subscription.CancelAtPeriodEnd = false
+	subscription.Items.Data[0].CurrentPeriodEnd = 0
+
+	provider := newStripeCosmeticPaymentProviderWithCreator(nil, nil, "", "", false)
+	provider.subscriptionRetriever = &recordingStripeSubscriptionRetriever{subscription: subscription}
+	state, err := provider.RetrieveCosmeticSubscription(context.Background(), subscription.ID)
+	if err != nil {
+		t.Fatalf("RetrieveCosmeticSubscription: %v", err)
+	}
+	if state == nil || !state.CancelAtPeriodEnd || state.CurrentPeriodEnd == nil || state.CurrentPeriodEnd.Unix() != cancelAt {
+		t.Fatalf("scheduled cancellation state = %#v", state)
+	}
+}
+
 func TestStripeCosmeticPaymentProviderRetrievesOpenCheckoutURLWithoutPersistingIt(t *testing.T) {
 	retriever := &recordingStripeCheckoutRetriever{session: &stripe.CheckoutSession{
 		ID: "cs_resume", URL: "https://checkout.stripe.com/c/pay/cs_resume",
@@ -492,5 +510,23 @@ func TestStripeCosmeticPaymentProviderNormalizesSubscriptionEvents(t *testing.T)
 				}
 			}
 		})
+	}
+}
+
+func TestStripeCosmeticPaymentProviderNormalizesCancelAtScheduledCancellation(t *testing.T) {
+	provider := newStripeCosmeticPaymentProviderWithCreator(nil, []string{"whsec_current"}, "", "", false)
+	cancelAt := time.Now().UTC().Add(30 * 24 * time.Hour).Unix()
+	payload := stripeEventPayload(t, "evt_subscription_cancel_at", stripe.EventTypeCustomerSubscriptionUpdated, map[string]interface{}{
+		"id": "sub_subscription", "customer": "cus_subscription", "status": "active",
+		"cancel_at": cancelAt, "cancel_at_period_end": false,
+		"metadata": map[string]string{"commerce_kind": "cosmetic_subscription", "subscription_id": "subscription-record", "account_id": "account-subscription"},
+	})
+	header := signedStripePayload(payload, "whsec_current", time.Now())
+	event, err := provider.ParseWebhook(payload, header)
+	if err != nil {
+		t.Fatalf("ParseWebhook() error = %v", err)
+	}
+	if event == nil || !event.CancelAtPeriodEnd || event.CurrentPeriodEnd == nil || event.CurrentPeriodEnd.Unix() != cancelAt {
+		t.Fatalf("scheduled cancellation event = %#v", event)
 	}
 }
