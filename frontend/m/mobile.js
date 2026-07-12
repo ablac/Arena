@@ -384,10 +384,67 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function resetKillFeed() {
-    if (killCount === 0 && seenKills.size === 0) return;
+    if (killCount === 0 && seenKills.size === 0 && seenTauntIds.size === 0 && pendingTaunts.length === 0) return;
     seenKills.clear();
+    seenTauntIds.clear();
+    pendingTaunts = [];
     killCount = 0;
     ui.panelKills.innerHTML = '<p class="panel-empty">No kills yet this round.</p>';
+  }
+
+  // ---------- Bot taunts (shares the Kills panel, mirrors desktop hud.js) ----------
+  const seenTauntIds = new Set();
+  let pendingTaunts = [];
+
+  // Called unthrottled from the WS callback: taunt events ride single
+  // broadcasts, so sampling them on the 200ms UI timer would miss some.
+  function queueTaunts(events) {
+    for (const ev of events) {
+      if (!ev || ev.type !== 'taunt' || !ev.id || !ev.text) continue;
+      if (seenTauntIds.has(ev.id)) continue;
+      seenTauntIds.add(ev.id);
+      if (seenTauntIds.size > 256) {
+        const first = seenTauntIds.values().next();
+        if (!first.done) seenTauntIds.delete(first.value);
+      }
+      pendingTaunts.push(ev);
+    }
+    while (pendingTaunts.length > 30) pendingTaunts.shift();
+  }
+
+  function renderTaunts(state) {
+    if (pendingTaunts.length === 0) return;
+    const names = new Map();
+    for (const bot of state.bots || []) {
+      if (bot && bot.bot_id) names.set(bot.bot_id, bot.name);
+    }
+    const pending = pendingTaunts;
+    pendingTaunts = [];
+    // Reverse iteration renders a drained batch oldest-at-top, matching the
+    // kill rows above.
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const ev = pending[i];
+      // Age gate: drop banter older than ~6s of ticks or from a previous
+      // round (tick counter reset), so a backgrounded tab does not flood
+      // the panel with stale lines on return.
+      if (typeof state.tick === 'number' && typeof ev.tick === 'number' &&
+          (ev.tick > state.tick || state.tick - ev.tick > 60)) {
+        continue;
+      }
+      if (killCount === 0) ui.panelKills.innerHTML = '';
+      const row = document.createElement('div');
+      row.className = 'k-row k-taunt';
+      row.innerHTML = `
+        <span class="k-killer">${esc(names.get(ev.owner_id) || '???')}</span>
+        <span class="k-icon">&#128172;</span>
+        <span class="k-taunt-text">${esc(ev.text)}</span>`;
+      ui.panelKills.prepend(row);
+      killCount++;
+    }
+    while (killCount > KILL_FEED_MAX && ui.panelKills.lastElementChild) {
+      ui.panelKills.lastElementChild.remove();
+      killCount--;
+    }
   }
 
   // ---------- Ranks (leaderboard) ----------
@@ -521,6 +578,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (activeTab === 'players') renderRoster(state);
     if (activeTab === 'ranks') loadRanks(); // self rate-limited to 30s
     renderKillFeed(state.kill_feed || []);
+    renderTaunts(state);
   }
 
   const wsUrl = wsURL('/spectator');
@@ -528,6 +586,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     (state) => {
       engine.setState(state); // full tick rate for the 3D scene
       tuneCameraIfNew();
+      if (state.type === 'arena_state' && Array.isArray(state.events)) {
+        queueTaunts(state.events);
+      }
       const now = performance.now();
       if (now - lastUiUpdate < UI_UPDATE_INTERVAL_MS) return;
       lastUiUpdate = now;
