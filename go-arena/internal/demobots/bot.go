@@ -11,36 +11,66 @@ import (
 	"time"
 
 	"arena-server/internal/db"
+	"arena-server/internal/security"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
+
+type demoBotCredentialProvisioner func(context.Context, BotConfig) (string, error)
 
 // demoBot represents a single demo bot client that connects to the arena
 // server via REST + WebSocket, exactly like a real SDK bot.
 type demoBot struct {
-	config      BotConfig
-	serverURL   string // e.g. "http://localhost:8000"
-	apiKey      string
-	logger      *slog.Logger
-	client      *http.Client
-	attackRange int     // Chebyshev grid range from loadout_confirmed
-	maxHP       float64 // max HP from loadout_confirmed
-	botID       string  // bot ID from connected message
-	strategy    string  // stable configured archetype for comparable balance samples
+	config                BotConfig
+	serverURL             string // e.g. "http://localhost:8000"
+	apiKey                string
+	logger                *slog.Logger
+	client                *http.Client
+	attackRange           int     // Chebyshev grid range from loadout_confirmed
+	maxHP                 float64 // max HP from loadout_confirmed
+	botID                 string  // bot ID from connected message
+	strategy              string  // stable configured archetype for comparable balance samples
+	credentialProvisioner demoBotCredentialProvisioner
 }
 
 // newDemoBot creates a demoBot from a config and server URL.
 func newDemoBot(cfg BotConfig, serverURL string) *demoBot {
 	initialStrategy := configuredStrategy(cfg.Weapon, cfg.Strategy)
 	return &demoBot{
-		config:    cfg,
-		serverURL: serverURL,
-		logger:    slog.With("demo_bot", cfg.Name),
-		strategy:  initialStrategy,
+		config:                cfg,
+		serverURL:             serverURL,
+		logger:                slog.With("demo_bot", cfg.Name),
+		strategy:              initialStrategy,
+		credentialProvisioner: provisionDemoBotCredential,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
 	}
+}
+
+func provisionDemoBotCredential(ctx context.Context, cfg BotConfig) (string, error) {
+	fullKey, keyHash, keyPrefix, err := security.GenerateAPIKey()
+	if err != nil {
+		return "", err
+	}
+	keyID := uuid.NewString()
+	now := time.Now()
+	bot := &db.Bot{
+		ID:              uuid.NewString(),
+		APIKeyID:        keyID,
+		Name:            security.SanitizeBotName(cfg.Name),
+		AvatarColor:     "#888888",
+		DefaultWeapon:   "sword",
+		DefaultStats:    db.JSONBStats{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
+		DefaultFallback: "aggressive",
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := db.CreateAPIKeyAndBot(ctx, keyID, keyHash, keyPrefix, "127.0.0.1", bot); err != nil {
+		return "", err
+	}
+	return fullKey, nil
 }
 
 // register either reuses a persisted API key or generates a new one,
@@ -62,32 +92,13 @@ func (b *demoBot) register(ctx context.Context) error {
 		}
 	}
 
-	// Generate a new key.
-	url := b.serverURL + "/api/v1/keys/generate"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	// Demo credentials are provisioned inside the trusted server process. They
+	// never need the retired public account-key registration endpoint.
+	apiKey, err := b.credentialProvisioner(ctx, b.config)
 	if err != nil {
-		return fmt.Errorf("create register request: %w", err)
+		return fmt.Errorf("provision demo credential: %w", err)
 	}
-
-	resp, err := b.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("register request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("register failed: HTTP %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result struct {
-		APIKey string `json:"api_key"`
-		BotID  string `json:"bot_id"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode register response: %w", err)
-	}
-	b.apiKey = result.APIKey
+	b.apiKey = apiKey
 
 	if len(b.apiKey) > 12 {
 		b.logger.Info("registered demo bot", "key_prefix", b.apiKey[:12]+"...")

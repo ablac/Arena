@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"arena-server/internal/config"
 	"arena-server/internal/db"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
@@ -86,11 +87,38 @@ func (f *fakeCosmeticsStore) Equip(_ context.Context, botID, slot, cosmeticID st
 	f.lastBotID, f.lastSlot, f.lastCosmetic = botID, slot, cosmeticID
 	return f.equipItem, f.equipErr
 }
-func (f *fakeCosmeticsStore) AccountInventory(context.Context, string) (*db.CustomerCosmeticsInventory, error) {
+
+func (f *fakeCosmeticsStore) AccountInventory(_ context.Context, accountID string) (*db.CustomerCosmeticsInventory, error) {
+	f.lastAccount = accountID
 	if f.inventory == nil {
 		f.inventory = &db.CustomerCosmeticsInventory{}
 	}
 	return f.inventory, nil
+}
+
+func TestAccountCosmeticsInventoryAccountQuotaStopsStoreWork(t *testing.T) {
+	store := &fakeCosmeticsStore{}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+	var quotaAccount string
+	var quotaLimit int
+	handler.checkAccountInventoryQuota = func(_ context.Context, accountID string, limit int) (bool, error) {
+		quotaAccount, quotaLimit = accountID, limit
+		return false, nil
+	}
+	previous := config.C
+	t.Cleanup(func() { config.C = previous })
+	config.C.CosmeticsAccountReadRPM = 60
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/account/cosmetics", nil)
+	request = request.WithContext(withCustomerSession(request.Context(), &CustomerSession{AccountID: "account-quota"}))
+	handler.AccountInventory(recorder, request)
+	if recorder.Code != http.StatusTooManyRequests || quotaAccount != "account-quota" || quotaLimit != 60 || store.lastAccount != "" {
+		t.Fatalf("inventory quota status=%d quota=%q/%d store=%q body=%s",
+			recorder.Code, quotaAccount, quotaLimit, store.lastAccount, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"code":"ACCOUNT_COSMETICS_RATE_LIMIT"`) {
+		t.Fatalf("inventory quota response=%s", recorder.Body.String())
+	}
 }
 func (f *fakeCosmeticsStore) LinkBot(_ context.Context, accountID, botID string) (*db.AccountBot, error) {
 	f.lastAccount, f.lastBotID = accountID, botID
@@ -144,12 +172,103 @@ func requestWithRouteParam(method, target string, body []byte, param, value stri
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
 }
 
+func TestLinkAccountBotMapsDurableKeyOwnershipConflicts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "owned by another account", err: db.ErrCustomerAPIKeyAlreadyOwned},
+		{name: "active key limit", err: db.ErrCustomerAPIKeyLimit},
+		{name: "lifetime history limit", err: db.ErrCustomerAPIKeyHistoryLimit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeCosmeticsStore{grantErr: tc.err}
+			handler := newCosmeticsHandlerWithStore(store, nil)
+			handler.verifyAPIKey = func(context.Context, string) (*db.Bot, error) {
+				return &db.Bot{ID: "bot-1", APIKeyID: "key-1"}, nil
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/account/bots", strings.NewReader(`{"api_key":"arena_valid"}`))
+			req = req.WithContext(withCustomerSession(req.Context(), &CustomerSession{AccountID: "account-1"}))
+			rec := httptest.NewRecorder()
+
+			handler.LinkAccountBot(rec, req)
+
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusConflict, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestLinkAccountBotRejectsOversizedBodyBeforeQuotaOrBcrypt(t *testing.T) {
+	handler := newCosmeticsHandlerWithStore(&fakeCosmeticsStore{}, nil)
+	quotaCalls, verifyCalls := 0, 0
+	handler.consumeAccountKeyQuota = func(context.Context, string, db.AccountAPIKeyQuotaAction, int) (bool, int, error) {
+		quotaCalls++
+		return true, 1, nil
+	}
+	handler.verifyAPIKey = func(context.Context, string) (*db.Bot, error) {
+		verifyCalls++
+		return nil, errors.New("should not run")
+	}
+	body := `{"api_key":"` + strings.Repeat("x", 8<<10) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/account/bots", strings.NewReader(body))
+	req = req.WithContext(withCustomerSession(req.Context(), &CustomerSession{AccountID: "account-1"}))
+	recorder := httptest.NewRecorder()
+
+	handler.LinkAccountBot(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest || quotaCalls != 0 || verifyCalls != 0 {
+		t.Fatalf("oversized link = status %d quota=%d verify=%d body=%s", recorder.Code, quotaCalls, verifyCalls, recorder.Body.String())
+	}
+}
+
+func TestLinkAccountBotQuotaIsPerAccountAcrossSourceIPsAndRunsBeforeBcrypt(t *testing.T) {
+	previous := config.C.CustomerBotLinkPerHour
+	config.C.CustomerBotLinkPerHour = 1
+	t.Cleanup(func() { config.C.CustomerBotLinkPerHour = previous })
+
+	handler := newCosmeticsHandlerWithStore(&fakeCosmeticsStore{linkBot: &db.AccountBot{BotID: "bot-1"}}, nil)
+	quotaCount, verifyCalls := 0, 0
+	handler.consumeAccountKeyQuota = func(_ context.Context, accountID string, action db.AccountAPIKeyQuotaAction, limit int) (bool, int, error) {
+		if accountID != "account-1" || action != db.AccountAPIKeyQuotaLink || limit != 1 {
+			t.Fatalf("quota input account=%q action=%q limit=%d", accountID, action, limit)
+		}
+		if quotaCount >= limit {
+			return false, 0, nil
+		}
+		quotaCount++
+		return true, 0, nil
+	}
+	handler.verifyAPIKey = func(context.Context, string) (*db.Bot, error) {
+		verifyCalls++
+		return &db.Bot{ID: "bot-1", APIKeyID: "key-1"}, nil
+	}
+
+	for index, remote := range []string{"198.51.100.10:1000", "203.0.113.20:2000"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/account/bots", strings.NewReader(`{"api_key":"arena_valid"}`))
+		req.RemoteAddr = remote
+		req = req.WithContext(withCustomerSession(req.Context(), &CustomerSession{AccountID: "account-1"}))
+		recorder := httptest.NewRecorder()
+		handler.LinkAccountBot(recorder, req)
+		if index == 0 && recorder.Code != http.StatusOK {
+			t.Fatalf("first link = %d %s", recorder.Code, recorder.Body.String())
+		}
+		if index == 1 && (recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), "ACCOUNT_BOT_LINK_RATE_LIMIT")) {
+			t.Fatalf("second link = %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
+	if verifyCalls != 1 {
+		t.Fatalf("bcrypt verification calls = %d, want 1", verifyCalls)
+	}
+}
+
 func TestCosmeticsCatalogDisclosesCheckoutState(t *testing.T) {
 	store := &fakeCosmeticsStore{publicCatalog: &db.CosmeticCatalog{
 		Categories: []db.CosmeticCategory{{ID: "starter-packs", Name: "Starter Packs", IsActive: true}},
 		Items:      []db.CosmeticItem{{ID: "free", CategoryID: "starter-packs", IsFree: true, IsActive: true}},
 		Packs: []db.CosmeticPack{{
-			ID: "neon-pack", CategoryID: "starter-packs", PriceCents: 99, Currency: "USD",
+			ID: "neon-pack", CategoryID: "starter-packs", PriceCents: db.CosmeticPackPriceCents, Currency: "USD",
 			IsPurchasable: true, IsActive: true, ItemIDs: []string{"free"},
 		}},
 	}}
@@ -162,15 +281,19 @@ func TestCosmeticsCatalogDisclosesCheckoutState(t *testing.T) {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	var response struct {
-		CheckoutEnabled bool                  `json:"checkout_enabled"`
-		Categories      []db.CosmeticCategory `json:"categories"`
-		Packs           []db.CosmeticPack     `json:"packs"`
-		Items           []db.CosmeticItem     `json:"items"`
+		CheckoutEnabled   bool                         `json:"checkout_enabled"`
+		SubscriptionOffer db.CosmeticSubscriptionOffer `json:"subscription_offer"`
+		Categories        []db.CosmeticCategory        `json:"categories"`
+		Packs             []db.CosmeticPack            `json:"packs"`
+		Items             []db.CosmeticItem            `json:"items"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.CheckoutEnabled || len(response.Categories) != 1 || len(response.Packs) != 1 || len(response.Items) != 1 {
+	if response.CheckoutEnabled || response.SubscriptionOffer.Enabled || response.SubscriptionOffer.PriceCents != 1999 ||
+		response.SubscriptionOffer.Currency != "USD" || response.SubscriptionOffer.Interval != "month" ||
+		!response.SubscriptionOffer.IncludesFutureSets || response.SubscriptionOffer.MaxAPIKeys != 5 ||
+		len(response.Categories) != 1 || len(response.Packs) != 1 || len(response.Items) != 1 {
 		t.Fatalf("unexpected catalog response: %+v", response)
 	}
 
@@ -180,9 +303,20 @@ func TestCosmeticsCatalogDisclosesCheckoutState(t *testing.T) {
 	if err := json.Unmarshal(enabled.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if !response.CheckoutEnabled {
+	if !response.CheckoutEnabled || !response.SubscriptionOffer.Enabled {
 		t.Fatal("configured checkout with a purchasable pack was not disclosed")
 	}
+
+	store.publicCatalog.Packs[0].PriceCents = 299
+	corruptPrice := httptest.NewRecorder()
+	handler.Catalog(corruptPrice, httptest.NewRequest(http.MethodGet, "/api/v1/cosmetics/catalog", nil))
+	if err := json.Unmarshal(corruptPrice.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.CheckoutEnabled {
+		t.Fatal("catalog advertised checkout for a stale non-$1.99 pack price")
+	}
+	store.publicCatalog.Packs[0].PriceCents = db.CosmeticPackPriceCents
 
 	// Launch checkout sells packs only. A stray item-level sale flag must not
 	// advertise an open shop when no pack can actually be checked out.
@@ -250,7 +384,7 @@ func TestAdminCosmeticCatalogMutationsUsePathIdentityAndSafeAuditActor(t *testin
 
 	pack := httptest.NewRecorder()
 	handler.UpsertAdminPack(pack, requestWithRouteParam(http.MethodPut, "/api/v1/admin/cosmetics/packs/event-pack", []byte(`{
-		"name":"Event Pack", "description":"A tiny pack", "category_id":"event", "price_cents":99,
+		"name":"Event Pack", "description":"A tiny pack", "category_id":"event", "price_cents":199,
 		"currency":"USD", "is_free":false, "is_purchasable":true, "is_active":true,
 		"sort_order":20, "item_ids":["attachment-event"]
 	}`), "pack_id", "event-pack"))
@@ -387,7 +521,7 @@ func TestRegisterCosmeticsAdminRoutes(t *testing.T) {
 		}`},
 		{http.MethodDelete, "/cosmetics/items/event-item", ""},
 		{http.MethodPut, "/cosmetics/packs/event-pack", `{
-			"name":"Event Pack","category_id":"event","price_cents":99,"currency":"USD",
+			"name":"Event Pack","category_id":"event","price_cents":199,"currency":"USD",
 			"is_purchasable":true,"is_active":true,"item_ids":["event-item"]
 		}`},
 		{http.MethodDelete, "/cosmetics/packs/event-pack", ""},

@@ -20,7 +20,9 @@ func validCosmeticsCheckoutConfig() Config {
 		StripeWebhookSecrets:     "whsec_current,whsec_previous",
 		StripeSuccessURL:         "https://arena.example/dashboard?checkout=success",
 		StripeCancelURL:          "https://arena.example/shop?checkout=cancelled",
+		StripePortalReturnURL:    "https://arena.example/dashboard?tab=cosmetics",
 		CosmeticsCheckoutRPM:     10,
+		CosmeticsAccountReadRPM:  60,
 	}
 }
 
@@ -43,7 +45,9 @@ func TestValidateCosmeticsCheckoutConfigFailsClosed(t *testing.T) {
 		{name: "insecure public success URL", mutate: func(cfg *Config) { cfg.StripeSuccessURL = "http://arena.example/dashboard" }, want: "ARENA_STRIPE_SUCCESS_URL"},
 		{name: "relative cancel URL", mutate: func(cfg *Config) { cfg.StripeCancelURL = "/shop" }, want: "ARENA_STRIPE_CANCEL_URL"},
 		{name: "unsupported cancel URL scheme", mutate: func(cfg *Config) { cfg.StripeCancelURL = "ftp://arena.example/shop" }, want: "ARENA_STRIPE_CANCEL_URL"},
+		{name: "relative portal return URL", mutate: func(cfg *Config) { cfg.StripePortalReturnURL = "/dashboard" }, want: "ARENA_STRIPE_PORTAL_RETURN_URL"},
 		{name: "checkout rate disabled", mutate: func(cfg *Config) { cfg.CosmeticsCheckoutRPM = 0 }, want: "ARENA_COSMETICS_CHECKOUT_RPM"},
+		{name: "account cosmetics read rate disabled", mutate: func(cfg *Config) { cfg.CosmeticsAccountReadRPM = 0 }, want: "ARENA_COSMETICS_ACCOUNT_READ_RPM"},
 	}
 
 	for _, tt := range tests {
@@ -58,14 +62,44 @@ func TestValidateCosmeticsCheckoutConfigFailsClosed(t *testing.T) {
 	}
 }
 
+func TestValidateCosmeticsCheckoutConfigRequiresStripeAPIKeyDuringWebhookSalesPause(t *testing.T) {
+	cfg := Config{
+		CosmeticsCheckoutEnabled: false,
+		StripeWebhookSecrets:     "whsec_existing_subscriptions",
+		CosmeticsAccountReadRPM:  60,
+		StripePortalReturnURL:    "https://arena.example/dashboard?tab=cosmetics",
+	}
+	if err := ValidateCosmeticsCheckoutConfig(cfg); err == nil || !strings.Contains(err.Error(), "ARENA_STRIPE_SECRET_KEY") {
+		t.Fatalf("sales-pause validation error = %v, want retained Stripe API key requirement", err)
+	}
+	cfg.StripeSecretKey = "sk_live_retained_for_subscription_reconciliation"
+	portalReturnURL := cfg.StripePortalReturnURL
+	cfg.StripePortalReturnURL = ""
+	if err := ValidateCosmeticsCheckoutConfig(cfg); err == nil || !strings.Contains(err.Error(), "ARENA_STRIPE_PORTAL_RETURN_URL") {
+		t.Fatalf("sales-pause portal validation error = %v", err)
+	}
+	cfg.StripePortalReturnURL = portalReturnURL
+	if err := ValidateCosmeticsCheckoutConfig(cfg); err != nil {
+		t.Fatalf("sales pause with retained Stripe API key rejected: %v", err)
+	}
+}
+
+func TestValidateCosmeticsCheckoutConfigRequiresAccountReadRateDuringSalesPause(t *testing.T) {
+	cfg := Config{CosmeticsAccountReadRPM: 0}
+	if err := ValidateCosmeticsCheckoutConfig(cfg); err == nil || !strings.Contains(err.Error(), "ARENA_COSMETICS_ACCOUNT_READ_RPM") {
+		t.Fatalf("disabled checkout read-rate validation error = %v", err)
+	}
+}
+
 func TestValidateCosmeticsCheckoutConfigAllowsDisabledAndLoopbackDevelopment(t *testing.T) {
-	if err := ValidateCosmeticsCheckoutConfig(Config{}); err != nil {
+	if err := ValidateCosmeticsCheckoutConfig(Config{CosmeticsAccountReadRPM: 60}); err != nil {
 		t.Fatalf("disabled checkout should not require payment config: %v", err)
 	}
 
 	cfg := validCosmeticsCheckoutConfig()
 	cfg.StripeSuccessURL = "http://localhost:8000/dashboard"
 	cfg.StripeCancelURL = "http://127.0.0.1:8000/shop"
+	cfg.StripePortalReturnURL = "http://localhost:8000/dashboard"
 	if err := ValidateCosmeticsCheckoutConfig(cfg); err != nil {
 		t.Fatalf("loopback HTTP checkout URLs should be allowed for development: %v", err)
 	}
@@ -193,6 +227,7 @@ func TestLoadReadsCosmeticsCheckoutDefaultsAndSecretRotation(t *testing.T) {
 		"ARENA_STRIPE_WEBHOOK_SECRETS",
 		"ARENA_STRIPE_SUCCESS_URL",
 		"ARENA_STRIPE_CANCEL_URL",
+		"ARENA_STRIPE_PORTAL_RETURN_URL",
 		"ARENA_STRIPE_AUTOMATIC_TAX",
 		"ARENA_COSMETICS_CHECKOUT_RPM",
 	} {
@@ -216,6 +251,9 @@ func TestLoadReadsCosmeticsCheckoutDefaultsAndSecretRotation(t *testing.T) {
 	if C.CosmeticsCheckoutRPM != 10 {
 		t.Fatalf("CosmeticsCheckoutRPM = %d, want 10", C.CosmeticsCheckoutRPM)
 	}
+	if C.CosmeticsAccountReadRPM != 60 {
+		t.Fatalf("CosmeticsAccountReadRPM = %d, want 60", C.CosmeticsAccountReadRPM)
+	}
 
 	t.Setenv("ARENA_COSMETICS_CHECKOUT_ENABLED", "true")
 	t.Setenv("ARENA_CUSTOMER_OIDC_ENABLED", "true")
@@ -229,6 +267,7 @@ func TestLoadReadsCosmeticsCheckoutDefaultsAndSecretRotation(t *testing.T) {
 	t.Setenv("ARENA_STRIPE_WEBHOOK_SECRETS", "whsec_current, whsec_previous")
 	t.Setenv("ARENA_STRIPE_SUCCESS_URL", "https://arena.example/dashboard")
 	t.Setenv("ARENA_STRIPE_CANCEL_URL", "https://arena.example/shop")
+	t.Setenv("ARENA_STRIPE_PORTAL_RETURN_URL", "https://arena.example/dashboard")
 	C = Config{}
 	Load()
 	secrets := ParseStripeWebhookSecrets(C.StripeWebhookSecrets)
@@ -272,6 +311,23 @@ func TestLoadReadsManagedMigrationRoles(t *testing.T) {
 	C.DBMigrationsManaged = false
 	if !ShouldAutoMigrateDatabase() {
 		t.Fatal("single-role local runtime should retain automatic migrations")
+	}
+}
+
+func TestLoadReadsCustomerAPIKeyAbuseLimits(t *testing.T) {
+	previous := C
+	t.Cleanup(func() { C = previous })
+	t.Setenv("ARENA_CUSTOMER_API_KEY_MUTATION_RPM", "31")
+	t.Setenv("ARENA_CUSTOMER_API_KEY_CREATE_PER_HOUR", "11")
+	t.Setenv("ARENA_CUSTOMER_API_KEY_REVOKE_PER_HOUR", "21")
+	t.Setenv("ARENA_CUSTOMER_BOT_LINK_PER_HOUR", "12")
+	C = Config{}
+
+	Load()
+
+	if C.CustomerAPIKeyMutationRPM != 31 || C.CustomerAPIKeyCreatePerHour != 11 ||
+		C.CustomerAPIKeyRevokePerHour != 21 || C.CustomerBotLinkPerHour != 12 {
+		t.Fatalf("customer API-key abuse limits were not loaded: %+v", C)
 	}
 }
 

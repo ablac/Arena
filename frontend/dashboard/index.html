@@ -489,6 +489,50 @@ tr:hover td{background:rgba(71,215,255,.035)}
 }
 .cosmetic-account-summary h2,.cosmetic-inventory-head h2{margin:5px 0 3px;color:#ecf4ff;font-size:18px;letter-spacing:-.03em}
 .cosmetic-account-summary p,.cosmetic-sidebar p,.cosmetic-rule,.cosmetic-license p{color:#91a6bd;font-size:11px}
+.all-access-plan{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(220px,auto);
+  align-items:center;
+  gap:22px;
+  margin-bottom:16px;
+  padding:20px;
+  border:1px solid rgba(240,192,64,.3);
+  border-radius:18px;
+  background:rgba(20,17,11,.72);
+}
+.all-access-copy{min-width:0}
+.all-access-copy h2{margin:5px 0 6px;color:#ecf4ff;font-size:24px;letter-spacing:-.04em}
+.all-access-copy p{max-width:76ch;margin:0;color:#c4cfdb;font-size:12px;line-height:1.55}
+.all-access-copy .all-access-removal{margin-top:7px;color:#91a6bd;font:500 9px/1.55 'IBM Plex Mono',monospace}
+.all-access-offer{display:grid;justify-items:end;gap:8px;min-width:220px;text-align:right}
+.all-access-offer>strong{color:#f0c040;font:700 24px/1 'IBM Plex Mono',monospace;white-space:nowrap}
+.all-access-offer>strong small{color:#a9b8c9;font-size:10px;font-weight:500}
+.all-access-status{display:inline-flex;align-items:center;min-height:24px;padding:0 8px;border:1px solid rgba(126,166,207,.2);border-radius:999px;color:#a9b8c9;font:600 8px/1 'IBM Plex Mono',monospace;text-transform:uppercase}
+.all-access-status.is-active{border-color:rgba(88,229,143,.28);background:rgba(88,229,143,.08);color:#58e58f}
+.all-access-status.is-warning{border-color:rgba(255,154,146,.28);background:rgba(255,123,114,.08);color:#ff9a92}
+.all-access-action{min-height:44px;border-color:rgba(240,192,64,.38);color:#f0c040}
+.all-access-unavailable,.all-access-feedback{margin:0;color:#91a6bd;font:500 9px/1.4 'IBM Plex Mono',monospace}
+.all-access-feedback.is-error{max-width:250px;color:#ff9a92}
+.account-key-manager{margin-bottom:16px;padding:18px;border:1px solid rgba(71,215,255,.2);border-radius:18px;background:rgba(6,12,20,.62)}
+.account-key-form{display:grid;grid-template-columns:minmax(180px,1fr) auto;align-items:end;gap:8px;margin:14px 0}
+.account-key-form label{grid-column:1/-1;color:#ecf4ff;font-size:11px;font-weight:700}
+.account-key-form input{min-width:0;min-height:44px;width:100%;font-size:16px}
+.account-key-form button{min-height:44px}
+.account-key-form small{grid-column:1/-1;color:#91a6bd;font:500 9px/1.5 'IBM Plex Mono',monospace}
+.account-generated-key{display:grid;gap:9px;margin:12px 0;padding:12px;border:1px solid rgba(240,192,64,.28);border-radius:13px;background:rgba(240,192,64,.06)}
+.account-generated-key>div:first-child{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.account-generated-key strong{color:#f0c040;font-size:12px}
+.account-generated-key span{color:#a9b8c9;font:500 9px/1.4 'IBM Plex Mono',monospace}
+.account-generated-key-field{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:7px}
+.account-generated-key-field input{min-width:0;min-height:44px;width:100%;font:500 11px/1 'IBM Plex Mono',monospace}
+.account-generated-key-field button{min-height:44px}
+.account-key-list{display:grid;gap:7px}
+.account-key-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:10px;min-width:0;padding:10px;border-top:1px solid rgba(126,166,207,.13)}
+.account-key-row>div:first-child{display:grid;min-width:0;gap:3px}
+.account-key-row strong{overflow:hidden;text-overflow:ellipsis;color:#ecf4ff;font-size:12px;white-space:nowrap}
+.account-key-row code{overflow:hidden;text-overflow:ellipsis;color:#91a6bd;font:500 9px/1.3 'IBM Plex Mono',monospace;white-space:nowrap}
+.account-key-meta{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;color:#91a6bd;font:500 8px/1.3 'IBM Plex Mono',monospace}
+.account-key-row button{min-height:44px}
 .verified-email-badge,.ownership-badge,.linked-bot-state{
   display:inline-flex;
   align-items:center;
@@ -568,10 +612,10 @@ button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.5;tra
 .cosmetic-purchase-facts,.cosmetic-purchase-money{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px;color:#91a6bd;font:500 9px/1.4 'IBM Plex Mono',monospace}
 .cosmetic-purchase-facts span,.cosmetic-purchase-facts time,.cosmetic-purchase-money span{padding:5px 7px;border:1px solid rgba(126,166,207,.1);border-radius:9px;background:rgba(255,255,255,.02)}
 .cosmetic-purchase-money strong{color:#ecf4ff}
-:is(.tbtn,.cosmetic-shop-buy,.cosmetic-shop-search input):focus-visible{outline:2px solid #7ee4ff;outline-offset:3px}
-@media (max-width:760px){.login-shell{grid-template-columns:1fr}.cosmetic-layout{grid-template-columns:minmax(0,1fr)}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.linked-bot-list li{align-items:flex-start;flex-wrap:wrap}.linked-bot-actions{flex-wrap:wrap}.cosmetic-license-grid{grid-template-columns:minmax(0,1fr)}.cosmetic-license-actions select{flex-basis:100%;min-width:0;width:100%}.cosmetic-shop-pack{grid-template-columns:68px minmax(0,1fr)}.cosmetic-shop-swatch{width:68px}.cosmetic-shop-offer{grid-column:1/-1;grid-template-columns:1fr auto;align-items:center;justify-items:start;width:100%}.cosmetic-shop-offer .cosmetic-shop-buy{justify-self:end}}
-@media (pointer:coarse){.cosmetic-shop button,.tbtn{min-height:44px}.cosmetic-shop-search input{font-size:16px}}
-@media (prefers-reduced-motion:reduce){.cosmetic-shop *{scroll-behavior:auto!important;transition-duration:.01ms!important}}
+:is(.tbtn,.cosmetic-shop-buy,.cosmetic-shop-search input,.all-access-plan button,.account-key-manager button,.account-key-manager input):focus-visible{outline:2px solid #7ee4ff;outline-offset:3px}
+@media (max-width:760px){.login-shell{grid-template-columns:1fr}.all-access-plan{grid-template-columns:minmax(0,1fr)}.all-access-offer{justify-items:start;min-width:0;text-align:left}.account-key-form,.account-generated-key-field,.account-key-row{grid-template-columns:minmax(0,1fr)}.account-key-meta{justify-content:flex-start}.account-key-row button{justify-self:start}.cosmetic-layout{grid-template-columns:minmax(0,1fr)}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.linked-bot-list li{align-items:flex-start;flex-wrap:wrap}.linked-bot-actions{flex-wrap:wrap}.cosmetic-license-grid{grid-template-columns:minmax(0,1fr)}.cosmetic-license-actions select{flex-basis:100%;min-width:0;width:100%}.cosmetic-shop-pack{grid-template-columns:68px minmax(0,1fr)}.cosmetic-shop-swatch{width:68px}.cosmetic-shop-offer{grid-column:1/-1;grid-template-columns:1fr auto;align-items:center;justify-items:start;width:100%}.cosmetic-shop-offer .cosmetic-shop-buy{justify-self:end}}
+@media (pointer:coarse){.cosmetic-shop button,.all-access-plan button,.account-key-manager button,.tbtn{min-height:44px}.cosmetic-shop-search input,.account-key-manager input{font-size:16px}}
+@media (prefers-reduced-motion:reduce){.cosmetic-shop *,.all-access-plan *,.account-key-manager *{scroll-behavior:auto!important;transition-duration:.01ms!important}}
 </style>
 </head>
 <body>
@@ -744,7 +788,7 @@ if (window.self !== window.top) {
 </div>
 
 <script src="../js/cosmetic-themes.js?v=20260711b"></script>
-<script src="./account-cosmetics.js?v=20260711d"></script>
+<script src="./account-cosmetics.js?v=20260712c"></script>
 <script>
 const WEAPON_META = {
   sword:{name:'Sword',badge:'SWD',role:'Balanced frontline weapon.',desc:'Reliable melee with cleave pressure when fights stack up.',build:'hp:5 speed:5 attack:5 defense:5',strongVs:'Daggers, shield',counter:'Bow, staff'},
@@ -883,6 +927,12 @@ let accountCatalog = null;
 let accountCatalogError = '';
 let accountOrders = null;
 let accountOrdersError = '';
+let accountKeys = null;
+let accountKeysError = '';
+let accountKeyCreateBusy = false;
+let accountBusyKeyID = '';
+let accountGeneratedKey = null;
+let accountSubscriptionState = {status:'idle',message:''};
 let accountBusyLicenseID = '';
 let accountViewError = '';
 let accountViewNotice = '';
@@ -1166,6 +1216,12 @@ function renderAccountCosmetics() {
     checkoutState: accountCheckoutState,
     orders: accountOrders,
     ordersError: accountOrdersError,
+    keys: accountKeys,
+    keysError: accountKeysError,
+    keyCreateBusy: accountKeyCreateBusy,
+    busyKeyID: accountBusyKeyID,
+    generatedKey: accountGeneratedKey,
+    subscriptionState: accountSubscriptionState,
   });
 }
 
@@ -1173,6 +1229,8 @@ async function refreshAccountCosmetics(notice='') {
   const requestID = ++accountRefreshSequence;
   accountOrders = null;
   accountOrdersError = '';
+  accountKeys = null;
+  accountKeysError = '';
   const ordersRequest = accountRequest(window.ArenaAccountCosmetics.accountRoute('orders')+'?limit=20')
     .then(payload => {
       if (requestID !== accountRefreshSequence) return;
@@ -1187,6 +1245,22 @@ async function refreshAccountCosmetics(notice='') {
       if (requestID !== accountRefreshSequence) return;
       accountOrders = null;
       accountOrdersError = error?.message || 'Purchase history could not be loaded.';
+      renderAccountCosmetics();
+    });
+  const keysRequest = accountRequest(window.ArenaAccountCosmetics.accountRoute('keys'))
+    .then(payload => {
+      if (requestID !== accountRefreshSequence) return;
+      if (!payload || typeof payload !== 'object' || !Array.isArray(payload.keys)) {
+        throw new Error('The API-key service returned an invalid response.');
+      }
+      accountKeys = window.ArenaAccountCosmetics.normalizeKeyCollection(payload);
+      accountKeysError = '';
+      renderAccountCosmetics();
+    })
+    .catch(error => {
+      if (requestID !== accountRefreshSequence) return;
+      accountKeys = null;
+      accountKeysError = error?.message || 'API keys could not be loaded.';
       renderAccountCosmetics();
     });
   if (accountSnapshot) renderAccountCosmetics();
@@ -1215,10 +1289,113 @@ async function refreshAccountCosmetics(notice='') {
     accountViewNotice = '';
   }
   renderAccountCosmetics();
-  await ordersRequest;
+  await Promise.all([ordersRequest, keysRequest]);
+}
+
+async function createAccountKey(form) {
+  const input = form?.querySelector('#accountKeyBotName');
+  const intent = window.ArenaAccountCosmetics.keyCreateIntent(input?.value || '', accountKeys);
+  if (!intent.ok) {
+    accountKeysError = intent.reason === 'keys-unavailable'
+      ? 'Current API key usage is unavailable. Retry before creating a key.'
+      : intent.reason === 'key-limit-reached'
+        ? 'Five API keys are already active. Revoke one before creating another.'
+        : 'Enter a bot name before creating an API key.';
+    renderAccountCosmetics();
+    return;
+  }
+  if (accountKeyCreateBusy) return;
+  accountKeyCreateBusy = true;
+  accountKeysError = '';
+  accountViewNotice = '';
+  renderAccountCosmetics();
+  try {
+    const data = await accountRequest(window.ArenaAccountCosmetics.accountRoute('keys'), {
+      method:'POST',
+      body:JSON.stringify(intent.body),
+    });
+    const apiKeyValue = String(data?.api_key || '').trim();
+    if (!apiKeyValue) throw new Error('The API-key service did not return the one-time key value.');
+    accountGeneratedKey = data;
+    accountKeyCreateBusy = false;
+    await refreshAccountCosmetics('API key created and linked to this verified email account.');
+  } catch (error) {
+    accountKeyCreateBusy = false;
+    accountKeysError = error?.message || 'Could not create an API key.';
+    renderAccountCosmetics();
+  }
+}
+
+async function revokeAccountKey(keyID) {
+  const intent = window.ArenaAccountCosmetics.keyRevokeIntent(keyID);
+  if (!intent.ok || accountBusyKeyID) return;
+  const key = accountKeys?.keys?.find(entry => entry.id === keyID);
+  if (!confirm(`Revoke the API key for ${key?.bot_name || 'this bot'}? The bot will no longer be able to connect.`)) return;
+  accountBusyKeyID = keyID;
+  accountKeysError = '';
+  accountViewNotice = '';
+  renderAccountCosmetics();
+  try {
+    await accountRequest(window.ArenaAccountCosmetics.accountRoute('key', keyID), {method:'DELETE'});
+    accountBusyKeyID = '';
+    await refreshAccountCosmetics('API key revoked. Account purchases and owned cosmetics were not removed.');
+  } catch (error) {
+    accountBusyKeyID = '';
+    accountKeysError = error?.message || 'Could not revoke that API key.';
+    renderAccountCosmetics();
+  }
+}
+
+async function copyGeneratedAccountKey() {
+  const input = document.getElementById('accountGeneratedKey');
+  if (!input?.value) return;
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(input.value);
+    else {
+      input.select();
+      document.execCommand('copy');
+    }
+    accountViewNotice = 'API key copied. Store it before clearing this screen.';
+  } catch (_) {
+    accountViewError = 'The browser could not copy this key. Select it and copy it manually.';
+  }
+  renderAccountCosmetics();
+}
+
+function clearGeneratedAccountKey() {
+  const input = document.getElementById('accountGeneratedKey');
+  if (input) input.value = '';
+  accountGeneratedKey = null;
+  renderAccountCosmetics();
+}
+
+async function openAccountSubscription() {
+  const offer = accountSnapshot?.subscription_offer?.enabled
+    ? accountSnapshot.subscription_offer
+    : accountCatalog?.subscription_offer;
+  const intent = window.ArenaAccountCosmetics.subscriptionIntent(offer, accountSnapshot?.subscription);
+  if (!intent.ok || accountSubscriptionState.status === 'pending') return;
+  accountSubscriptionState = {status:'pending',message:''};
+  renderAccountCosmetics();
+  try {
+    const data = await accountRequest(intent.path, {method:'POST'});
+    const rawURL = String((intent.kind === 'portal' ? data?.portal_url : data?.checkout_url) || '').trim();
+    if (!rawURL) throw new Error(`The subscription ${intent.kind} service did not return a redirect.`);
+    const destination = new URL(rawURL, window.location.href);
+    if (!['http:','https:'].includes(destination.protocol)) throw new Error('The subscription service returned an unsafe redirect.');
+    window.location.assign(destination.href);
+  } catch (error) {
+    accountSubscriptionState = {status:'error',message:error?.message || 'Try again in a moment.'};
+    renderAccountCosmetics();
+  }
 }
 
 async function handleAccountPanelSubmit(event) {
+  if (event.target?.id === 'accountKeyForm') {
+    event.preventDefault();
+    await createAccountKey(event.target);
+    return;
+  }
   if (event.target?.id !== 'linkBotForm') return;
   event.preventDefault();
   const input = event.target.querySelector('#linkBotKey');
@@ -1377,6 +1554,32 @@ async function unlinkAccountBot(botID) {
 }
 
 function handleAccountPanelClick(event) {
+  const subscriptionButton = event.target.closest('[data-subscription-checkout],[data-subscription-portal]');
+  if (subscriptionButton) {
+    openAccountSubscription();
+    return;
+  }
+  const copyKeyButton = event.target.closest('[data-account-key-copy]');
+  if (copyKeyButton) {
+    copyGeneratedAccountKey();
+    return;
+  }
+  const clearKeyButton = event.target.closest('[data-account-key-clear]');
+  if (clearKeyButton) {
+    clearGeneratedAccountKey();
+    return;
+  }
+  const revokeKeyButton = event.target.closest('[data-account-key-revoke]');
+  if (revokeKeyButton) {
+    revokeAccountKey(revokeKeyButton.dataset.accountKeyRevoke);
+    return;
+  }
+  const retryKeysButton = event.target.closest('[data-account-keys-retry]');
+  if (retryKeysButton) {
+    accountKeysError = '';
+    refreshAccountCosmetics();
+    return;
+  }
   const checkoutButton = event.target.closest('[data-pack-checkout]');
   if (checkoutButton) {
     startCosmeticCheckout(checkoutButton.dataset.packCheckout);

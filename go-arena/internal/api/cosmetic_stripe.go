@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"arena-server/internal/db"
+
 	stripe "github.com/stripe/stripe-go/v86"
 	"github.com/stripe/stripe-go/v86/webhook"
 )
@@ -33,45 +35,95 @@ type CosmeticCheckoutRequest struct {
 // CosmeticCheckoutSession contains only the hosted-checkout fields a handler
 // may safely return to the browser.
 type CosmeticCheckoutSession struct {
-	ID        string
-	URL       string
-	ExpiresAt time.Time
+	ID             string
+	URL            string
+	ExpiresAt      time.Time
+	Status         CosmeticCheckoutSessionStatus
+	Mode           string
+	SubscriptionID string
+	AccountID      string
 }
+
+type CosmeticCheckoutSessionStatus string
+
+const (
+	CosmeticCheckoutSessionStatusOpen     CosmeticCheckoutSessionStatus = "open"
+	CosmeticCheckoutSessionStatusComplete CosmeticCheckoutSessionStatus = "complete"
+	CosmeticCheckoutSessionStatusExpired  CosmeticCheckoutSessionStatus = "expired"
+)
+
+type CosmeticPortalSession struct {
+	URL string
+}
+
+type CosmeticSubscriptionCheckoutRequest struct {
+	SubscriptionID string
+	AccountID      string
+	CustomerEmail  string
+}
+
+type CosmeticSubscriptionProviderState struct {
+	ID                string
+	CustomerID        string
+	Status            string
+	CancelAtPeriodEnd bool
+	CurrentPeriodEnd  *time.Time
+	Terminal          bool
+}
+
+type CosmeticPaymentKind string
+
+const CosmeticPaymentKindSubscription CosmeticPaymentKind = "subscription"
 
 // CosmeticPaymentEventType is independent from Stripe's event names so the
 // fulfillment layer does not need provider-specific imports.
 type CosmeticPaymentEventType string
 
 const (
-	CosmeticPaymentEventCheckoutCompleted      CosmeticPaymentEventType = "checkout_completed"
-	CosmeticPaymentEventCheckoutAsyncSucceeded CosmeticPaymentEventType = "checkout_async_succeeded"
-	CosmeticPaymentEventCheckoutAsyncFailed    CosmeticPaymentEventType = "checkout_async_failed"
-	CosmeticPaymentEventCheckoutExpired        CosmeticPaymentEventType = "checkout_expired"
-	CosmeticPaymentEventRefundCreated          CosmeticPaymentEventType = "refund_created"
-	CosmeticPaymentEventRefundUpdated          CosmeticPaymentEventType = "refund_updated"
-	CosmeticPaymentEventRefundFailed           CosmeticPaymentEventType = "refund_failed"
-	CosmeticPaymentEventChargeRefunded         CosmeticPaymentEventType = "charge_refunded"
-	CosmeticPaymentEventDisputeCreated         CosmeticPaymentEventType = "dispute_created"
+	CosmeticPaymentEventCheckoutCompleted             CosmeticPaymentEventType = "checkout_completed"
+	CosmeticPaymentEventCheckoutAsyncSucceeded        CosmeticPaymentEventType = "checkout_async_succeeded"
+	CosmeticPaymentEventCheckoutAsyncFailed           CosmeticPaymentEventType = "checkout_async_failed"
+	CosmeticPaymentEventCheckoutExpired               CosmeticPaymentEventType = "checkout_expired"
+	CosmeticPaymentEventRefundCreated                 CosmeticPaymentEventType = "refund_created"
+	CosmeticPaymentEventRefundUpdated                 CosmeticPaymentEventType = "refund_updated"
+	CosmeticPaymentEventRefundFailed                  CosmeticPaymentEventType = "refund_failed"
+	CosmeticPaymentEventChargeRefunded                CosmeticPaymentEventType = "charge_refunded"
+	CosmeticPaymentEventDisputeCreated                CosmeticPaymentEventType = "dispute_created"
+	CosmeticPaymentEventSubscriptionCheckoutCompleted CosmeticPaymentEventType = "subscription_checkout_completed"
+	CosmeticPaymentEventSubscriptionCheckoutExpired   CosmeticPaymentEventType = "subscription_checkout_expired"
+	CosmeticPaymentEventSubscriptionCreated           CosmeticPaymentEventType = "subscription_created"
+	CosmeticPaymentEventSubscriptionUpdated           CosmeticPaymentEventType = "subscription_updated"
+	CosmeticPaymentEventSubscriptionDeleted           CosmeticPaymentEventType = "subscription_deleted"
 )
 
 // CosmeticPaymentEvent is the signed, normalized payment fact consumed by a
 // separate idempotent order/fulfillment handler. Parsing performs no DB writes.
 type CosmeticPaymentEvent struct {
-	ID                string
-	Type              CosmeticPaymentEventType
-	PayloadSHA256     string
-	OrderID           string
-	AccountID         string
-	CheckoutSessionID string
-	PaymentIntentID   string
-	AmountTotal       int64
-	AmountRefunded    int64
-	Currency          string
-	PaymentStatus     string
-	RefundID          string
-	RefundStatus      string
-	DisputeID         string
-	DisputeStatus     string
+	ID                      string
+	Type                    CosmeticPaymentEventType
+	Kind                    CosmeticPaymentKind
+	PayloadSHA256           string
+	OrderID                 string
+	AccountID               string
+	CheckoutSessionID       string
+	PaymentIntentID         string
+	AmountTotal             int64
+	AmountRefunded          int64
+	Currency                string
+	PaymentStatus           string
+	RefundID                string
+	RefundStatus            string
+	DisputeID               string
+	DisputeStatus           string
+	SubscriptionID          string
+	CustomerID              string
+	ProviderSubscriptionID  string
+	SubscriptionStatus      string
+	CancelAtPeriodEnd       bool
+	CurrentPeriodEnd        *time.Time
+	ProviderCreatedAt       time.Time
+	ProviderStateObservedAt time.Time
+	Terminal                bool
 }
 
 // CosmeticPaymentProvider is the provider-neutral seam used by checkout and
@@ -87,21 +139,42 @@ type stripeCheckoutSessionCreator interface {
 	Create(context.Context, *stripe.CheckoutSessionCreateParams) (*stripe.CheckoutSession, error)
 }
 
+type stripeBillingPortalSessionCreator interface {
+	Create(context.Context, *stripe.BillingPortalSessionCreateParams) (*stripe.BillingPortalSession, error)
+}
+
+type stripeCheckoutSessionRetriever interface {
+	Retrieve(context.Context, string, *stripe.CheckoutSessionRetrieveParams) (*stripe.CheckoutSession, error)
+}
+
+type stripeSubscriptionRetriever interface {
+	Retrieve(context.Context, string, *stripe.SubscriptionRetrieveParams) (*stripe.Subscription, error)
+}
+
 // StripeCosmeticPaymentProvider adapts Stripe Checkout and signed Stripe
 // webhooks to the provider-neutral commerce contract.
 type StripeCosmeticPaymentProvider struct {
-	checkoutCreator stripeCheckoutSessionCreator
-	webhookSecrets  []string
-	successURL      string
-	cancelURL       string
-	automaticTax    bool
+	checkoutCreator       stripeCheckoutSessionCreator
+	checkoutRetriever     stripeCheckoutSessionRetriever
+	portalCreator         stripeBillingPortalSessionCreator
+	subscriptionRetriever stripeSubscriptionRetriever
+	webhookSecrets        []string
+	successURL            string
+	cancelURL             string
+	portalReturnURL       string
+	automaticTax          bool
 }
 
 var _ CosmeticPaymentProvider = (*StripeCosmeticPaymentProvider)(nil)
 
-func NewStripeCosmeticPaymentProvider(secretKey string, webhookSecrets []string, successURL, cancelURL string, automaticTax bool) *StripeCosmeticPaymentProvider {
+func NewStripeCosmeticPaymentProvider(secretKey string, webhookSecrets []string, successURL, cancelURL, portalReturnURL string, automaticTax bool) *StripeCosmeticPaymentProvider {
 	client := stripe.NewClient(strings.TrimSpace(secretKey))
-	return newStripeCosmeticPaymentProviderWithCreator(client.V1CheckoutSessions, webhookSecrets, successURL, cancelURL, automaticTax)
+	provider := newStripeCosmeticPaymentProviderWithCreator(client.V1CheckoutSessions, webhookSecrets, successURL, cancelURL, automaticTax)
+	provider.checkoutRetriever = client.V1CheckoutSessions
+	provider.portalCreator = client.V1BillingPortalSessions
+	provider.subscriptionRetriever = client.V1Subscriptions
+	provider.portalReturnURL = strings.TrimSpace(portalReturnURL)
+	return provider
 }
 
 func newStripeCosmeticPaymentProviderWithCreator(creator stripeCheckoutSessionCreator, webhookSecrets []string, successURL, cancelURL string, automaticTax bool) *StripeCosmeticPaymentProvider {
@@ -111,13 +184,18 @@ func newStripeCosmeticPaymentProviderWithCreator(creator stripeCheckoutSessionCr
 			secrets = append(secrets, secret)
 		}
 	}
-	return &StripeCosmeticPaymentProvider{
+	provider := &StripeCosmeticPaymentProvider{
 		checkoutCreator: creator,
 		webhookSecrets:  secrets,
 		successURL:      strings.TrimSpace(successURL),
 		cancelURL:       strings.TrimSpace(cancelURL),
+		portalReturnURL: strings.TrimSpace(successURL),
 		automaticTax:    automaticTax,
 	}
+	if retriever, ok := creator.(stripeCheckoutSessionRetriever); ok {
+		provider.checkoutRetriever = retriever
+	}
+	return provider
 }
 
 func (p *StripeCosmeticPaymentProvider) CreateCheckoutSession(ctx context.Context, request CosmeticCheckoutRequest) (*CosmeticCheckoutSession, error) {
@@ -189,6 +267,171 @@ func (p *StripeCosmeticPaymentProvider) CreateCheckoutSession(ctx context.Contex
 	return result, nil
 }
 
+func (p *StripeCosmeticPaymentProvider) CreateSubscriptionCheckoutSession(ctx context.Context, request CosmeticSubscriptionCheckoutRequest) (*CosmeticCheckoutSession, error) {
+	request.SubscriptionID = strings.TrimSpace(request.SubscriptionID)
+	request.AccountID = strings.TrimSpace(request.AccountID)
+	request.CustomerEmail = strings.TrimSpace(strings.ToLower(request.CustomerEmail))
+	if p == nil || p.checkoutCreator == nil {
+		return nil, errors.New("cosmetic subscription checkout provider is not configured")
+	}
+	if request.SubscriptionID == "" || request.AccountID == "" || request.CustomerEmail == "" {
+		return nil, errors.New("invalid cosmetic subscription checkout request")
+	}
+	metadata := map[string]string{
+		"commerce_kind":   "cosmetic_subscription",
+		"subscription_id": request.SubscriptionID,
+		"account_id":      request.AccountID,
+	}
+	params := &stripe.CheckoutSessionCreateParams{
+		Mode:              stripe.String(string(stripe.CheckoutSessionModeSubscription)),
+		SuccessURL:        stripe.String(p.successURL),
+		CancelURL:         stripe.String(p.cancelURL),
+		CustomerEmail:     stripe.String(request.CustomerEmail),
+		ClientReferenceID: stripe.String(request.SubscriptionID),
+		AutomaticTax: &stripe.CheckoutSessionCreateAutomaticTaxParams{
+			Enabled: stripe.Bool(p.automaticTax),
+		},
+		Metadata: metadata,
+		SubscriptionData: &stripe.CheckoutSessionCreateSubscriptionDataParams{
+			Description: stripe.String("Arena Cosmetics Pass: every current and future cosmetic set."),
+			Metadata:    metadata,
+		},
+		LineItems: []*stripe.CheckoutSessionCreateLineItemParams{{
+			Quantity: stripe.Int64(1),
+			PriceData: &stripe.CheckoutSessionCreateLineItemPriceDataParams{
+				Currency:   stripe.String(strings.ToLower(db.CosmeticSubscriptionCurrency)),
+				UnitAmount: stripe.Int64(db.CosmeticSubscriptionPriceCents),
+				Recurring: &stripe.CheckoutSessionCreateLineItemPriceDataRecurringParams{
+					Interval:      stripe.String(db.CosmeticSubscriptionInterval),
+					IntervalCount: stripe.Int64(1),
+				},
+				ProductData: &stripe.CheckoutSessionCreateLineItemPriceDataProductDataParams{
+					Name:        stripe.String("Arena Cosmetics Pass"),
+					Description: stripe.String("Every current and future Arena cosmetic set, for up to five API keys."),
+				},
+			},
+		}},
+	}
+	params.SetIdempotencyKey("cosmetics_subscription_" + request.SubscriptionID)
+	session, err := p.checkoutCreator.Create(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("create Stripe subscription checkout session: %w", err)
+	}
+	if session == nil {
+		return nil, errors.New("Stripe subscription checkout returned no session")
+	}
+	result := &CosmeticCheckoutSession{ID: session.ID, URL: session.URL}
+	if session.ExpiresAt > 0 {
+		result.ExpiresAt = time.Unix(session.ExpiresAt, 0).UTC()
+	}
+	return result, nil
+}
+
+func (p *StripeCosmeticPaymentProvider) RetrieveSubscriptionCheckoutSession(ctx context.Context, checkoutSessionID string) (*CosmeticCheckoutSession, error) {
+	checkoutSessionID = strings.TrimSpace(checkoutSessionID)
+	if p == nil || p.checkoutRetriever == nil || checkoutSessionID == "" {
+		return nil, errors.New("cosmetic subscription Checkout retrieval is not configured")
+	}
+	session, err := p.checkoutRetriever.Retrieve(ctx, checkoutSessionID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("retrieve Stripe subscription checkout session: %w", err)
+	}
+	if session == nil || strings.TrimSpace(session.ID) == "" {
+		return nil, errors.New("Stripe subscription checkout retrieval returned no session")
+	}
+	result := &CosmeticCheckoutSession{
+		ID: strings.TrimSpace(session.ID), URL: strings.TrimSpace(session.URL),
+		Status: CosmeticCheckoutSessionStatus(strings.ToLower(strings.TrimSpace(string(session.Status)))),
+		Mode:   strings.ToLower(strings.TrimSpace(string(session.Mode))),
+	}
+	result.SubscriptionID, result.AccountID = cosmeticSubscriptionMetadata(session.Metadata)
+	if session.ExpiresAt > 0 {
+		result.ExpiresAt = time.Unix(session.ExpiresAt, 0).UTC()
+	}
+	return result, nil
+}
+
+func normalizeStripeSubscriptionStatus(status string) (string, bool) {
+	status = strings.ToLower(strings.TrimSpace(status))
+	switch status {
+	case string(stripe.SubscriptionStatusIncompleteExpired):
+		return db.CosmeticSubscriptionStatusExpired, true
+	case string(stripe.SubscriptionStatusCanceled):
+		return db.CosmeticSubscriptionStatusCanceled, true
+	case db.CosmeticSubscriptionStatusExpired:
+		return db.CosmeticSubscriptionStatusExpired, true
+	default:
+		return status, false
+	}
+}
+
+func (p *StripeCosmeticPaymentProvider) RetrieveCosmeticSubscription(ctx context.Context, providerSubscriptionID string) (*CosmeticSubscriptionProviderState, error) {
+	providerSubscriptionID = strings.TrimSpace(providerSubscriptionID)
+	if p == nil || p.subscriptionRetriever == nil || providerSubscriptionID == "" {
+		return nil, errors.New("cosmetic subscription retrieval is not configured")
+	}
+	subscription, err := p.subscriptionRetriever.Retrieve(ctx, providerSubscriptionID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("retrieve Stripe cosmetic subscription: %w", err)
+	}
+	if subscription == nil || strings.TrimSpace(subscription.ID) == "" {
+		return nil, errors.New("Stripe cosmetic subscription retrieval returned no subscription")
+	}
+	state := &CosmeticSubscriptionProviderState{
+		ID: strings.TrimSpace(subscription.ID), CancelAtPeriodEnd: subscription.CancelAtPeriodEnd,
+	}
+	if subscription.Customer != nil {
+		state.CustomerID = strings.TrimSpace(subscription.Customer.ID)
+	}
+	state.Status, state.Terminal = normalizeStripeSubscriptionStatus(string(subscription.Status))
+
+	activeItems := make([]*stripe.SubscriptionItem, 0, 1)
+	if subscription.Items != nil {
+		for _, item := range subscription.Items.Data {
+			if item == nil || item.Deleted {
+				continue
+			}
+			activeItems = append(activeItems, item)
+			if item.CurrentPeriodEnd > 0 && (state.CurrentPeriodEnd == nil || item.CurrentPeriodEnd > state.CurrentPeriodEnd.Unix()) {
+				periodEnd := time.Unix(item.CurrentPeriodEnd, 0).UTC()
+				state.CurrentPeriodEnd = &periodEnd
+			}
+		}
+	}
+	if !state.Terminal && !validStripeCosmeticSubscriptionBilling(activeItems) {
+		state.Status = db.CosmeticSubscriptionStatusBillingMismatch
+	}
+	return state, nil
+}
+
+func validStripeCosmeticSubscriptionBilling(items []*stripe.SubscriptionItem) bool {
+	if len(items) != 1 || items[0].Quantity != 1 || items[0].Price == nil || items[0].Price.Recurring == nil {
+		return false
+	}
+	price := items[0].Price
+	return price.UnitAmount == db.CosmeticSubscriptionPriceCents &&
+		strings.EqualFold(string(price.Currency), db.CosmeticSubscriptionCurrency) &&
+		string(price.Recurring.Interval) == db.CosmeticSubscriptionInterval && price.Recurring.IntervalCount == 1
+}
+
+func (p *StripeCosmeticPaymentProvider) CreateBillingPortalSession(ctx context.Context, customerID string) (*CosmeticPortalSession, error) {
+	customerID = strings.TrimSpace(customerID)
+	if p == nil || p.portalCreator == nil || customerID == "" || p.portalReturnURL == "" {
+		return nil, errors.New("cosmetic subscription billing portal is not configured")
+	}
+	session, err := p.portalCreator.Create(ctx, &stripe.BillingPortalSessionCreateParams{
+		Customer:  stripe.String(customerID),
+		ReturnURL: stripe.String(p.portalReturnURL),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create Stripe billing portal session: %w", err)
+	}
+	if session == nil || strings.TrimSpace(session.URL) == "" {
+		return nil, errors.New("Stripe billing portal returned no session")
+	}
+	return &CosmeticPortalSession{URL: session.URL}, nil
+}
+
 func (p *StripeCosmeticPaymentProvider) ParseWebhook(payload []byte, signatureHeader string) (*CosmeticPaymentEvent, error) {
 	if p == nil || len(p.webhookSecrets) == 0 {
 		return nil, errors.New("Stripe webhook secrets are not configured")
@@ -248,6 +491,9 @@ type stripeCheckoutWebhookObject struct {
 	AmountTotal   int64              `json:"amount_total"`
 	Currency      string             `json:"currency"`
 	PaymentStatus string             `json:"payment_status"`
+	Mode          string             `json:"mode"`
+	Customer      stripeExpandableID `json:"customer"`
+	Subscription  stripeExpandableID `json:"subscription"`
 }
 
 type stripeRefundWebhookObject struct {
@@ -277,6 +523,15 @@ type stripeDisputeWebhookObject struct {
 	Status        string             `json:"status"`
 }
 
+type stripeSubscriptionWebhookObject struct {
+	ID                string             `json:"id"`
+	Customer          stripeExpandableID `json:"customer"`
+	Status            string             `json:"status"`
+	CancelAtPeriodEnd bool               `json:"cancel_at_period_end"`
+	CurrentPeriodEnd  int64              `json:"current_period_end"`
+	Metadata          map[string]string  `json:"metadata"`
+}
+
 func normalizeStripeCosmeticPaymentEvent(event stripe.Event) (*CosmeticPaymentEvent, error) {
 	if event.Data == nil || len(event.Data.Raw) == 0 {
 		return nil, errors.New("Stripe webhook is missing event data")
@@ -290,6 +545,24 @@ func normalizeStripeCosmeticPaymentEvent(event stripe.Event) (*CosmeticPaymentEv
 		var object stripeCheckoutWebhookObject
 		if err := json.Unmarshal(event.Data.Raw, &object); err != nil {
 			return nil, fmt.Errorf("decode Stripe checkout event: %w", err)
+		}
+		if object.Mode == string(stripe.CheckoutSessionModeSubscription) ||
+			strings.EqualFold(strings.TrimSpace(object.Metadata["commerce_kind"]), "cosmetic_subscription") {
+			if event.Type != stripe.EventTypeCheckoutSessionCompleted && event.Type != stripe.EventTypeCheckoutSessionExpired {
+				return nil, fmt.Errorf("%w: %s", ErrUnsupportedCosmeticPaymentEvent, event.Type)
+			}
+			result.Kind = CosmeticPaymentKindSubscription
+			result.Type = CosmeticPaymentEventSubscriptionCheckoutCompleted
+			if event.Type == stripe.EventTypeCheckoutSessionExpired {
+				result.Type = CosmeticPaymentEventSubscriptionCheckoutExpired
+				result.Terminal = true
+			}
+			result.SubscriptionID, result.AccountID = cosmeticSubscriptionMetadata(object.Metadata)
+			result.CheckoutSessionID = object.ID
+			result.CustomerID = string(object.Customer)
+			result.ProviderSubscriptionID = string(object.Subscription)
+			result.ProviderCreatedAt = time.Unix(event.Created, 0).UTC()
+			return result, nil
 		}
 		result.Type = normalizedCheckoutEventType(event.Type)
 		result.OrderID, result.AccountID = cosmeticPaymentMetadata(object.Metadata)
@@ -338,6 +611,36 @@ func normalizeStripeCosmeticPaymentEvent(event stripe.Event) (*CosmeticPaymentEv
 		result.DisputeID = object.ID
 		result.DisputeStatus = object.Status
 
+	case stripe.EventTypeCustomerSubscriptionCreated,
+		stripe.EventTypeCustomerSubscriptionUpdated,
+		stripe.EventTypeCustomerSubscriptionDeleted:
+		var object stripeSubscriptionWebhookObject
+		if err := json.Unmarshal(event.Data.Raw, &object); err != nil {
+			return nil, fmt.Errorf("decode Stripe subscription event: %w", err)
+		}
+		result.Kind = CosmeticPaymentKindSubscription
+		switch event.Type {
+		case stripe.EventTypeCustomerSubscriptionCreated:
+			result.Type = CosmeticPaymentEventSubscriptionCreated
+		case stripe.EventTypeCustomerSubscriptionUpdated:
+			result.Type = CosmeticPaymentEventSubscriptionUpdated
+		default:
+			result.Type = CosmeticPaymentEventSubscriptionDeleted
+			result.Terminal = true
+		}
+		result.SubscriptionID, result.AccountID = cosmeticSubscriptionMetadata(object.Metadata)
+		result.ProviderSubscriptionID = object.ID
+		result.CustomerID = string(object.Customer)
+		status, terminal := normalizeStripeSubscriptionStatus(object.Status)
+		result.SubscriptionStatus = status
+		result.Terminal = result.Terminal || terminal
+		result.CancelAtPeriodEnd = object.CancelAtPeriodEnd
+		if object.CurrentPeriodEnd > 0 {
+			periodEnd := time.Unix(object.CurrentPeriodEnd, 0).UTC()
+			result.CurrentPeriodEnd = &periodEnd
+		}
+		result.ProviderCreatedAt = time.Unix(event.Created, 0).UTC()
+
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedCosmeticPaymentEvent, event.Type)
 	}
@@ -370,4 +673,8 @@ func normalizedRefundEventType(eventType stripe.EventType) CosmeticPaymentEventT
 
 func cosmeticPaymentMetadata(metadata map[string]string) (string, string) {
 	return strings.TrimSpace(metadata["order_id"]), strings.TrimSpace(metadata["account_id"])
+}
+
+func cosmeticSubscriptionMetadata(metadata map[string]string) (string, string) {
+	return strings.TrimSpace(metadata["subscription_id"]), strings.TrimSpace(metadata["account_id"])
 }

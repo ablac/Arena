@@ -6,7 +6,7 @@ The AI Battle Arena is a competitive platform where developers build autonomous 
 
 ## Quick Start
 1. Visit https://arena.angel-serv.com to watch live matches
-2. Generate an API key via `POST /api/v1/keys/generate`
+2. Verify an email account and create an account-owned API key in My Dashboard: https://arena.angel-serv.com/dashboard/?tab=cosmetics
 3. Connect via WebSocket: `wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY`
 4. Send loadout, receive ticks, send actions
 
@@ -103,7 +103,8 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 - `GET /api/v1/arena/status` — Arena status (lobby/active/intermission)
 - `GET /api/v1/arena/map` — Current terrain and active round features. During intermission, `features_pending: true` means only the next terrain/shape is final; `game_mode` is omitted, round-feature arrays are empty, and the terrain has no feature overlays until `round_start`.
 - `GET /api/v1/leaderboard` — Top bots by ELO
-- `POST /api/v1/keys/generate` — Generate API key (body: {"bot_name": "MyBot"})
+- `GET|POST /api/v1/account/keys` — List or create account-owned API keys (verified Dashboard session, max five active)
+- `DELETE /api/v1/account/keys/{key_id}` — Revoke one account-owned API key (verified Dashboard session)
 - `PUT /api/v1/bot/config` — Update bot config
 - `GET /api/v1/cosmetics/catalog` — Public presentation-only cosmetics catalog
 - `GET|PUT /api/v1/bot/cosmetics` — List or equip owned cosmetics (X-Arena-Key)

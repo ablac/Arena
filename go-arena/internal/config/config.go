@@ -372,13 +372,17 @@ type Config struct {
 
 	// Customer OIDC is deliberately a separate client/application from admin
 	// SSO. A public customer login must never mint an admin-authorized session.
-	CustomerOIDCEnabled      bool   `envconfig:"ARENA_CUSTOMER_OIDC_ENABLED" default:"false"`
-	CustomerOIDCIssuer       string `envconfig:"ARENA_CUSTOMER_OIDC_ISSUER" default:""`
-	CustomerOIDCClientID     string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_ID" default:""`
-	CustomerOIDCClientSecret string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_SECRET" default:""`
-	CustomerOIDCRedirectURI  string `envconfig:"ARENA_CUSTOMER_OIDC_REDIRECT_URI" default:""`
-	CustomerOIDCSessionTTL   int    `envconfig:"ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS" default:"24"`
-	CustomerBotLinkRPM       int    `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
+	CustomerOIDCEnabled         bool   `envconfig:"ARENA_CUSTOMER_OIDC_ENABLED" default:"false"`
+	CustomerOIDCIssuer          string `envconfig:"ARENA_CUSTOMER_OIDC_ISSUER" default:""`
+	CustomerOIDCClientID        string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_ID" default:""`
+	CustomerOIDCClientSecret    string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_SECRET" default:""`
+	CustomerOIDCRedirectURI     string `envconfig:"ARENA_CUSTOMER_OIDC_REDIRECT_URI" default:""`
+	CustomerOIDCSessionTTL      int    `envconfig:"ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS" default:"24"`
+	CustomerBotLinkRPM          int    `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
+	CustomerBotLinkPerHour      int    `envconfig:"ARENA_CUSTOMER_BOT_LINK_PER_HOUR" default:"10"`
+	CustomerAPIKeyMutationRPM   int    `envconfig:"ARENA_CUSTOMER_API_KEY_MUTATION_RPM" default:"30"`
+	CustomerAPIKeyCreatePerHour int    `envconfig:"ARENA_CUSTOMER_API_KEY_CREATE_PER_HOUR" default:"10"`
+	CustomerAPIKeyRevokePerHour int    `envconfig:"ARENA_CUSTOMER_API_KEY_REVOKE_PER_HOUR" default:"20"`
 
 	// Native customer email auth is an alternative to customer OIDC. It sends
 	// one-time passwordless links through the deployment's transactional SMTP
@@ -405,8 +409,10 @@ type Config struct {
 	StripeWebhookSecrets     string `envconfig:"ARENA_STRIPE_WEBHOOK_SECRETS" default:""`
 	StripeSuccessURL         string `envconfig:"ARENA_STRIPE_SUCCESS_URL" default:""`
 	StripeCancelURL          string `envconfig:"ARENA_STRIPE_CANCEL_URL" default:""`
+	StripePortalReturnURL    string `envconfig:"ARENA_STRIPE_PORTAL_RETURN_URL" default:""`
 	StripeAutomaticTax       bool   `envconfig:"ARENA_STRIPE_AUTOMATIC_TAX" default:"false"`
 	CosmeticsCheckoutRPM     int    `envconfig:"ARENA_COSMETICS_CHECKOUT_RPM" default:"10"`
+	CosmeticsAccountReadRPM  int    `envconfig:"ARENA_COSMETICS_ACCOUNT_READ_RPM" default:"60"`
 
 	// Developer lobby chat. Off by default; posting requires a signed-in
 	// customer session, so enabling chat without customer auth yields a
@@ -599,7 +605,18 @@ func StartingElo() int {
 // intentionally does nothing while checkout is disabled so development and
 // existing non-commerce deployments retain their current defaults.
 func ValidateCosmeticsCheckoutConfig(cfg Config) error {
+	if cfg.CosmeticsAccountReadRPM <= 0 {
+		return fmt.Errorf("ARENA_COSMETICS_ACCOUNT_READ_RPM must be positive")
+	}
 	if !cfg.CosmeticsCheckoutEnabled {
+		if len(ParseStripeWebhookSecrets(cfg.StripeWebhookSecrets)) > 0 {
+			if strings.TrimSpace(cfg.StripeSecretKey) == "" {
+				return fmt.Errorf("ARENA_STRIPE_SECRET_KEY must be retained while Stripe webhooks service existing cosmetic subscriptions")
+			}
+			if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_PORTAL_RETURN_URL", cfg.StripePortalReturnURL); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 	oidcReady := cfg.CustomerOIDCEnabled &&
@@ -625,6 +642,9 @@ func ValidateCosmeticsCheckoutConfig(cfg Config) error {
 		return err
 	}
 	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_CANCEL_URL", cfg.StripeCancelURL); err != nil {
+		return err
+	}
+	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_PORTAL_RETURN_URL", cfg.StripePortalReturnURL); err != nil {
 		return err
 	}
 	if cfg.CosmeticsCheckoutRPM <= 0 {

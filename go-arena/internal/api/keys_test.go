@@ -1,26 +1,388 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"arena-server/internal/config"
 	"arena-server/internal/db"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
+	"github.com/go-chi/chi/v5"
 )
+
+type fakeAccountAPIKeyStore struct {
+	keys            []db.AccountAPIKey
+	activeCount     int
+	createErr       error
+	deactivateErr   error
+	capacityErr     error
+	quotaErr        error
+	capacityActive  int
+	capacityTotal   int
+	enforceQuota    bool
+	quotaCounts     map[string]int
+	lastAccountID   string
+	lastKeyID       string
+	lastHash        string
+	lastPrefix      string
+	lastBot         *db.Bot
+	deactivatedKey  *db.AccountAPIKey
+	deactivateCalls int
+}
+
+func (f *fakeAccountAPIKeyStore) Capacity(_ context.Context, accountID string) (int, int, error) {
+	f.lastAccountID = accountID
+	return f.capacityActive, f.capacityTotal, f.capacityErr
+}
+
+func (f *fakeAccountAPIKeyStore) ConsumeQuota(_ context.Context, accountID string, action db.AccountAPIKeyQuotaAction, limit int) (bool, int, error) {
+	f.lastAccountID = accountID
+	if f.quotaErr != nil {
+		return false, 0, f.quotaErr
+	}
+	if !f.enforceQuota {
+		return true, limit, nil
+	}
+	if f.quotaCounts == nil {
+		f.quotaCounts = make(map[string]int)
+	}
+	key := accountID + ":" + string(action)
+	if f.quotaCounts[key] >= limit {
+		return false, 0, nil
+	}
+	f.quotaCounts[key]++
+	return true, limit - f.quotaCounts[key], nil
+}
+
+func (f *fakeAccountAPIKeyStore) List(_ context.Context, accountID string) ([]db.AccountAPIKey, int, error) {
+	f.lastAccountID = accountID
+	return f.keys, f.activeCount, nil
+}
+
+func (f *fakeAccountAPIKeyStore) Create(_ context.Context, accountID, keyID, keyHash, keyPrefix, _ string, bot *db.Bot) (*db.AccountAPIKey, int, error) {
+	f.lastAccountID, f.lastKeyID, f.lastHash, f.lastPrefix, f.lastBot = accountID, keyID, keyHash, keyPrefix, bot
+	if f.createErr != nil {
+		return nil, f.activeCount, f.createErr
+	}
+	return &db.AccountAPIKey{
+		ID: keyID, KeyPrefix: keyPrefix, BotID: bot.ID, BotName: bot.Name, CreatedAt: bot.CreatedAt, IsActive: true,
+	}, f.activeCount, nil
+}
+
+func (f *fakeAccountAPIKeyStore) Deactivate(_ context.Context, accountID, keyID string) (*db.AccountAPIKey, int, error) {
+	f.lastAccountID, f.lastKeyID = accountID, keyID
+	f.deactivateCalls++
+	if f.deactivateErr != nil {
+		return nil, f.activeCount, f.deactivateErr
+	}
+	return f.deactivatedKey, f.activeCount, nil
+}
+
+func verifiedAccountKeyRequest(method, target string, body []byte) *http.Request {
+	verifiedAt := time.Now()
+	req := httptest.NewRequest(method, target, bytes.NewReader(body))
+	return req.WithContext(withCustomerSession(req.Context(), &CustomerSession{
+		AccountID:       "account-1",
+		Email:           "owner@example.com",
+		EmailVerifiedAt: &verifiedAt,
+	}))
+}
+
+func TestAccountKeysListResponseNeverContainsSecretMaterial(t *testing.T) {
+	store := &fakeAccountAPIKeyStore{
+		keys: []db.AccountAPIKey{{
+			ID: "key-1", KeyPrefix: "arena_abc123", BotID: "bot-1", BotName: "First Bot", IsActive: true,
+		}},
+		activeCount: 1,
+	}
+	handler := newAccountKeysHandler(store, nil, security.GenerateAPIKey)
+	rec := httptest.NewRecorder()
+
+	handler.List(rec, verifiedAccountKeyRequest(http.MethodGet, "/api/v1/account/keys", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if store.lastAccountID != "account-1" {
+		t.Fatalf("listed account = %q", store.lastAccountID)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "key_hash") || strings.Contains(body, "api_key\"") {
+		t.Fatalf("list response contains secret material: %s", body)
+	}
+	var payload struct {
+		Keys        []db.AccountAPIKey `json:"keys"`
+		ActiveCount int                `json:"active_count"`
+		Limit       int                `json:"limit"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Keys) != 1 || payload.ActiveCount != 1 || payload.Limit != db.MaxActiveAccountAPIKeys {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+func TestAccountKeysCreateReturnsPlaintextOnceAndOwnedMetadata(t *testing.T) {
+	store := &fakeAccountAPIKeyStore{activeCount: 1}
+	generator := func() (string, string, string, error) {
+		return "arena_plaintext_once", "bcrypt-only", "arena_plaint", nil
+	}
+	handler := newAccountKeysHandler(store, nil, generator)
+	rec := httptest.NewRecorder()
+
+	handler.Create(rec, verifiedAccountKeyRequest(http.MethodPost, "/api/v1/account/keys", []byte(`{"bot_name":"<b>Key Bot</b>"}`)))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if store.lastAccountID != "account-1" || store.lastHash != "bcrypt-only" || store.lastPrefix != "arena_plaint" {
+		t.Fatalf("create inputs: account=%q hash=%q prefix=%q", store.lastAccountID, store.lastHash, store.lastPrefix)
+	}
+	if store.lastBot == nil || store.lastBot.Name != "Key Bot" || store.lastBot.APIKeyID != store.lastKeyID {
+		t.Fatalf("created bot = %+v, key id = %q", store.lastBot, store.lastKeyID)
+	}
+	var payload struct {
+		APIKey      string           `json:"api_key"`
+		Key         db.AccountAPIKey `json:"key"`
+		ActiveCount int              `json:"active_count"`
+		Limit       int              `json:"limit"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.APIKey != "arena_plaintext_once" || payload.Key.BotName != "Key Bot" || payload.ActiveCount != 1 || payload.Limit != db.MaxActiveAccountAPIKeys {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+func TestAccountKeysCreateMapsFiveKeyLimitToConflict(t *testing.T) {
+	store := &fakeAccountAPIKeyStore{activeCount: db.MaxActiveAccountAPIKeys, createErr: db.ErrCustomerAPIKeyLimit}
+	handler := newAccountKeysHandler(store, nil, security.GenerateAPIKey)
+	rec := httptest.NewRecorder()
+
+	handler.Create(rec, verifiedAccountKeyRequest(http.MethodPost, "/api/v1/account/keys", nil))
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "API_KEY_LIMIT") {
+		t.Fatalf("limit response = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAccountKeysCreatePreflightsCapacityBeforeGeneratingSecret(t *testing.T) {
+	const historyLimit = 100
+	for _, tc := range []struct {
+		name        string
+		activeCount int
+		totalCount  int
+		wantCode    string
+	}{
+		{name: "active cap", activeCount: db.MaxActiveAccountAPIKeys, totalCount: db.MaxActiveAccountAPIKeys, wantCode: "API_KEY_LIMIT"},
+		{name: "lifetime history cap", totalCount: historyLimit, wantCode: "API_KEY_HISTORY_LIMIT"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeAccountAPIKeyStore{capacityActive: tc.activeCount, capacityTotal: tc.totalCount}
+			generated := 0
+			handler := newAccountKeysHandler(store, nil, func() (string, string, string, error) {
+				generated++
+				return "arena_should_not_exist", "unused", "arena_unused", nil
+			})
+			recorder := httptest.NewRecorder()
+
+			handler.Create(recorder, verifiedAccountKeyRequest(http.MethodPost, "/api/v1/account/keys", nil))
+
+			if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), tc.wantCode) {
+				t.Fatalf("capacity response = %d %s", recorder.Code, recorder.Body.String())
+			}
+			if generated != 0 || store.lastBot != nil {
+				t.Fatalf("capacity rejection generated=%d bot=%+v", generated, store.lastBot)
+			}
+		})
+	}
+}
+
+func TestAccountKeyCreateQuotaIsPerAccountAcrossSourceIPs(t *testing.T) {
+	previous := config.C.CustomerAPIKeyCreatePerHour
+	config.C.CustomerAPIKeyCreatePerHour = 1
+	t.Cleanup(func() { config.C.CustomerAPIKeyCreatePerHour = previous })
+
+	store := &fakeAccountAPIKeyStore{enforceQuota: true}
+	generated := 0
+	handler := newAccountKeysHandler(store, nil, func() (string, string, string, error) {
+		generated++
+		return fmt.Sprintf("arena_plaintext_%d", generated), fmt.Sprintf("hash-%d", generated), fmt.Sprintf("prefix-%d", generated), nil
+	})
+
+	for index, remote := range []string{"198.51.100.10:1000", "203.0.113.20:2000"} {
+		req := verifiedAccountKeyRequest(http.MethodPost, "/api/v1/account/keys", nil)
+		req.RemoteAddr = remote
+		recorder := httptest.NewRecorder()
+		handler.Create(recorder, req)
+		if index == 0 && recorder.Code != http.StatusCreated {
+			t.Fatalf("first create = %d %s", recorder.Code, recorder.Body.String())
+		}
+		if index == 1 && (recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), "ACCOUNT_API_KEY_CREATE_RATE_LIMIT")) {
+			t.Fatalf("second create = %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
+	if generated != 1 {
+		t.Fatalf("generated secrets = %d, want 1", generated)
+	}
+}
+
+type recordingSessionRevoker struct {
+	botID  string
+	reason string
+	calls  int
+}
+
+func (r *recordingSessionRevoker) KickBot(botID, reason string) bool {
+	r.botID, r.reason = botID, reason
+	r.calls++
+	return true
+}
+
+func TestAccountKeysDeleteRevokesOwnedKeyAndRequestsSessionKick(t *testing.T) {
+	sessions := &recordingSessionRevoker{}
+	store := &fakeAccountAPIKeyStore{
+		activeCount:    0,
+		deactivatedKey: &db.AccountAPIKey{ID: "key-1", BotID: "bot-1", IsActive: false},
+	}
+	handler := newAccountKeysHandler(store, sessions, security.GenerateAPIKey)
+	req := verifiedAccountKeyRequest(http.MethodDelete, "/api/v1/account/keys/key-1", nil)
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("key_id", "key-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+	rec := httptest.NewRecorder()
+
+	handler.Deactivate(rec, req)
+
+	if rec.Code != http.StatusOK || store.lastAccountID != "account-1" || store.lastKeyID != "key-1" {
+		t.Fatalf("delete response = %d %s, account=%q key=%q", rec.Code, rec.Body.String(), store.lastAccountID, store.lastKeyID)
+	}
+	if sessions.calls != 1 || sessions.botID != "bot-1" || sessions.reason != "API key revoked" {
+		t.Fatalf("session revocation = calls %d, bot %q, reason %q", sessions.calls, sessions.botID, sessions.reason)
+	}
+	var payload struct {
+		Revoked     bool `json:"revoked"`
+		ActiveCount int  `json:"active_count"`
+		Limit       int  `json:"limit"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil || !payload.Revoked || payload.ActiveCount != 0 || payload.Limit != db.MaxActiveAccountAPIKeys {
+		t.Fatalf("payload = %+v, error %v", payload, err)
+	}
+}
+
+func TestAccountKeyRevokeQuotaStopsCreateRevokeCyclingAcrossSourceIPs(t *testing.T) {
+	previous := config.C.CustomerAPIKeyRevokePerHour
+	config.C.CustomerAPIKeyRevokePerHour = 2
+	t.Cleanup(func() { config.C.CustomerAPIKeyRevokePerHour = previous })
+
+	sessions := &recordingSessionRevoker{}
+	store := &fakeAccountAPIKeyStore{
+		enforceQuota:   true,
+		deactivatedKey: &db.AccountAPIKey{ID: "key", BotID: "bot", IsActive: false},
+	}
+	handler := newAccountKeysHandler(store, sessions, security.GenerateAPIKey)
+
+	for index := 0; index < 3; index++ {
+		keyID := fmt.Sprintf("key-%d", index)
+		req := verifiedAccountKeyRequest(http.MethodDelete, "/api/v1/account/keys/"+keyID, nil)
+		req.RemoteAddr = fmt.Sprintf("198.51.100.%d:1234", index+1)
+		routeCtx := chi.NewRouteContext()
+		routeCtx.URLParams.Add("key_id", keyID)
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+		recorder := httptest.NewRecorder()
+		handler.Deactivate(recorder, req)
+		if index < 2 && recorder.Code != http.StatusOK {
+			t.Fatalf("revoke %d = %d %s", index, recorder.Code, recorder.Body.String())
+		}
+		if index == 2 && (recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), "ACCOUNT_API_KEY_REVOKE_RATE_LIMIT")) {
+			t.Fatalf("third revoke = %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
+	if store.deactivateCalls != 2 || sessions.calls != 2 {
+		t.Fatalf("revoke side effects: database=%d sessions=%d", store.deactivateCalls, sessions.calls)
+	}
+}
+
+func TestAnonymousKeyGenerationIsRetiredAtEveryMount(t *testing.T) {
+	originalPool := db.Pool
+	db.Pool = nil
+	t.Cleanup(func() { db.Pool = originalPool })
+
+	router := NewRouter(game.NewGameEngine())
+	for _, tc := range []struct {
+		path        string
+		replacement string
+	}{
+		{path: "/api/v1/keys/generate", replacement: "/api/v1/account/keys"},
+		{path: "/arena/api/v1/keys/generate", replacement: "/arena/api/v1/account/keys"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, tc.path, nil))
+
+			if rec.Code != http.StatusGone {
+				t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusGone, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.replacement) {
+				t.Fatalf("body = %q, want authenticated replacement route", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestGenerateKeyRequiresVerifiedCustomerSession(t *testing.T) {
+	originalPool := db.Pool
+	db.Pool = nil
+	t.Cleanup(func() { db.Pool = originalPool })
+
+	for _, tc := range []struct {
+		name    string
+		session *CustomerSession
+		want    int
+	}{
+		{name: "anonymous", want: http.StatusUnauthorized},
+		{name: "unverified", session: &CustomerSession{AccountID: "account-1", Email: "owner@example.com"}, want: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/account/keys", nil)
+			if tc.session != nil {
+				req = req.WithContext(withCustomerSession(req.Context(), tc.session))
+			}
+			rec := httptest.NewRecorder()
+
+			GenerateKey(rec, req)
+
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}
 
 func TestGenerateKeyRequiresDatabase(t *testing.T) {
 	originalPool := db.Pool
 	db.Pool = nil
 	t.Cleanup(func() { db.Pool = originalPool })
 
+	verifiedAt := time.Now()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/account/keys", nil)
+	req = req.WithContext(withCustomerSession(req.Context(), &CustomerSession{
+		AccountID:       "account-1",
+		Email:           "owner@example.com",
+		EmailVerifiedAt: &verifiedAt,
+	}))
 	rec := httptest.NewRecorder()
-	GenerateKey(rec, httptest.NewRequest(http.MethodPost, "/api/v1/keys/generate", nil))
+	GenerateKey(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())

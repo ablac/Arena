@@ -27,7 +27,7 @@ func TestPostgresCosmeticCatalogAdministrationAndPublicProjection(t *testing.T) 
 	}
 	pack := CosmeticPack{
 		ID: "event-pack", CategoryID: category.ID, Name: "Event Pack", Description: "One event cosmetic.",
-		PriceCents: 99, Currency: "USD", IsPurchasable: true, IsActive: true, SortOrder: 50,
+		PriceCents: CosmeticPackPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true, SortOrder: 50,
 		ItemIDs: []string{item.ID},
 	}
 	if _, err := UpsertCosmeticPack(ctx, pack, "integration-admin"); err != nil {
@@ -43,9 +43,9 @@ func TestPostgresCosmeticCatalogAdministrationAndPublicProjection(t *testing.T) 
 		t.Fatalf("public pack = %+v, want embedded item %q", gotPack, item.ID)
 	}
 
-	pack.PriceCents = 129
+	pack.Description = "Updated event cosmetic description."
 	if _, err := UpsertCosmeticPack(ctx, pack, "integration-admin"); err != nil {
-		t.Fatalf("update pack price: %v", err)
+		t.Fatalf("update pack metadata: %v", err)
 	}
 	audit, err := ListCosmeticCatalogAudit(ctx, 20)
 	if err != nil {
@@ -188,12 +188,11 @@ func TestPostgresCosmeticPackUpdatesAreAtomicUnderConcurrency(t *testing.T) {
 
 	packA := CosmeticPack{
 		ID: "concurrent-pack", CategoryID: "starter-packs", Name: "Concurrent Pack A",
-		PriceCents: 101, Currency: "USD", IsPurchasable: true, IsActive: true, SortOrder: 90,
+		PriceCents: CosmeticPackPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true, SortOrder: 90,
 		ItemIDs: []string{"skin-neon-grid"},
 	}
 	packB := packA
 	packB.Name = "Concurrent Pack B"
-	packB.PriceCents = 202
 	packB.ItemIDs = []string{"weapon-void-edge"}
 
 	results := make(chan error, 2)
@@ -228,7 +227,7 @@ func TestPostgresCosmeticCatalogRejectsBrokenReferencesAndImmutableRenderIdentit
 
 	invalidPack := CosmeticPack{
 		ID: "broken-pack", CategoryID: "starter-packs", Name: "Broken Pack",
-		PriceCents: 99, Currency: "USD", IsPurchasable: true, IsActive: true,
+		PriceCents: CosmeticPackPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true,
 		ItemIDs: []string{"missing-item"},
 	}
 	if _, err := UpsertCosmeticPack(ctx, invalidPack, "integration-admin"); !errors.Is(err, ErrCosmeticCatalogInvalid) {
@@ -274,6 +273,44 @@ func TestPostgresCosmeticStarterPackAdminEditsSurviveSchemaRepair(t *testing.T) 
 	}
 }
 
+func TestPostgresCosmeticPackPriceMigrationPreservesOrderSnapshot(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	account, err := UpsertVerifiedCustomerAccount(ctx, "price-migration@example.com", "https://id.example", "price-migration", "Price Migration")
+	if err != nil {
+		t.Fatalf("create price migration account: %v", err)
+	}
+	order, err := CreateCosmeticOrder(ctx, account.ID, "neon-signal-pack", 1)
+	if err != nil || order.UnitPriceCents != CosmeticPackPriceCents {
+		t.Fatalf("create pre-migration order snapshot = (%+v, %v)", order, err)
+	}
+	// Simulate rows written by a pre-fixed-price release. Current order creation
+	// correctly rejects this catalog price, while schema repair must preserve
+	// historical order snapshots already in the ledger.
+	if _, err := Pool.Exec(ctx, `UPDATE cosmetic_packs SET price_cents = 699 WHERE id = 'neon-signal-pack'`); err != nil {
+		t.Fatalf("stage legacy catalog price: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		UPDATE cosmetic_orders SET unit_price_cents = 699, expected_subtotal_cents = 699 WHERE id = $1`, order.ID); err != nil {
+		t.Fatalf("stage legacy order price: %v", err)
+	}
+	if err := EnsureCosmeticsSchema(ctx); err != nil {
+		t.Fatalf("EnsureCosmeticsSchema price migration: %v", err)
+	}
+	var packPrice, orderPrice int64
+	if err := Pool.QueryRow(ctx, `
+		SELECT
+			(SELECT price_cents FROM cosmetic_packs WHERE id = 'neon-signal-pack'),
+			(SELECT unit_price_cents FROM cosmetic_orders WHERE id = $1)`, order.ID).Scan(&packPrice, &orderPrice); err != nil {
+		t.Fatalf("read migrated catalog and order prices: %v", err)
+	}
+	if packPrice != CosmeticPackPriceCents || orderPrice != 699 {
+		t.Fatalf("post-migration pack/order prices = %d/%d, want 199/699", packPrice, orderPrice)
+	}
+}
+
 func TestPostgresBuiltinCatalogEntriesAreEditableButNotDeletable(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {
@@ -292,7 +329,7 @@ func TestPostgresBuiltinCatalogEntriesAreEditableButNotDeletable(t *testing.T) {
 		t.Fatalf("seed pack built-in state = %+v, want true", pack)
 	}
 
-	pack.PriceCents = 149
+	pack.Description = "Operator-edited built-in description."
 	updated, err := UpsertCosmeticPack(ctx, *pack, "integration-admin")
 	if err != nil {
 		t.Fatalf("edit built-in pack: %v", err)
@@ -311,8 +348,8 @@ func TestPostgresBuiltinCatalogEntriesAreEditableButNotDeletable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAdminCosmeticCatalog after repair: %v", err)
 	}
-	if got := cosmeticPackByID(catalog.Packs, pack.ID); got == nil || got.PriceCents != 149 || !got.IsBuiltin {
-		t.Fatalf("built-in pack after repair = %+v, want edited price and built-in state", got)
+	if got := cosmeticPackByID(catalog.Packs, pack.ID); got == nil || got.Description != pack.Description || got.PriceCents != CosmeticPackPriceCents || !got.IsBuiltin {
+		t.Fatalf("built-in pack after repair = %+v, want edited metadata, fixed price, and built-in state", got)
 	}
 
 	category := CosmeticCategory{ID: "operator-collection", Name: "Operator Collection", IsActive: true}
@@ -331,7 +368,7 @@ func TestPostgresBuiltinCatalogEntriesAreEditableButNotDeletable(t *testing.T) {
 	}
 	operatorPack := CosmeticPack{
 		ID: "operator-pack", CategoryID: category.ID, Name: "Operator Pack",
-		PriceCents: 99, Currency: "USD", IsPurchasable: true, IsActive: true,
+		PriceCents: CosmeticPackPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true,
 		ItemIDs: []string{item.ID},
 	}
 	createdPack, err := UpsertCosmeticPack(ctx, operatorPack, "integration-admin")

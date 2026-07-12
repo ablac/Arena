@@ -29,6 +29,10 @@ assert.equal(emailSession.email_start_url, '/api/v1/account/email/start');
 assert.equal(emailSession.email_verify_url, '/api/v1/account/email/verify');
 assert.equal(cosmetics.accountRoute('session'), '/account/session');
 assert.equal(cosmetics.accountRoute('checkout'), '/account/cosmetics/checkout');
+assert.equal(cosmetics.accountRoute('subscriptionCheckout'), '/account/cosmetics/subscription/checkout');
+assert.equal(cosmetics.accountRoute('subscriptionPortal'), '/account/cosmetics/subscription/portal');
+assert.equal(cosmetics.accountRoute('keys'), '/account/keys');
+assert.equal(cosmetics.accountRoute('key', 'key/a'), '/account/keys/key%2Fa');
 recentPurchaseCheck('orders route', () => {
   assert.equal(cosmetics.accountRoute('orders'), '/account/cosmetics/orders');
 });
@@ -66,6 +70,90 @@ const snapshot = cosmetics.normalizeSnapshot({
 assert.equal(snapshot.account.email, 'owner@example.com');
 assert.equal(snapshot.licenses.length, 2, 'multiple purchased copies must remain separate licenses');
 
+const subscriptionOffer = cosmetics.normalizeSubscriptionOffer({
+  enabled:true,
+  price_cents:1999,
+  currency:'USD',
+  interval:'month',
+  includes_future_sets:true,
+  max_api_keys:5,
+});
+assert.deepEqual(JSON.parse(JSON.stringify(subscriptionOffer)), {
+  enabled:true,
+  price_cents:1999,
+  currency:'USD',
+  interval:'month',
+  includes_future_sets:true,
+  max_api_keys:5,
+});
+const managedSubscription = cosmetics.normalizeSubscription({
+  id:'sub-1',
+  status:'active',
+  has_access:false,
+  cancel_at_period_end:true,
+  current_period_end:'2026-08-12T12:00:00Z',
+  can_manage:true,
+  price_cents:1999,
+  currency:'USD',
+  interval:'month',
+  includes_future_sets:true,
+  max_api_keys:5,
+});
+assert.equal(managedSubscription.has_access, false, 'UI must use the server-authoritative has_access flag instead of inferring access from status');
+assert.equal(managedSubscription.cancel_at_period_end, true);
+
+const keyCollection = cosmetics.normalizeKeyCollection({
+  keys:[
+    {id:'key-1',key_prefix:'arena_alpha',bot_id:'bot-1',bot_name:'Alpha',created_at:'2026-07-12T10:00:00Z',is_active:true},
+    {id:'key-2',key_prefix:'arena_beta',bot_id:'bot-2',bot_name:'Beta',created_at:'2026-07-12T11:00:00Z',is_active:true},
+  ],
+  active_count:2,
+  limit:5,
+});
+assert.equal(keyCollection.active_count, 2);
+assert.equal(keyCollection.limit, 5);
+assert.equal(keyCollection.keys[0].key_prefix, 'arena_alpha');
+assert.deepEqual(
+  JSON.parse(JSON.stringify(cosmetics.keyCreateIntent('  New Bot  ', keyCollection))),
+  {ok:true,path:'/account/keys',body:{bot_name:'New Bot'}},
+);
+assert.equal(cosmetics.keyCreateIntent('Sixth Bot', {...keyCollection,active_count:5}).reason, 'key-limit-reached');
+assert.equal(cosmetics.keyCreateIntent('Pending Bot', null).reason, 'keys-unavailable');
+assert.deepEqual(
+  JSON.parse(JSON.stringify(cosmetics.keyRevokeIntent('key/1'))),
+  {ok:true,path:'/account/keys/key%2F1'},
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(cosmetics.subscriptionIntent(subscriptionOffer, null))),
+  {ok:true,kind:'checkout',path:'/account/cosmetics/subscription/checkout'},
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(cosmetics.subscriptionIntent(subscriptionOffer, {...managedSubscription,can_manage:true}))),
+  {ok:true,kind:'portal',path:'/account/cosmetics/subscription/portal'},
+);
+for (const status of ['created', 'checkout_pending', 'canceled', 'expired']) {
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(cosmetics.subscriptionIntent(subscriptionOffer, {...managedSubscription,status,can_manage:false}))),
+    {ok:true,kind:'checkout',path:'/account/cosmetics/subscription/checkout'},
+    `${status} subscriptions must be resumable or replaceable through checkout`,
+  );
+}
+assert.deepEqual(
+  JSON.parse(JSON.stringify(cosmetics.subscriptionIntent(subscriptionOffer, {...managedSubscription,status:'checkout_pending',can_manage:true}))),
+  {ok:true,kind:'portal',path:'/account/cosmetics/subscription/portal'},
+  'a completed Checkout with a known Stripe customer must expose cancellation while lifecycle webhooks catch up',
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(cosmetics.subscriptionIntent(subscriptionOffer, {...managedSubscription,status:'billing_mismatch',can_manage:true}))),
+  {ok:true,kind:'portal',path:'/account/cosmetics/subscription/portal'},
+  'billing mismatches must stay manageable while access remains revoked',
+);
+assert.equal(
+  cosmetics.subscriptionIntent(subscriptionOffer, {...managedSubscription,status:'active',can_manage:false}).reason,
+  'subscription-unmanageable',
+  'an active subscription without provider management must never fall through into duplicate checkout',
+);
+
 assert.deepEqual(
   JSON.parse(JSON.stringify(cosmetics.assignmentIntent(snapshot, 'license-1', 'bot-2'))),
   {ok: true, kind: 'move', license_id: 'license-1', bot_id: 'bot-2', previous_bot_id: 'bot-1'},
@@ -93,13 +181,14 @@ assert.match(inactiveBotHTML, /data-license-equip="license-refunded" disabled>Bo
 
 const catalog = {
   checkout_enabled: true,
+  subscription_offer: subscriptionOffer,
   categories: [{id:'sets',name:'Sets'}],
   packs: Array.from({length:100}, (_, index) => {
     const number = String(index + 1).padStart(3, '0');
     const assetKey = `arena_set_${number}_signal_${number}`;
     return {
       id:`set-${number}-pack`, name:`Signal Set ${number}`, description:`Set ${number}`,
-      category_id:'sets', is_purchasable:true, price_cents:499, currency:'USD',
+      category_id:'sets', is_purchasable:true, price_cents:199, currency:'USD',
       items:['bot_skin','weapon_skin','attachment'].map(slot => ({id:`${slot}-${number}`,slot,asset_key:assetKey,name:`${slot} ${number}`})),
     };
   }),
@@ -107,6 +196,13 @@ const catalog = {
 const shopHTML = cosmetics.renderPanel(snapshot, {catalog});
 assert.equal((shopHTML.match(/data-shop-pack=/g) || []).length, 12, 'dashboard shop should bound its initial pack render');
 assert.match(shopHTML, /data-pack-checkout="set-001-pack"/, 'enabled sale-ready packs should expose checkout');
+assert.match(shopHTML, /\$1\.99/, 'every one-time cosmetic set should display the $1.99 catalog price');
+assert.match(shopHTML, /All Access/);
+assert.match(shopHTML, /\$19\.99[\s\S]*month/);
+assert.match(shopHTML, /every current and future cosmetic set/i);
+assert.match(shopHTML, /up to 5 active API keys/i);
+assert.match(shopHTML, /subscription cosmetics are removed/i);
+assert.match(shopHTML, /data-subscription-checkout/, 'accounts without a managed subscription should be able to start All Access checkout');
 const searchedShopHTML = cosmetics.renderPanel(snapshot, {catalog, shopQuery:'Signal Set 099'});
 assert.equal((searchedShopHTML.match(/data-shop-pack=/g) || []).length, 1, 'dashboard search should narrow the pack list');
 const noResultsHTML = cosmetics.renderPanel(snapshot, {catalog, shopQuery:'missing set'});
@@ -238,6 +334,55 @@ assert.doesNotMatch(html, /Neon <Grid>/, 'cosmetic names must be escaped');
 assert.match(html, /Neon &lt;Grid&gt;/);
 assert.doesNotMatch(html, /value="arena_alpha"/, 'rendered account UI must not contain raw API keys');
 
+const managedHTML = cosmetics.renderPanel({
+  ...snapshot,
+  subscription:{
+    id:'sub-active',status:'active',has_access:true,cancel_at_period_end:true,
+    current_period_end:'2026-08-12T12:00:00Z',can_manage:true,price_cents:1999,currency:'USD',interval:'month',
+    includes_future_sets:true,max_api_keys:5,
+  },
+  subscription_offer:subscriptionOffer,
+}, {
+  catalog,
+  keys:keyCollection,
+  generatedKey:{api_key:'arena_one_time_secret',bot_id:'bot-new',key:{id:'key-new',key_prefix:'arena_one'}},
+});
+assert.match(managedHTML, /All Access/);
+assert.match(managedHTML, /Access active/);
+assert.match(managedHTML, /data-subscription-portal/, 'an existing provider subscription should expose customer portal management');
+assert.doesNotMatch(managedHTML, /data-subscription-checkout/, 'managed subscriptions must not offer a duplicate checkout');
+assert.match(managedHTML, /2 of 5 active/);
+assert.match(managedHTML, /id="accountKeyForm"/);
+assert.match(managedHTML, /data-account-key-revoke="key-1"/);
+assert.match(managedHTML, /value="arena_one_time_secret"/, 'a newly issued key should be shown exactly once inside the authenticated Dashboard');
+assert.match(managedHTML, /data-account-key-clear/);
+
+const billingMismatchHTML = cosmetics.renderPanel({
+  ...snapshot,
+  subscription:{...managedSubscription,status:'billing_mismatch',has_access:false,can_manage:true},
+  subscription_offer:subscriptionOffer,
+}, {catalog,keys:keyCollection});
+assert.match(billingMismatchHTML, /Billing needs attention/, 'a plan mismatch must clearly direct the customer to billing management');
+assert.match(billingMismatchHTML, /data-subscription-portal/);
+
+const pendingSubscriptionHTML = cosmetics.renderPanel({
+  ...snapshot,
+  subscription:{...managedSubscription,status:'checkout_pending',has_access:false,can_manage:false},
+  subscription_offer:subscriptionOffer,
+}, {catalog,keys:keyCollection});
+assert.match(pendingSubscriptionHTML, /Checkout pending/, 'an resumable hosted session must not be described as ended access');
+assert.match(pendingSubscriptionHTML, /data-subscription-checkout/);
+
+const atLimitHTML = cosmetics.renderPanel(snapshot, {
+  keys:{...keyCollection,active_count:5},
+});
+assert.match(atLimitHTML, /5 of 5 active/);
+assert.match(atLimitHTML, /id="accountKeyCreate"[^>]*disabled/, 'Dashboard must disable key generation at the five-active-key limit');
+const loadingKeysHTML = cosmetics.renderPanel(snapshot, {keys:null});
+assert.match(loadingKeysHTML, /id="accountKeyCreate"[^>]*disabled/, 'Dashboard must not create a key before current usage is known');
+const failedKeysHTML = cosmetics.renderPanel(snapshot, {keys:null,keysError:'key service offline'});
+assert.match(failedKeysHTML, /id="accountKeyCreate"[^>]*disabled/, 'Dashboard must keep generation fail-closed when the key list is unavailable');
+
 const dashboardHTML = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8');
 assert.match(dashboardHTML, /dashboard\/login/, 'verified-email sign-in should use the customer dashboard login route');
 assert.match(dashboardHTML, /id="accountSignInButton"[^>]*disabled/, 'email login stays disabled until session capability is known');
@@ -255,7 +400,7 @@ const linkHandler = dashboardHTML.slice(
 assert.doesNotMatch(linkHandler, /saveKey|localStorage/, 'linking a bot must not persist the proof key in dashboard storage');
 
 recentPurchaseCheck('dashboard script cache version', () => {
-  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260711d/);
+  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260712c/);
 });
 recentPurchaseCheck('long purchase data remains contained', () => {
   assert.match(dashboardHTML, /\.cosmetic-purchase-head>div\{[^}]*min-width:0/);
@@ -279,14 +424,17 @@ if (refreshStart >= 0 && refreshEnd > refreshStart) {
     accountCatalogError:'',
     accountOrders:null,
     accountOrdersError:'',
+    accountKeys:null,
+    accountKeysError:'',
     accountSession:{account:{id:'acct-1',email:'owner@example.com',email_verified:true}},
     accountViewError:'',
     accountViewNotice:'',
     window:{
       ArenaAccountCosmetics:{
-        accountRoute:name => ({cosmetics:'/account/cosmetics',orders:'/account/cosmetics/orders'})[name],
+        accountRoute:name => ({cosmetics:'/account/cosmetics',orders:'/account/cosmetics/orders',keys:'/account/keys'})[name],
         normalizeSnapshot:value => value,
         normalizeCatalog:value => value,
+        normalizeKeyCollection:value => value,
       },
     },
   };
@@ -304,6 +452,7 @@ if (refreshStart >= 0 && refreshEnd > refreshStart) {
         rejectOrders = reject;
       });
     }
+    if (path === '/account/keys') return Promise.resolve(keyCollection);
     if (path === '/cosmetics/catalog') return Promise.resolve(catalog);
     return Promise.resolve({account:refreshSandbox.accountSession.account,bots:[],licenses:[]});
   };
@@ -313,7 +462,9 @@ if (refreshStart >= 0 && refreshEnd > refreshStart) {
   await new Promise(resolve => setImmediate(resolve));
   recentPurchaseCheck('independent bounded fetch', () => {
     assert.ok(refreshCalls.includes('/account/cosmetics/orders?limit=20'));
+    assert.ok(refreshCalls.includes('/account/keys'));
     assert.equal(refreshSandbox.accountSnapshot.account.id, 'acct-1');
+    assert.equal(refreshSandbox.accountKeys.active_count, 2);
     assert.ok(refreshRenders.some(state => state.hasInventory && state.orders === null),
       'inventory must render while purchase history is still pending');
   });

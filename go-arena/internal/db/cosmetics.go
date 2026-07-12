@@ -331,6 +331,19 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_account_bot_links_account
 			ON account_bot_links (account_id, linked_at, bot_id)`,
+		`CREATE TABLE IF NOT EXISTS account_api_keys (
+			account_id TEXT NOT NULL REFERENCES customer_accounts(id) ON DELETE CASCADE,
+			api_key_id TEXT NOT NULL UNIQUE REFERENCES api_keys(id) ON DELETE CASCADE,
+			linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (account_id, api_key_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_account_api_keys_account
+			ON account_api_keys (account_id, linked_at, api_key_id)`,
+		`INSERT INTO account_api_keys (account_id, api_key_id, linked_at)
+			SELECT links.account_id, bots.api_key_id, links.linked_at
+			FROM account_bot_links links
+			JOIN bots ON bots.id = links.bot_id
+			ON CONFLICT (api_key_id) DO NOTHING`,
 		`CREATE TABLE IF NOT EXISTS cosmetic_licenses (
 			id TEXT PRIMARY KEY,
 			account_id TEXT REFERENCES customer_accounts(id) ON DELETE RESTRICT,
@@ -489,6 +502,16 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 				return fmt.Errorf("EnsureCosmeticsSchema seed pack item %s/%s: %w", pack.ID, itemID, err)
 			}
 		}
+	}
+	// Every sale-ready set follows one fixed catalog price. Orders snapshot the
+	// price before Checkout, so repairing catalog rows cannot rewrite historical
+	// or already-created order amounts.
+	if _, err := tx.Exec(ctx, `
+		UPDATE cosmetic_packs
+		SET price_cents = $1, currency = 'USD', updated_at = NOW()
+		WHERE is_purchasable = true AND is_free = false
+		  AND (price_cents <> $1 OR currency <> 'USD')`, CosmeticPackPriceCents); err != nil {
+		return fmt.Errorf("EnsureCosmeticsSchema normalize pack prices: %w", err)
 	}
 	categoryIDs := make([]string, 0, len(starterCosmeticCategories))
 	for _, category := range starterCosmeticCategories {

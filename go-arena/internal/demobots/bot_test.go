@@ -1,6 +1,53 @@
 package demobots
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"arena-server/internal/db"
+)
+
+func TestDemoBotRegistrationProvisionsCredentialInProcess(t *testing.T) {
+	originalPool := db.Pool
+	db.Pool = nil
+	t.Cleanup(func() { db.Pool = originalPool })
+
+	requests := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.Method + " " + r.URL.Path
+		if r.URL.Path == "/api/v1/keys/generate" {
+			t.Error("demo bot called retired public key-generation route")
+			http.Error(w, "retired", http.StatusGone)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	bot := newDemoBot(DemoConfigs[0], server.URL)
+	provisionCalls := 0
+	bot.credentialProvisioner = func(context.Context, BotConfig) (string, error) {
+		provisionCalls++
+		return "arena_demo_test_credential", nil
+	}
+
+	if err := bot.register(context.Background()); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if provisionCalls != 1 {
+		t.Fatalf("provision calls = %d, want 1", provisionCalls)
+	}
+	select {
+	case request := <-requests:
+		if request != "PUT /api/v1/bot/config" {
+			t.Fatalf("unexpected HTTP request: %s", request)
+		}
+	default:
+		t.Fatal("demo bot did not configure its in-process credential")
+	}
+}
 
 func TestDemoBotActsOnlyOnAliveTick(t *testing.T) {
 	for _, tc := range []struct {

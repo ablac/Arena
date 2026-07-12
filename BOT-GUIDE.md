@@ -8,19 +8,23 @@
 
 ## Quick Start (5 Minutes)
 
-### 1. Generate an API Key
+### 1. Create an API Key
 
-```bash
-curl -X POST https://arena.angel-serv.com/api/v1/keys/generate
-```
+Sign in with a verified email in the [Arena Dashboard](https://arena.angel-serv.com/dashboard/) and create the key there. API keys are server-generated, saved as non-recoverable hashes, and owned by your account. Each account can have at most five active keys.
 
 Response:
 ```json
 {
   "api_key": "arena_abc123...",
-  "bot_id": "550e8400-e29b-41d4-a716-446655440000",
-  "created_at": "2026-03-18T00:00:00Z",
-  "message": "API key created successfully"
+  "key": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "key_prefix": "arena_abc123",
+    "bot_id": "550e8400-e29b-41d4-a716-446655440001",
+    "bot_name": "My Bot",
+    "is_active": true
+  },
+  "active_count": 1,
+  "limit": 5
 }
 ```
 
@@ -110,7 +114,6 @@ All HTTP endpoints are also available under the `/arena` prefix (e.g., `/arena/a
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/health` | Health check — returns `{"status": "ok", "bots_online": N}` |
-| `POST` | `/api/v1/keys/generate` | Generate a new API key and bot (rate-limited) |
 | `GET` | `/api/v1/leaderboard` | Leaderboard with `?limit=N&offset=N` pagination |
 | `GET` | `/api/v1/arena/status` | Current round, bots alive, safe zone radius |
 | `GET` | `/api/v1/service-status` | Current public broadcast and scheduled-maintenance status (`Cache-Control: no-store`) |
@@ -130,6 +133,16 @@ All HTTP endpoints are also available under the `/arena` prefix (e.g., `/arena/a
 | `GET` | `/api/v1/bot/cosmetics` | Free plus account-assigned, locked, and equipped cosmetics |
 | `PUT` | `/api/v1/bot/cosmetics` | Equip a free or account-assigned cosmetic without changing gameplay stats |
 | `DELETE` | `/api/v1/keys/revoke` | Permanently revoke your API key |
+
+### Verified Customer Account Endpoints
+
+These same-origin Dashboard endpoints use the customer session cookie. `POST` and `DELETE` also require `X-CSRF-Token`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/account/keys` | List account-owned keys without plaintext or hashes |
+| `POST` | `/api/v1/account/keys` | Create a server-issued key and bot (maximum five active; ten creations/hour/account) |
+| `DELETE` | `/api/v1/account/keys/{key_id}` | Revoke one account-owned key |
 
 ### Authentication Methods
 
@@ -676,7 +689,8 @@ Items spawn on the map and can be collected with the `use_item` action.
 - WebSocket messages: **25 per second** max
 - WebSocket connections: **3 per minute** per IP
 - Reconnect cooldown: **5 seconds** per API key
-- API key generation: **500 per hour** per IP
+- Account API keys: **5 active keys maximum**, **10 creations/hour**, and **20 revocations/hour** per verified email account; mutations are also fail-closed rate-limited by IP
+- Issued-key history: **100 durable records maximum** per account; revoked records remain linked for audit and the Dashboard directs the owner to support at the cap
 
 ---
 
@@ -686,20 +700,13 @@ Items spawn on the map and can be collected with the `use_item` action.
 import asyncio
 import json
 import math
+import os
 import urllib.request
 
 import websockets
 
 API_BASE = "https://arena.angel-serv.com"
 WS_URL = "wss://arena.angel-serv.com/ws/bot"
-
-
-def generate_key():
-    """Generate a new API key (do this once, save the result)."""
-    req = urllib.request.Request(f"{API_BASE}/api/v1/keys/generate", method="POST")
-    with urllib.request.urlopen(req) as resp:
-        data = json.loads(resp.read())
-    return data["api_key"], data["bot_id"]
 
 
 def dist(a, b):
@@ -884,14 +891,11 @@ async def run_bot(api_key: str):
 
 
 if __name__ == "__main__":
-    # Generate a key or use an existing one
+    # Create the key in the verified-email Dashboard, then pass it securely.
     import sys
-    if len(sys.argv) > 1:
-        key = sys.argv[1]
-    else:
-        key, bot_id = generate_key()
-        print(f"Generated new bot: {bot_id}")
-        print(f"API Key: {key}")
+    key = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("ARENA_API_KEY")
+    if not key:
+        raise SystemExit("Set ARENA_API_KEY or pass a Dashboard-created key as the first argument")
     asyncio.run(run_bot(key))
 ```
 
@@ -902,8 +906,8 @@ pip install websockets
 
 Run:
 ```bash
-python bot.py                    # generate new key and play
-python bot.py YOUR_API_KEY       # use existing key
+python bot.py                    # use ARENA_API_KEY from the environment
+python bot.py YOUR_API_KEY       # or pass a Dashboard-created key
 ```
 
 ---
@@ -913,26 +917,17 @@ python bot.py YOUR_API_KEY       # use existing key
 ```javascript
 const WebSocket = require("ws");
 
-const API_BASE = "https://arena.angel-serv.com";
 const WS_URL = "wss://arena.angel-serv.com/ws/bot";
-
-async function generateKey() {
-  const resp = await fetch(`${API_BASE}/api/v1/keys/generate`, { method: "POST" });
-  return resp.json();
-}
 
 function dist(a, b) {
   return Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2);
 }
 
 async function main() {
-  // Generate key or use from CLI arg
-  let apiKey = process.argv[2];
+  // Create the key in the verified-email Dashboard first.
+  const apiKey = process.argv[2] || process.env.ARENA_API_KEY;
   if (!apiKey) {
-    const data = await generateKey();
-    apiKey = data.api_key;
-    console.log(`New bot: ${data.bot_id}`);
-    console.log(`API Key: ${apiKey}`);
+    throw new Error("Set ARENA_API_KEY or pass a Dashboard-created key");
   }
 
   const ws = new WebSocket(`${WS_URL}?key=${apiKey}`);

@@ -100,10 +100,22 @@ func TestManagedSchemaPreflightRequiresCosmeticCommerceLedger(t *testing.T) {
 		"('cosmetic_order_licenses', 'license_id')",
 		"('cosmetic_payment_events', 'payload_hash')",
 		"('cosmetic_order_refunds', 'refund_id')",
+		"('cosmetic_subscriptions', 'id')",
+		"('cosmetic_subscriptions', 'stripe_subscription_id')",
+		"('cosmetic_subscriptions', 'last_provider_event_created_at')",
+		"('cosmetic_subscriptions', 'last_provider_state_observed_at')",
+		"('cosmetic_subscription_licenses', 'license_id')",
+		"('cosmetic_subscription_events', 'payload_hash')",
 	} {
 		if !strings.Contains(managedSchemaPreflightQuery, required) {
 			t.Errorf("managed schema preflight is missing %s", required)
 		}
+	}
+}
+
+func TestManagedSchemaPreflightRequiresAccountAPIKeyOwnership(t *testing.T) {
+	if required := "('account_api_keys', 'account_id')"; !strings.Contains(managedSchemaPreflightQuery, required) {
+		t.Fatalf("managed schema preflight is missing %s", required)
 	}
 }
 

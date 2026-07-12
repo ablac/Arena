@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"arena-server/internal/config"
 	"arena-server/internal/db"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
@@ -104,18 +105,33 @@ func (databaseCosmeticsStore) RevokeLicense(ctx context.Context, licenseID strin
 // CosmeticsHandler owns catalog, entitlement, and equip HTTP behavior. The
 // store seam keeps payment fulfillment/provider work independent from routes.
 type CosmeticsHandler struct {
-	store           cosmeticsStore
-	engine          *game.GameEngine
-	checkoutEnabled bool
-	verifyAPIKey    func(context.Context, string) (*db.Bot, error)
+	store                      cosmeticsStore
+	engine                     *game.GameEngine
+	checkoutEnabled            bool
+	verifyAPIKey               func(context.Context, string) (*db.Bot, error)
+	consumeAccountKeyQuota     func(context.Context, string, db.AccountAPIKeyQuotaAction, int) (bool, int, error)
+	checkAccountInventoryQuota func(context.Context, string, int) (bool, error)
 }
 
 func NewCosmeticsHandler(engine *game.GameEngine) *CosmeticsHandler {
-	return &CosmeticsHandler{store: databaseCosmeticsStore{}, engine: engine, verifyAPIKey: security.VerifyAPIKey}
+	return &CosmeticsHandler{
+		store: databaseCosmeticsStore{}, engine: engine, verifyAPIKey: security.VerifyAPIKey,
+		consumeAccountKeyQuota: db.ConsumeAccountAPIKeyQuota,
+		checkAccountInventoryQuota: func(ctx context.Context, accountID string, limit int) (bool, error) {
+			allowed, _, _, err := security.CheckRateLimit(ctx, "cosmetics-inventory-account:"+accountID, limit, 60)
+			return allowed, err
+		},
+	}
 }
 
 func newCosmeticsHandlerWithStore(store cosmeticsStore, engine *game.GameEngine) *CosmeticsHandler {
-	return &CosmeticsHandler{store: store, engine: engine, verifyAPIKey: security.VerifyAPIKey}
+	return &CosmeticsHandler{
+		store: store, engine: engine, verifyAPIKey: security.VerifyAPIKey,
+		consumeAccountKeyQuota: func(context.Context, string, db.AccountAPIKeyQuotaAction, int) (bool, int, error) {
+			return true, 0, nil
+		},
+		checkAccountInventoryQuota: func(context.Context, string, int) (bool, error) { return true, nil },
+	}
 }
 
 func (h *CosmeticsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
@@ -124,6 +140,7 @@ func (h *CosmeticsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "cosmetics catalog is unavailable")
 		return
 	}
+	checkoutEnabled := h.checkoutEnabled && cosmeticCatalogHasPurchasablePack(catalog)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"categories": catalog.Categories,
 		"packs":      catalog.Packs,
@@ -131,7 +148,8 @@ func (h *CosmeticsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 		// A catalog sale flag is not enough to make payments safe. This remains
 		// false until a verified checkout/webhook provider is wired into the
 		// handler, even if an operator stages purchasable catalog entries.
-		"checkout_enabled": h.checkoutEnabled && cosmeticCatalogHasPurchasablePack(catalog),
+		"checkout_enabled":   checkoutEnabled,
+		"subscription_offer": db.DefaultCosmeticSubscriptionOffer(checkoutEnabled),
 	})
 }
 
@@ -152,7 +170,7 @@ func cosmeticCatalogHasPurchasablePack(catalog *db.CosmeticCatalog) bool {
 		activeItems[item.ID] = item.IsActive && activeCategories[item.CategoryID]
 	}
 	for _, pack := range catalog.Packs {
-		if !pack.IsActive || !pack.IsPurchasable || pack.IsFree || pack.PriceCents <= 0 ||
+		if !pack.IsActive || !pack.IsPurchasable || pack.IsFree || pack.PriceCents != db.CosmeticPackPriceCents ||
 			!strings.EqualFold(pack.Currency, "USD") || !activeCategories[pack.CategoryID] {
 			continue
 		}
@@ -418,6 +436,17 @@ func (h *CosmeticsHandler) AccountInventory(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusUnauthorized, "customer authentication required")
 		return
 	}
+	if h.checkAccountInventoryQuota != nil {
+		allowed, err := h.checkAccountInventoryQuota(r.Context(), session.AccountID, config.C.CosmeticsAccountReadRPM)
+		// Inventory reads degrade open when Redis is unavailable, but an
+		// authoritative over-quota result stops the account-locking DB sync.
+		if err == nil && !allowed {
+			writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
+				"error": "account cosmetics rate limit exceeded", "code": "ACCOUNT_COSMETICS_RATE_LIMIT",
+			})
+			return
+		}
+	}
 	inventory, err := h.store.AccountInventory(r.Context(), session.AccountID)
 	if err != nil {
 		if errors.Is(err, db.ErrNoDatabase) {
@@ -427,6 +456,7 @@ func (h *CosmeticsHandler) AccountInventory(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to load customer cosmetics")
 		return
 	}
+	inventory.SubscriptionOffer = db.DefaultCosmeticSubscriptionOffer(h.checkoutEnabled)
 	writeJSON(w, http.StatusOK, inventory)
 }
 
@@ -440,11 +470,27 @@ func (h *CosmeticsHandler) LinkAccountBot(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusUnauthorized, "customer authentication required")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var req linkAccountBotRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil || strings.TrimSpace(req.APIKey) == "" || len(req.APIKey) > 256 {
 		writeError(w, http.StatusBadRequest, "api_key is required")
+		return
+	}
+	allowed, remaining, err := h.consumeAccountKeyQuota(
+		r.Context(), session.AccountID, db.AccountAPIKeyQuotaLink, config.C.CustomerBotLinkPerHour,
+	)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "account bot-link quota is temporarily unavailable")
+		return
+	}
+	if !allowed {
+		writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
+			"error": "account bot-link rate limit exceeded", "code": "ACCOUNT_BOT_LINK_RATE_LIMIT",
+			"limit": config.C.CustomerBotLinkPerHour, "remaining": remaining,
+			"window": "1h", "retry_after": 3600,
+		})
 		return
 	}
 	bot, err := h.verifyAPIKey(r.Context(), strings.TrimSpace(req.APIKey))
@@ -457,6 +503,16 @@ func (h *CosmeticsHandler) LinkAccountBot(w http.ResponseWriter, r *http.Request
 		switch {
 		case errors.Is(err, db.ErrCustomerBotAlreadyLinked):
 			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, db.ErrCustomerAPIKeyAlreadyOwned):
+			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, db.ErrCustomerAPIKeyLimit):
+			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, db.ErrCustomerAPIKeyHistoryLimit):
+			writeJSON(w, http.StatusConflict, map[string]interface{}{
+				"error": err.Error(), "code": "API_KEY_HISTORY_LIMIT",
+				"history_limit": db.MaxAccountAPIKeyHistory,
+				"support":       "Contact Arena support to review your account's archived API-key history.",
+			})
 		case errors.Is(err, db.ErrCustomerBotKeyInactive):
 			writeError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, db.ErrCustomerAccountUnverified):
