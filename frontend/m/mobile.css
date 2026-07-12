@@ -520,6 +520,7 @@ body {
 }
 
 .k-killer { font-weight: 600; color: var(--accent-blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k-taunt .k-taunt-text { color: var(--accent-gold); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .k-icon { flex: none; color: var(--text-muted); }
 .k-victim { font-weight: 600; color: var(--accent-red); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
