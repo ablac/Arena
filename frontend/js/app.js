@@ -5,13 +5,12 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260711b';
+import { ArenaEngine } from './renderer/engine.js?v=20260712a';
 import { HudRenderer } from './renderer/hud.js?v=20260711b';
 import { Minimap } from './renderer/minimap.js?v=20260710d';
 import { SpectatorSocket } from './spectator-ws.js';
 import { initLeaderboardWidget } from './leaderboard.js?v=20260710f';
 import { initKeyGenerator } from './key-generator.js?v=20260710f';
-import { initCosmeticsPanel } from './cosmetics-panel.js?v=20260711b';
 import { isEnabled, onSettingsChange } from './settings.js';
 import { initSettingsPanel } from './settings-panel.js';
 import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';
@@ -150,9 +149,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Leaderboard
   initLeaderboardWidgets();
 
-  // Public catalog preview and key generation are independent. Cosmetic
-  // ownership and bot linking happen only in the verified-email dashboard.
-  initCosmeticsPanel(document.getElementById('cosmetics-panel'));
   const keygenEl = document.getElementById('keygen-card');
   if (keygenEl) {
     initKeyGenerator(keygenEl);

@@ -358,14 +358,16 @@ export function disposeBotCosmetics(entry) {
 }
 
 /** Apply or live-refresh a bot's allowlisted cosmetic loadout. */
-export function applyBotCosmetics(entry, bot, scene) {
+export function applyBotCosmetics(entry, bot, scene, options = {}) {
   if (!entry || !bot) return;
   const loadout = desiredLoadout(bot);
-  const enabled = {
-    bot_skin: isEnabled('botCosmetics', 'skins'),
-    weapon_skin: isEnabled('botCosmetics', 'weaponFinishes'),
-    attachment: isEnabled('botCosmetics', 'attachments'),
-  };
+  const enabled = options.forceEnabled === true
+    ? {bot_skin: true, weapon_skin: true, attachment: true}
+    : {
+        bot_skin: isEnabled('botCosmetics', 'skins'),
+        weapon_skin: isEnabled('botCosmetics', 'weaponFinishes'),
+        attachment: isEnabled('botCosmetics', 'attachments'),
+      };
   const signature = [
     loadout.bot_skin.key, enabled.bot_skin,
     loadout.weapon_skin.key, enabled.weapon_skin,

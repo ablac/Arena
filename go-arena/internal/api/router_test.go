@@ -16,14 +16,15 @@ import (
 // nothing telling it to revalidate.
 func TestNoCacheStaticHandler_HTMLDocuments(t *testing.T) {
 	cases := []struct {
-		name      string
-		path      string
+		name        string
+		path        string
 		wantNoCache bool
 	}{
 		{"root", "/", true},
 		{"dashboard directory", "/dashboard/", true},
 		{"admin directory", "/admin/", true},
 		{"mobile directory", "/m/", true},
+		{"shop directory", "/shop/", true},
 		{"explicit html file", "/dashboard/index.html", true},
 		{"js asset", "/js/app.js", true},
 		{"css asset", "/css/arena.css", true},

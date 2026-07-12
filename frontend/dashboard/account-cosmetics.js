@@ -338,7 +338,7 @@
         <div><div class="cosmetic-kicker">Set shop</div><h2 id="cosmetic-shop-title">Cosmetic sets</h2></div>
         <span>${escapeHTML(summary)}</span>
       </div>
-      <p class="cosmetic-rule">Every set is visual only. Purchases belong to this verified email account, then each license can be assigned to one linked bot.</p>
+      <p class="cosmetic-rule">Buying a pack grants one license for every included item. Each purchased item copy can be assigned to one bot at a time; items from the same pack can be assigned to different bots.</p>
       ${feedback}
       <label class="cosmetic-shop-search" for="accountCosmeticSearch">Find a set
         <input type="search" id="accountCosmeticSearch" data-account-shop-search value="${escapeHTML(query)}" placeholder="Search name, number, or item" autocomplete="off">
@@ -495,7 +495,7 @@
           <div><div class="cosmetic-kicker">Your collection</div><h2>Cosmetic licenses</h2></div>
           <span>${escapeHTML(licenseSummary)}</span>
         </div>
-        <p class="cosmetic-rule">Each license can be assigned to one bot at a time. Moving changes which bot may use it; Equip is a separate, explicit action that can replace that bot's active cosmetic in the same slot.</p>
+        <p class="cosmetic-rule">Every purchased pack item appears here as its own license. Each license can be assigned to one bot at a time. Items from the same pack may be assigned to different bots. Moving changes which bot may use a license; Equip is a separate, explicit action that can replace that bot's active cosmetic in the same slot.</p>
         ${inventory}
       </section>
     </div>`;

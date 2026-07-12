@@ -419,7 +419,7 @@ func requestLogger(next http.Handler) http.Handler {
 
 // noCacheStaticHandler wraps a file server to set no-cache headers on JS/CSS
 // files and on HTML documents (including extensionless directory routes
-// like "/", "/dashboard/", "/admin/", "/m/" that http.FileServer resolves to
+// like "/", "/dashboard/", "/admin/", "/m/", "/shop/" that http.FileServer resolves to
 // an index.html) so browsers always fetch the latest version. Without this,
 // a browser that cached a bad response for one of these routes keeps
 // serving it from cache after the server is fixed, since nothing tells it

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Cosmetic Shop | AI Battle Arena</title>
+  <meta name="description" content="Preview Arena cosmetic packs on a full-size bot, inspect every included item, and purchase presentation-only customization.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23030b13'/%3E%3Cpath d='M18 45 32 12l14 33-14-8z' fill='%2347d7ff'/%3E%3Ccircle cx='32' cy='32' r='5' fill='%23ff8f5c'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/arena.css?v=20260707c">
+  <link rel="stylesheet" href="../css/shop.css?v=20260712a">
+  <script defer src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
+  <script defer src="../js/cosmetic-themes.js?v=20260711b"></script>
+  <script type="module" src="../js/cosmetics-shop.js?v=20260712a"></script>
+</head>
+<body class="shop-page">
+  <a class="shop-skip-link" href="#cosmetic-shop">Skip to the cosmetic shop</a>
+
+  <div class="page-backdrop" aria-hidden="true">
+    <div class="aurora aurora-a"></div>
+    <div class="aurora aurora-b"></div>
+    <div class="aurora aurora-c"></div>
+    <div class="grid-haze"></div>
+  </div>
+
+  <header class="shop-site-header">
+    <a href="../" class="site-brand" aria-label="Return to the AI Battle Arena live view">
+      <span class="site-brand-mark" aria-hidden="true"></span>
+      <span>AI Battle Arena</span>
+    </a>
+    <nav class="shop-site-nav" aria-label="Shop navigation">
+      <a href="../">Live Arena</a>
+      <a href="../dashboard/">My Dashboard</a>
+    </nav>
+  </header>
+
+  <main class="shop-main" id="cosmetic-shop">
+    <section class="shop-masthead" aria-labelledby="shop-title">
+      <div>
+        <p class="shop-kicker">Arena // Cosmetic Shop</p>
+        <h1 id="shop-title">Build the look.<br><span>Preview the whole bot.</span></h1>
+        <p class="shop-lede">Inspect every item in a pack on the same procedural bot used by the live Arena. Cosmetics change presentation only, never damage, defense, movement, cooldowns, or hitboxes.</p>
+      </div>
+      <p class="shop-catalog-state" data-shop-status role="status" aria-live="polite">Loading cosmetic catalog...</p>
+    </section>
+
+    <section class="shop-license-rules" aria-labelledby="shop-license-title">
+      <div>
+        <p class="shop-kicker">Pack ownership</p>
+        <h2 id="shop-license-title">Every included item becomes its own license.</h2>
+      </div>
+      <ul>
+        <li>Each purchased item copy can be assigned to one bot at a time.</li>
+        <li>Items from the same pack can be assigned to different bots.</li>
+      </ul>
+    </section>
+
+    <section class="shop-toolbar" role="search" aria-label="Filter cosmetic packs">
+      <label for="shop-search">
+        <span>Find a pack or item</span>
+        <input id="shop-search" type="search" data-shop-search placeholder="Search pack, collection, or item" autocomplete="off" aria-controls="shop-pack-list">
+      </label>
+      <label for="shop-category">
+        <span>Collection</span>
+        <select id="shop-category" data-shop-category aria-controls="shop-pack-list">
+          <option value="all">All collections</option>
+        </select>
+      </label>
+      <p class="shop-results-summary" data-shop-results-summary role="status" aria-live="polite">Preparing the showroom...</p>
+    </section>
+
+    <div class="shop-showroom">
+      <section class="shop-preview-panel" aria-labelledby="shop-preview-title">
+        <header class="shop-panel-heading shop-preview-heading">
+          <div>
+            <p class="shop-kicker">Live fitting stage</p>
+            <h2 id="shop-preview-title">Bot preview</h2>
+          </div>
+          <span class="shop-preview-state" data-shop-preview-status role="status" aria-live="polite">Preparing 3D preview</span>
+        </header>
+
+        <div class="shop-preview-frame">
+          <canvas id="shop-preview-canvas" aria-label="Large 3D preview of an Arena bot wearing the selected cosmetics">Your browser does not support the Arena cosmetic preview canvas.</canvas>
+          <p class="shop-preview-label" data-shop-preview-label role="status" aria-live="polite">Select a pack to preview its full loadout.</p>
+          <span class="shop-preview-corner shop-preview-corner-a" aria-hidden="true"></span>
+          <span class="shop-preview-corner shop-preview-corner-b" aria-hidden="true"></span>
+        </div>
+
+        <div class="shop-preview-controls" aria-label="Bot preview controls">
+          <button type="button" data-shop-rotate-left aria-label="Rotate bot left"><span aria-hidden="true">&#8634;</span> Rotate left</button>
+          <button type="button" data-shop-reset-view>Reset view</button>
+          <button type="button" data-shop-rotate-right aria-label="Rotate bot right">Rotate right <span aria-hidden="true">&#8635;</span></button>
+        </div>
+        <p class="shop-preview-help">Drag the stage to turn the bot, or use the rotation controls. Preview selection never changes a live bot.</p>
+      </section>
+
+      <aside class="shop-pack-index" aria-labelledby="shop-pack-index-title">
+        <header class="shop-panel-heading">
+          <div>
+            <p class="shop-kicker">Pack index</p>
+            <h2 id="shop-pack-index-title">Browse packs</h2>
+          </div>
+        </header>
+        <div class="shop-pack-list" id="shop-pack-list" data-shop-pack-list aria-busy="true">
+          <div class="shop-list-loading" role="status">Loading coordinated packs...</div>
+        </div>
+        <button class="btn btn-secondary shop-show-more" type="button" data-shop-show-more hidden>Show more packs</button>
+      </aside>
+
+      <aside class="shop-pack-detail" data-shop-pack-detail aria-labelledby="shop-pack-name">
+        <header class="shop-panel-heading shop-detail-heading">
+          <div>
+            <p class="shop-kicker">Selected pack</p>
+            <h2 id="shop-pack-name" data-shop-pack-name>Choose a pack</h2>
+          </div>
+          <strong class="shop-pack-price" data-shop-pack-price>--</strong>
+        </header>
+        <p class="shop-pack-description" data-shop-pack-description>Select a pack from the index to inspect every included cosmetic and preview it on the bot.</p>
+        <p class="shop-pack-count" data-shop-pack-count>No pack selected</p>
+
+        <button class="shop-preview-pack" type="button" data-shop-preview-pack disabled aria-pressed="false">
+          Preview complete pack
+        </button>
+
+        <section class="shop-pack-items" aria-labelledby="shop-pack-items-title">
+          <div class="shop-items-heading">
+            <div>
+              <p class="shop-kicker">Pack contents</p>
+              <h3 id="shop-pack-items-title">Included items</h3>
+            </div>
+            <span>Click an item to isolate it</span>
+          </div>
+          <div class="shop-item-list" data-shop-item-list>
+            <p class="shop-detail-empty">The complete item list will appear here.</p>
+          </div>
+        </section>
+
+        <a class="btn btn-gold shop-purchase" data-shop-purchase href="../dashboard/?tab=cosmetics" aria-disabled="true" hidden>Select a pack to continue</a>
+        <p class="shop-purchase-note">Checkout opens in your verified-email Dashboard. Returning from checkout does not mark an order paid until Arena verifies the signed payment event.</p>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="shop-footer">
+    <span>Cosmetics are presentation-only.</span>
+    <nav aria-label="Footer navigation">
+      <a href="../">Live Arena</a>
+      <a href="../dashboard/">Dashboard</a>
+      <a href="https://github.com/ablac/Arena" target="_blank" rel="noopener">Source</a>
+    </nav>
+  </footer>
+</body>
+</html>

@@ -9,7 +9,7 @@
 import { parseColor, makeMat } from './utils.js';
 import { createWeaponMesh, disposeWeapon } from './weapons.js?v=20260707c';
 import { BotAnimState } from './animations.js?v=20260707c';
-import { createSwordsmanEntry, disposeSwordsmanEntry } from './swordsman-body.js?v=20260707c';
+import { createSwordsmanEntry, disposeSwordsmanEntry } from './swordsman-body.js?v=20260712a';
 
 const BODY_H = 12;
 const BODY_R = 5;
@@ -67,7 +67,7 @@ function _getShadowMat(scene) {
  * Hidden source mesh; each bot arm is an InstancedMesh created from this.
  */
 function _getTplArm(scene) {
-  if (!_tplArm || _tplArm.isDisposed()) {
+  if (!_tplArm || _tplArm.isDisposed() || _tplArm.getScene() !== scene) {
     const B = window.BABYLON;
     _tplArm = B.MeshBuilder.CreateCylinder('tpl-arm', {
       height: ARM_H, diameter: ARM_R * 2, tessellation: 4
@@ -91,7 +91,7 @@ function _getTplArm(scene) {
  * All shadows share the same black semi-transparent material.
  */
 export function _getTplShadow(scene) {
-  if (!_tplShadow || _tplShadow.isDisposed()) {
+  if (!_tplShadow || _tplShadow.isDisposed() || _tplShadow.getScene() !== scene) {
     const B = window.BABYLON;
     _tplShadow = B.MeshBuilder.CreateDisc('tpl-shadow', {
       radius: BODY_R * 1.3, tessellation: 6
@@ -117,10 +117,11 @@ function _getPickMat(scene) {
   return _pickMat;
 }
 
-export function createBotEntry(bot, scene) {
+export function createBotEntry(bot, scene, options = {}) {
+  const presentationOnly = options.presentationOnly === true;
   // Sword bots get the articulated swordsman character
   if ((bot.weapon || 'sword') === 'sword') {
-    return createSwordsmanEntry(bot, scene);
+    return createSwordsmanEntry(bot, scene, options);
   }
 
   const B = window.BABYLON;
@@ -135,7 +136,7 @@ export function createBotEntry(bot, scene) {
   }, scene);
   body.position.y = BODY_H / 2;
   body.parent = root;
-  body.isPickable = true;
+  body.isPickable = !presentationOnly;
   body.metadata = { botId: id };
   body.alwaysSelectAsActiveMesh = true;
   const bodyMat = makeMat(`bmat-${id}`, scene, color, { emissiveFactor: 0.35 });
@@ -151,7 +152,7 @@ export function createBotEntry(bot, scene) {
   const head = B.MeshBuilder.CreateSphere(`head-${id}`, {
     diameter: HEAD_R * 2, segments: 4
   }, scene);
-  head.isPickable = true;
+  head.isPickable = !presentationOnly;
   head.metadata = { botId: id };
   head.alwaysSelectAsActiveMesh = true;
   head.position.y = BODY_H + HEAD_R * 0.7;
@@ -201,62 +202,70 @@ export function createBotEntry(bot, scene) {
   shadow.isPickable = false;
   shadow.alwaysSelectAsActiveMesh = true;
 
-  const selector = B.MeshBuilder.CreateCylinder(`pick-${id}`, {
-    height: 34, diameter: 28, tessellation: 12,
-  }, scene);
-  selector.parent = root;
-  selector.position.y = 16;
-  selector.material = _getPickMat(scene);
-  selector.isPickable = true;
-  selector.metadata = { botId: id };
-  selector.visibility = 0.01;
-  selector.alwaysSelectAsActiveMesh = true;
+  let selector = null;
+  if (!presentationOnly) {
+    selector = B.MeshBuilder.CreateCylinder(`pick-${id}`, {
+      height: 34, diameter: 28, tessellation: 12,
+    }, scene);
+    selector.parent = root;
+    selector.position.y = 16;
+    selector.material = _getPickMat(scene);
+    selector.isPickable = true;
+    selector.metadata = { botId: id };
+    selector.visibility = 0.01;
+    selector.alwaysSelectAsActiveMesh = true;
+  }
 
   // Weapon
   const weapon = createWeaponMesh(bot.weapon || 'sword', id, scene, root);
 
   // ── GUI-based name label & HP bar ──
-  const GUI = window.BABYLON.GUI;
-  const adt = getGuiTexture();
+  let nameLabel = null;
+  let hpContainer = null;
+  let hpFill = null;
+  if (!presentationOnly) {
+    const GUI = window.BABYLON.GUI;
+    const adt = getGuiTexture();
 
-  // Name label (TextBlock linked to root mesh)
-  const nameLabel = new GUI.TextBlock(`lbl-${id}`);
-  const displayName = (bot.name || '???');
-  nameLabel.text = displayName.length > 12 ? displayName.slice(0, 11) + '\u2026' : displayName;
-  nameLabel.color = 'white';
-  nameLabel.fontSize = 14;
-  nameLabel.fontFamily = 'monospace';
-  nameLabel.fontWeight = 'bold';
-  nameLabel.resizeToFit = true;
-  adt.addControl(nameLabel);
-  nameLabel.linkWithMesh(root);
-  nameLabel.linkOffsetY = -50;
+    // Name label (TextBlock linked to root mesh)
+    nameLabel = new GUI.TextBlock(`lbl-${id}`);
+    const displayName = (bot.name || '???');
+    nameLabel.text = displayName.length > 12 ? displayName.slice(0, 11) + '\u2026' : displayName;
+    nameLabel.color = 'white';
+    nameLabel.fontSize = 14;
+    nameLabel.fontFamily = 'monospace';
+    nameLabel.fontWeight = 'bold';
+    nameLabel.resizeToFit = true;
+    adt.addControl(nameLabel);
+    nameLabel.linkWithMesh(root);
+    nameLabel.linkOffsetY = -50;
 
-  // HP bar background container
-  const hpContainer = new GUI.Rectangle(`hpbg-${id}`);
-  hpContainer.width = '60px';
-  hpContainer.height = '8px';
-  hpContainer.background = '#1a1a1a';
-  hpContainer.thickness = 0;
-  hpContainer.alpha = 0.85;
-  adt.addControl(hpContainer);
-  hpContainer.linkWithMesh(root);
-  hpContainer.linkOffsetY = -38;
+    // HP bar background container
+    hpContainer = new GUI.Rectangle(`hpbg-${id}`);
+    hpContainer.width = '60px';
+    hpContainer.height = '8px';
+    hpContainer.background = '#1a1a1a';
+    hpContainer.thickness = 0;
+    hpContainer.alpha = 0.85;
+    adt.addControl(hpContainer);
+    hpContainer.linkWithMesh(root);
+    hpContainer.linkOffsetY = -38;
 
-  // HP bar fill
-  const hpFill = new GUI.Rectangle(`hp-${id}`);
-  hpFill.width = 1;
-  hpFill.height = 1;
-  hpFill.background = '#00ff00';
-  hpFill.thickness = 0;
-  hpFill.horizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-  hpContainer.addControl(hpFill);
+    // HP bar fill
+    hpFill = new GUI.Rectangle(`hp-${id}`);
+    hpFill.width = 1;
+    hpFill.height = 1;
+    hpFill.background = '#00ff00';
+    hpFill.thickness = 0;
+    hpFill.horizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+    hpContainer.addControl(hpFill);
+  }
 
   return {
     root, body, bodyMat, head, headMat, lArm, rArm,
     lShoulder, rShoulder,
     shadow, weapon, hpContainer, hpFill, nameLabel,
-    selector, pickMeshes: [selector, body, head],
+    selector, pickMeshes: presentationOnly ? [] : [selector, body, head],
     anim: new BotAnimState(),
     isAlive: true, _wasAlive: true, _lastHp: -1,
   };
