@@ -12,7 +12,7 @@ import { ObstacleRenderer } from './obstacles.js?v=20260710f';
 import { PickupRenderer } from './pickups.js?v=20260521m';
 import { EffectRenderer } from './effects.js?v=20260710f';
 import { TrailRenderer } from './trails.js?v=20260707c';
-import { ProjectileRenderer } from './projectiles.js?v=20260521l';
+import { ProjectileRenderer } from './projectiles.js?v=20260711a';
 import { GameplayRenderer } from './gameplay.js?v=20260710g';
 import { getState, isEnabled, onSettingsChange } from '../settings.js';
 

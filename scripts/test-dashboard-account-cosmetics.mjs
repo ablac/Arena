@@ -6,6 +6,15 @@ const source = readFileSync(new URL('../frontend/dashboard/account-cosmetics.js'
 const sandbox = {};
 vm.runInNewContext(source, sandbox, {filename: 'account-cosmetics.js'});
 const cosmetics = sandbox.ArenaAccountCosmetics;
+const recentPurchaseFailures = [];
+
+function recentPurchaseCheck(name, check) {
+  try {
+    check();
+  } catch (error) {
+    recentPurchaseFailures.push(`${name}: ${error.message}`);
+  }
+}
 
 assert.ok(cosmetics, 'dashboard cosmetics helpers should attach to globalThis');
 assert.equal(cosmetics.normalizeSession({authenticated:false, account:{id:'acct-1',email:'owner@example.com',email_verified:true}}).authenticated, false, 'an explicit logged-out response must never be inferred as authenticated');
@@ -13,7 +22,16 @@ const verifiedSession = cosmetics.normalizeSession({authenticated:true, login_en
 assert.equal(verifiedSession.account.email_verified, true, 'a server verification timestamp should authorize the account UX');
 assert.equal(verifiedSession.login_enabled, true);
 assert.equal(verifiedSession.login_url, '/api/v1/dashboard/login');
+const emailSession = cosmetics.normalizeSession({authenticated:false,login_enabled:true,email_login_enabled:true,oidc_login_enabled:false,email_start_url:'/api/v1/account/email/start',email_verify_url:'/api/v1/account/email/verify'});
+assert.equal(emailSession.email_login_enabled, true);
+assert.equal(emailSession.oidc_login_enabled, false);
+assert.equal(emailSession.email_start_url, '/api/v1/account/email/start');
+assert.equal(emailSession.email_verify_url, '/api/v1/account/email/verify');
 assert.equal(cosmetics.accountRoute('session'), '/account/session');
+assert.equal(cosmetics.accountRoute('checkout'), '/account/cosmetics/checkout');
+recentPurchaseCheck('orders route', () => {
+  assert.equal(cosmetics.accountRoute('orders'), '/account/cosmetics/orders');
+});
 assert.equal(cosmetics.accountRoute('assignment', 'license/a'), '/account/cosmetic-licenses/license%2Fa/assignment');
 assert.equal(cosmetics.accountRoute('equip', 'bot/a'), '/account/bots/bot%2Fa/cosmetics');
 assert.deepEqual(
@@ -73,6 +91,132 @@ const inactiveBotHTML = cosmetics.renderPanel({
 }, {});
 assert.match(inactiveBotHTML, /data-license-equip="license-refunded" disabled>Bot key inactive/);
 
+const catalog = {
+  checkout_enabled: true,
+  categories: [{id:'sets',name:'Sets'}],
+  packs: Array.from({length:100}, (_, index) => {
+    const number = String(index + 1).padStart(3, '0');
+    const assetKey = `arena_set_${number}_signal_${number}`;
+    return {
+      id:`set-${number}-pack`, name:`Signal Set ${number}`, description:`Set ${number}`,
+      category_id:'sets', is_purchasable:true, price_cents:499, currency:'USD',
+      items:['bot_skin','weapon_skin','attachment'].map(slot => ({id:`${slot}-${number}`,slot,asset_key:assetKey,name:`${slot} ${number}`})),
+    };
+  }),
+};
+const shopHTML = cosmetics.renderPanel(snapshot, {catalog});
+assert.equal((shopHTML.match(/data-shop-pack=/g) || []).length, 12, 'dashboard shop should bound its initial pack render');
+assert.match(shopHTML, /data-pack-checkout="set-001-pack"/, 'enabled sale-ready packs should expose checkout');
+const searchedShopHTML = cosmetics.renderPanel(snapshot, {catalog, shopQuery:'Signal Set 099'});
+assert.equal((searchedShopHTML.match(/data-shop-pack=/g) || []).length, 1, 'dashboard search should narrow the pack list');
+const noResultsHTML = cosmetics.renderPanel(snapshot, {catalog, shopQuery:'missing set'});
+assert.match(noResultsHTML, /No cosmetic sets match/i);
+const disabledShopHTML = cosmetics.renderPanel(snapshot, {catalog:{...catalog,checkout_enabled:false}});
+assert.doesNotMatch(disabledShopHTML, /data-pack-checkout=/, 'checkout-disabled catalogs must not render purchase buttons');
+assert.deepEqual(
+  JSON.parse(JSON.stringify(cosmetics.checkoutIntent(catalog, 'set-001-pack'))),
+  {ok:true,path:'/account/cosmetics/checkout',body:{pack_id:'set-001-pack',quantity:1}},
+);
+
+const baseOrder = {
+  id:'order-001',
+  pack_id:'set-003-pack',
+  pack_name:'Signal Set 003',
+  quantity:2,
+  expected_subtotal_cents:1000,
+  amount_received_cents:900,
+  amount_refunded_cents:100,
+  currency:'USD',
+  status:'refund_review',
+  fulfilled_license_count:6,
+  created_at:'2026-07-11T12:00:00Z',
+};
+
+const loadingOrdersHTML = cosmetics.renderPanel(snapshot, {catalog, orders:null, ordersError:''});
+recentPurchaseCheck('loading state', () => {
+  assert.match(loadingOrdersHTML, /Recent purchases/);
+  assert.match(loadingOrdersHTML, /Loading recent purchases\.\.\./);
+});
+
+const failedOrdersHTML = cosmetics.renderPanel(snapshot, {
+  catalog,
+  orders:null,
+  ordersError:'Ledger <offline>',
+});
+recentPurchaseCheck('independent error state', () => {
+  assert.match(failedOrdersHTML, /Recent purchases unavailable/);
+  assert.match(failedOrdersHTML, /Ledger &lt;offline&gt;/);
+  assert.match(failedOrdersHTML, /data-shop-pack="set-001-pack"/, 'order failure must leave the shop visible');
+  assert.match(failedOrdersHTML, /data-license-id="license-1"/, 'order failure must leave owned inventory visible');
+});
+
+const emptyOrdersHTML = cosmetics.renderPanel(snapshot, {catalog, orders:[]});
+recentPurchaseCheck('empty state', () => {
+  assert.match(emptyOrdersHTML, /No purchases yet\./);
+});
+
+const hostileOrdersHTML = cosmetics.renderPanel(snapshot, {
+  catalog,
+  orders:[
+    {
+      ...baseOrder,
+      id:'order-<img src=x onerror=alert(1)>',
+      pack_name:'Launch <script>alert(1)</script> Set',
+    },
+    {
+      ...baseOrder,
+      id:'order-hostile-status',
+      status:'<svg onload=alert(1)>',
+    },
+  ],
+});
+recentPurchaseCheck('hostile data and complete order facts', () => {
+  assert.doesNotMatch(hostileOrdersHTML, /<img src=x onerror=alert\(1\)>/);
+  assert.doesNotMatch(hostileOrdersHTML, /<script>alert\(1\)<\/script>/);
+  assert.doesNotMatch(hostileOrdersHTML, /<svg onload=alert\(1\)>/);
+  assert.match(hostileOrdersHTML, /order-&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(hostileOrdersHTML, /Launch &lt;script&gt;alert\(1\)&lt;\/script&gt; Set/);
+  assert.match(hostileOrdersHTML, /Quantity 2/);
+  assert.match(hostileOrdersHTML, /Expected[\s\S]*\$10\.00/);
+  assert.match(hostileOrdersHTML, /Received[\s\S]*\$9\.00/);
+  assert.match(hostileOrdersHTML, /Refunded[\s\S]*\$1\.00/);
+  assert.match(hostileOrdersHTML, /6 licenses fulfilled/);
+  assert.match(hostileOrdersHTML, /<time[^>]*datetime="2026-07-11T12:00:00\.000Z"[^>]*>[^<]*2026[^<]*<\/time>/);
+});
+
+const statusCases = [
+  ['created', 'Checkout pending'],
+  ['checkout_pending', 'Checkout pending'],
+  ['processing', 'Processing'],
+  ['paid', 'Paid'],
+  ['refund_review', 'Refund review'],
+  ['refunded', 'Refunded'],
+  ['disputed', 'Disputed'],
+  ['expired', 'Expired'],
+  ['payment_failed', 'Failed'],
+  ['failed', 'Failed'],
+];
+const statusOrdersHTML = cosmetics.renderPanel(snapshot, {
+  catalog,
+  orders:statusCases.map(([status], index) => ({...baseOrder, id:`status-${index}`, status})),
+});
+for (const [status, label] of statusCases) {
+  recentPurchaseCheck(`truthful ${status} status`, () => {
+    assert.match(
+      statusOrdersHTML,
+      new RegExp(`data-order-status="${status}"[\\s\\S]*?<span class="cosmetic-purchase-status[^"]*">${label}<\\/span>`),
+    );
+  });
+}
+
+const boundedOrdersHTML = cosmetics.renderPanel(snapshot, {
+  catalog,
+  orders:Array.from({length:25}, (_, index) => ({...baseOrder, id:`bounded-${index}`})),
+});
+recentPurchaseCheck('bounded history', () => {
+  assert.equal((boundedOrdersHTML.match(/data-purchase-order=/g) || []).length, 20);
+});
+
 const unverified = structuredClone(snapshot);
 unverified.account.email_verified = false;
 assert.equal(cosmetics.assignmentIntent(unverified, 'license-2', 'bot-2').reason, 'verified-email-required');
@@ -109,5 +253,80 @@ const linkHandler = dashboardHTML.slice(
   dashboardHTML.indexOf('async function assignAccountLicense'),
 );
 assert.doesNotMatch(linkHandler, /saveKey|localStorage/, 'linking a bot must not persist the proof key in dashboard storage');
+
+recentPurchaseCheck('dashboard script cache version', () => {
+  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260711d/);
+});
+recentPurchaseCheck('long purchase data remains contained', () => {
+  assert.match(dashboardHTML, /\.cosmetic-purchase-head>div\{[^}]*min-width:0/);
+  assert.match(dashboardHTML, /\.cosmetic-purchase-head h3\{[^}]*overflow-wrap:anywhere/);
+});
+
+const refreshStart = dashboardHTML.indexOf('async function refreshAccountCosmetics');
+const refreshEnd = dashboardHTML.indexOf('async function handleAccountPanelSubmit', refreshStart);
+recentPurchaseCheck('refresh helper source', () => {
+  assert.ok(refreshStart >= 0 && refreshEnd > refreshStart);
+});
+
+if (refreshStart >= 0 && refreshEnd > refreshStart) {
+  const refreshCalls = [];
+  const refreshRenders = [];
+  let rejectOrders = null;
+  const refreshSandbox = {
+    accountRefreshSequence:0,
+    accountSnapshot:null,
+    accountCatalog:null,
+    accountCatalogError:'',
+    accountOrders:null,
+    accountOrdersError:'',
+    accountSession:{account:{id:'acct-1',email:'owner@example.com',email_verified:true}},
+    accountViewError:'',
+    accountViewNotice:'',
+    window:{
+      ArenaAccountCosmetics:{
+        accountRoute:name => ({cosmetics:'/account/cosmetics',orders:'/account/cosmetics/orders'})[name],
+        normalizeSnapshot:value => value,
+        normalizeCatalog:value => value,
+      },
+    },
+  };
+  refreshSandbox.renderAccountCosmetics = () => {
+    refreshRenders.push({
+      hasInventory:Boolean(refreshSandbox.accountSnapshot),
+      orders:refreshSandbox.accountOrders,
+      ordersError:refreshSandbox.accountOrdersError,
+    });
+  };
+  refreshSandbox.accountRequest = path => {
+    refreshCalls.push(path);
+    if (path === '/account/cosmetics/orders?limit=20') {
+      return new Promise((_, reject) => {
+        rejectOrders = reject;
+      });
+    }
+    if (path === '/cosmetics/catalog') return Promise.resolve(catalog);
+    return Promise.resolve({account:refreshSandbox.accountSession.account,bots:[],licenses:[]});
+  };
+
+  vm.runInNewContext(dashboardHTML.slice(refreshStart, refreshEnd), refreshSandbox, {filename:'dashboard-refresh.js'});
+  const refreshPromise = refreshSandbox.refreshAccountCosmetics();
+  await new Promise(resolve => setImmediate(resolve));
+  recentPurchaseCheck('independent bounded fetch', () => {
+    assert.ok(refreshCalls.includes('/account/cosmetics/orders?limit=20'));
+    assert.equal(refreshSandbox.accountSnapshot.account.id, 'acct-1');
+    assert.ok(refreshRenders.some(state => state.hasInventory && state.orders === null),
+      'inventory must render while purchase history is still pending');
+  });
+  if (rejectOrders) rejectOrders(new Error('history offline'));
+  await refreshPromise;
+  recentPurchaseCheck('history failure leaves inventory and shop data usable', () => {
+    assert.equal(refreshSandbox.accountSnapshot.account.id, 'acct-1');
+    assert.equal(refreshSandbox.accountCatalog.checkout_enabled, true);
+    assert.match(refreshSandbox.accountOrdersError, /history offline/);
+    assert.equal(refreshSandbox.accountViewError, '');
+  });
+}
+
+assert.deepEqual(recentPurchaseFailures, [], `recent purchase behavior failures:\n${recentPurchaseFailures.join('\n')}`);
 
 console.log('account-owned dashboard cosmetics rendering and assignment rules pass');

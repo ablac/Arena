@@ -16,6 +16,7 @@
   <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/materialsLibrary/babylonjs.materials.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/gui/babylon.gui.min.js"></script>
+  <script src="js/cosmetic-themes.js?v=20260711b"></script>
   <!-- service-status.js is NOT loaded here: app.js and site-shell.js import
        it (unversioned), and a second versioned URL would create a separate
        module instance with its own banner controller racing the first. -->
@@ -1625,7 +1626,19 @@ wss://arena.angel-serv.com/ws/spectator
                     <a class="btn btn-gold" href="dashboard/">Open Bot Dashboard</a>
                   </div>
                   <p class="cosmetics-status" data-cosmetic-status role="status" aria-live="polite">Loading account-owned catalog...</p>
-                  <div class="cosmetics-catalog" data-cosmetic-catalog></div>
+                  <div class="cosmetics-browser" role="search" aria-label="Filter cosmetic sets">
+                    <label for="cosmetic-set-search">Find a set
+                      <input id="cosmetic-set-search" type="search" data-cosmetic-search placeholder="Search set, theme, or item" autocomplete="off" aria-controls="cosmetic-set-results">
+                    </label>
+                    <label for="cosmetic-set-category">Collection
+                      <select id="cosmetic-set-category" data-cosmetic-category aria-controls="cosmetic-set-results">
+                        <option value="all">All collections</option>
+                      </select>
+                    </label>
+                  </div>
+                  <p class="cosmetics-results-summary" data-cosmetic-results-summary role="status" aria-live="polite"></p>
+                  <div class="cosmetics-catalog" id="cosmetic-set-results" data-cosmetic-catalog></div>
+                  <button class="btn cosmetics-show-more" type="button" data-cosmetic-show-more hidden>Show more sets</button>
                 </div>
               </section>
 

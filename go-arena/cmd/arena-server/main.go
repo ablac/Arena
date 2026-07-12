@@ -64,19 +64,35 @@ const managedSchemaPreflightQuery = `
 			('admin_runtime_overrides', 'scope'),
 			('service_notice_events', 'id'),
 			('cosmetic_categories', 'id'),
+			('cosmetic_categories', 'is_builtin'),
 			('cosmetic_items', 'id'),
 			('cosmetic_items', 'category_id'),
+			('cosmetic_items', 'is_builtin'),
 			('cosmetic_items', 'sort_order'),
 			('cosmetic_packs', 'id'),
+			('cosmetic_packs', 'is_builtin'),
 			('cosmetic_pack_items', 'pack_id'),
 			('cosmetic_catalog_audit', 'id'),
 			('cosmetic_entitlements', 'bot_id'),
 			('customer_accounts', 'id'),
+			('customer_email_verifications', 'email'),
+			('customer_email_verifications', 'token_hash'),
+			('customer_email_verifications', 'expires_at'),
 			('account_bot_links', 'account_id'),
 			('cosmetic_licenses', 'id'),
 			('cosmetic_license_assignments', 'license_id'),
 			('bot_cosmetic_loadout', 'license_id'),
-			('bot_cosmetic_loadout', 'account_id')
+			('bot_cosmetic_loadout', 'account_id'),
+			('cosmetic_orders', 'account_id'),
+			('cosmetic_orders', 'pack_description'),
+			('cosmetic_orders', 'expected_subtotal_cents'),
+			('cosmetic_orders', 'cumulative_charge_refunded_cents'),
+			('cosmetic_orders', 'stripe_checkout_session_id'),
+			('cosmetic_orders', 'stripe_payment_intent_id'),
+			('cosmetic_order_items', 'item_id'),
+			('cosmetic_order_licenses', 'license_id'),
+			('cosmetic_payment_events', 'payload_hash'),
+			('cosmetic_order_refunds', 'refund_id')
 	), missing AS (
 		SELECT required.table_name, required.column_name
 		FROM required
@@ -180,9 +196,10 @@ func main() {
 		}
 	}
 
-	// Initialise Redis for rate limiting (optional).
+	// Initialise Redis for rate limiting. General routes degrade gracefully;
+	// email delivery and checkout fail closed until Redis is available.
 	if err := security.InitRedis(); err != nil {
-		slog.Warn("redis not available, rate limiting disabled", "error", err)
+		slog.Warn("redis rate limiting initialisation failed", "error", err)
 	}
 
 	// Initialise grid-based weapon ranges from config cell size.

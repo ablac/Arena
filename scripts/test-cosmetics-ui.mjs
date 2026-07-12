@@ -12,10 +12,17 @@ class FakeElement {
     this.dataset = {};
     this.className = '';
     this.textContent = '';
+    this.style = {};
+    this.value = '';
+    this.hidden = false;
+    this.href = '';
+    this.listeners = {};
   }
   append(...nodes) { this.children.push(...nodes); }
   appendChild(node) { this.children.push(node); return node; }
   replaceChildren(...nodes) { this.children = [...nodes]; }
+  addEventListener(type, handler) { this.listeners[type] = handler; }
+  setAttribute(name, value) { this[name] = String(value); }
   querySelector() { return null; }
 }
 
@@ -45,10 +52,18 @@ const {initCosmeticsPanel} = await import(dataModule(panelSource));
 const status = new FakeElement('p');
 const catalogRoot = new FakeElement('div');
 const checkoutState = new FakeElement('span');
+const searchInput = new FakeElement('input');
+const categorySelect = new FakeElement('select');
+const resultsSummary = new FakeElement('p');
+const showMoreButton = new FakeElement('button');
 const panel = new FakeContainer({
   '[data-cosmetic-status]': status,
   '[data-cosmetic-catalog]': catalogRoot,
   '[data-cosmetic-checkout]': checkoutState,
+  '[data-cosmetic-search]': searchInput,
+  '[data-cosmetic-category]': categorySelect,
+  '[data-cosmetic-results-summary]': resultsSummary,
+  '[data-cosmetic-show-more]': showMoreButton,
 });
 
 let requestOptions;
@@ -91,12 +106,13 @@ const api = initCosmeticsPanel(panel);
 await new Promise(resolve => setTimeout(resolve, 0));
 assert.ok(api, 'panel should initialise without an API-key input');
 assert.equal(requestOptions.cache, 'no-store');
-assert.ok(findNode(catalogRoot, node => node.textContent === 'Starter item'));
 assert.ok(findNode(catalogRoot, node => node.textContent === 'Coming soon'));
 assert.ok(findNode(catalogRoot, node => node.textContent === 'Neon Signal Pack'), 'pack name should be rendered');
-assert.ok(findNode(catalogRoot, node => node.textContent === 'Preview · $0.99'), 'disabled checkout should show the planned pack price');
+assert.ok(findNode(catalogRoot, node => node.textContent === '$0.99'), 'disabled checkout should still show the planned pack price');
 assert.ok(findNode(catalogRoot, node => node.textContent === 'Solar Flare'), 'pack contents should be inspectable');
-assert.equal(findNode(catalogRoot, node => node.textContent === 'Email-account license'), null, 'disabled checkout must not advertise a purchasable license');
+assert.equal(findNode(catalogRoot, node => node.dataset?.cosmeticPurchaseLink), null, 'disabled checkout must not expose a purchase action');
+assert.deepEqual(api.snapshot(), {filteredCount: 1, renderedCount: 1, query: '', category: 'all'});
+assert.equal(showMoreButton.hidden, true, 'show-more should remain hidden when every matching pack is visible');
 assert.match(status.textContent, /verified email account/i);
 
 const html = readFileSync(new URL('../frontend/index.html', import.meta.url), 'utf8');

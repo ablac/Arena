@@ -15,13 +15,14 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisClient is the package-level Redis client used for rate limiting.
-// It is nil if Redis is unavailable (graceful degradation).
+// RedisClient is the package-level Redis client used for rate limiting. It is
+// nil if Redis is unavailable. General endpoints degrade gracefully, while
+// side-effecting routes protected by FailClosedRateLimitMiddleware return 503.
 var RedisClient *redis.Client
 
 // InitRedis connects to Redis using the host and port from the loaded config.
-// If the connection fails, it logs a warning and leaves RedisClient nil so
-// that all rate-limit checks degrade gracefully (allow all requests).
+// If the connection fails, it logs a warning and leaves RedisClient nil.
+// Individual middleware selects graceful degradation or fail-closed behavior.
 func InitRedis() error {
 	addr := fmt.Sprintf("%s:%d", config.C.RedisHost, config.C.RedisPort)
 
@@ -33,7 +34,7 @@ func InitRedis() error {
 	defer cancel()
 
 	if err := client.Ping(ctx).Err(); err != nil {
-		slog.Warn("redis connection failed, rate limiting disabled", "addr", addr, "error", err)
+		slog.Warn("redis connection failed; general limits degraded and protected side effects unavailable", "addr", addr, "error", err)
 		return nil
 	}
 
@@ -106,13 +107,35 @@ type rateLimitResponse struct {
 // requests are allowed through. Each endpoint gets its own rate-limit bucket
 // based on the request path, so different endpoints don't share counters.
 func RateLimitMiddleware(rpm int) func(http.Handler) http.Handler {
+	return rateLimitMiddleware(rpm, false)
+}
+
+// FailClosedRateLimitMiddleware is for side-effecting endpoints, such as email
+// delivery, that must not become unbounded when Redis is unavailable. It
+// returns 503 without invoking the protected handler if the limiter cannot
+// make a reliable decision.
+func FailClosedRateLimitMiddleware(rpm int) func(http.Handler) http.Handler {
+	return rateLimitMiddleware(rpm, true)
+}
+
+func rateLimitMiddleware(rpm int, failClosed bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if failClosed && RedisClient == nil {
+				writeRateLimitUnavailable(w)
+				return
+			}
+
 			ip := ExtractClientIP(r)
 			key := "api:" + r.URL.Path + ":" + ip
 
 			allowed, remaining, resetAt, err := CheckRateLimit(r.Context(), key, rpm, 60)
 			if err != nil {
+				if failClosed {
+					slog.Warn("rate limit check error, rejecting side-effecting request", "error", err)
+					writeRateLimitUnavailable(w)
+					return
+				}
 				slog.Warn("rate limit check error, allowing request",
 					"error", err, "ip", ip)
 			}
@@ -142,6 +165,16 @@ func RateLimitMiddleware(rpm int) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func writeRateLimitUnavailable(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", "60")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": "request rate limiting is temporarily unavailable",
+		"code":  "RATE_LIMIT_UNAVAILABLE",
+	})
 }
 
 // ExtractClientIP returns the client's IP address, preferring X-Forwarded-For

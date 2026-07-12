@@ -16,5 +16,7 @@ assert.match(
   /scheduleSSEReconnect\(controller\)[\s\S]*hasActiveAdminAuth\(token, ssoSession\)/,
   'the reconnect scheduler should use the token-or-SSO predicate',
 );
+assert.match(html, /addEventListener\('pagehide', stopSSE\)/, 'navigation must abort the old document stream');
+assert.match(html, /event\.persisted[\s\S]*hasActiveAdminAuth\(token, ssoSession\)[\s\S]*startSSE\(\)/, 'BFCache restoration should restart an authenticated stream');
 
 console.log('admin SSE reconnect accepts token and OIDC session authentication');
