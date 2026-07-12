@@ -10,7 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/arena.css?v=20260707c">
   <link rel="stylesheet" href="css/sections.css?v=20260711b">
-  <link rel="stylesheet" href="css/site-shell.css?v=20260710g">
+  <link rel="stylesheet" href="css/site-shell.css?v=20260712a">
   <link rel="stylesheet" href="css/chat.css?v=20260711a">
   <script src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
@@ -21,7 +21,7 @@
        it (unversioned), and a second versioned URL would create a separate
        module instance with its own banner controller racing the first. -->
   <script type="module" src="js/content-blocks.js?v=20260707d"></script>
-  <script type="module" src="js/app.js?v=20260711b"></script>
+  <script type="module" src="js/app.js?v=20260712a"></script>
   <script type="module" src="js/site-shell.js?v=20260710g"></script>
   <script type="module" src="js/chat-panel.js?v=20260711a"></script>
 </head>
@@ -59,6 +59,7 @@
     <nav class="mobile-command-actions" aria-label="Quick actions">
       <button type="button" data-overlay-open="onboarding-overlay">Join</button>
       <button type="button" data-overlay-open="standings-overlay">Scores</button>
+      <a href="shop/">Shop</a>
       <button type="button" data-overlay-open="chat-overlay">Chat</button>
       <button type="button" data-site-menu-toggle aria-controls="site-command-dock" aria-expanded="false">Menu</button>
     </nav>
@@ -1318,6 +1319,10 @@ wss://arena.angel-serv.com/ws/spectator
       <svg class="rail-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="6"></circle><polyline points="8.21 12.89 7 22 12 19 17 22 15.79 12.88"></polyline></svg>
       <span>Standings</span>
     </button>
+    <a class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" href="shop/">
+      <svg class="rail-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8h12l-1 13H7L6 8Z"></path><path d="M9 8V6a3 3 0 0 1 6 0v2"></path></svg>
+      <span>Shop</span>
+    </a>
     <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="toolkit-overlay">
       <svg class="rail-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>
       <span>Toolkit</span>
@@ -1609,36 +1614,23 @@ wss://arena.angel-serv.com/ws/spectator
               </section>
 
               <section class="onboarding-section" id="onboarding-cosmetics">
-                <div class="card cosmetics-shell" id="cosmetics-panel">
+                <div class="card cosmetics-shell">
                   <div class="cosmetics-intro">
                     <div>
                       <p class="onboarding-kicker">Fair-play customization</p>
-                      <h3 class="onboarding-section-title">Make the bot yours</h3>
-                      <p>Preview curated packs, chassis skins, weapon finishes, and attachments. Every item is visual only: no damage, cooldown, defense, movement, or hitbox advantage.</p>
+                      <h3 class="onboarding-section-title">Try the dedicated Cosmetic Shop</h3>
+                      <p>Open the full-size bot fitting stage, inspect every item inside a pack, and preview complete sets or one cosmetic at a time. Every item remains visual only.</p>
                     </div>
-                    <span class="cosmetics-checkout-state" data-cosmetic-checkout>Loading catalog...</span>
+                    <span class="cosmetics-checkout-state">100 coordinated packs</span>
                   </div>
                   <div class="cosmetics-auth cosmetics-account-cta">
                     <div>
-                      <strong>Owned by you, not by a disposable key.</strong>
-                      <span>Sign in with the verified email used for the purchase, then link or replace bot API keys without losing your collection.</span>
+                      <strong>Preview here. Own through your verified account.</strong>
+                      <span>Pack items become independent licenses, so different cosmetics from one pack can be assigned to different linked bots.</span>
                     </div>
-                    <a class="btn btn-gold" href="dashboard/">Open Bot Dashboard</a>
+                    <a class="btn btn-gold" href="shop/">Open Cosmetic Shop</a>
                   </div>
-                  <p class="cosmetics-status" data-cosmetic-status role="status" aria-live="polite">Loading account-owned catalog...</p>
-                  <div class="cosmetics-browser" role="search" aria-label="Filter cosmetic sets">
-                    <label for="cosmetic-set-search">Find a set
-                      <input id="cosmetic-set-search" type="search" data-cosmetic-search placeholder="Search set, theme, or item" autocomplete="off" aria-controls="cosmetic-set-results">
-                    </label>
-                    <label for="cosmetic-set-category">Collection
-                      <select id="cosmetic-set-category" data-cosmetic-category aria-controls="cosmetic-set-results">
-                        <option value="all">All collections</option>
-                      </select>
-                    </label>
-                  </div>
-                  <p class="cosmetics-results-summary" data-cosmetic-results-summary role="status" aria-live="polite"></p>
-                  <div class="cosmetics-catalog" id="cosmetic-set-results" data-cosmetic-catalog></div>
-                  <button class="btn cosmetics-show-more" type="button" data-cosmetic-show-more hidden>Show more sets</button>
+                  <a class="btn btn-secondary" href="dashboard/">Manage owned cosmetics</a>
                 </div>
               </section>
 

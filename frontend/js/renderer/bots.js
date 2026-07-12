@@ -6,10 +6,10 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260707c';
+import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260712a';
 import { updateBotAnim, triggerAttack, triggerDodge, triggerShove, meleeContactDelay } from './animations.js?v=20260707c';
-import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance, triggerSwordsmanHit } from './swordsman-anims.js?v=20260707c';
-import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260711b';
+import { updateSwordsmanAnim, triggerSwordsmanAttack, triggerSwordsmanDodge, updateSwordsmanStance, triggerSwordsmanHit } from './swordsman-anims.js?v=20260712a';
+import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260712a';
 import { isEnabled } from '../settings.js';
 
 export class BotRenderer {

@@ -34,8 +34,8 @@
  */
 
 import { parseColor, makeMat } from './utils.js';
-import { getGuiTexture, _getTplShadow } from './bot-body.js?v=20260707c';
-import { SwordsmanAnimState } from './swordsman-anims.js?v=20260707c';
+import { getGuiTexture, _getTplShadow } from './bot-body.js?v=20260712a';
+import { SwordsmanAnimState } from './swordsman-anims.js?v=20260712a';
 import { getSwordsmanMaterials } from './swordsman-materials.js?v=20260710b';
 
 // ─── Scale ───────────────────────────────────────────────────────────────────
@@ -192,10 +192,11 @@ export function makeSwordTrail(entry) {
  * @param {BABYLON.Scene} scene
  * @returns {Object} Entry object for BotRenderer
  */
-export function createSwordsmanEntry(bot, scene) {
+export function createSwordsmanEntry(bot, scene, options = {}) {
   const B = window.BABYLON;
   const id = bot.bot_id;
   const color = parseColor(bot.avatar_color);
+  const presentationOnly = options.presentationOnly === true;
 
   // ── Root node (world position) ──
   const root = new B.TransformNode(`swRoot-${id}`, scene);
@@ -230,10 +231,10 @@ export function createSwordsmanEntry(bot, scene) {
   head.parent = body;
   head.position.y = TORSO_H / 2 + HEAD_R * 0.8;
   head.material = headMat;
-  head.isPickable = true;
+  head.isPickable = !presentationOnly;
   head.metadata = { botId: id };
   head.alwaysSelectAsActiveMesh = true;
-  torso.isPickable = true;
+  torso.isPickable = !presentationOnly;
   torso.metadata = { botId: id };
 
   // ── Arm material (shared per bot, slightly darker) ──
@@ -321,57 +322,66 @@ export function createSwordsmanEntry(bot, scene) {
   shadow.isPickable = false;
   shadow.alwaysSelectAsActiveMesh = true;
 
-  const selector = B.MeshBuilder.CreateCylinder(`swPick-${id}`, {
-    height: 38, diameter: 30, tessellation: 12,
-  }, scene);
-  selector.parent = root;
-  selector.position.y = 18;
-  selector.isPickable = true;
-  selector.metadata = { botId: id };
-  selector.visibility = 0.01;
-  const selectorMat = new B.StandardMaterial(`sw-pick-mat-${id}`, scene);
-  selectorMat.diffuseColor = B.Color3.Black();
-  selectorMat.emissiveColor = B.Color3.Black();
-  selectorMat.alpha = 0.001;
-  selectorMat.disableLighting = true;
-  selector.material = selectorMat;
+  let selector = null;
+  let selectorMat = null;
+  if (!presentationOnly) {
+    selector = B.MeshBuilder.CreateCylinder(`swPick-${id}`, {
+      height: 38, diameter: 30, tessellation: 12,
+    }, scene);
+    selector.parent = root;
+    selector.position.y = 18;
+    selector.isPickable = true;
+    selector.metadata = { botId: id };
+    selector.visibility = 0.01;
+    selectorMat = new B.StandardMaterial(`sw-pick-mat-${id}`, scene);
+    selectorMat.diffuseColor = B.Color3.Black();
+    selectorMat.emissiveColor = B.Color3.Black();
+    selectorMat.alpha = 0.001;
+    selectorMat.disableLighting = true;
+    selector.material = selectorMat;
+  }
 
   // ── GUI-based name label & HP bar ──
-  const GUI = window.BABYLON.GUI;
-  const adt = getGuiTexture();
+  let nameLabel = null;
+  let hpContainer = null;
+  let hpFill = null;
+  if (!presentationOnly) {
+    const GUI = window.BABYLON.GUI;
+    const adt = getGuiTexture();
 
-  // Name label
-  const nameLabel = new GUI.TextBlock(`sw-lbl-${id}`);
-  const displayName = (bot.name || '???');
-  nameLabel.text = displayName.length > 12 ? displayName.slice(0, 11) + '\u2026' : displayName;
-  nameLabel.color = 'white';
-  nameLabel.fontSize = 14;
-  nameLabel.fontFamily = 'monospace';
-  nameLabel.fontWeight = 'bold';
-  nameLabel.resizeToFit = true;
-  adt.addControl(nameLabel);
-  nameLabel.linkWithMesh(root);
-  nameLabel.linkOffsetY = -50;
+    // Name label
+    nameLabel = new GUI.TextBlock(`sw-lbl-${id}`);
+    const displayName = (bot.name || '???');
+    nameLabel.text = displayName.length > 12 ? displayName.slice(0, 11) + '\u2026' : displayName;
+    nameLabel.color = 'white';
+    nameLabel.fontSize = 14;
+    nameLabel.fontFamily = 'monospace';
+    nameLabel.fontWeight = 'bold';
+    nameLabel.resizeToFit = true;
+    adt.addControl(nameLabel);
+    nameLabel.linkWithMesh(root);
+    nameLabel.linkOffsetY = -50;
 
-  // HP bar background container
-  const hpContainer = new GUI.Rectangle(`sw-hpbg-${id}`);
-  hpContainer.width = '60px';
-  hpContainer.height = '8px';
-  hpContainer.background = '#1a1a1a';
-  hpContainer.thickness = 0;
-  hpContainer.alpha = 0.85;
-  adt.addControl(hpContainer);
-  hpContainer.linkWithMesh(root);
-  hpContainer.linkOffsetY = -38;
+    // HP bar background container
+    hpContainer = new GUI.Rectangle(`sw-hpbg-${id}`);
+    hpContainer.width = '60px';
+    hpContainer.height = '8px';
+    hpContainer.background = '#1a1a1a';
+    hpContainer.thickness = 0;
+    hpContainer.alpha = 0.85;
+    adt.addControl(hpContainer);
+    hpContainer.linkWithMesh(root);
+    hpContainer.linkOffsetY = -38;
 
-  // HP bar fill
-  const hpFill = new GUI.Rectangle(`sw-hp-${id}`);
-  hpFill.width = 1;
-  hpFill.height = 1;
-  hpFill.background = '#00ff00';
-  hpFill.thickness = 0;
-  hpFill.horizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-  hpContainer.addControl(hpFill);
+    // HP bar fill
+    hpFill = new GUI.Rectangle(`sw-hp-${id}`);
+    hpFill.width = 1;
+    hpFill.height = 1;
+    hpFill.background = '#00ff00';
+    hpFill.thickness = 0;
+    hpFill.horizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+    hpContainer.addControl(hpFill);
+  }
 
   // ── Joint references for animation system ──
   const joints = {
@@ -405,7 +415,7 @@ export function createSwordsmanEntry(bot, scene) {
     hpContainer,
     hpFill,
     nameLabel,
-    pickMeshes: [selector, torso, head],
+    pickMeshes: presentationOnly ? [] : [selector, torso, head],
     anim: new SwordsmanAnimState(),
     isAlive: true,
     _wasAlive: true,
@@ -416,7 +426,7 @@ export function createSwordsmanEntry(bot, scene) {
     joints,
 
     // Per-bot mats for disposal
-    _swMats: [bodyMat, headMat, armMat, handMat, legMat, selectorMat],
+    _swMats: [bodyMat, headMat, armMat, handMat, legMat, selectorMat].filter(Boolean),
   };
 }
 
