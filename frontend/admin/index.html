@@ -1841,7 +1841,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
               <div class="cosmetics-admin-heading">
                 <div>
                   <h3>Cosmetic Sets / Packs</h3>
-                  <p class="muted">Curate presentation-only bundles. Prices are stored in the currency's smallest unit; 99 means $0.99 USD.</p>
+                  <p class="muted">Curate presentation-only bundles. Every sale-ready set uses the fixed $1.99 USD catalog price; individual item prices remain preview references.</p>
                 </div>
                 <button type="button" onclick="startCosmeticPackCreate()">New pack</button>
               </div>
@@ -1852,8 +1852,8 @@ tr:hover td{background:rgba(88,166,255,0.07)}
                   <label>Pack ID<input id="cosmeticPackID" maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" required></label>
                   <label>Name<input id="cosmeticPackName" maxlength="100" required></label>
                   <label>Category<select id="cosmeticPackCategory" required><option value="">Select category</option></select></label>
-                  <label>Price (minor unit)<input id="cosmeticPackPrice" type="number" min="0" max="1000000" step="1" inputmode="numeric" value="99" required></label>
-                  <label>Currency<input id="cosmeticPackCurrency" value="USD" maxlength="3" pattern="[A-Z]{3}" required></label>
+                  <label>Set price (fixed)<input id="cosmeticPackPrice" type="number" value="199" readonly required></label>
+                  <label>Currency<input id="cosmeticPackCurrency" value="USD" maxlength="3" pattern="[A-Z]{3}" readonly required></label>
                   <label>Sort order<input id="cosmeticPackSort" type="number" min="0" max="1000000" value="0" required></label>
                   <label class="cosmetics-form-wide">Description<textarea id="cosmeticPackDescription" maxlength="500" rows="3"></textarea></label>
                   <fieldset class="cosmetics-form-wide">
@@ -5144,7 +5144,7 @@ function resetCosmeticPackForm() {
   const form = document.getElementById('cosmeticPackForm');
   form.reset();
   document.getElementById('cosmeticPackID').readOnly = false;
-  document.getElementById('cosmeticPackPrice').value = 99;
+  document.getElementById('cosmeticPackPrice').value = 199;
   document.getElementById('cosmeticPackCurrency').value = 'USD';
   renderCosmeticPackItemPicker([]);
 }
@@ -5162,8 +5162,8 @@ function editCosmeticPack(id) {
   document.getElementById('cosmeticPackID').readOnly = true;
   document.getElementById('cosmeticPackName').value = pack.name || '';
   document.getElementById('cosmeticPackCategory').value = pack.category_id || '';
-  document.getElementById('cosmeticPackPrice').value = Number(pack.price_cents || 0);
-  document.getElementById('cosmeticPackCurrency').value = String(pack.currency || 'USD').toUpperCase();
+  document.getElementById('cosmeticPackPrice').value = 199;
+  document.getElementById('cosmeticPackCurrency').value = 'USD';
   document.getElementById('cosmeticPackSort').value = Number(pack.sort_order || 0);
   document.getElementById('cosmeticPackDescription').value = pack.description || '';
   document.getElementById('cosmeticPackFree').checked = pack.is_free === true;
@@ -5183,8 +5183,8 @@ async function saveCosmeticPack(event) {
     name: document.getElementById('cosmeticPackName').value.trim(),
     category_id: document.getElementById('cosmeticPackCategory').value,
     description: document.getElementById('cosmeticPackDescription').value.trim(),
-    price_cents: isFree ? 0 : Number(document.getElementById('cosmeticPackPrice').value || 0),
-    currency: document.getElementById('cosmeticPackCurrency').value.trim().toUpperCase(),
+    price_cents: isFree ? 0 : 199,
+    currency: 'USD',
     sort_order: Number(document.getElementById('cosmeticPackSort').value || 0),
     item_ids: Array.from(cosmeticPackSelection),
     is_free: isFree,

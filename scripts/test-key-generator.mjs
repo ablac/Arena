@@ -1,71 +1,47 @@
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {existsSync, readFileSync} from 'node:fs';
 
-function dataModule(source) {
-  return `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+const mainHTML = readFileSync(new URL('../frontend/index.html', import.meta.url), 'utf8');
+const appSource = readFileSync(new URL('../frontend/js/app.js', import.meta.url), 'utf8');
+const dashboardHTML = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8');
+const accountSource = readFileSync(new URL('../frontend/dashboard/account-cosmetics.js', import.meta.url), 'utf8');
+const debugHTML = readFileSync(new URL('../frontend/debug2.html', import.meta.url), 'utf8');
+const publicDocs = [
+  ['README.md', readFileSync(new URL('../README.md', import.meta.url), 'utf8')],
+  ['sdk/README.md', readFileSync(new URL('../sdk/README.md', import.meta.url), 'utf8')],
+  ['bots/anismin_bot/README.md', readFileSync(new URL('../bots/anismin_bot/README.md', import.meta.url), 'utf8')],
+  ['frontend/llms.txt', readFileSync(new URL('../frontend/llms.txt', import.meta.url), 'utf8')],
+];
+
+assert.doesNotMatch(mainHTML, /\/api\/v1\/keys\/generate|No signup required/i,
+  'public Arena UI must not advertise anonymous API-key generation');
+assert.match(mainHTML, /Create API key in Dashboard/i);
+assert.match(mainHTML, /href="dashboard\/\?tab=cosmetics"/,
+  'Get Started must send key creation through the authenticated Dashboard');
+assert.doesNotMatch(appSource, /key-generator|initKeyGenerator|keygen-card/,
+  'the public spectator app must not ship the anonymous key generator');
+assert.doesNotMatch(debugHTML, /key-generator|initKeyGenerator/,
+  'public debug pages must not import the retired anonymous key generator');
+assert.equal(existsSync(new URL('../frontend/js/key-generator.js', import.meta.url)), false,
+  'the obsolete anonymous key generator module should be removed');
+assert.equal(existsSync(new URL('../frontend/js/credential-events.js', import.meta.url)), false,
+  'the credential event helper should be removed with its only caller');
+
+for (const [name, content] of publicDocs) {
+  assert.doesNotMatch(content, /\/api\/v1\/keys\/generate/i,
+    `${name} must not direct users to the retired anonymous key route`);
+  assert.match(content, /Dashboard/i, `${name} should direct users to authenticated Dashboard key creation`);
 }
 
-class FakeButton {
-  constructor() {
-    this.listeners = [];
-    this.disabled = false;
-    this.textContent = '';
-  }
-  addEventListener(type, listener) {
-    if (type === 'click') this.listeners.push(listener);
-  }
-  async click() {
-    for (const listener of this.listeners) await listener({type:'click',target:this});
-  }
-}
+assert.match(accountSource, /keys:\s*'\/account\/keys'/);
+assert.match(accountSource, /key:\s*`\/account\/keys\/\$\{encoded\}`/);
+assert.match(dashboardHTML, /async function createAccountKey/);
+assert.match(dashboardHTML, /accountRoute\('keys'\)[\s\S]*method:'POST'/,
+  'Dashboard key creation must use the authenticated account route');
+assert.match(dashboardHTML, /async function revokeAccountKey/);
+assert.match(dashboardHTML, /accountRoute\('key', keyID\)[\s\S]*method:'DELETE'/,
+  'Dashboard key revocation must target one account-owned key');
+assert.match(dashboardHTML, /input\.value = '';/,
+  'one-time API-key values must be zeroed before removal from the Dashboard');
 
-class FakeResult {
-  constructor() {
-    this.keyField = null;
-    this.clearButton = new FakeButton();
-    this.removed = false;
-  }
-  set innerHTML(value) {
-    if (String(value).includes('id="key-display"')) this.keyField = {value:'arena_secret'};
-  }
-  querySelector(selector) {
-    if (selector === '#key-display') return this.keyField;
-    if (selector === '[data-keygen-clear]') return this.clearButton;
-    return null;
-  }
-  replaceChildren() {
-    assert.equal(this.keyField?.value, '', 'the plaintext key must be zeroed before its DOM is removed');
-    this.removed = true;
-  }
-}
-
-const sourcePath = new URL('../frontend/js/key-generator.js', import.meta.url);
-let source = readFileSync(sourcePath, 'utf8');
-assert.match(source, /addEventListener\('click', \(\) => requestArenaAPIKeyClear\(\)\)/, 'click events must not be passed as the credential-event target');
-source = source
-  .replace(/import \{ apiPath \} from '[^']+';\r?\n/, "const apiPath = path => '/api/v1' + path;\n")
-  .replace(
-    /import \{ onArenaAPIKeyClear, requestArenaAPIKeyClear \} from '[^']+';\r?\n/,
-    'let clearListener; const onArenaAPIKeyClear = listener => { clearListener = listener; }; const requestArenaAPIKeyClear = () => clearListener?.();\n',
-  );
-
-globalThis.document = {createElement: () => ({textContent:'',innerHTML:''})};
-globalThis.fetch = async () => ({ok:true,json:async () => ({api_key:'arena_secret',bot_id:'bot-1'})});
-const {initKeyGenerator} = await import(dataModule(source));
-const generateButton = new FakeButton();
-const result = new FakeResult();
-const container = {
-  querySelector(selector) {
-    if (selector === '.keygen-btn') return generateButton;
-    if (selector === '.keygen-result') return result;
-    return null;
-  },
-};
-
-initKeyGenerator(container);
-await generateButton.click();
-assert.equal(result.keyField?.value, 'arena_secret');
-await result.clearButton.click();
-assert.equal(result.removed, true, 'clicking Clear key should dispatch the page-wide clear event');
-
-console.log('generated API key has a reachable zero-and-clear control');
+console.log('API-key creation is account-owned and available only in the authenticated Dashboard');

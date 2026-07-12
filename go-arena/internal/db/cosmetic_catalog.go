@@ -26,6 +26,8 @@ var cosmeticAssetKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,79}$`)
 var cosmeticCurrencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
 var cosmeticRarityPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
+const CosmeticPackPriceCents = 199
+
 type CosmeticCategory struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -98,13 +100,13 @@ var legacyStarterCosmeticPacks = []CosmeticPack{
 	{
 		ID: "neon-signal-pack", CategoryID: "starter-packs", Name: "Neon Signal Pack",
 		Description: "Neon Grid chassis, Solar Flare weapon finish, and Signal Antenna.",
-		PriceCents:  99, Currency: "USD", IsPurchasable: true, IsActive: true, SortOrder: 10,
+		PriceCents:  CosmeticPackPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true, SortOrder: 10,
 		ItemIDs: []string{"skin-neon-grid", "weapon-solar-flare", "attachment-signal-antenna"},
 	},
 	{
 		ID: "void-orbit-pack", CategoryID: "starter-packs", Name: "Void Orbit Pack",
 		Description: "Carbon Armor chassis, Void Edge weapon finish, and Orbital Halo.",
-		PriceCents:  99, Currency: "USD", IsPurchasable: true, IsActive: true, SortOrder: 20,
+		PriceCents:  CosmeticPackPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true, SortOrder: 20,
 		ItemIDs: []string{"skin-carbon-armor", "weapon-void-edge", "attachment-orbital-halo"},
 	},
 }
@@ -222,15 +224,15 @@ var starterCosmeticPacks = buildStarterCosmeticPacks()
 func launchSetEconomy(number int) (rarity string, itemPrice, packPrice int) {
 	switch {
 	case number <= 26:
-		return "uncommon", 99, 199
+		return "uncommon", 99, CosmeticPackPriceCents
 	case number <= 50:
-		return "rare", 149, 299
+		return "rare", 149, CosmeticPackPriceCents
 	case number <= 74:
-		return "epic", 199, 399
+		return "epic", 199, CosmeticPackPriceCents
 	case number <= 94:
-		return "legendary", 249, 499
+		return "legendary", 249, CosmeticPackPriceCents
 	default:
-		return "mythic", 349, 699
+		return "mythic", 349, CosmeticPackPriceCents
 	}
 }
 
@@ -304,6 +306,9 @@ func ValidateCosmeticPack(pack CosmeticPack) error {
 		strings.TrimSpace(pack.Name) == "" || len(pack.Name) > 100 || len(pack.Description) > 500 ||
 		!validCosmeticPrice(pack.PriceCents, pack.Currency, pack.IsFree, pack.IsPurchasable) ||
 		pack.SortOrder < 0 || pack.SortOrder > 1_000_000 || len(pack.ItemIDs) > 500 {
+		return ErrCosmeticCatalogInvalid
+	}
+	if pack.IsPurchasable && !pack.IsFree && (pack.PriceCents != CosmeticPackPriceCents || pack.Currency != "USD") {
 		return ErrCosmeticCatalogInvalid
 	}
 	seen := make(map[string]struct{}, len(pack.ItemIDs))

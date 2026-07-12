@@ -79,6 +79,7 @@ const managedSchemaPreflightQuery = `
 			('customer_email_verifications', 'token_hash'),
 			('customer_email_verifications', 'expires_at'),
 			('account_bot_links', 'account_id'),
+			('account_api_keys', 'account_id'),
 			('cosmetic_licenses', 'id'),
 			('cosmetic_license_assignments', 'license_id'),
 			('bot_cosmetic_loadout', 'license_id'),
@@ -92,7 +93,13 @@ const managedSchemaPreflightQuery = `
 			('cosmetic_order_items', 'item_id'),
 			('cosmetic_order_licenses', 'license_id'),
 			('cosmetic_payment_events', 'payload_hash'),
-			('cosmetic_order_refunds', 'refund_id')
+			('cosmetic_order_refunds', 'refund_id'),
+			('cosmetic_subscriptions', 'id'),
+			('cosmetic_subscriptions', 'stripe_subscription_id'),
+			('cosmetic_subscriptions', 'last_provider_event_created_at'),
+			('cosmetic_subscriptions', 'last_provider_state_observed_at'),
+			('cosmetic_subscription_licenses', 'license_id'),
+			('cosmetic_subscription_events', 'payload_hash')
 	), missing AS (
 		SELECT required.table_name, required.column_name
 		FROM required

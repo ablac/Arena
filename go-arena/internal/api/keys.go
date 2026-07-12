@@ -2,8 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"arena-server/internal/config"
@@ -11,46 +15,170 @@ import (
 	"arena-server/internal/game"
 	"arena-server/internal/security"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
-// GenerateKey handles POST /api/v1/keys/generate.
-// It rate-limits key generation per IP, creates a new API key and a default
-// bot record, and returns the plaintext key to the caller.
-func GenerateKey(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	ip := security.ExtractClientIP(r)
+type accountAPIKeyStore interface {
+	Capacity(context.Context, string) (int, int, error)
+	ConsumeQuota(context.Context, string, db.AccountAPIKeyQuotaAction, int) (bool, int, error)
+	List(context.Context, string) ([]db.AccountAPIKey, int, error)
+	Create(context.Context, string, string, string, string, string, *db.Bot) (*db.AccountAPIKey, int, error)
+	Deactivate(context.Context, string, string) (*db.AccountAPIKey, int, error)
+}
 
-	// API-key authentication is database-backed. Returning a plaintext key in
-	// database-optional mode would create a credential that can never pass the
-	// next authenticated request or WebSocket connection.
-	if db.Pool == nil {
+type databaseAccountAPIKeyStore struct{}
+
+func (databaseAccountAPIKeyStore) Capacity(ctx context.Context, accountID string) (int, int, error) {
+	return db.GetAccountAPIKeyCapacity(ctx, accountID)
+}
+
+func (databaseAccountAPIKeyStore) ConsumeQuota(ctx context.Context, accountID string, action db.AccountAPIKeyQuotaAction, limit int) (bool, int, error) {
+	return db.ConsumeAccountAPIKeyQuota(ctx, accountID, action, limit)
+}
+
+func (databaseAccountAPIKeyStore) List(ctx context.Context, accountID string) ([]db.AccountAPIKey, int, error) {
+	return db.ListAccountAPIKeys(ctx, accountID)
+}
+
+func (databaseAccountAPIKeyStore) Create(ctx context.Context, accountID, keyID, keyHash, keyPrefix, ip string, bot *db.Bot) (*db.AccountAPIKey, int, error) {
+	return db.CreateAccountAPIKeyAndBot(ctx, accountID, keyID, keyHash, keyPrefix, ip, bot)
+}
+
+func (databaseAccountAPIKeyStore) Deactivate(ctx context.Context, accountID, keyID string) (*db.AccountAPIKey, int, error) {
+	return db.DeactivateAccountAPIKey(ctx, accountID, keyID)
+}
+
+type generateAPIKeyFunc func() (string, string, string, error)
+
+type AccountKeysHandler struct {
+	store    accountAPIKeyStore
+	sessions botSessionRevoker
+	generate generateAPIKeyFunc
+}
+
+func NewAccountKeysHandler(engine *game.GameEngine) *AccountKeysHandler {
+	return newAccountKeysHandler(databaseAccountAPIKeyStore{}, engine, security.GenerateAPIKey)
+}
+
+func newAccountKeysHandler(store accountAPIKeyStore, sessions botSessionRevoker, generate generateAPIKeyFunc) *AccountKeysHandler {
+	return &AccountKeysHandler{store: store, sessions: sessions, generate: generate}
+}
+
+func verifiedAccountKeySession(w http.ResponseWriter, r *http.Request) (*CustomerSession, bool) {
+	session, ok := customerSession(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "customer authentication required")
+		return nil, false
+	}
+	if session.EmailVerifiedAt == nil {
+		writeError(w, http.StatusForbidden, "a verified customer email is required")
+		return nil, false
+	}
+	return session, true
+}
+
+func (h *AccountKeysHandler) List(w http.ResponseWriter, r *http.Request) {
+	session, ok := verifiedAccountKeySession(w, r)
+	if !ok {
+		return
+	}
+	keys, activeCount, err := h.store.List(r.Context(), session.AccountID)
+	if err != nil {
+		if errors.Is(err, db.ErrNoDatabase) {
+			writeError(w, http.StatusServiceUnavailable, "account API keys are unavailable")
+			return
+		}
+		slog.Error("failed to list account API keys", "error", err, "account_id", session.AccountID)
+		writeError(w, http.StatusInternalServerError, "failed to list account API keys")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"keys": keys, "active_count": activeCount, "limit": db.MaxActiveAccountAPIKeys,
+	})
+}
+
+type accountKeyCreateRequest struct {
+	BotName string `json:"bot_name"`
+}
+
+func (h *AccountKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
+	session, ok := verifiedAccountKeySession(w, r)
+	if !ok {
+		return
+	}
+	if db.Pool == nil && isDatabaseAccountAPIKeyStore(h.store) {
 		writeError(w, http.StatusServiceUnavailable, "key registration requires the database")
 		return
 	}
 
-	// Rate-limit key registration per IP.
-	allowed, _, err := db.CheckRateLimit(ctx, ip, config.C.RateLimitRegisterPerHour)
-	if err != nil {
-		slog.Error("rate limit check failed", "error", err)
-		// Registration writes to this same database moments later. Failing
-		// open here only bypasses abuse controls and cannot provide a reliable
-		// degraded registration path.
-		writeError(w, http.StatusServiceUnavailable, "key registration is temporarily unavailable")
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var request accountKeyCreateRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
-	} else if !allowed {
-		writeStructuredError(w, GlobalEventBus, http.StatusTooManyRequests,
-			"rate limit exceeded for key generation", "RATE_LIMITED",
-			map[string]interface{}{
-				"limit":       config.C.RateLimitRegisterPerHour,
-				"window":      "1h",
-				"retry_after": 3600,
-			})
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	botName := security.SanitizeBotName(request.BotName)
+
+	ctx := r.Context()
+	ip := security.ExtractClientIP(r)
+	activeCount, totalCount, err := h.store.Capacity(ctx, session.AccountID)
+	if err != nil {
+		if errors.Is(err, db.ErrNoDatabase) {
+			writeError(w, http.StatusServiceUnavailable, "account API key capacity is unavailable")
+			return
+		}
+		slog.Error("failed to preflight account API key capacity", "error", err, "account_id", session.AccountID)
+		writeError(w, http.StatusInternalServerError, "failed to check account API key capacity")
+		return
+	}
+	if activeCount >= db.MaxActiveAccountAPIKeys {
+		writeAccountAPIKeyActiveLimit(w, activeCount)
+		return
+	}
+	if totalCount >= db.MaxAccountAPIKeyHistory {
+		writeAccountAPIKeyHistoryLimit(w, totalCount)
 		return
 	}
 
+	allowed, remaining, err := h.store.ConsumeQuota(ctx, session.AccountID, db.AccountAPIKeyQuotaCreate, config.C.CustomerAPIKeyCreatePerHour)
+	if err != nil {
+		slog.Error("account API key create quota failed", "error", err, "account_id", session.AccountID)
+		writeError(w, http.StatusServiceUnavailable, "account API key quota is temporarily unavailable")
+		return
+	}
+	if !allowed {
+		writeAccountAPIKeyQuotaLimit(w, "ACCOUNT_API_KEY_CREATE_RATE_LIMIT", config.C.CustomerAPIKeyCreatePerHour, remaining)
+		return
+	}
+
+	// Rate-limit key registration per IP.
+	if isDatabaseAccountAPIKeyStore(h.store) {
+		allowed, _, err := db.CheckRateLimit(ctx, ip, config.C.RateLimitRegisterPerHour)
+		if err != nil {
+			slog.Error("rate limit check failed", "error", err)
+			writeError(w, http.StatusServiceUnavailable, "key registration is temporarily unavailable")
+			return
+		} else if !allowed {
+			writeStructuredError(w, GlobalEventBus, http.StatusTooManyRequests,
+				"rate limit exceeded for key generation", "RATE_LIMITED",
+				map[string]interface{}{
+					"limit":       config.C.RateLimitRegisterPerHour,
+					"window":      "1h",
+					"retry_after": 3600,
+				})
+			return
+		}
+	}
+
 	// Generate API key material.
-	fullKey, keyHash, keyPrefix, err := security.GenerateAPIKey()
+	fullKey, keyHash, keyPrefix, err := h.generate()
 	if err != nil {
 		slog.Error("failed to generate API key", "error", err)
 		writeStructuredError(w, GlobalEventBus, http.StatusInternalServerError,
@@ -67,7 +195,7 @@ func GenerateKey(w http.ResponseWriter, r *http.Request) {
 	bot := &db.Bot{
 		ID:              botID,
 		APIKeyID:        keyID,
-		Name:            "Unnamed Bot",
+		Name:            botName,
 		AvatarColor:     "#888888",
 		DefaultWeapon:   "sword",
 		DefaultStats:    db.JSONBStats{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
@@ -75,19 +203,115 @@ func GenerateKey(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
-	if err := db.CreateAPIKeyAndBot(ctx, keyID, keyHash, keyPrefix, ip, bot); err != nil {
-		slog.Error("failed to create API key and bot", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to create API key")
+	key, activeCount, err := h.store.Create(ctx, session.AccountID, keyID, keyHash, keyPrefix, ip, bot)
+	if err != nil {
+		switch {
+		case errors.Is(err, db.ErrCustomerAPIKeyLimit):
+			writeAccountAPIKeyActiveLimit(w, activeCount)
+		case errors.Is(err, db.ErrCustomerAPIKeyHistoryLimit):
+			writeAccountAPIKeyHistoryLimit(w, db.MaxAccountAPIKeyHistory)
+		case errors.Is(err, db.ErrCustomerAccountUnverified):
+			writeError(w, http.StatusForbidden, "a verified customer email is required")
+		case errors.Is(err, db.ErrNoDatabase):
+			writeError(w, http.StatusServiceUnavailable, "key registration requires the database")
+		default:
+			slog.Error("failed to create account API key and bot", "error", err, "account_id", session.AccountID)
+			writeError(w, http.StatusInternalServerError, "failed to create API key")
+		}
 		return
 	}
 
-	resp := KeyGenerateResponse{
-		APIKey:    fullKey,
-		BotID:     botID,
-		CreatedAt: now,
-		Message:   "API key generated successfully. Store it safely -- it cannot be recovered.",
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"api_key": fullKey, "key": key, "active_count": activeCount, "limit": db.MaxActiveAccountAPIKeys,
+	})
+}
+
+func isDatabaseAccountAPIKeyStore(store accountAPIKeyStore) bool {
+	_, ok := store.(databaseAccountAPIKeyStore)
+	return ok
+}
+
+func writeAccountAPIKeyActiveLimit(w http.ResponseWriter, activeCount int) {
+	writeJSON(w, http.StatusConflict, map[string]interface{}{
+		"error": db.ErrCustomerAPIKeyLimit.Error(), "code": "API_KEY_LIMIT",
+		"active_count": activeCount, "limit": db.MaxActiveAccountAPIKeys,
+	})
+}
+
+func writeAccountAPIKeyHistoryLimit(w http.ResponseWriter, historyCount int) {
+	writeJSON(w, http.StatusConflict, map[string]interface{}{
+		"error": db.ErrCustomerAPIKeyHistoryLimit.Error(), "code": "API_KEY_HISTORY_LIMIT",
+		"history_count": historyCount, "history_limit": db.MaxAccountAPIKeyHistory,
+		"support": "Contact Arena support to review your account's archived API-key history.",
+	})
+}
+
+func writeAccountAPIKeyQuotaLimit(w http.ResponseWriter, code string, limit, remaining int) {
+	writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
+		"error": "account API key mutation rate limit exceeded", "code": code,
+		"limit": limit, "remaining": remaining, "window": "1h", "retry_after": 3600,
+	})
+}
+
+func (h *AccountKeysHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
+	session, ok := verifiedAccountKeySession(w, r)
+	if !ok {
+		return
 	}
-	writeJSON(w, http.StatusCreated, resp)
+	keyID := strings.TrimSpace(chi.URLParam(r, "key_id"))
+	if keyID == "" || len(keyID) > 128 {
+		writeError(w, http.StatusBadRequest, "key_id is required")
+		return
+	}
+	allowed, remaining, err := h.store.ConsumeQuota(r.Context(), session.AccountID, db.AccountAPIKeyQuotaRevoke, config.C.CustomerAPIKeyRevokePerHour)
+	if err != nil {
+		slog.Error("account API key revoke quota failed", "error", err, "account_id", session.AccountID)
+		writeError(w, http.StatusServiceUnavailable, "account API key quota is temporarily unavailable")
+		return
+	}
+	if !allowed {
+		writeAccountAPIKeyQuotaLimit(w, "ACCOUNT_API_KEY_REVOKE_RATE_LIMIT", config.C.CustomerAPIKeyRevokePerHour, remaining)
+		return
+	}
+	key, activeCount, err := h.store.Deactivate(r.Context(), session.AccountID, keyID)
+	if err != nil {
+		switch {
+		case errors.Is(err, db.ErrCustomerAPIKeyNotOwned):
+			writeError(w, http.StatusNotFound, "API key not found")
+		case errors.Is(err, db.ErrNoDatabase):
+			writeError(w, http.StatusServiceUnavailable, "account API keys are unavailable")
+		default:
+			slog.Error("failed to deactivate account API key", "error", err, "account_id", session.AccountID, "key_id", keyID)
+			writeError(w, http.StatusInternalServerError, "failed to revoke API key")
+		}
+		return
+	}
+	if h.sessions != nil && key != nil {
+		h.sessions.KickBot(key.BotID, "API key revoked")
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"revoked": true, "active_count": activeCount, "limit": db.MaxActiveAccountAPIKeys,
+	})
+}
+
+// GenerateKey keeps direct package callers on the authenticated account path.
+func GenerateKey(w http.ResponseWriter, r *http.Request) {
+	NewAccountKeysHandler(nil).Create(w, r)
+}
+
+func RetiredAnonymousKeyGeneration(w http.ResponseWriter, r *http.Request) {
+	replacementPath := "/api/v1/account/keys"
+	if strings.HasPrefix(r.URL.Path, "/arena/") {
+		replacementPath = "/arena" + replacementPath
+	}
+	writeJSON(w, http.StatusGone, map[string]interface{}{
+		"error": "anonymous API key generation has been retired",
+		"code":  "ACCOUNT_REQUIRED",
+		"replacement": map[string]string{
+			"method": "POST",
+			"path":   replacementPath,
+		},
+	})
 }
 
 type botSessionRevoker interface {

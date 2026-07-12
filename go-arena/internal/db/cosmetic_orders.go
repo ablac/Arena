@@ -344,7 +344,7 @@ func CreateCosmeticOrder(ctx context.Context, accountID, packID string, quantity
 		return nil, fmt.Errorf("CreateCosmeticOrder pack: %w", err)
 	}
 	currency = strings.ToUpper(strings.TrimSpace(currency))
-	if packFree || !packPurchasable || !packActive || !categoryActive || price <= 0 || currency != "USD" {
+	if packFree || !packPurchasable || !packActive || !categoryActive || price != CosmeticPackPriceCents || currency != "USD" {
 		return nil, ErrCosmeticOrderPackUnavailable
 	}
 

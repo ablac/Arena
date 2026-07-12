@@ -94,6 +94,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	dashboardHandler := NewDashboardHandler(bus, adminHandler)
 	cosmeticsHandler := NewCosmeticsHandler(engine)
 	commerceHandler := NewCosmeticCommerceHandler(engine)
+	accountKeysHandler := NewAccountKeysHandler(engine)
 
 	// Initialise OIDC handler (nil if disabled/misconfigured).
 	oidcHandler := NewOIDCHandler()
@@ -184,10 +185,19 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		}
 		api.Route("/account", func(account chi.Router) {
 			account.Use(MakeCustomerAuthMiddleware(customerOIDCHandler))
-			account.Get("/cosmetics", cosmeticsHandler.AccountInventory)
-			registerCustomerCosmeticCommerceRoutes(account, commerceHandler)
 			account.With(
-				security.RateLimitMiddleware(config.C.CustomerBotLinkRPM),
+				security.RateLimitMiddleware(config.C.CosmeticsAccountReadRPM),
+			).Get("/cosmetics", cosmeticsHandler.AccountInventory)
+			registerCustomerCosmeticCommerceRoutes(account, commerceHandler)
+			account.Get("/keys", accountKeysHandler.List)
+			account.With(
+				security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
+			).Post("/keys", accountKeysHandler.Create)
+			account.With(
+				security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
+			).Delete("/keys/{key_id}", accountKeysHandler.Deactivate)
+			account.With(
+				security.FailClosedRateLimitMiddleware(config.C.CustomerBotLinkRPM),
 			).Post("/bots", cosmeticsHandler.LinkAccountBot)
 			account.Delete("/bots/{bot_id}", cosmeticsHandler.UnlinkAccountBot)
 			account.Put("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
@@ -195,10 +205,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountLicense)
 		})
 
-		// Key generation (public, rate-limited per IP for registration).
-		api.With(
-			security.RateLimitMiddleware(config.C.RateLimitRegisterPerHour),
-		).Post("/keys/generate", GenerateKey)
+		// Anonymous key issuance is retired. Keys are created from the verified
+		// customer account route above so ownership and plan limits are durable.
+		api.Post("/keys/generate", RetiredAnonymousKeyGeneration)
 
 		// Authenticated routes.
 		api.Group(func(auth chi.Router) {
@@ -281,19 +290,26 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			}
 			api.Route("/account", func(account chi.Router) {
 				account.Use(MakeCustomerAuthMiddleware(customerOIDCHandler))
-				account.Get("/cosmetics", cosmeticsHandler.AccountInventory)
-				registerCustomerCosmeticCommerceRoutes(account, commerceHandler)
 				account.With(
-					security.RateLimitMiddleware(config.C.CustomerBotLinkRPM),
+					security.RateLimitMiddleware(config.C.CosmeticsAccountReadRPM),
+				).Get("/cosmetics", cosmeticsHandler.AccountInventory)
+				registerCustomerCosmeticCommerceRoutes(account, commerceHandler)
+				account.Get("/keys", accountKeysHandler.List)
+				account.With(
+					security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
+				).Post("/keys", accountKeysHandler.Create)
+				account.With(
+					security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
+				).Delete("/keys/{key_id}", accountKeysHandler.Deactivate)
+				account.With(
+					security.FailClosedRateLimitMiddleware(config.C.CustomerBotLinkRPM),
 				).Post("/bots", cosmeticsHandler.LinkAccountBot)
 				account.Delete("/bots/{bot_id}", cosmeticsHandler.UnlinkAccountBot)
 				account.Put("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
 				account.Delete("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
 				account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountLicense)
 			})
-			api.With(
-				security.RateLimitMiddleware(config.C.RateLimitRegisterPerHour),
-			).Post("/keys/generate", GenerateKey)
+			api.Post("/keys/generate", RetiredAnonymousKeyGeneration)
 			api.Group(func(auth chi.Router) {
 				auth.Use(security.AuthMiddleware)
 				auth.Delete("/keys/revoke", RevokeKey(engine))
@@ -351,9 +367,10 @@ func registerCustomerEmailAuthRoutes(api chi.Router, handler *CustomerOIDCHandle
 
 func registerCustomerCosmeticCommerceRoutes(account chi.Router, handler *CosmeticCommerceHandler) {
 	account.Get("/cosmetics/orders", handler.CustomerOrders)
-	account.With(
-		security.FailClosedRateLimitMiddleware(config.C.CosmeticsCheckoutRPM),
-	).Post("/cosmetics/checkout", handler.Checkout)
+	checkoutQuota := security.FailClosedRateLimitMiddleware(config.C.CosmeticsCheckoutRPM)
+	account.With(checkoutQuota).Post("/cosmetics/checkout", handler.Checkout)
+	account.With(checkoutQuota).Post("/cosmetics/subscription/checkout", handler.SubscriptionCheckout)
+	account.With(checkoutQuota).Post("/cosmetics/subscription/portal", handler.SubscriptionPortal)
 }
 
 // healthHandler returns a handler for GET /api/v1/health.

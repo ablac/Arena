@@ -3,11 +3,13 @@ import {existsSync, readFileSync} from 'node:fs';
 
 const shopHTMLURL = new URL('../frontend/shop/index.html', import.meta.url);
 const shopModuleURL = new URL('../frontend/js/cosmetics-shop.js', import.meta.url);
+const shopCSSURL = new URL('../frontend/css/shop.css', import.meta.url);
 
 assert.equal(existsSync(shopHTMLURL), true, 'cosmetics need a dedicated /shop/ document');
 assert.equal(existsSync(shopModuleURL), true, 'the Shop needs an isolated catalog controller');
 
 const shopHTML = readFileSync(shopHTMLURL, 'utf8');
+const shopCSS = readFileSync(shopCSSURL, 'utf8');
 const mainHTML = readFileSync(new URL('../frontend/index.html', import.meta.url), 'utf8');
 const shopIDs = Array.from(shopHTML.matchAll(/\sid="([^"]+)"/g), match => match[1]);
 assert.equal(shopIDs.length, new Set(shopIDs).size, 'Shop document must not contain duplicate IDs');
@@ -39,6 +41,16 @@ assert.match(shopHTML, /Each purchased item copy can be assigned to one bot at a
   'Shop must state the per-item license rule precisely');
 assert.match(shopHTML, /Items from the same pack can be assigned to different bots/i,
   'Shop must explain that pack members are independent licenses');
+assert.match(shopHTML, /data-shop-subscription/, 'Shop needs one prominent horizontal All Access offer');
+assert.match(shopHTML, /All Access/);
+assert.match(shopHTML, /every current and future cosmetic set/i);
+assert.match(shopHTML, /up to 5 active API keys/i);
+assert.match(shopHTML, /subscription cosmetics are removed/i);
+assert.match(shopHTML, /data-shop-subscription-action/, 'All Access must lead into the verified-email Dashboard');
+assert.match(shopHTML, /data-shop-subscription-action[^>]*\shidden(?:\s|>)/,
+  'All Access action must not be operable before checkout availability is confirmed');
+assert.match(shopCSS, /\.shop-all-access-offer \[hidden\]\s*\{[^}]*display:\s*none\s*!important/s,
+  'author button styles must not override the unavailable offer hidden state');
 assert.match(mainHTML, /href="shop\/"[^>]*>[\s\S]*?<span>Shop<\/span>/,
   'the main command dock must link to the dedicated Shop');
 assert.match(mainHTML, /class="mobile-command-actions"[\s\S]*?href="shop\/"[^>]*>Shop<\/a>/,
@@ -82,6 +94,8 @@ assert.deepEqual(shop.packItems(pack).map(item => item.id), ['body-first', 'body
   'pack detail must preserve every catalog item, including multiple items in one slot');
 assert.equal(shop.dashboardPurchasePath('ember pack', '/shop/'), '/dashboard/?tab=cosmetics&pack=ember%20pack');
 assert.equal(shop.dashboardPurchasePath('ember pack', '/arena/shop/'), '/arena/dashboard/?tab=cosmetics&pack=ember%20pack');
+assert.equal(shop.subscriptionDashboardPath('/shop/'), '/dashboard/?tab=cosmetics&plan=all-access');
+assert.equal(shop.subscriptionDashboardPath('/arena/shop/'), '/arena/dashboard/?tab=cosmetics&plan=all-access');
 assert.equal(shop.catalogPath('/arena/shop/'), '/arena/api/v1/cosmetics/catalog');
 
 class FakeStyle {
@@ -150,6 +164,10 @@ const previewStatus = new FakeElement('p');
 const rotateLeft = new FakeElement('button');
 const rotateRight = new FakeElement('button');
 const resetView = new FakeElement('button');
+const subscription = new FakeElement('section');
+const subscriptionPrice = new FakeElement('strong');
+const subscriptionAction = new FakeElement('a');
+const subscriptionState = new FakeElement('p');
 const root = new FakeRoot({
   '#shop-preview-canvas': canvas,
   '[data-shop-status]': status,
@@ -171,6 +189,10 @@ const root = new FakeRoot({
   '[data-shop-rotate-left]': rotateLeft,
   '[data-shop-rotate-right]': rotateRight,
   '[data-shop-reset-view]': resetView,
+  '[data-shop-subscription]': subscription,
+  '[data-shop-subscription-price]': subscriptionPrice,
+  '[data-shop-subscription-action]': subscriptionAction,
+  '[data-shop-subscription-state]': subscriptionState,
 });
 
 globalThis.document = {
@@ -195,12 +217,13 @@ const fakePreview = {
 const bulkPacks = Array.from({length: 99}, (_, index) => {
   const number = String(index + 2).padStart(3, '0');
   const assetKey = `arena_set_${number}_signal_test`;
+  const finalSet = number === '100';
   return {
-    id: `signal-set-${number}`,
-    name: `Signal Set ${number}`,
-    description: `Coordinated Arena set ${number}`,
+    id: finalSet ? 'arena-set-100-apex-radiance-pack' : `signal-set-${number}`,
+    name: finalSet ? 'Apex Radiance Set' : `Signal Set ${number}`,
+    description: finalSet ? 'A coordinated three-piece Apex Radiance cosmetic set' : `Coordinated Arena set ${number}`,
     category_id: 'season-one',
-    price_cents: 299,
+    price_cents: 199,
     currency: 'USD',
     is_purchasable: true,
     items: [{
@@ -213,9 +236,17 @@ const bulkPacks = Array.from({length: 99}, (_, index) => {
 });
 const catalog = {
   checkout_enabled: true,
+  subscription_offer: {
+    enabled: true,
+    price_cents: 1999,
+    currency: 'USD',
+    interval: 'month',
+    includes_future_sets: true,
+    max_api_keys: 5,
+  },
   categories: [{id: 'season-one', name: 'Season One'}],
   packs: [
-    {...pack, name: 'Ember Pack', category_id: 'season-one', price_cents: 499, currency: 'USD', is_purchasable: true},
+    {...pack, name: 'Ember Pack', category_id: 'season-one', price_cents: 199, currency: 'USD', is_purchasable: true},
     ...bulkPacks,
   ],
 };
@@ -236,11 +267,20 @@ await new Promise(resolve => setTimeout(resolve, 0));
 assert.equal(controller.snapshot().selectedPackID, 'signal-set-099',
   'a search typed during fetch must determine the selected pack when the response arrives');
 assert.equal(packList.children.length, 1);
+assert.equal(subscriptionPrice.textContent, '$19.99 / month');
+assert.equal(subscriptionAction.href, '/dashboard/?tab=cosmetics&plan=all-access');
+assert.equal(subscriptionAction.hidden, false);
+assert.match(subscriptionState.textContent, /current and future/i);
+
+search.value = 'set 100';
+search.listeners.get('input')({currentTarget: search});
+assert.equal(controller.snapshot().filteredCount, 1, 'natural spacing must find a hyphenated set number');
+assert.equal(controller.snapshot().selectedPackID, 'arena-set-100-apex-radiance-pack');
 
 search.value = '';
 search.listeners.get('input')({currentTarget: search});
 assert.equal(packList.children.length, 24, 'the 100-pack Shop must keep its initial DOM page bounded');
-assert.equal(packList.children[0].dataset.shopPackId, 'signal-set-099',
+assert.equal(packList.children[0].dataset.shopPackId, 'arena-set-100-apex-radiance-pack',
   'the selected pack must stay visible when a broader filter is restored');
 showMore.listeners.get('click')();
 assert.equal(packList.children.length, 48, 'Show more must reveal one bounded page at a time');
@@ -254,6 +294,7 @@ assert.equal(document.activeElement, emberButton, 'pack selection must retain ke
 assert.equal(controller.snapshot().selectedPackID, 'ember-pack');
 assert.equal(itemList.children.length, 4, 'selecting a pack must render every item, not a three-item slice');
 assert.equal(packCount.textContent, '4 included items');
+assert.equal(packPrice.textContent, '$1.99');
 assert.equal(purchase.href, '/dashboard/?tab=cosmetics&pack=ember-pack');
 assert.equal(purchase.hidden, false);
 assert.deepEqual(previewCalls.at(-1).loadout, shop.packPreviewLoadout(pack));
@@ -280,5 +321,26 @@ assert.equal(canvas.dataset.previewSignature, 'standard:no-pack-selected',
   'an empty filter must clear stale pack cosmetics from the preview');
 assert.deepEqual(previewCalls.at(-1).loadout, {bot_skin: 'standard', weapon_skin: 'standard', attachment: 'none'});
 controller.dispose();
+
+subscriptionAction.hidden = false;
+subscriptionAction.attributes.clear();
+const unavailableController = shop.initCosmeticsShop(root, {
+  pathname: '/shop/',
+  updateURL: false,
+  previewFactory: () => fakePreview,
+  fetchImpl: async () => ({
+    ok: true,
+    json: async () => ({
+      ...catalog,
+      subscription_offer: {...catalog.subscription_offer, enabled: false},
+    }),
+  }),
+});
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(subscriptionAction.hidden, true,
+  'an unavailable All Access checkout must not leave a clickable-looking action');
+assert.equal(subscriptionAction.getAttribute('aria-disabled'), 'true');
+assert.match(subscriptionState.textContent, /not open yet/i);
+unavailableController.dispose();
 
 console.log('dedicated cosmetics Shop exposes full pack details and deterministic item previews');

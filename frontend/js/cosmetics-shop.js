@@ -47,6 +47,10 @@ export function dashboardPurchasePath(packID, pathname = window.location.pathnam
   return appPath(`/dashboard/${query}`, pathname);
 }
 
+export function subscriptionDashboardPath(pathname = window.location.pathname) {
+  return appPath('/dashboard/?tab=cosmetics&plan=all-access', pathname);
+}
+
 export function catalogPath(pathname = window.location.pathname) {
   return apiPath('/cosmetics/catalog', pathname);
 }
@@ -63,13 +67,17 @@ function formatPrice(pack) {
   }
 }
 
+function normalizeSearchText(value) {
+  return String(value ?? '').toLowerCase().replace(/[-_\s]+/g, ' ').trim();
+}
+
 function searchText(pack) {
-  return [
+  return normalizeSearchText([
     pack?.id,
     pack?.name,
     pack?.description,
     ...packItems(pack).flatMap(item => [item.id, item.name, item.description, item.rarity, item.slot]),
-  ].filter(Boolean).join(' ').toLowerCase();
+  ].filter(Boolean).join(' '));
 }
 
 function swatchStyle(assetKey) {
@@ -122,6 +130,10 @@ export function initCosmeticsShop(root, options = {}) {
     rotateLeft: root.querySelector('[data-shop-rotate-left]'),
     rotateRight: root.querySelector('[data-shop-rotate-right]'),
     resetView: root.querySelector('[data-shop-reset-view]'),
+    subscription: root.querySelector('[data-shop-subscription]'),
+    subscriptionPrice: root.querySelector('[data-shop-subscription-price]'),
+    subscriptionAction: root.querySelector('[data-shop-subscription-action]'),
+    subscriptionState: root.querySelector('[data-shop-subscription-state]'),
   };
 
   if (!elements.canvas || !elements.packList || !elements.detail || !elements.itemList) return null;
@@ -129,6 +141,7 @@ export function initCosmeticsShop(root, options = {}) {
   const state = {
     catalog: {categories: [], packs: []},
     checkoutEnabled: false,
+    subscriptionOffer: null,
     query: '',
     category: 'all',
     visible: PAGE_SIZE,
@@ -151,7 +164,7 @@ export function initCosmeticsShop(root, options = {}) {
   const selectedPack = () => allPacks().find(pack => pack.id === state.selectedPackID) || null;
   const selectedItem = () => packItems(selectedPack()).find(item => item.id === state.selectedItemID) || null;
   const filteredPacks = () => {
-    const query = state.query.trim().toLowerCase();
+    const query = normalizeSearchText(state.query);
     return allPacks().filter(pack => {
       if (state.category !== 'all' && pack.category_id !== state.category) return false;
       return !query || searchText(pack).includes(query);
@@ -162,6 +175,34 @@ export function initCosmeticsShop(root, options = {}) {
     if (!elements.status) return;
     elements.status.textContent = message;
     elements.status.dataset.state = status;
+  };
+
+  const renderSubscription = () => {
+    const raw = state.subscriptionOffer && typeof state.subscriptionOffer === 'object'
+      ? state.subscriptionOffer
+      : {};
+    const offer = {
+      enabled: raw.enabled === true,
+      price_cents: Number.isFinite(Number(raw.price_cents)) ? Number(raw.price_cents) : 1999,
+      currency: raw.currency || 'USD',
+      interval: String(raw.interval || 'month').trim().toLowerCase() || 'month',
+      includes_future_sets: raw.includes_future_sets === true,
+      max_api_keys: Math.min(5, Math.max(1, Number(raw.max_api_keys) || 5)),
+    };
+    if (elements.subscriptionPrice) {
+      elements.subscriptionPrice.textContent = `${formatPrice(offer)} / ${offer.interval}`;
+    }
+    if (elements.subscriptionAction) {
+      elements.subscriptionAction.href = subscriptionDashboardPath(pathname);
+      elements.subscriptionAction.hidden = !offer.enabled;
+      elements.subscriptionAction.setAttribute('aria-disabled', String(!offer.enabled));
+    }
+    if (elements.subscriptionState) {
+      elements.subscriptionState.textContent = offer.enabled
+        ? `Every current and future set, up to ${offer.max_api_keys} active API keys.`
+        : 'All Access checkout is not open yet.';
+    }
+    if (elements.subscription) elements.subscription.dataset.state = offer.enabled ? 'available' : 'unavailable';
   };
 
   const updateURL = packID => {
@@ -465,6 +506,10 @@ export function initCosmeticsShop(root, options = {}) {
         packs: Array.isArray(data.packs) ? data.packs.filter(pack => pack?.is_active !== false) : [],
       };
       state.checkoutEnabled = data.checkout_enabled === true;
+      state.subscriptionOffer = data.subscription_offer && typeof data.subscription_offer === 'object'
+        ? data.subscription_offer
+        : null;
+      renderSubscription();
       populateCategories();
       const matches = filteredPacks();
       const requested = matches.find(pack => pack.id === requestedPackID);
@@ -482,6 +527,8 @@ export function initCosmeticsShop(root, options = {}) {
       }
     } catch (error) {
       state.catalog = {categories: [], packs: []};
+      state.subscriptionOffer = null;
+      renderSubscription();
       state.selectedPackID = '';
       renderPackList();
       renderDetail();
@@ -539,6 +586,7 @@ export function initCosmeticsShop(root, options = {}) {
       selectedPackID: state.selectedPackID,
       selectedItemID: state.selectedItemID,
       previewSignature: elements.canvas.dataset.previewSignature || '',
+      subscriptionEnabled: state.subscriptionOffer?.enabled === true,
     }),
   };
 }
