@@ -147,7 +147,7 @@ func requestWithRouteParam(method, target string, body []byte, param, value stri
 func TestCosmeticsCatalogDisclosesCheckoutState(t *testing.T) {
 	store := &fakeCosmeticsStore{publicCatalog: &db.CosmeticCatalog{
 		Categories: []db.CosmeticCategory{{ID: "starter-packs", Name: "Starter Packs", IsActive: true}},
-		Items:      []db.CosmeticItem{{ID: "free", IsFree: true, IsActive: true}},
+		Items:      []db.CosmeticItem{{ID: "free", CategoryID: "starter-packs", IsFree: true, IsActive: true}},
 		Packs: []db.CosmeticPack{{
 			ID: "neon-pack", CategoryID: "starter-packs", PriceCents: 99, Currency: "USD",
 			IsPurchasable: true, IsActive: true, ItemIDs: []string{"free"},
@@ -181,7 +181,20 @@ func TestCosmeticsCatalogDisclosesCheckoutState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !response.CheckoutEnabled {
-		t.Fatal("configured checkout with a purchasable item was not disclosed")
+		t.Fatal("configured checkout with a purchasable pack was not disclosed")
+	}
+
+	// Launch checkout sells packs only. A stray item-level sale flag must not
+	// advertise an open shop when no pack can actually be checked out.
+	store.publicCatalog.Packs = nil
+	store.publicCatalog.Items[0].IsPurchasable = true
+	itemOnly := httptest.NewRecorder()
+	handler.Catalog(itemOnly, httptest.NewRequest(http.MethodGet, "/api/v1/cosmetics/catalog", nil))
+	if err := json.Unmarshal(itemOnly.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.CheckoutEnabled {
+		t.Fatal("item-only sale flag enabled pack checkout without a purchasable pack")
 	}
 }
 
@@ -228,7 +241,7 @@ func TestAdminCosmeticCatalogMutationsUsePathIdentityAndSafeAuditActor(t *testin
 	item := httptest.NewRecorder()
 	handler.UpsertAdminItem(item, requestWithRouteParam(http.MethodPut, "/api/v1/admin/cosmetics/items/attachment-event", []byte(`{
 		"name":"Event Crown", "description":"Presentation only", "category_id":"event",
-		"slot":"attachment", "asset_key":"event_crown", "rarity":"rare", "price_cents":99,
+		"slot":"attachment", "asset_key":"signal_antenna", "rarity":"rare", "price_cents":99,
 		"currency":"USD", "is_free":false, "is_purchasable":true, "is_active":true, "sort_order":10
 	}`), "item_id", "attachment-event"))
 	if item.Code != http.StatusOK || store.lastCosmetic != "attachment-event" {
@@ -255,6 +268,61 @@ func TestAdminCosmeticCatalogMutationsUsePathIdentityAndSafeAuditActor(t *testin
 	}
 }
 
+func TestAdminCosmeticItemMutationRefreshesConnectedBotVisuals(t *testing.T) {
+	engine := game.NewGameEngine()
+	engine.Bots["bot-active"] = &game.BotState{
+		BotID: "bot-active", Cosmetics: map[string]string{db.CosmeticSlotBotSkin: "neon_grid"},
+	}
+	engine.WaitingBots["bot-waiting"] = &game.BotState{
+		BotID: "bot-waiting", Cosmetics: map[string]string{db.CosmeticSlotBotSkin: "neon_grid"},
+	}
+	// This mirrors the DB projection after the item is deactivated: the
+	// previously equipped asset is no longer resolved for either live bot.
+	store := &fakeCosmeticsStore{equipped: map[string]string{}}
+	handler := newCosmeticsHandlerWithStore(store, engine)
+
+	recorder := httptest.NewRecorder()
+	handler.UpsertAdminItem(recorder, requestWithRouteParam(
+		http.MethodPut,
+		"/api/v1/admin/cosmetics/items/skin-neon-grid",
+		[]byte(`{
+			"name":"Neon Grid Chassis", "description":"Presentation only", "category_id":"chassis",
+			"slot":"bot_skin", "asset_key":"neon_grid", "rarity":"rare", "price_cents":499,
+			"currency":"USD", "is_free":false, "is_purchasable":false, "is_active":false, "sort_order":20
+		}`),
+		"item_id",
+		"skin-neon-grid",
+	))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	for _, bot := range []*game.BotState{engine.Bots["bot-active"], engine.WaitingBots["bot-waiting"]} {
+		if len(bot.Cosmetics) != 0 {
+			t.Fatalf("bot %s retained stale cosmetics after admin mutation: %+v", bot.BotID, bot.Cosmetics)
+		}
+	}
+}
+
+func TestAdminCosmeticItemDeletionRefreshesConnectedBotVisuals(t *testing.T) {
+	engine := game.NewGameEngine()
+	engine.Bots["bot-active"] = &game.BotState{
+		BotID: "bot-active", Cosmetics: map[string]string{db.CosmeticSlotAttachment: "arena_set_003_ember_vanguard"},
+	}
+	store := &fakeCosmeticsStore{revoked: true, equipped: map[string]string{}}
+	handler := newCosmeticsHandlerWithStore(store, engine)
+	recorder := httptest.NewRecorder()
+	handler.DeleteAdminItem(
+		recorder,
+		requestWithRouteParam(http.MethodDelete, "/api/v1/admin/cosmetics/items/custom", nil, "item_id", "custom"),
+	)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(engine.Bots["bot-active"].Cosmetics) != 0 {
+		t.Fatalf("connected bot retained deleted cosmetic: %+v", engine.Bots["bot-active"].Cosmetics)
+	}
+}
+
 func TestAdminCosmeticCatalogMutationsValidateAndMapConflicts(t *testing.T) {
 	badJSON := httptest.NewRecorder()
 	newCosmeticsHandlerWithStore(&fakeCosmeticsStore{}, nil).UpsertAdminCategory(badJSON,
@@ -267,11 +335,21 @@ func TestAdminCosmeticCatalogMutationsValidateAndMapConflicts(t *testing.T) {
 	conflict := httptest.NewRecorder()
 	newCosmeticsHandlerWithStore(conflictStore, nil).UpsertAdminItem(conflict,
 		requestWithRouteParam(http.MethodPut, "/api/v1/admin/cosmetics/items/item", []byte(`{
-			"name":"Item", "category_id":"event", "slot":"attachment", "asset_key":"item", "rarity":"common",
+			"name":"Item", "category_id":"event", "slot":"attachment", "asset_key":"signal_antenna", "rarity":"common",
 			"currency":"USD", "is_free":true, "is_active":true
 		}`), "item_id", "item"))
 	if conflict.Code != http.StatusConflict {
 		t.Fatalf("catalog conflict status = %d, want 409; body=%s", conflict.Code, conflict.Body.String())
+	}
+
+	builtinStore := &fakeCosmeticsStore{revokeErr: db.ErrCosmeticCatalogBuiltin}
+	builtin := httptest.NewRecorder()
+	newCosmeticsHandlerWithStore(builtinStore, nil).DeleteAdminItem(
+		builtin,
+		requestWithRouteParam(http.MethodDelete, "/api/v1/admin/cosmetics/items/skin-standard", nil, "item_id", "skin-standard"),
+	)
+	if builtin.Code != http.StatusConflict || !strings.Contains(builtin.Body.String(), "deactivate") {
+		t.Fatalf("built-in delete status=%d body=%s", builtin.Code, builtin.Body.String())
 	}
 }
 
@@ -304,7 +382,7 @@ func TestRegisterCosmeticsAdminRoutes(t *testing.T) {
 		{http.MethodPut, "/cosmetics/categories/event", `{"name":"Event","is_active":true}`},
 		{http.MethodDelete, "/cosmetics/categories/event", ""},
 		{http.MethodPut, "/cosmetics/items/event-item", `{
-			"name":"Event Item","category_id":"event","slot":"attachment","asset_key":"event_item",
+			"name":"Event Item","category_id":"event","slot":"attachment","asset_key":"signal_antenna",
 			"rarity":"common","currency":"USD","is_free":true,"is_active":true
 		}`},
 		{http.MethodDelete, "/cosmetics/items/event-item", ""},

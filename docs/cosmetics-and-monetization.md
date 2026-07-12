@@ -1,10 +1,13 @@
 # Cosmetics And Fair Monetization
 
-Arena has a provider-neutral foundation for bot skins, weapon finishes, and
-attachments. Checkout is intentionally disabled until a payment provider,
-tax/receipt policy, and signed webhook flow are selected. The catalog,
-verified-email account, per-copy license, bot assignment, equip, protocol, and
-renderer boundaries are in place first.
+Arena ships a launch catalog for bot skins, weapon finishes, and attachments,
+plus a provider-neutral ownership ledger and Stripe-hosted Checkout adapter.
+Checkout is intentionally disabled by default: the public catalog only exposes
+working purchase buttons after verified customer auth, PostgreSQL, Stripe credentials,
+signed webhooks, and return URLs pass startup validation. Catalog browsing,
+Admin editing, verified-email ownership, per-copy licenses, bot assignment,
+equip, refunds, disputes, protocol boundaries, and rendering remain useful and
+testable independently.
 
 ## Ownership and assignment rules
 
@@ -16,8 +19,9 @@ An API key is only a one-time proof that the signed-in customer controls a bot.
 - Assignment and equip are separate. Moving a license does not silently replace
   the destination bot's current cosmetic in that slot.
 - Only an active license assigned to that bot can be equipped or rendered.
-- Unassigning, unlinking a bot, refunding, charging back, or revoking a license
-  removes that exact paid loadout. The account's other licenses are untouched.
+- Unassigning, unlinking a bot, fully refunding, charging back, or revoking a
+  license removes that exact paid loadout. A partial refund flags the order for
+  review without guessing which piece to remove. Other orders are untouched.
 - Losing, revoking, or replacing an API key does not delete account ownership.
 - Linking a bot already owned by another account is rejected; possession of a
   leaked key cannot silently steal the existing account link.
@@ -34,12 +38,59 @@ later lost or revoked. If both the key and provider purchase reference are
 already unavailable, recovery requires an administrator; Arena does not invent
 an email owner.
 
-## Customer authentication
+## Customer registration and authentication
 
-Customer login is a separate OIDC client from admin login. Customer sessions
-cannot authorize admin routes. The customer flow requires a non-empty
-`email_verified=true` claim, browser-bound state, nonce, PKCE, a distinct
-HttpOnly cookie, and a CSRF token for mutations.
+Arena supports two independent ways to establish the same verified customer
+session: native passwordless email links or a dedicated customer OIDC client.
+Neither can authorize Admin routes. Both produce the same distinct HttpOnly,
+Secure, SameSite=Lax customer cookie and the same CSRF token for mutations.
+
+### Native passwordless email registration
+
+The Dashboard can create or sign into an account by emailing a one-time link.
+Arena generates 32 random bytes, stores only the SHA-256 digest in PostgreSQL,
+expires it after 15 minutes, replaces an older unused token only after a
+per-email cooldown, and atomically consumes it once. The bearer token is in the
+URL fragment, which is not sent in the HTTP request; the Dashboard removes it
+from browser history and waits for the customer to click **Continue to Arena**
+before a same-origin POST verifies it. A mail scanner or preview that merely
+fetches or renders the link therefore cannot consume it. Request responses are
+generic and do not disclose whether an account already exists.
+
+Angel-serv runs Stalwart for transactional mail. Provision a dedicated regular
+user `noreply@angel-serv.com`, then give Arena a server-generated app password
+limited to `authenticate` and `emailSend`; do not reuse a recovery, admin, IMAP,
+or personal mailbox credential. Configure the production container with:
+
+```dotenv
+ARENA_CUSTOMER_EMAIL_AUTH_ENABLED=true
+ARENA_CUSTOMER_EMAIL_SIGN_IN_URL=https://arena.angel-serv.com/dashboard/
+ARENA_CUSTOMER_EMAIL_TOKEN_TTL_MINUTES=15
+ARENA_CUSTOMER_EMAIL_SEND_COOLDOWN_SECONDS=60
+ARENA_CUSTOMER_EMAIL_SEND_RPM=5
+ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS=24
+ARENA_SMTP_HOST=100.71.171.28
+ARENA_SMTP_PORT=465
+ARENA_SMTP_TLS_MODE=implicit
+ARENA_SMTP_TLS_SERVER_NAME=mail.angel-serv.com
+ARENA_SMTP_USERNAME=noreply@angel-serv.com
+ARENA_SMTP_PASSWORD=replace-with-send-only-app-password
+ARENA_SMTP_FROM=Arena <noreply@angel-serv.com>
+```
+
+The private submission address is deliberately separate from the TLS server
+name. Arena verifies the `mail.angel-serv.com` certificate with TLS 1.2 or
+newer and never uses `InsecureSkipVerify` or public port 25. The production
+`.env` is rendered by `nimbus-infra/roles/arena/templates/.env.j2`; add these
+nonsecret settings there and keep the app password in the role's encrypted
+vault variable so an Ansible run cannot erase the integration.
+
+### Dedicated customer OIDC
+
+OIDC remains supported for deployments that already have a public customer
+identity provider. It requires a non-empty `email_verified=true` claim,
+browser-bound state, nonce, and PKCE. Never reuse the Admin client or open the
+shared staff Authentik instance to public enrollment.
 
 Configure a dedicated customer OIDC application:
 
@@ -82,27 +133,36 @@ The implementation enforces this in several places:
 - Spectators can disable chassis skins, weapon finishes, or attachments in the
   existing graphics settings.
 
-## Current catalog
+## Launch catalog
 
-| Slot | Free starter options | Paid preview options |
-| --- | --- | --- |
-| `bot_skin` | Standard Chassis | Neon Grid, Carbon Armor |
-| `weapon_skin` | Standard Weapon Finish | Solar Flare, Void Edge |
-| `attachment` | None, Signal Antenna | Orbital Halo |
+The built-in catalog contains exactly 303 items: three permanent defaults and
+300 custom cosmetics arranged as 100 coordinated sets. Each set contains one
+chassis, one weapon finish, and one attachment. The original Neon Signal and
+Void Orbit packs remain sets 001 and 002; sets 003-100 add 294 custom pieces
+across Elemental, Cosmic, Cyber, Wild, Arcane, Industrial, Royal, Abyssal, and
+Apex collections.
 
-The launch catalog is organized into `chassis`, `weapon-finishes`,
-`attachments`, and `starter-packs`. Two curated packs expose the intended
-launch price without enabling payment:
+| Set range | Rarity | Pieces per set | Pack price |
+| --- | --- | ---: | ---: |
+| 001-002 | Launch | 3 | $0.99 USD |
+| 003-026 | Uncommon | 3 | $1.99 USD |
+| 027-050 | Rare | 3 | $2.99 USD |
+| 051-074 | Epic | 3 | $3.99 USD |
+| 075-094 | Legendary | 3 | $4.99 USD |
+| 095-100 | Mythic | 3 | $6.99 USD |
 
-| Pack | Contents | Planned price |
-| --- | --- | --- |
-| Neon Signal Pack | Neon Grid, Solar Flare, Signal Antenna | $0.99 USD |
-| Void Orbit Pack | Carbon Armor, Void Edge, Orbital Halo | $0.99 USD |
+Only whole sets are purchasable at launch. Individual pieces keep reference
+price and rarity metadata for Admin/search displays but cannot create an
+accidental single-item checkout. Quantity is bounded to 1-10; buying two packs
+creates six independent licenses. Every price, currency, pack membership, and
+quantity is snapshotted on the server before Stripe is called.
 
-Individual preview items retain reference price metadata, but are not directly
-purchasable. Pack rows can be marked sale-ready by an administrator while the
-public `checkout_enabled` value remains false. The public page therefore labels
-every paid offer Coming soon and never invents a checkout or payment endpoint.
+Set keys use the fixed `arena_set_NNN_slug` contract. A local deterministic
+theme mapper gives every set a bounded palette, chassis pattern, weapon finish,
+and attachment recipe. No catalog row can load a remote image, model, script,
+or gameplay behavior. Public and account storefronts render 12 packs initially
+and use search/filter/show-more controls instead of inserting all 300 pieces
+into the DOM at once.
 
 ## Asset source and intake policy
 
@@ -140,14 +200,19 @@ Public catalog:
 curl https://YOUR_ARENA_HOST/api/v1/cosmetics/catalog
 ```
 
-Customer account routes use the OIDC session cookie. Every POST, PUT, and
+Customer account routes use the verified customer session cookie. Every
+authenticated POST, PUT, and
 DELETE also requires the `X-CSRF-Token` returned by the session endpoint.
 
 ```text
 GET    /api/v1/dashboard/login
 POST   /api/v1/dashboard/logout
 GET    /api/v1/account/session
+POST   /api/v1/account/email/start
+POST   /api/v1/account/email/verify
 GET    /api/v1/account/cosmetics
+GET    /api/v1/account/cosmetics/orders
+POST   /api/v1/account/cosmetics/checkout
 POST   /api/v1/account/bots
 DELETE /api/v1/account/bots/{bot_id}
 PUT    /api/v1/account/cosmetic-licenses/{license_id}/assignment
@@ -157,7 +222,30 @@ PUT    /api/v1/account/bots/{bot_id}/cosmetics
 
 Linking submits `{"api_key":"arena_..."}`. Assignment submits
 `{"bot_id":"BOT_UUID"}`. Explicit account equip submits
-`{"license_id":"LICENSE_UUID"}`.
+`{"license_id":"LICENSE_UUID"}`. Checkout submits a catalog identity, never a
+price: `{"pack_id":"arena-set-003-ember-vanguard-pack","quantity":1}`. Arena
+creates a pending order from the current server-side pack snapshot, then returns
+the HTTPS `checkout_url` for Stripe-hosted Checkout.
+
+Stripe posts signed events to the public provider endpoint; this route does not
+use a customer cookie or CSRF token because it authenticates the exact raw body
+with the configured Stripe signing secret:
+
+```text
+POST /api/v1/cosmetics/webhooks/stripe
+```
+
+The two email endpoints are pre-authentication routes. They require a strict
+same-origin browser request and have IP rate limits; `start` also has the
+PostgreSQL per-email cooldown. `verify` receives the fragment token only after
+the Dashboard removes it from the address bar. OIDC-only deployments may leave
+native email auth disabled. Redis is an availability dependency for `start`:
+Arena returns `503` without sending mail whenever the per-client quota cannot
+be enforced.
+
+The `/arena/api/v1/...` mirror is also registered for prefixed deployments.
+Configure exactly one of these URLs in Stripe, matching the deployment's public
+path.
 
 The existing bot-key route remains useful for bot code and free cosmetics. A
 paid item succeeds only when an active exact license is assigned to that bot:
@@ -195,6 +283,7 @@ DELETE /api/v1/admin/cosmetics/items/{item_id}
 PUT    /api/v1/admin/cosmetics/packs/{pack_id}
 DELETE /api/v1/admin/cosmetics/packs/{pack_id}
 GET    /api/v1/admin/cosmetics/audit?limit=50
+GET    /api/v1/admin/cosmetics/orders?status=paid&query=buyer@example.com
 ```
 
 Admin catalog reads include inactive records. Item `slot` and `asset_key` are
@@ -218,6 +307,10 @@ curl -X DELETE \
 ```text
 customer_accounts
   normalized verified email identity and durable account ID
+
+customer_email_verifications
+  one short-lived SHA-256 token digest per normalized email; atomically deleted
+  when consumed and never stores the bearer token
 
 account_bot_links
   bots proven by API-key possession; each bot links to at most one account
@@ -248,30 +341,112 @@ bot_cosmetic_loadout
 
 cosmetic_entitlements
   legacy bot-scoped claims retained only for safe upgrade/recovery
+
+cosmetic_orders
+  account, immutable pack/price snapshot, quantity, expected subtotal,
+  received/refunded amounts, provider IDs, and lifecycle timestamps
+
+cosmetic_order_items
+  ordered item/name/slot/asset snapshots protected by item foreign keys
+
+cosmetic_order_licenses
+  exact order + copy + item position mapped to the exact fulfilled license
+
+cosmetic_payment_events
+  provider event ID, type, payload hash, processing status, and idempotency state
+
+cosmetic_order_refunds
+  per-refund amount and lifecycle used to compute cumulative refund state
 ```
 
 PostgreSQL composite foreign keys enforce that an assignment and paid loadout
 refer to a bot linked to the same account as the license. Application checks
 provide useful errors, but the database remains the final exclusivity boundary.
 
-## Payment launch work still required
+## Stripe fulfillment and reversal rules
 
-Before charging real money:
+Arena uses [Stripe-hosted Checkout](https://docs.stripe.com/api/checkout/sessions/create),
+so payment details never enter Arena's frontend or backend. A signed paid event
+must match the pending order's account, Checkout Session, currency, and minimum
+server-side subtotal before fulfillment. Automatic tax may raise the final
+amount. Unpaid `checkout.session.completed` events remain processing until an
+asynchronous success or failure arrives.
 
-1. Choose a payment provider and tax/receipt policy.
-2. Create checkout only from an authenticated customer session. Resolve
-   product IDs and amounts server-side and attach the stable account ID/email.
-3. Verify signed webhooks against the bounded raw request body. Track webhook
-   event idempotency separately from the order-line/copy reference used for a
-   license.
-4. Support quantity correctly: quantity two creates two license rows. Make
-   failed webhook attempts retryable.
-5. Map refunds and chargebacks to the exact license copy and keep terminal
-   states from being resurrected by late paid events.
-6. Add purchase history, receipts, email-change/recovery support, durable
-   customer sessions, and account-driven API-key rotation.
-7. Add a moderated asset pipeline before accepting creator-submitted designs.
-   Never render unreviewed remote assets or executable content.
+Webhook event IDs and raw-body SHA-256 hashes are recorded independently from
+the deterministic order/copy/item license references. Fulfillment and license
+creation commit in one PostgreSQL transaction, making retries and concurrent
+delivery safe. Arena follows Stripe's guidance to verify the raw body and
+signature before acting on an event; see [Stripe webhooks](https://docs.stripe.com/webhooks?lang=node).
 
-This sequence keeps monetization auditable and recoverable while protecting
-Arena's no-pay-to-win promise.
+- A successful partial refund moves the order to `refund_review`; licenses stay
+  active because Arena cannot safely infer which bundled piece was refunded.
+- Successful refunds totaling the amount actually received revoke only that
+  order's mapped licenses and remove their assignments/loadouts.
+- A created dispute immediately revokes only that order's mapped licenses and
+  becomes terminal. Late paid events never restore refunded/disputed copies.
+- Failed or canceled refund updates recompute from successful refund records;
+  `charge.refunded` cumulative totals do not double-count individual events.
+
+Review Stripe's [refund behavior](https://docs.stripe.com/refunds?locale=en-GB)
+and set a customer-facing refund/support policy before enabling live mode.
+
+## Launch configuration and runbook
+
+Use `stripe-go` v86 and configure the webhook endpoint for Stripe API version
+`2026-06-24.dahlia`. Subscribe to:
+
+```text
+checkout.session.completed
+checkout.session.async_payment_succeeded
+checkout.session.async_payment_failed
+checkout.session.expired
+refund.created
+refund.updated
+refund.failed
+charge.refunded
+charge.dispute.created
+```
+
+Configure either native verified-email auth or the dedicated customer OIDC
+application first, ensure Redis is available for the fail-closed checkout
+quota, then add:
+
+```dotenv
+ARENA_COSMETICS_CHECKOUT_ENABLED=true
+ARENA_COSMETICS_CHECKOUT_RPM=10
+ARENA_STRIPE_SECRET_KEY=sk_live_replace_me
+ARENA_STRIPE_WEBHOOK_SECRETS=whsec_current,whsec_previous
+ARENA_STRIPE_SUCCESS_URL=https://YOUR_ARENA_HOST/dashboard/?tab=cosmetics&checkout=success&session_id={CHECKOUT_SESSION_ID}
+ARENA_STRIPE_CANCEL_URL=https://YOUR_ARENA_HOST/dashboard/?tab=cosmetics&checkout=cancel
+ARENA_STRIPE_AUTOMATIC_TAX=false
+```
+
+The comma-separated webhook list supports zero-downtime secret rotation. Keep
+the old secret until Stripe no longer delivers events signed with it. Keep
+webhook verification configured even during a sales pause so already-created
+orders can finish safely. For an `/arena` deployment, use the prefixed dashboard
+and webhook paths.
+
+Before switching from `sk_test_...` to live credentials:
+
+1. Provision the dedicated Stalwart mailbox/app password, persist it through
+   the `nimbus-infra` Arena role, and complete one real registration email and
+   one expired/replayed-link exercise. Do not use a recovery-admin credential.
+2. Apply the idempotent schema migration with the release migrator and confirm
+   the managed-schema preflight passes.
+3. Complete a test purchase, duplicate webhook delivery, quantity-two purchase,
+   asynchronous payment, partial refund, full refund, and dispute exercise.
+4. Confirm the account order history and protected Admin order search show the
+   same amount, currency, provider IDs, status, and fulfillment count.
+5. Confirm full reversals remove the three exact licenses while another order's
+   licenses remain equipped and usable.
+6. Configure Stripe receipts, tax registrations/Stripe Tax policy, statement
+   descriptor, customer support/refund terms, and production alerting.
+7. Enable checkout, fetch `/api/v1/cosmetics/catalog`, and verify
+   `checkout_enabled:true` only after the provider configuration is active.
+
+Customer sessions remain process-local, so a restart asks the browser to sign
+in again; accounts, orders, licenses, assignments, and reversals remain durable
+in PostgreSQL. A multi-replica deployment should add a shared session store or
+sticky sessions before horizontal scaling. Creator-submitted art still requires
+a moderated asset pipeline; never render unreviewed remote content.

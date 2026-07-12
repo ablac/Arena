@@ -333,14 +333,24 @@ func (h *OIDCHandler) SessionInfoHandler(w http.ResponseWriter, r *http.Request)
 	if session == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"authenticated": false,
+			"login_enabled": true,
 		})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"authenticated": true,
+		"login_enabled": true,
 		"email":         session.Email,
 		"name":          session.Name,
 		"expires_at":    session.ExpiresAt,
+	})
+}
+
+func AdminSessionUnavailableHandler(w http.ResponseWriter, _ *http.Request) {
+	setCustomerNoStore(w)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"authenticated": false,
+		"login_enabled": false,
 	})
 }
 

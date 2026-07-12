@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -41,6 +43,7 @@ type CosmeticItem struct {
 	IsFree        bool   `json:"is_free"`
 	IsPurchasable bool   `json:"is_purchasable"`
 	IsActive      bool   `json:"is_active"`
+	IsBuiltin     bool   `json:"is_builtin"`
 	SortOrder     int    `json:"sort_order"`
 }
 
@@ -51,7 +54,7 @@ type BotCosmeticItem struct {
 	Equipped bool `json:"equipped"`
 }
 
-var starterCosmeticCatalog = []CosmeticItem{
+var legacyStarterCosmeticCatalog = []CosmeticItem{
 	{
 		ID: "skin-standard", Name: "Standard Chassis", Description: "The classic Arena bot finish.",
 		CategoryID: "chassis", Slot: CosmeticSlotBotSkin, AssetKey: "standard", Rarity: "common", Currency: "USD", IsFree: true, IsActive: true, SortOrder: 10,
@@ -88,6 +91,76 @@ var starterCosmeticCatalog = []CosmeticItem{
 		ID: "attachment-orbital-halo", Name: "Orbital Halo", Description: "A luminous halo attachment with no gameplay effect.",
 		CategoryID: "attachments", Slot: CosmeticSlotAttachment, AssetKey: "orbital_halo", Rarity: "epic", PriceCents: 299, Currency: "USD", IsActive: true, SortOrder: 30,
 	},
+}
+
+var generatedCosmeticAssetPattern = regexp.MustCompile(`^arena_set_([0-9]{3})_([a-z0-9]+(?:_[a-z0-9]+)*)$`)
+
+var legacyCosmeticAssets = map[string]map[string]bool{
+	CosmeticSlotBotSkin: {
+		"standard": true, "neon_grid": true, "carbon_armor": true,
+	},
+	CosmeticSlotWeaponSkin: {
+		"standard": true, "solar_flare": true, "void_edge": true,
+	},
+	CosmeticSlotAttachment: {
+		"none": true, "signal_antenna": true, "orbital_halo": true,
+	},
+}
+
+// IsSupportedCosmeticAsset is the shared server-side render contract. Legacy
+// procedural assets stay explicitly allowlisted; launch-set assets use one
+// strict, bounded key shared by the set's three presentation slots.
+func IsSupportedCosmeticAsset(slot, assetKey string) bool {
+	slot = strings.TrimSpace(strings.ToLower(slot))
+	if assets, ok := legacyCosmeticAssets[slot]; ok && assets[assetKey] {
+		return true
+	}
+	if !IsValidCosmeticSlot(slot) || len(assetKey) > 80 {
+		return false
+	}
+	matches := generatedCosmeticAssetPattern.FindStringSubmatch(assetKey)
+	if len(matches) != 3 {
+		return false
+	}
+	number, err := strconv.Atoi(matches[1])
+	return err == nil && number >= 1 && number <= 999
+}
+
+var starterCosmeticCatalog = buildStarterCosmeticCatalog()
+
+func buildStarterCosmeticCatalog() []CosmeticItem {
+	items := append([]CosmeticItem(nil), legacyStarterCosmeticCatalog...)
+	for index, seed := range launchSetSeeds {
+		number := index + 3
+		assetKey := fmt.Sprintf("arena_set_%03d_%s", number, seed.Slug)
+		idSlug := strings.ReplaceAll(seed.Slug, "_", "-")
+		rarity, itemPrice, _ := launchSetEconomy(number)
+		sortOrder := number * 10
+		items = append(items,
+			CosmeticItem{
+				ID: fmt.Sprintf("skin-arena-set-%03d-%s", number, idSlug), Name: seed.Name + " Chassis",
+				Description: "A presentation-only " + seed.Name + " chassis from Arena's " + seed.CollectionName + " collection.",
+				CategoryID:  "chassis", Slot: CosmeticSlotBotSkin, AssetKey: assetKey, Rarity: rarity,
+				PriceCents: itemPrice, Currency: "USD", IsActive: true, SortOrder: sortOrder,
+			},
+			CosmeticItem{
+				ID: fmt.Sprintf("weapon-arena-set-%03d-%s", number, idSlug), Name: seed.Name + " Weapon Finish",
+				Description: "A presentation-only " + seed.Name + " weapon finish from Arena's " + seed.CollectionName + " collection.",
+				CategoryID:  "weapon-finishes", Slot: CosmeticSlotWeaponSkin, AssetKey: assetKey, Rarity: rarity,
+				PriceCents: itemPrice, Currency: "USD", IsActive: true, SortOrder: sortOrder,
+			},
+			CosmeticItem{
+				ID: fmt.Sprintf("attachment-arena-set-%03d-%s", number, idSlug), Name: seed.Name + " Attachment",
+				Description: "A presentation-only " + seed.Name + " attachment from Arena's " + seed.CollectionName + " collection.",
+				CategoryID:  "attachments", Slot: CosmeticSlotAttachment, AssetKey: assetKey, Rarity: rarity,
+				PriceCents: itemPrice, Currency: "USD", IsActive: true, SortOrder: sortOrder,
+			},
+		)
+	}
+	for index := range items {
+		items[index].IsBuiltin = true
+	}
+	return items
 }
 
 // DefaultCosmeticCatalog returns a copy so callers cannot mutate the seed
@@ -134,10 +207,12 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			is_active BOOLEAN NOT NULL DEFAULT true,
+			is_builtin BOOLEAN NOT NULL DEFAULT false,
 			sort_order INT NOT NULL DEFAULT 0 CHECK (sort_order BETWEEN 0 AND 1000000),
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
+		`ALTER TABLE cosmetic_categories ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT false`,
 		`CREATE TABLE IF NOT EXISTS cosmetic_items (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -151,6 +226,7 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			is_free BOOLEAN NOT NULL DEFAULT false,
 			is_purchasable BOOLEAN NOT NULL DEFAULT false,
 			is_active BOOLEAN NOT NULL DEFAULT true,
+			is_builtin BOOLEAN NOT NULL DEFAULT false,
 			sort_order INT NOT NULL DEFAULT 0 CHECK (sort_order BETWEEN 0 AND 1000000),
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -158,6 +234,7 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 		)`,
 		`ALTER TABLE cosmetic_items ADD COLUMN IF NOT EXISTS category_id TEXT`,
 		`ALTER TABLE cosmetic_items ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0`,
+		`ALTER TABLE cosmetic_items ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT false`,
 		`CREATE TABLE IF NOT EXISTS cosmetic_packs (
 			id TEXT PRIMARY KEY,
 			category_id TEXT NOT NULL REFERENCES cosmetic_categories(id) ON DELETE RESTRICT,
@@ -168,10 +245,12 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			is_free BOOLEAN NOT NULL DEFAULT false,
 			is_purchasable BOOLEAN NOT NULL DEFAULT false,
 			is_active BOOLEAN NOT NULL DEFAULT true,
+			is_builtin BOOLEAN NOT NULL DEFAULT false,
 			sort_order INT NOT NULL DEFAULT 0 CHECK (sort_order BETWEEN 0 AND 1000000),
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
+		`ALTER TABLE cosmetic_packs ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT false`,
 		`CREATE TABLE IF NOT EXISTS cosmetic_pack_items (
 			pack_id TEXT NOT NULL REFERENCES cosmetic_packs(id) ON DELETE CASCADE,
 			item_id TEXT NOT NULL REFERENCES cosmetic_items(id) ON DELETE RESTRICT,
@@ -233,6 +312,17 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_accounts_oidc_identity
 			ON customer_accounts (oidc_issuer, oidc_subject)
 			WHERE oidc_issuer IS NOT NULL AND oidc_subject IS NOT NULL`,
+		`CREATE TABLE IF NOT EXISTS customer_email_verifications (
+			email TEXT PRIMARY KEY CHECK (email = LOWER(email)),
+			display_name TEXT NOT NULL DEFAULT '',
+			return_to TEXT NOT NULL,
+			token_hash BYTEA NOT NULL UNIQUE CHECK (OCTET_LENGTH(token_hash) = 32),
+			created_at TIMESTAMPTZ NOT NULL,
+			expires_at TIMESTAMPTZ NOT NULL,
+			CHECK (expires_at > created_at)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_customer_email_verifications_expires
+			ON customer_email_verifications (expires_at)`,
 		`CREATE TABLE IF NOT EXISTS account_bot_links (
 			account_id TEXT NOT NULL REFERENCES customer_accounts(id) ON DELETE CASCADE,
 			bot_id TEXT NOT NULL UNIQUE REFERENCES bots(id) ON DELETE CASCADE,
@@ -324,10 +414,10 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 
 	for _, category := range starterCosmeticCategories {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO cosmetic_categories (id, name, description, is_active, sort_order)
-			VALUES ($1,$2,$3,$4,$5)
+			INSERT INTO cosmetic_categories (id, name, description, is_active, is_builtin, sort_order)
+			VALUES ($1,$2,$3,$4,$5,$6)
 			ON CONFLICT (id) DO NOTHING`,
-			category.ID, category.Name, category.Description, category.IsActive, category.SortOrder,
+			category.ID, category.Name, category.Description, category.IsActive, category.IsBuiltin, category.SortOrder,
 		); err != nil {
 			return fmt.Errorf("EnsureCosmeticsSchema seed category %s: %w", category.ID, err)
 		}
@@ -364,11 +454,11 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 	for _, item := range starterCosmeticCatalog {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO cosmetic_items
-				(id, name, description, category_id, slot, asset_key, rarity, price_cents, currency, is_free, is_purchasable, is_active, sort_order)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+				(id, name, description, category_id, slot, asset_key, rarity, price_cents, currency, is_free, is_purchasable, is_active, is_builtin, sort_order)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 			ON CONFLICT (id) DO NOTHING`,
 			item.ID, item.Name, item.Description, item.CategoryID, item.Slot, item.AssetKey, item.Rarity,
-			item.PriceCents, item.Currency, item.IsFree, item.IsPurchasable, item.IsActive, item.SortOrder,
+			item.PriceCents, item.Currency, item.IsFree, item.IsPurchasable, item.IsActive, item.IsBuiltin, item.SortOrder,
 		); err != nil {
 			return fmt.Errorf("EnsureCosmeticsSchema seed %s: %w", item.ID, err)
 		}
@@ -377,11 +467,11 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 	for _, pack := range starterCosmeticPacks {
 		result, err := tx.Exec(ctx, `
 			INSERT INTO cosmetic_packs
-				(id, category_id, name, description, price_cents, currency, is_free, is_purchasable, is_active, sort_order)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+				(id, category_id, name, description, price_cents, currency, is_free, is_purchasable, is_active, is_builtin, sort_order)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 			ON CONFLICT (id) DO NOTHING`,
 			pack.ID, pack.CategoryID, pack.Name, pack.Description, pack.PriceCents,
-			pack.Currency, pack.IsFree, pack.IsPurchasable, pack.IsActive, pack.SortOrder,
+			pack.Currency, pack.IsFree, pack.IsPurchasable, pack.IsActive, pack.IsBuiltin, pack.SortOrder,
 		)
 		if err != nil {
 			return fmt.Errorf("EnsureCosmeticsSchema seed pack %s: %w", pack.ID, err)
@@ -398,6 +488,31 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 				ON CONFLICT (pack_id, item_id) DO NOTHING`, pack.ID, itemID, (index+1)*10); err != nil {
 				return fmt.Errorf("EnsureCosmeticsSchema seed pack item %s/%s: %w", pack.ID, itemID, err)
 			}
+		}
+	}
+	categoryIDs := make([]string, 0, len(starterCosmeticCategories))
+	for _, category := range starterCosmeticCategories {
+		categoryIDs = append(categoryIDs, category.ID)
+	}
+	itemIDs := make([]string, 0, len(starterCosmeticCatalog))
+	for _, item := range starterCosmeticCatalog {
+		itemIDs = append(itemIDs, item.ID)
+	}
+	packIDs := make([]string, 0, len(starterCosmeticPacks))
+	for _, pack := range starterCosmeticPacks {
+		packIDs = append(packIDs, pack.ID)
+	}
+	for _, builtin := range []struct {
+		entity string
+		query  string
+		ids    []string
+	}{
+		{entity: "categories", query: `UPDATE cosmetic_categories SET is_builtin = true WHERE id = ANY($1)`, ids: categoryIDs},
+		{entity: "items", query: `UPDATE cosmetic_items SET is_builtin = true WHERE id = ANY($1)`, ids: itemIDs},
+		{entity: "packs", query: `UPDATE cosmetic_packs SET is_builtin = true WHERE id = ANY($1)`, ids: packIDs},
+	} {
+		if _, err := tx.Exec(ctx, builtin.query, builtin.ids); err != nil {
+			return fmt.Errorf("EnsureCosmeticsSchema mark built-in %s: %w", builtin.entity, err)
 		}
 	}
 
@@ -438,12 +553,13 @@ func ListCosmeticCatalog(ctx context.Context) ([]CosmeticItem, error) {
 		return nil, ErrNoDatabase
 	}
 	rows, err := Pool.Query(ctx, `
-		SELECT id, name, description, category_id, slot, asset_key, rarity, price_cents, currency,
-		       is_free, is_purchasable, is_active, sort_order
-		FROM cosmetic_items
-		WHERE is_active = true
-		ORDER BY CASE slot WHEN 'bot_skin' THEN 1 WHEN 'weapon_skin' THEN 2 ELSE 3 END,
-		         sort_order, price_cents, name`)
+		SELECT i.id, i.name, i.description, i.category_id, i.slot, i.asset_key, i.rarity, i.price_cents, i.currency,
+		       i.is_free, i.is_purchasable, i.is_active, i.is_builtin, i.sort_order
+		FROM cosmetic_items i
+		JOIN cosmetic_categories c ON c.id = i.category_id
+		WHERE i.is_active = true AND c.is_active = true
+		ORDER BY CASE i.slot WHEN 'bot_skin' THEN 1 WHEN 'weapon_skin' THEN 2 ELSE 3 END,
+		         i.sort_order, i.price_cents, i.name`)
 	if err != nil {
 		return nil, fmt.Errorf("ListCosmeticCatalog: %w", err)
 	}
@@ -453,7 +569,7 @@ func ListCosmeticCatalog(ctx context.Context) ([]CosmeticItem, error) {
 	for rows.Next() {
 		var item CosmeticItem
 		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.CategoryID, &item.Slot, &item.AssetKey,
-			&item.Rarity, &item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable, &item.IsActive, &item.SortOrder); err != nil {
+			&item.Rarity, &item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable, &item.IsActive, &item.IsBuiltin, &item.SortOrder); err != nil {
 			return nil, fmt.Errorf("ListCosmeticCatalog scan: %w", err)
 		}
 		items = append(items, item)
@@ -467,7 +583,7 @@ func ListBotCosmetics(ctx context.Context, botID string) ([]BotCosmeticItem, err
 	}
 	rows, err := Pool.Query(ctx, `
 		SELECT i.id, i.name, i.description, i.category_id, i.slot, i.asset_key, i.rarity,
-		       i.price_cents, i.currency, i.is_free, i.is_purchasable, i.is_active, i.sort_order,
+		       i.price_cents, i.currency, i.is_free, i.is_purchasable, i.is_active, i.is_builtin, i.sort_order,
 		       (i.is_free OR EXISTS (
 		         SELECT 1 FROM cosmetic_licenses owned_license
 		         WHERE owned_license.cosmetic_id = i.id
@@ -487,12 +603,15 @@ func ListBotCosmetics(ctx context.Context, botID string) ([]BotCosmeticItem, err
 		           OR (i.slot = 'attachment' AND i.asset_key = 'none')
 		       END AS equipped
 		FROM cosmetic_items i
+		JOIN cosmetic_categories c ON c.id = i.category_id
 		LEFT JOIN bot_cosmetic_loadout l ON l.bot_id = $1 AND l.slot = i.slot
 		  AND EXISTS (
 		    SELECT 1 FROM cosmetic_items equipped_item
+		    JOIN cosmetic_categories equipped_category ON equipped_category.id = equipped_item.category_id
 		    WHERE equipped_item.id = l.cosmetic_id AND equipped_item.is_active = true
+		      AND equipped_category.is_active = true
 		  )
-		WHERE i.is_active = true
+		WHERE i.is_active = true AND c.is_active = true
 		ORDER BY CASE i.slot WHEN 'bot_skin' THEN 1 WHEN 'weapon_skin' THEN 2 ELSE 3 END,
 		         i.price_cents, i.name`, botID)
 	if err != nil {
@@ -505,7 +624,7 @@ func ListBotCosmetics(ctx context.Context, botID string) ([]BotCosmeticItem, err
 		var item BotCosmeticItem
 		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.CategoryID, &item.Slot, &item.AssetKey,
 			&item.Rarity, &item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable,
-			&item.IsActive, &item.SortOrder, &item.Owned, &item.Equipped); err != nil {
+			&item.IsActive, &item.IsBuiltin, &item.SortOrder, &item.Owned, &item.Equipped); err != nil {
 			return nil, fmt.Errorf("ListBotCosmetics scan: %w", err)
 		}
 		items = append(items, item)
@@ -523,10 +642,11 @@ func GetEquippedCosmetics(ctx context.Context, botID string) (map[string]string,
 		SELECT l.slot, i.asset_key
 		FROM bot_cosmetic_loadout l
 		JOIN cosmetic_items i ON i.id = l.cosmetic_id AND i.slot = l.slot
+		JOIN cosmetic_categories c ON c.id = i.category_id
 		LEFT JOIN cosmetic_licenses cl ON cl.id = l.license_id
 		LEFT JOIN cosmetic_license_assignments cla
 		  ON cla.license_id = l.license_id AND cla.bot_id = l.bot_id AND cla.account_id = l.account_id
-		WHERE l.bot_id = $1 AND i.is_active = true
+		WHERE l.bot_id = $1 AND i.is_active = true AND c.is_active = true
 		  AND (
 		    i.is_free = true OR
 		    (cl.id IS NOT NULL AND cl.cosmetic_id = i.id AND cl.status = 'active' AND (
@@ -539,11 +659,7 @@ func GetEquippedCosmetics(ctx context.Context, botID string) (map[string]string,
 	}
 	defer rows.Close()
 
-	result := map[string]string{
-		CosmeticSlotBotSkin:    "standard",
-		CosmeticSlotWeaponSkin: "standard",
-		CosmeticSlotAttachment: "none",
-	}
+	result := defaultEquippedCosmetics()
 	for rows.Next() {
 		var slot, assetKey string
 		if err := rows.Scan(&slot, &assetKey); err != nil {
@@ -554,6 +670,75 @@ func GetEquippedCosmetics(ctx context.Context, botID string) (map[string]string,
 		}
 	}
 	return result, rows.Err()
+}
+
+// GetEquippedCosmeticsForBots resolves a bounded connected-bot snapshot with
+// one database query. Every requested bot receives a fallback loadout even if
+// it has no active rows, allowing payment-reversal cache repair to clear stale
+// visuals without an N+1 query loop.
+func GetEquippedCosmeticsForBots(ctx context.Context, botIDs []string) (map[string]map[string]string, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
+	unique := make([]string, 0, len(botIDs))
+	result := make(map[string]map[string]string, len(botIDs))
+	for _, rawBotID := range botIDs {
+		botID := strings.TrimSpace(rawBotID)
+		if botID == "" {
+			continue
+		}
+		if _, exists := result[botID]; exists {
+			continue
+		}
+		result[botID] = defaultEquippedCosmetics()
+		unique = append(unique, botID)
+	}
+	if len(unique) == 0 {
+		return result, nil
+	}
+
+	rows, err := Pool.Query(ctx, `
+		SELECT l.bot_id, l.slot, i.asset_key
+		FROM bot_cosmetic_loadout l
+		JOIN cosmetic_items i ON i.id = l.cosmetic_id AND i.slot = l.slot
+		JOIN cosmetic_categories c ON c.id = i.category_id
+		LEFT JOIN cosmetic_licenses cl ON cl.id = l.license_id
+		LEFT JOIN cosmetic_license_assignments cla
+		  ON cla.license_id = l.license_id AND cla.bot_id = l.bot_id AND cla.account_id = l.account_id
+		WHERE l.bot_id = ANY($1::text[]) AND i.is_active = true AND c.is_active = true
+		  AND (
+		    i.is_free = true OR
+		    (cl.id IS NOT NULL AND cl.cosmetic_id = i.id AND cl.status = 'active' AND (
+		      (cl.account_id IS NULL AND cl.assigned_bot_id = l.bot_id) OR
+		      (cl.account_id IS NOT NULL AND cla.license_id IS NOT NULL)
+		    ))
+		  )
+		ORDER BY l.bot_id, l.slot`, unique)
+	if err != nil {
+		return nil, fmt.Errorf("GetEquippedCosmeticsForBots: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var botID, slot, assetKey string
+		if err := rows.Scan(&botID, &slot, &assetKey); err != nil {
+			return nil, fmt.Errorf("GetEquippedCosmeticsForBots scan: %w", err)
+		}
+		if IsValidCosmeticSlot(slot) {
+			result[botID][slot] = assetKey
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetEquippedCosmeticsForBots rows: %w", err)
+	}
+	return result, nil
+}
+
+func defaultEquippedCosmetics() map[string]string {
+	return map[string]string{
+		CosmeticSlotBotSkin:    "standard",
+		CosmeticSlotWeaponSkin: "standard",
+		CosmeticSlotAttachment: "none",
+	}
 }
 
 func EquipCosmetic(ctx context.Context, botID, slot, cosmeticID string) (*CosmeticItem, error) {
@@ -572,19 +757,23 @@ func EquipCosmetic(ctx context.Context, botID, slot, cosmeticID string) (*Cosmet
 	defer tx.Rollback(ctx)
 
 	var item CosmeticItem
+	var categoryActive bool
 	err = tx.QueryRow(ctx, `
-		SELECT id, name, description, category_id, slot, asset_key, rarity, price_cents, currency,
-		       is_free, is_purchasable, is_active, sort_order
-		FROM cosmetic_items WHERE id = $1`, cosmeticID).
+		SELECT i.id, i.name, i.description, i.category_id, i.slot, i.asset_key, i.rarity, i.price_cents, i.currency,
+		       i.is_free, i.is_purchasable, i.is_active, i.is_builtin, i.sort_order, c.is_active
+		FROM cosmetic_items i
+		JOIN cosmetic_categories c ON c.id = i.category_id
+		WHERE i.id = $1
+		FOR SHARE OF i, c`, cosmeticID).
 		Scan(&item.ID, &item.Name, &item.Description, &item.CategoryID, &item.Slot, &item.AssetKey, &item.Rarity,
-			&item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable, &item.IsActive, &item.SortOrder)
+			&item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable, &item.IsActive, &item.IsBuiltin, &item.SortOrder, &categoryActive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrCosmeticNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("EquipCosmetic item: %w", err)
 	}
-	if !item.IsActive {
+	if !item.IsActive || !categoryActive {
 		return nil, ErrCosmeticInactive
 	}
 	if item.Slot != slot {
@@ -666,20 +855,13 @@ func GrantCosmeticEntitlement(ctx context.Context, botID, cosmeticID, source, ex
 		source = "manual"
 	}
 
-	var botExists, itemExists bool
+	var botExists bool
 	if err := Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM bots WHERE id = $1)`, botID).Scan(&botExists); err != nil {
 		return false, fmt.Errorf("GrantCosmeticEntitlement bot lookup: %w", err)
 	}
 	if !botExists {
 		return false, ErrCosmeticBotNotFound
 	}
-	if err := Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM cosmetic_items WHERE id = $1 AND is_active = true)`, cosmeticID).Scan(&itemExists); err != nil {
-		return false, fmt.Errorf("GrantCosmeticEntitlement item lookup: %w", err)
-	}
-	if !itemExists {
-		return false, ErrCosmeticNotFound
-	}
-
 	tx, err := Pool.Begin(ctx)
 	if err != nil {
 		return false, fmt.Errorf("GrantCosmeticEntitlement begin: %w", err)
@@ -702,6 +884,21 @@ func GrantCosmeticEntitlement(ctx context.Context, botID, cosmeticID, source, ex
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return false, fmt.Errorf("GrantCosmeticEntitlement idempotency lookup: %w", err)
 		}
+	}
+	var itemActive, categoryActive bool
+	if err := tx.QueryRow(ctx, `
+		SELECT i.is_active, c.is_active
+		FROM cosmetic_items i
+		JOIN cosmetic_categories c ON c.id = i.category_id
+		WHERE i.id = $1
+		FOR SHARE OF i, c`, cosmeticID).Scan(&itemActive, &categoryActive); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrCosmeticNotFound
+		}
+		return false, fmt.Errorf("GrantCosmeticEntitlement item lookup: %w", err)
+	}
+	if !itemActive || !categoryActive {
+		return false, ErrCosmeticInactive
 	}
 
 	tag, err := tx.Exec(ctx, `

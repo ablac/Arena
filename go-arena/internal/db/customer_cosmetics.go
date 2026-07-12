@@ -480,9 +480,11 @@ const cosmeticLicenseSelect = `
 	       cl.status, cl.source, cl.external_reference,
 	       cl.granted_at, cl.updated_at,
 	       i.id, i.name, i.description, i.slot, i.asset_key, i.rarity,
-	       i.price_cents, i.currency, i.is_free, i.is_purchasable, i.is_active
+	       i.price_cents, i.currency, i.is_free, i.is_purchasable,
+	       (i.is_active AND c.is_active), i.is_builtin
 	FROM cosmetic_licenses cl
 	JOIN cosmetic_items i ON i.id = cl.cosmetic_id
+	JOIN cosmetic_categories c ON c.id = i.category_id
 	LEFT JOIN cosmetic_license_assignments cla ON cla.license_id = cl.id
 	LEFT JOIN bots b ON b.id = COALESCE(cla.bot_id, cl.assigned_bot_id)`
 
@@ -498,7 +500,7 @@ func scanCosmeticLicense(row rowScanner) (*CosmeticLicense, error) {
 		&license.GrantedAt, &license.UpdatedAt,
 		&license.Item.ID, &license.Item.Name, &license.Item.Description, &license.Item.Slot,
 		&license.Item.AssetKey, &license.Item.Rarity, &license.Item.PriceCents,
-		&license.Item.Currency, &license.Item.IsFree, &license.Item.IsPurchasable, &license.Item.IsActive)
+		&license.Item.Currency, &license.Item.IsFree, &license.Item.IsPurchasable, &license.Item.IsActive, &license.Item.IsBuiltin)
 	if err != nil {
 		return nil, err
 	}
@@ -582,14 +584,6 @@ func GrantCosmeticLicense(ctx context.Context, rawEmail, cosmeticID, source, ext
 	if _, err := lockCustomerAccount(ctx, tx, account.ID, false); err != nil {
 		return nil, false, err
 	}
-	var itemExists bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM cosmetic_items WHERE id = $1 AND is_active = true)`, cosmeticID).Scan(&itemExists); err != nil {
-		return nil, false, fmt.Errorf("GrantCosmeticLicense item: %w", err)
-	}
-	if !itemExists {
-		return nil, false, ErrCosmeticNotFound
-	}
 	if externalReference != "" {
 		var existingID, existingCosmetic string
 		var existingAccount *string
@@ -639,6 +633,21 @@ func GrantCosmeticLicense(ctx context.Context, rawEmail, cosmeticID, source, ext
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, fmt.Errorf("GrantCosmeticLicense idempotency: %w", err)
 		}
+	}
+	var itemActive, categoryActive bool
+	if err := tx.QueryRow(ctx, `
+		SELECT i.is_active, c.is_active
+		FROM cosmetic_items i
+		JOIN cosmetic_categories c ON c.id = i.category_id
+		WHERE i.id = $1
+		FOR SHARE OF i, c`, cosmeticID).Scan(&itemActive, &categoryActive); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, false, ErrCosmeticNotFound
+		}
+		return nil, false, fmt.Errorf("GrantCosmeticLicense item: %w", err)
+	}
+	if !itemActive || !categoryActive {
+		return nil, false, ErrCosmeticInactive
 	}
 
 	licenseID := uuid.NewString()
@@ -763,12 +772,15 @@ func EquipCustomerCosmeticLicense(ctx context.Context, accountID, botID, license
 	}
 	var owner *string
 	var cosmeticID, slot, status string
+	var itemActive, categoryActive bool
 	if err := tx.QueryRow(ctx, `
-		SELECT cl.account_id, cl.cosmetic_id, i.slot, cl.status
+		SELECT cl.account_id, cl.cosmetic_id, i.slot, cl.status, i.is_active, c.is_active
 		FROM cosmetic_licenses cl
 		JOIN cosmetic_items i ON i.id = cl.cosmetic_id
-		WHERE cl.id = $1 AND i.is_active = true
-		FOR UPDATE OF cl`, licenseID).Scan(&owner, &cosmeticID, &slot, &status); err != nil {
+		JOIN cosmetic_categories c ON c.id = i.category_id
+		WHERE cl.id = $1
+		FOR UPDATE OF cl
+		FOR SHARE OF i, c`, licenseID).Scan(&owner, &cosmeticID, &slot, &status, &itemActive, &categoryActive); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrCosmeticLicenseNotFound
 		}
@@ -778,6 +790,9 @@ func EquipCustomerCosmeticLicense(ctx context.Context, accountID, botID, license
 		return nil, ErrCosmeticLicenseNotOwned
 	}
 	if status != "active" {
+		return nil, ErrCosmeticInactive
+	}
+	if !itemActive || !categoryActive {
 		return nil, ErrCosmeticInactive
 	}
 	var keyIsActive bool

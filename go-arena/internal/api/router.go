@@ -93,10 +93,14 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	// Create dashboard handler.
 	dashboardHandler := NewDashboardHandler(bus, adminHandler)
 	cosmeticsHandler := NewCosmeticsHandler(engine)
+	commerceHandler := NewCosmeticCommerceHandler(engine)
 
 	// Initialise OIDC handler (nil if disabled/misconfigured).
 	oidcHandler := NewOIDCHandler()
 	customerOIDCHandler := NewCustomerOIDCHandler()
+	checkoutReady := commerceHandler.Enabled() && customerAccountAuthEnabled(customerOIDCHandler) && security.RedisClient != nil
+	commerceHandler.checkoutEnabled = checkoutReady
+	cosmeticsHandler.checkoutEnabled = checkoutReady
 
 	// Developer lobby chat hub. The session resolver maps a request cookie
 	// to a chat identity; it stays nil-safe when customer OIDC is disabled
@@ -134,14 +138,19 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		r.With(oidcEntry).Get("/arena/admin/callback", oidcHandler.CallbackHandler)
 		r.Get("/arena/admin/logout", oidcHandler.LogoutHandler)
 		r.Get("/arena/api/v1/admin/session", oidcHandler.SessionInfoHandler)
+	} else {
+		r.Get("/api/v1/admin/session", AdminSessionUnavailableHandler)
+		r.Get("/arena/api/v1/admin/session", AdminSessionUnavailableHandler)
 	}
 	if customerOIDCHandler != nil {
-		customerOIDCEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
-		r.With(customerOIDCEntry).Get("/account/login", customerOIDCHandler.LoginHandler)
-		r.With(customerOIDCEntry).Get("/account/callback", customerOIDCHandler.CallbackHandler)
+		if customerOIDCHandler.oauth2Config != nil {
+			customerOIDCEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
+			r.With(customerOIDCEntry).Get("/account/login", customerOIDCHandler.LoginHandler)
+			r.With(customerOIDCEntry).Get("/account/callback", customerOIDCHandler.CallbackHandler)
+			r.With(customerOIDCEntry).Get("/arena/account/login", customerOIDCHandler.LoginHandler)
+			r.With(customerOIDCEntry).Get("/arena/account/callback", customerOIDCHandler.CallbackHandler)
+		}
 		r.With(MakeCustomerAuthMiddleware(customerOIDCHandler)).Post("/account/logout", customerOIDCHandler.LogoutHandler)
-		r.With(customerOIDCEntry).Get("/arena/account/login", customerOIDCHandler.LoginHandler)
-		r.With(customerOIDCEntry).Get("/arena/account/callback", customerOIDCHandler.CallbackHandler)
 		r.With(MakeCustomerAuthMiddleware(customerOIDCHandler)).Post("/arena/account/logout", customerOIDCHandler.LogoutHandler)
 	}
 
@@ -157,11 +166,17 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		api.Get("/content", PublicContentBlocks)
 		api.Get("/service-status", serviceStatus.publicStatus)
 		api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
+		api.Post("/cosmetics/webhooks/stripe", commerceHandler.StripeWebhook)
 		if customerOIDCHandler != nil {
-			customerOIDCEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
-			api.With(customerOIDCEntry).Get("/dashboard/login", customerOIDCHandler.LoginHandler)
+			if customerOIDCHandler.oauth2Config != nil {
+				customerOIDCEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
+				api.With(customerOIDCEntry).Get("/dashboard/login", customerOIDCHandler.LoginHandler)
+			} else {
+				api.Get("/dashboard/login", CustomerLoginUnavailableHandler)
+			}
 			api.With(MakeCustomerAuthMiddleware(customerOIDCHandler)).Post("/dashboard/logout", customerOIDCHandler.LogoutHandler)
 			api.Get("/account/session", customerOIDCHandler.SessionInfoHandler)
+			registerCustomerEmailAuthRoutes(api, customerOIDCHandler)
 		} else {
 			api.Get("/dashboard/login", CustomerLoginUnavailableHandler)
 			api.Post("/dashboard/logout", CustomerLoginUnavailableHandler)
@@ -170,6 +185,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		api.Route("/account", func(account chi.Router) {
 			account.Use(MakeCustomerAuthMiddleware(customerOIDCHandler))
 			account.Get("/cosmetics", cosmeticsHandler.AccountInventory)
+			registerCustomerCosmeticCommerceRoutes(account, commerceHandler)
 			account.With(
 				security.RateLimitMiddleware(config.C.CustomerBotLinkRPM),
 			).Post("/bots", cosmeticsHandler.LinkAccountBot)
@@ -218,6 +234,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
 			adminHandler.Routes(admin)
 			registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
+			admin.Get("/cosmetics/orders", commerceHandler.AdminOrders)
 
 			// Dashboard API endpoints.
 			admin.Route("/dashboard", func(dash chi.Router) {
@@ -246,11 +263,17 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			api.Get("/content", PublicContentBlocks)
 			api.Get("/service-status", serviceStatus.publicStatus)
 			api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
+			api.Post("/cosmetics/webhooks/stripe", commerceHandler.StripeWebhook)
 			if customerOIDCHandler != nil {
-				customerOIDCEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
-				api.With(customerOIDCEntry).Get("/dashboard/login", customerOIDCHandler.LoginHandler)
+				if customerOIDCHandler.oauth2Config != nil {
+					customerOIDCEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
+					api.With(customerOIDCEntry).Get("/dashboard/login", customerOIDCHandler.LoginHandler)
+				} else {
+					api.Get("/dashboard/login", CustomerLoginUnavailableHandler)
+				}
 				api.With(MakeCustomerAuthMiddleware(customerOIDCHandler)).Post("/dashboard/logout", customerOIDCHandler.LogoutHandler)
 				api.Get("/account/session", customerOIDCHandler.SessionInfoHandler)
+				registerCustomerEmailAuthRoutes(api, customerOIDCHandler)
 			} else {
 				api.Get("/dashboard/login", CustomerLoginUnavailableHandler)
 				api.Post("/dashboard/logout", CustomerLoginUnavailableHandler)
@@ -259,6 +282,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			api.Route("/account", func(account chi.Router) {
 				account.Use(MakeCustomerAuthMiddleware(customerOIDCHandler))
 				account.Get("/cosmetics", cosmeticsHandler.AccountInventory)
+				registerCustomerCosmeticCommerceRoutes(account, commerceHandler)
 				account.With(
 					security.RateLimitMiddleware(config.C.CustomerBotLinkRPM),
 				).Post("/bots", cosmeticsHandler.LinkAccountBot)
@@ -294,6 +318,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
 				adminHandler.Routes(admin)
 				registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
+				admin.Get("/cosmetics/orders", commerceHandler.AdminOrders)
 
 				admin.Route("/dashboard", func(dash chi.Router) {
 					dashboardHandler.DashboardRoutes(dash)
@@ -314,6 +339,21 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	r.Handle("/*", noCacheStaticHandler(fileServer))
 
 	return r
+}
+
+func registerCustomerEmailAuthRoutes(api chi.Router, handler *CustomerOIDCHandler) {
+	if handler == nil || handler.emailSender == nil || handler.emailStore == nil {
+		return
+	}
+	api.With(security.FailClosedRateLimitMiddleware(config.C.CustomerEmailSendRPM)).Post("/account/email/start", handler.EmailStartHandler)
+	api.With(security.RateLimitMiddleware(config.C.AdminRateLimitRPM)).Post("/account/email/verify", handler.EmailVerifyHandler)
+}
+
+func registerCustomerCosmeticCommerceRoutes(account chi.Router, handler *CosmeticCommerceHandler) {
+	account.Get("/cosmetics/orders", handler.CustomerOrders)
+	account.With(
+		security.FailClosedRateLimitMiddleware(config.C.CosmeticsCheckoutRPM),
+	).Post("/cosmetics/checkout", handler.Checkout)
 }
 
 // healthHandler returns a handler for GET /api/v1/health.

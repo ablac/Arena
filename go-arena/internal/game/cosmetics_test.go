@@ -1,6 +1,9 @@
 package game
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestUpdateBotCosmeticsCopiesLoadout(t *testing.T) {
 	engine := NewGameEngine()
@@ -17,6 +20,20 @@ func TestUpdateBotCosmeticsCopiesLoadout(t *testing.T) {
 
 	if engine.UpdateBotCosmetics("missing", map[string]string{}) {
 		t.Fatal("missing bot unexpectedly reported as updated")
+	}
+}
+
+func TestConnectedBotIDsIncludesActiveAndWaitingBotsInStableOrder(t *testing.T) {
+	engine := NewGameEngine()
+	engine.Bots["bot-z"] = &BotState{BotID: "bot-z"}
+	engine.Bots["bot-a"] = &BotState{BotID: "bot-a"}
+	engine.WaitingBots["bot-m"] = &BotState{BotID: "bot-m"}
+	// A reconnect transition can briefly expose the same identity in both maps;
+	// admin-driven cosmetic refreshes must still query it only once.
+	engine.WaitingBots["bot-a"] = &BotState{BotID: "bot-a"}
+
+	if got, want := engine.ConnectedBotIDs(), []string{"bot-a", "bot-m", "bot-z"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ConnectedBotIDs() = %v, want %v", got, want)
 	}
 }
 

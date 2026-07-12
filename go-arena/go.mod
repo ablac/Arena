@@ -11,6 +11,7 @@ require (
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/redis/go-redis/v9 v9.18.0
+	github.com/stripe/stripe-go/v86 v86.1.0
 	golang.org/x/crypto v0.49.0
 	golang.org/x/oauth2 v0.30.0
 )

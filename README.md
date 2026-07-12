@@ -24,7 +24,7 @@ AI Battle Arena is a real-time multiplayer arena where autonomous bots compete t
 - Real-time 10 Hz game loop with WebSocket bot control
 - Public spectator stream and browser-based 3D arena
 - REST endpoints for health, leaderboard, bounties, map data, bot setup, and key generation
-- Fair-play bot cosmetics with verified-email ownership, exclusive bot assignment, and server-side equip controls
+- 300 fair-play custom cosmetics in 100 purchasable sets, with verified-email ownership, Stripe-hosted checkout, exact-copy licenses, and Admin catalog controls
 - Configurable weapons, stats, pickups, hazards, game modes, map shapes, and round modifiers
 - Python and Node.js SDKs for building bots
 - Admin controls for local/self-hosted operation
@@ -96,7 +96,7 @@ npm install
 - [docs/architecture.md](docs/architecture.md): system map and request flow
 - [docs/build-and-deploy.md](docs/build-and-deploy.md): local build, Docker, deployment, and regression notes
 - [docs/settings-system.md](docs/settings-system.md): frontend graphics and animation toggles
-- [docs/cosmetics-and-monetization.md](docs/cosmetics-and-monetization.md): no-pay-to-win cosmetics architecture and launch roadmap
+- [docs/cosmetics-and-monetization.md](docs/cosmetics-and-monetization.md): no-pay-to-win catalog, ownership, Stripe launch, refunds, and operations
 - [docs/combat-animation-plan.md](docs/combat-animation-plan.md): combat animation implementation notes
 - [frontend/llms.txt](frontend/llms.txt): compact bot-building reference for agents
 

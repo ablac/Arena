@@ -948,6 +948,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   background:rgba(7,11,17,0.76);
 }
 #panel-cosmetics .ops-shell{max-width:1320px;margin:0;gap:14px}
+.cosmetics-catalog-status{min-height:18px;padding:0 2px}
 .cosmetics-admin-summary{
   display:grid;
   grid-template-columns:repeat(4,minmax(0,1fr));
@@ -1001,6 +1002,25 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 .cosmetics-admin-row-title{color:var(--text);font-weight:800;overflow-wrap:anywhere}
 .cosmetics-admin-row-meta{color:var(--text2);font-size:11px;overflow-wrap:anywhere}
 .cosmetics-admin-row-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.cosmetics-admin-badge{
+  display:inline-flex;
+  align-items:center;
+  min-height:20px;
+  padding:2px 7px;
+  border:1px solid var(--border);
+  border-radius:999px;
+  color:var(--text2);
+  font-size:9px;
+  font-weight:800;
+  letter-spacing:.04em;
+  line-height:1;
+  vertical-align:middle;
+}
+.cosmetics-admin-badge.is-live{border-color:rgba(63,185,80,.35);color:var(--green)}
+.cosmetics-admin-badge.is-warning{border-color:rgba(210,153,34,.4);color:var(--orange)}
+.cosmetics-admin-badge.is-inactive{color:var(--text2)}
+.cosmetics-admin-badge.is-builtin{border-color:rgba(188,140,255,.35);color:var(--purple)}
+.cosmetics-admin-builtin-note{margin-top:7px;color:var(--text2);font-size:11px;line-height:1.5}
 .cosmetics-admin-editor{
   margin-top:12px;
   border:1px solid var(--border);
@@ -1036,9 +1056,27 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   border-radius:7px;
 }
 .cosmetics-admin-form legend{padding:0 5px;color:var(--text2);font-size:11px}
-.cosmetics-item-picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px}
+.cosmetics-filter-toolbar,.cosmetics-picker-controls{
+  display:grid;
+  grid-template-columns:minmax(210px,2fr) repeat(4,minmax(130px,1fr)) auto;
+  gap:8px;
+  align-items:end;
+  margin-top:12px;
+}
+.cosmetics-picker-controls{grid-template-columns:minmax(190px,2fr) minmax(150px,1fr) minmax(135px,1fr) auto;margin-top:0}
+.cosmetics-filter-toolbar label,.cosmetics-picker-controls label{display:grid;gap:5px;color:var(--text2);font-size:10px}
+.cosmetics-filter-toolbar :is(input,select),.cosmetics-picker-controls :is(input,select){width:100%;min-width:0}
+.cosmetics-filter-summary,.cosmetics-picker-summary{margin-top:8px;color:var(--text2);font-size:11px}
+.cosmetics-item-list{max-block-size:min(62vh,720px);overflow:auto;scrollbar-gutter:stable;padding-right:4px}
+.cosmetics-item-picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px;max-block-size:min(48vh,520px);overflow:auto;scrollbar-gutter:stable;margin-top:8px;padding:6px;border:1px solid var(--border);border-radius:7px}
 .cosmetics-item-picker label{display:flex;grid-template-columns:none;align-items:center;gap:7px;min-height:36px}
 .cosmetics-item-picker input{width:18px!important;height:18px}
+.cosmetics-order-controls{display:grid;grid-template-columns:minmax(220px,2fr) minmax(170px,1fr) auto auto;gap:8px;align-items:end;margin-top:12px}
+.cosmetics-order-controls label{display:grid;gap:5px;color:var(--text2);font-size:10px}
+.cosmetics-order-controls :is(input,select){width:100%;min-width:0}
+.cosmetics-order-list{max-block-size:min(48vh,560px);overflow:auto;scrollbar-gutter:stable;padding-right:4px}
+.cosmetics-order-provider-line{display:flex;gap:10px;align-items:center;flex-wrap:wrap;color:var(--text2);font-size:10px}
+.cosmetics-order-provider-id{display:inline-block;max-width:210px;padding:2px 5px;overflow:hidden;color:var(--cyan);text-overflow:ellipsis;white-space:nowrap;user-select:all}
 .cosmetics-form-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .cosmetics-admin-audit{display:grid;gap:7px;max-height:420px;margin-top:10px;overflow:auto;scrollbar-gutter:stable}
 @media(max-width:980px){
@@ -1055,16 +1093,25 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   #panel-broadcasts .broadcast-layout,
   .cosmetics-admin-layout{grid-template-columns:1fr}
   .cosmetics-admin-sidebar{position:static}
+  .cosmetics-filter-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cosmetics-picker-controls{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cosmetics-order-controls{grid-template-columns:repeat(2,minmax(0,1fr))}
   #panel-cosmetics button,
   .cosmetics-check,
   .cosmetics-item-picker label{min-height:44px}
-  .cosmetics-admin-form :is(input:not([type="checkbox"]),select,textarea){min-height:44px;font-size:16px}
+  .cosmetics-admin-form :is(input:not([type="checkbox"]),select,textarea),
+  .cosmetics-filter-toolbar :is(input,select),
+  .cosmetics-picker-controls :is(input,select),
+  .cosmetics-order-controls :is(input,select){min-height:44px;font-size:16px}
 }
 @media(pointer:coarse){
   #panel-cosmetics button,
   .cosmetics-check,
   .cosmetics-item-picker label{min-height:44px}
-  .cosmetics-admin-form :is(input:not([type="checkbox"]),select,textarea){min-height:44px;font-size:16px}
+  .cosmetics-admin-form :is(input:not([type="checkbox"]),select,textarea),
+  .cosmetics-filter-toolbar :is(input,select),
+  .cosmetics-picker-controls :is(input,select),
+  .cosmetics-order-controls :is(input,select){min-height:44px;font-size:16px}
 }
 @media(max-width:640px){
   .cosmetics-admin-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -1074,6 +1121,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   .cosmetics-form-actions button{min-height:44px}
   .cosmetics-admin-row{grid-template-columns:1fr}
   .cosmetics-admin-row-actions{justify-content:flex-start}
+  .cosmetics-filter-toolbar,.cosmetics-picker-controls,.cosmetics-order-controls{grid-template-columns:1fr}
   .cosmetics-admin-form{grid-template-columns:1fr;padding:12px}
   .cosmetics-form-wide{grid-column:auto}
   .cosmetics-admin-form :is(input:not([type="checkbox"]),select,textarea){min-height:44px;font-size:16px}
@@ -1731,6 +1779,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
           <div class="cosmetics-admin-metric"><span>Items</span><strong id="cosmeticItemCount">--</strong></div>
           <div class="cosmetics-admin-metric"><span>Checkout</span><strong id="cosmeticCheckoutState">Disabled</strong></div>
         </section>
+        <div id="cosmeticCatalogStatus" class="cosmetics-catalog-status muted" role="status" aria-live="polite">Open the catalog to load public readiness.</div>
 
         <div class="cosmetics-admin-layout">
           <div class="cosmetics-admin-workbench">
@@ -1742,7 +1791,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
                 </div>
                 <button type="button" onclick="startCosmeticCategoryCreate()">New category</button>
               </div>
-              <div id="cosmeticCategoryList" class="cosmetics-admin-list" aria-live="polite">Loading categories...</div>
+              <div id="cosmeticCategoryList" class="cosmetics-admin-list">Loading categories...</div>
               <details class="cosmetics-admin-editor" id="cosmeticCategoryEditor">
                 <summary>Add or edit category</summary>
                 <form id="cosmeticCategoryForm" class="cosmetics-admin-form" onsubmit="saveCosmeticCategory(event)">
@@ -1763,12 +1812,40 @@ tr:hover td{background:rgba(88,166,255,0.07)}
             <section class="ops-card">
               <div class="cosmetics-admin-heading">
                 <div>
-                  <h3>Packs &amp; Pricing</h3>
+                  <h3>Commerce Orders</h3>
+                  <p class="muted">Read-only launch support for the latest 50 orders. Empty history is normal while checkout is disabled or before the first purchase.</p>
+                </div>
+              </div>
+              <form class="cosmetics-order-controls" aria-label="Filter commerce orders" onsubmit="loadCosmeticOrders(event)">
+                <label>Search orders<input id="cosmeticOrderSearch" type="search" maxlength="120" placeholder="Order, email, pack, Stripe ID..."></label>
+                <label>Status<select id="cosmeticOrderStatusFilter">
+                  <option value="">All statuses</option>
+                  <option value="created">Created</option>
+                  <option value="checkout_pending">Checkout pending</option>
+                  <option value="processing">Processing</option>
+                  <option value="paid">Paid</option>
+                  <option value="payment_failed">Payment failed</option>
+                  <option value="expired">Expired</option>
+                  <option value="refund_review">Refund review</option>
+                  <option value="refunded">Refunded</option>
+                  <option value="disputed">Disputed</option>
+                </select></label>
+                <button type="submit">Apply filters</button>
+                <button type="button" id="cosmeticOrderRefresh" onclick="loadCosmeticOrders()">Refresh</button>
+              </form>
+              <div id="cosmeticOrderStatus" class="cosmetics-filter-summary" role="status" aria-live="polite">Orders load independently from the catalog.</div>
+              <div id="cosmeticOrderList" class="cosmetics-admin-list cosmetics-order-list" aria-busy="false">Open Cosmetics Shop to load commerce orders.</div>
+            </section>
+
+            <section class="ops-card">
+              <div class="cosmetics-admin-heading">
+                <div>
+                  <h3>Cosmetic Sets / Packs</h3>
                   <p class="muted">Curate presentation-only bundles. Prices are stored in the currency's smallest unit; 99 means $0.99 USD.</p>
                 </div>
                 <button type="button" onclick="startCosmeticPackCreate()">New pack</button>
               </div>
-              <div id="cosmeticPackList" class="cosmetics-admin-list" aria-live="polite">Loading packs...</div>
+              <div id="cosmeticPackList" class="cosmetics-admin-list">Loading packs...</div>
               <details class="cosmetics-admin-editor" id="cosmeticPackEditor">
                 <summary>Add or edit pack</summary>
                 <form id="cosmeticPackForm" class="cosmetics-admin-form" onsubmit="saveCosmeticPack(event)">
@@ -1781,6 +1858,13 @@ tr:hover td{background:rgba(88,166,255,0.07)}
                   <label class="cosmetics-form-wide">Description<textarea id="cosmeticPackDescription" maxlength="500" rows="3"></textarea></label>
                   <fieldset class="cosmetics-form-wide">
                     <legend>Pack contents</legend>
+                    <div class="cosmetics-picker-controls" aria-label="Filter set contents">
+                      <label>Search items<input id="cosmeticPackItemSearch" type="search" placeholder="Name, ID, asset key..." oninput="renderCosmeticPackItemPicker()"></label>
+                      <label>Category<select id="cosmeticPackItemCategoryFilter" onchange="renderCosmeticPackItemPicker()"><option value="all">All categories</option></select></label>
+                      <label>Slot<select id="cosmeticPackItemSlotFilter" onchange="renderCosmeticPackItemPicker()"><option value="all">All slots</option><option value="bot_skin">Bot skins</option><option value="weapon_skin">Weapon finishes</option><option value="attachment">Attachments</option></select></label>
+                      <button type="button" onclick="resetCosmeticPackItemFilters()">Clear item filters</button>
+                    </div>
+                    <div id="cosmeticPackSelectionCount" class="cosmetics-picker-summary">0 selected</div>
                     <div id="cosmeticPackItems" class="cosmetics-item-picker">Load the catalog to choose items.</div>
                   </fieldset>
                   <label class="cosmetics-check"><input id="cosmeticPackFree" type="checkbox"> Free pack</label>
@@ -1800,10 +1884,10 @@ tr:hover td{background:rgba(88,166,255,0.07)}
                 <div>
                   <h3>Individual Items</h3>
                   <p class="muted">Edit customer-facing names, categories, prices, rarity, ordering, and visibility. Slot and local asset key stay immutable after creation.</p>
+                  <p class="cosmetics-admin-builtin-note">Built-in cosmetics are code-seeded; deactivate them to hide safely instead of deleting them. Delete is for removable custom drafts.</p>
                 </div>
                 <button type="button" onclick="startCosmeticItemCreate()">New item</button>
               </div>
-              <div id="cosmeticItemList" class="cosmetics-admin-list cosmetics-item-list" aria-live="polite">Loading items...</div>
               <details class="cosmetics-admin-editor" id="cosmeticItemEditor">
                 <summary>Add or edit item</summary>
                 <form id="cosmeticItemForm" class="cosmetics-admin-form" onsubmit="saveCosmeticItem(event)">
@@ -1826,6 +1910,16 @@ tr:hover td{background:rgba(88,166,255,0.07)}
                   </div>
                 </form>
               </details>
+              <div class="cosmetics-filter-toolbar" aria-label="Filter cosmetic items">
+                <label>Search<input id="cosmeticItemSearch" type="search" placeholder="Name, ID, description, asset key..." oninput="renderCosmeticAdminCatalog()"></label>
+                <label>Category<select id="cosmeticItemCategoryFilter" onchange="renderCosmeticAdminCatalog()"><option value="all">All categories</option></select></label>
+                <label>Slot<select id="cosmeticItemSlotFilter" onchange="renderCosmeticAdminCatalog()"><option value="all">All slots</option><option value="bot_skin">Bot skins</option><option value="weapon_skin">Weapon finishes</option><option value="attachment">Attachments</option></select></label>
+                <label>Rarity<select id="cosmeticItemRarityFilter" onchange="renderCosmeticAdminCatalog()"><option value="all">All rarities</option></select></label>
+                <label>Lifecycle<select id="cosmeticItemLifecycleFilter" onchange="renderCosmeticAdminCatalog()"><option value="all">All lifecycle states</option><option value="live">Live</option><option value="inactive">Inactive</option><option value="hidden-category">Hidden by category</option><option value="unknown">Readiness unknown</option><option value="not-public">Not public</option></select></label>
+                <button type="button" onclick="resetCosmeticItemFilters()">Clear filters</button>
+              </div>
+              <div id="cosmeticItemFilterCount" class="cosmetics-filter-summary">Showing -- items</div>
+              <div id="cosmeticItemList" class="cosmetics-admin-list cosmetics-item-list">Loading items...</div>
               <div class="ctrl-result" id="cosmeticItemResult" role="status" aria-live="polite"></div>
             </section>
           </div>
@@ -2323,6 +2417,11 @@ function connectFetchSSE() {
 function hasActiveAdminAuth(tokenValue, session) {
   return Boolean(tokenValue || (session && session.authenticated));
 }
+
+window.addEventListener('pagehide', stopSSE);
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted && hasActiveAdminAuth(token, ssoSession)) startSSE();
+});
 
 function scheduleSSEReconnect(controller) {
   if (controller.signal.aborted || sseSource !== controller || !hasActiveAdminAuth(token, ssoSession)) return;
@@ -3883,6 +3982,8 @@ let opsDemoTemplates = [];
 let opsSelectedDemoTemplate = '';
 let opsMapSettings = null;
 let cosmeticAdminCatalog = {categories:[], packs:[], items:[], checkout_enabled:false};
+let cosmeticPublicProjection = {available:false, categories:new Set(), packs:new Set(), items:new Set()};
+let cosmeticPackSelection = new Set();
 let activeConfigGroup = 'all';
 
 async function loadOpsConsole() {
@@ -3891,8 +3992,7 @@ async function loadOpsConsole() {
     loadGameConfig(),
     loadDemoBotStudio(),
     loadMapWorkshop(),
-    refreshIPBans(),
-    loadCosmeticCatalog()
+    refreshIPBans()
   ]);
   renderConfigHistory();
 }
@@ -4580,10 +4680,61 @@ async function resetLeaderboard() {
   }
 }
 
+async function fetchPublicCosmeticCatalog() {
+  const response = await fetch(getPublicAPIBase() + '/cosmetics/catalog', {
+    headers:{'Accept':'application/json'},
+    cache:'no-store',
+  });
+  if (!response.ok) throw new Error('public catalog request failed (' + response.status + ')');
+  return response.json();
+}
+
+function setCosmeticPublicProjection(data) {
+  cosmeticPublicProjection = {
+    available:true,
+    categories:new Set((Array.isArray(data?.categories) ? data.categories : []).map(entry => entry.id)),
+    packs:new Set((Array.isArray(data?.packs) ? data.packs : []).map(entry => entry.id)),
+    items:new Set((Array.isArray(data?.items) ? data.items : []).map(entry => entry.id)),
+  };
+}
+
+function clearCosmeticPublicProjection() {
+  cosmeticPublicProjection = {available:false, categories:new Set(), packs:new Set(), items:new Set()};
+}
+
+function populateCosmeticGrantCatalog(data) {
+  const select = document.getElementById('cosmeticGrantItem');
+  if (!select) return;
+  const items = Array.isArray(data?.items) ? data.items : [];
+  select.innerHTML = '<option value="">Select a cosmetic</option>' + items.map(item => {
+    const state = item.is_free ? 'free' : (item.is_purchasable ? 'sale-ready' : 'preview');
+    return `<option value="${escAttr(item.id||'')}">${esc(item.name||item.id||'Unknown')} · ${esc(item.slot||'')} · ${state}</option>`;
+  }).join('');
+}
+
 async function loadCosmeticsAdmin() {
   const lists = ['cosmeticCategoryList','cosmeticPackList','cosmeticItemList'];
-  try {
-    const data = await api('/cosmetics/catalog');
+  const status = document.getElementById('cosmeticCatalogStatus');
+  if (status) {
+    status.textContent = 'Loading protected catalog and public readiness...';
+    status.style.color = 'var(--text2)';
+  }
+  const [adminResult, publicResult] = await Promise.allSettled([
+    api('/cosmetics/catalog'),
+    fetchPublicCosmeticCatalog(),
+  ]);
+
+  if (publicResult.status === 'fulfilled') {
+    setCosmeticPublicProjection(publicResult.value);
+    populateCosmeticGrantCatalog(publicResult.value);
+  } else {
+    clearCosmeticPublicProjection();
+    const select = document.getElementById('cosmeticGrantItem');
+    if (select) select.innerHTML = '<option value="">Public catalog unavailable</option>';
+  }
+
+  if (adminResult.status === 'fulfilled') {
+    const data = adminResult.value;
     cosmeticAdminCatalog = {
       categories: Array.isArray(data.categories) ? data.categories : [],
       packs: Array.isArray(data.packs) ? data.packs : [],
@@ -4591,14 +4742,111 @@ async function loadCosmeticsAdmin() {
       checkout_enabled: data.checkout_enabled === true,
     };
     renderCosmeticAdminCatalog();
-  } catch (e) {
+    if (status) {
+      const liveItems = cosmeticPublicProjection.available ? cosmeticPublicProjection.items.size : 0;
+      status.textContent = cosmeticPublicProjection.available
+        ? `Catalog loaded. ${liveItems} of ${cosmeticAdminCatalog.items.length} items are Live publicly.`
+        : 'Catalog loaded. Public readiness unavailable; no entries are marked Live.';
+      status.style.color = cosmeticPublicProjection.available ? 'var(--green)' : 'var(--orange)';
+    }
+  } else {
+    const error = adminResult.reason;
     lists.forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.textContent = 'Catalog unavailable: ' + (e.message || 'unknown error');
+      if (el) el.textContent = 'Catalog unavailable: ' + (error?.message || 'unknown error');
     });
+    if (status) {
+      status.textContent = 'Protected catalog unavailable: ' + (error?.message || 'unknown error');
+      status.style.color = 'var(--red)';
+    }
     toast('Cosmetic catalog failed to load', 'error');
   }
-  await Promise.allSettled([loadCosmeticCatalog(), loadCosmeticCatalogAudit()]);
+  void loadCosmeticOrders();
+  await Promise.allSettled([loadCosmeticCatalogAudit()]);
+}
+
+function cosmeticOrderMoney(cents, currency) {
+  const amount = Number(cents || 0) / 100;
+  const code = String(currency || 'USD').trim().toUpperCase();
+  try {
+    return new Intl.NumberFormat(undefined, {style:'currency', currency:code}).format(amount);
+  } catch (_) {
+    return `${code || 'USD'} ${amount.toFixed(2)}`;
+  }
+}
+
+function cosmeticOrderStatusMeta(rawStatus) {
+  const status = String(rawStatus || 'created').trim().toLowerCase();
+  const labels = {
+    created:'Created', checkout_pending:'Checkout pending', processing:'Processing', paid:'Paid',
+    payment_failed:'Payment failed', expired:'Expired', refund_review:'Refund review',
+    refunded:'Refunded', disputed:'Disputed',
+  };
+  const warning = new Set(['payment_failed','expired','refund_review','refunded','disputed']);
+  return {
+    label: labels[status] || prettyLabel(status || 'unknown'),
+    className: status === 'paid' ? 'is-live' : (warning.has(status) ? 'is-warning' : 'is-inactive'),
+  };
+}
+
+function cosmeticOrderProviderID(value, label) {
+  const full = String(value || '').trim();
+  if (!full) return '<span class="muted">not assigned</span>';
+  const terse = full.length > 22 ? `${full.slice(0,9)}…${full.slice(-7)}` : full;
+  return `<code class="cosmetics-order-provider-id" title="${escAttr(full)}" aria-label="${escAttr(label + ': ' + full)}">${esc(terse)}</code>`;
+}
+
+function renderCosmeticOrders(rawOrders) {
+  const root = document.getElementById('cosmeticOrderList');
+  const orders = Array.isArray(rawOrders) ? rawOrders : [];
+  const visible = orders.slice(0,50);
+  if (!visible.length) {
+    root.textContent = 'No commerce orders match these filters. Checkout may be disabled or no purchases have been made yet.';
+    return {shown:0, total:orders.length};
+  }
+  root.innerHTML = visible.map(order => {
+    const status = cosmeticOrderStatusMeta(order.status);
+    const quantity = Math.max(0, Number(order.quantity || 0));
+    return `<article class="cosmetics-admin-row">
+      <div class="cosmetics-admin-row-main">
+        <div class="cosmetics-admin-row-title">${esc(order.account_email || 'Unknown account')} · ${esc(order.pack_name || 'Unknown pack')} × ${quantity} <span class="cosmetics-admin-badge ${status.className}">${esc(status.label)}</span></div>
+        <div class="cosmetics-admin-row-meta">${esc(order.id || '')} · expected ${esc(cosmeticOrderMoney(order.expected_subtotal_cents, order.currency))} · received ${esc(cosmeticOrderMoney(order.amount_received_cents, order.currency))} · refunded ${esc(cosmeticOrderMoney(order.amount_refunded_cents, order.currency))} · ${Number(order.fulfilled_license_count || 0)} licenses · ${esc(fmtTime(order.created_at || order.updated_at || ''))}</div>
+        <div class="cosmetics-order-provider-line"><span>Checkout ${cosmeticOrderProviderID(order.checkout_session_id, 'Checkout session')}</span><span>Payment ${cosmeticOrderProviderID(order.payment_intent_id, 'Payment intent')}</span></div>
+      </div>
+    </article>`;
+  }).join('');
+  return {shown:visible.length, total:orders.length};
+}
+
+async function loadCosmeticOrders(event) {
+  if (event?.preventDefault) event.preventDefault();
+  const root = document.getElementById('cosmeticOrderList');
+  const status = document.getElementById('cosmeticOrderStatus');
+  if (!root || !status) return;
+  const query = document.getElementById('cosmeticOrderSearch')?.value.trim() || '';
+  const statusFilter = document.getElementById('cosmeticOrderStatusFilter')?.value || '';
+  const params = new URLSearchParams();
+  params.set('limit','50');
+  if (query) params.set('query', query);
+  if (statusFilter) params.set('status', statusFilter);
+  root.setAttribute('aria-busy', 'true');
+  root.textContent = 'Loading commerce orders...';
+  status.textContent = 'Loading up to 50 commerce orders...';
+  status.style.color = 'var(--text2)';
+  try {
+    const data = await api('/cosmetics/orders?' + params.toString());
+    const counts = renderCosmeticOrders(data?.orders);
+    status.textContent = counts.total
+      ? `Showing ${counts.shown} of ${counts.total} orders returned by this filter.`
+      : 'No commerce orders found. Checkout may be disabled or no purchases have been made.';
+    status.style.color = 'var(--text2)';
+  } catch (error) {
+    root.textContent = 'Orders unavailable. Checkout may be disabled or the support endpoint may be temporarily unavailable.';
+    status.textContent = 'Commerce orders unavailable: ' + (error?.message || 'unknown error') + '. Catalog editing is unaffected.';
+    status.style.color = 'var(--orange)';
+  } finally {
+    root.setAttribute('aria-busy', 'false');
+  }
 }
 
 function cosmeticPriceLabel(entry) {
@@ -4619,6 +4867,88 @@ function cosmeticCatalogState(entry) {
   return 'preview';
 }
 
+function cosmeticVisibilityState(entry, entityType) {
+  if (entry?.is_active !== true) {
+    return {key:'inactive', label:'Inactive', className:'is-inactive'};
+  }
+  const category = entityType === 'category'
+    ? entry
+    : cosmeticAdminCatalog.categories.find(candidate => candidate.id === entry?.category_id);
+  if (entityType !== 'category' && (!category || category.is_active !== true)) {
+    return {key:'hidden-category', label:'Hidden by category', className:'is-warning'};
+  }
+  if (!cosmeticPublicProjection.available) {
+    return {key:'unknown', label:'Readiness unknown', className:'is-warning'};
+  }
+  const collection = entityType === 'category'
+    ? cosmeticPublicProjection.categories
+    : (entityType === 'pack' ? cosmeticPublicProjection.packs : cosmeticPublicProjection.items);
+  if (collection.has(entry.id)) {
+    return {key:'live', label:'Live', className:'is-live'};
+  }
+  if (entityType === 'pack') {
+    const itemIDs = Array.isArray(entry.item_ids) ? entry.item_ids : (entry.items || []).map(item => item.id);
+    if (!itemIDs.length || itemIDs.some(itemID => !cosmeticPublicProjection.items.has(itemID))) {
+      return {key:'blocked-member', label:'Blocked by pack member', className:'is-warning'};
+    }
+  }
+  return {key:'not-public', label:'Not public', className:'is-warning'};
+}
+
+function cosmeticVisibilityBadge(entry, entityType) {
+  const state = cosmeticVisibilityState(entry, entityType);
+  return `<span class="cosmetics-admin-badge ${state.className}">${esc(state.label)}</span>`;
+}
+
+function cosmeticBuiltinBadge(entry) {
+  return entry?.is_builtin === true
+    ? '<span class="cosmetics-admin-badge is-builtin" title="Code-seeded entry; deactivate instead of deleting">Built-in</span>'
+    : '';
+}
+
+function cosmeticDeleteAttributes(entry) {
+  return entry?.is_builtin === true
+    ? 'disabled title="Built-in entries are code-seeded. Deactivate this entry in the editor instead."'
+    : '';
+}
+
+function cosmeticFilterValue(id, fallback='all') {
+  return document.getElementById(id)?.value || fallback;
+}
+
+function filteredCosmeticAdminItems() {
+  const search = cosmeticFilterValue('cosmeticItemSearch', '').trim().toLowerCase();
+  const category = cosmeticFilterValue('cosmeticItemCategoryFilter');
+  const slot = cosmeticFilterValue('cosmeticItemSlotFilter');
+  const rarity = cosmeticFilterValue('cosmeticItemRarityFilter');
+  const lifecycle = cosmeticFilterValue('cosmeticItemLifecycleFilter');
+  return cosmeticAdminCatalog.items.filter(item => {
+    const haystack = [item.id, item.name, item.description, item.asset_key].join(' ').toLowerCase();
+    return (!search || haystack.includes(search)) &&
+      (category === 'all' || item.category_id === category) &&
+      (slot === 'all' || item.slot === slot) &&
+      (rarity === 'all' || item.rarity === rarity) &&
+      (lifecycle === 'all' || cosmeticVisibilityState(item, 'item').key === lifecycle);
+  });
+}
+
+function resetCosmeticItemFilters() {
+  document.getElementById('cosmeticItemSearch').value = '';
+  document.getElementById('cosmeticItemCategoryFilter').value = 'all';
+  document.getElementById('cosmeticItemSlotFilter').value = 'all';
+  document.getElementById('cosmeticItemRarityFilter').value = 'all';
+  document.getElementById('cosmeticItemLifecycleFilter').value = 'all';
+  renderCosmeticAdminCatalog();
+}
+
+function setCosmeticFilterOptions(select, firstLabel, entries, preservedValue) {
+  if (!select) return;
+  select.innerHTML = `<option value="all">${esc(firstLabel)}</option>` + entries.map(entry =>
+    `<option value="${escAttr(entry.value)}">${esc(entry.label)}</option>`
+  ).join('');
+  select.value = entries.some(entry => entry.value === preservedValue) ? preservedValue : 'all';
+}
+
 function renderCosmeticAdminCatalog() {
   const categories = cosmeticAdminCatalog.categories;
   const packs = cosmeticAdminCatalog.packs;
@@ -4632,9 +4962,10 @@ function renderCosmeticAdminCatalog() {
   const itemCategorySelect = document.getElementById('cosmeticItemCategory');
   const preservedPackCategory = packEditorOpen ? packCategorySelect.value : '';
   const preservedItemCategory = itemEditorOpen ? itemCategorySelect.value : '';
-  const preservedPackItemIDs = packEditorOpen
-    ? Array.from(document.querySelectorAll('[data-cosmetic-pack-item]:checked')).map(input => input.value)
-    : [];
+  const preservedPackItemIDs = packEditorOpen ? Array.from(cosmeticPackSelection) : [];
+  const preservedItemFilterCategory = cosmeticFilterValue('cosmeticItemCategoryFilter');
+  const preservedItemFilterRarity = cosmeticFilterValue('cosmeticItemRarityFilter');
+  const preservedPackItemFilterCategory = cosmeticFilterValue('cosmeticPackItemCategoryFilter');
   document.getElementById('cosmeticCategoryCount').textContent = String(categories.length);
   document.getElementById('cosmeticPackCount').textContent = String(packs.length);
   document.getElementById('cosmeticItemCount').textContent = String(items.length);
@@ -4646,12 +4977,12 @@ function renderCosmeticAdminCatalog() {
   categoryList.innerHTML = categories.length ? categories.map(category => `
     <article class="cosmetics-admin-row">
       <div class="cosmetics-admin-row-main">
-        <div class="cosmetics-admin-row-title">${esc(category.name || category.id)}</div>
-        <div class="cosmetics-admin-row-meta">${esc(category.id)} · order ${Number(category.sort_order || 0)} · ${category.is_active ? 'active' : 'inactive'}</div>
+        <div class="cosmetics-admin-row-title">${esc(category.name || category.id)} ${cosmeticBuiltinBadge(category)}</div>
+        <div class="cosmetics-admin-row-meta">${esc(category.id)} · order ${Number(category.sort_order || 0)} · ${cosmeticVisibilityBadge(category, 'category')}</div>
       </div>
       <div class="cosmetics-admin-row-actions">
         <button type="button" onclick="editCosmeticCategory('${escAttr(category.id)}')">Edit</button>
-        <button type="button" class="btn-danger" onclick="deleteCosmeticCategory('${escAttr(category.id)}')">Delete</button>
+        <button type="button" class="btn-danger" onclick="deleteCosmeticCategory('${escAttr(category.id)}')" ${cosmeticDeleteAttributes(category)}>Delete</button>
       </div>
     </article>`).join('') : '<div class="muted">No catalog categories.</div>';
 
@@ -4661,28 +4992,36 @@ function renderCosmeticAdminCatalog() {
     return `
       <article class="cosmetics-admin-row">
         <div class="cosmetics-admin-row-main">
-          <div class="cosmetics-admin-row-title">${esc(pack.name || pack.id)} <span style="color:var(--orange)">${esc(cosmeticPriceLabel(pack))}</span></div>
-          <div class="cosmetics-admin-row-meta">${esc(pack.category_id || '')} · ${count} items · ${cosmeticCatalogState(pack)} · order ${Number(pack.sort_order || 0)}</div>
+          <div class="cosmetics-admin-row-title">${esc(pack.name || pack.id)} <span style="color:var(--orange)">${esc(cosmeticPriceLabel(pack))}</span> ${cosmeticBuiltinBadge(pack)}</div>
+          <div class="cosmetics-admin-row-meta">${esc(pack.category_id || '')} · ${count} items · ${esc(cosmeticCatalogState(pack))} · ${cosmeticVisibilityBadge(pack, 'pack')} · order ${Number(pack.sort_order || 0)}</div>
         </div>
         <div class="cosmetics-admin-row-actions">
           <button type="button" onclick="editCosmeticPack('${escAttr(pack.id)}')">Edit</button>
-          <button type="button" class="btn-danger" onclick="deleteCosmeticPack('${escAttr(pack.id)}')">Delete</button>
+          <button type="button" class="btn-danger" onclick="deleteCosmeticPack('${escAttr(pack.id)}')" ${cosmeticDeleteAttributes(pack)}>Delete</button>
         </div>
       </article>`;
   }).join('') : '<div class="muted">No cosmetic packs.</div>';
 
+  const categoryFilters = categories.map(category => ({value:category.id, label:category.name || category.id}));
+  setCosmeticFilterOptions(document.getElementById('cosmeticItemCategoryFilter'), 'All categories', categoryFilters, preservedItemFilterCategory);
+  setCosmeticFilterOptions(document.getElementById('cosmeticPackItemCategoryFilter'), 'All categories', categoryFilters, preservedPackItemFilterCategory);
+  const rarityFilters = Array.from(new Set(items.map(item => item.rarity || 'common'))).sort().map(rarity => ({value:rarity, label:prettyLabel(rarity)}));
+  setCosmeticFilterOptions(document.getElementById('cosmeticItemRarityFilter'), 'All rarities', rarityFilters, preservedItemFilterRarity);
+
+  const filteredItems = filteredCosmeticAdminItems();
   const itemList = document.getElementById('cosmeticItemList');
-  itemList.innerHTML = items.length ? items.map(item => `
+  itemList.innerHTML = filteredItems.length ? filteredItems.map(item => `
     <article class="cosmetics-admin-row">
       <div class="cosmetics-admin-row-main">
-        <div class="cosmetics-admin-row-title">${esc(item.name || item.id)} <span style="color:var(--orange)">${esc(cosmeticPriceLabel(item))}</span></div>
-        <div class="cosmetics-admin-row-meta">${esc(item.slot || '')} · ${esc(item.category_id || '')} · ${esc(item.rarity || 'common')} · ${cosmeticCatalogState(item)}</div>
+        <div class="cosmetics-admin-row-title">${esc(item.name || item.id)} <span style="color:var(--orange)">${esc(cosmeticPriceLabel(item))}</span> ${cosmeticBuiltinBadge(item)}</div>
+        <div class="cosmetics-admin-row-meta">${esc(item.id)} · ${esc(item.slot || '')} · ${esc(item.category_id || '')} · ${esc(item.rarity || 'common')} · ${esc(cosmeticCatalogState(item))} · ${cosmeticVisibilityBadge(item, 'item')}</div>
       </div>
       <div class="cosmetics-admin-row-actions">
         <button type="button" onclick="editCosmeticItem('${escAttr(item.id)}')">Edit</button>
-        <button type="button" class="btn-danger" onclick="deleteCosmeticItem('${escAttr(item.id)}')">Delete</button>
+        <button type="button" class="btn-danger" onclick="deleteCosmeticItem('${escAttr(item.id)}')" ${cosmeticDeleteAttributes(item)}>Delete</button>
       </div>
-    </article>`).join('') : '<div class="muted">No individual cosmetic items.</div>';
+    </article>`).join('') : '<div class="muted">No items match the current filters. Clear filters to recover the catalog.</div>';
+  document.getElementById('cosmeticItemFilterCount').textContent = `Showing ${filteredItems.length} of ${items.length} items`;
 
   const categoryOptions = '<option value="">Select category</option>' + categories.map(category =>
     `<option value="${escAttr(category.id)}">${esc(category.name || category.id)}${category.is_active ? '' : ' (inactive)'}</option>`
@@ -4698,15 +5037,49 @@ function renderCosmeticAdminCatalog() {
   renderCosmeticPackItemPicker(preservedPackItemIDs);
 }
 
+function filteredCosmeticPackItems() {
+  const search = cosmeticFilterValue('cosmeticPackItemSearch', '').trim().toLowerCase();
+  const category = cosmeticFilterValue('cosmeticPackItemCategoryFilter');
+  const slot = cosmeticFilterValue('cosmeticPackItemSlotFilter');
+  return cosmeticAdminCatalog.items.filter(item => {
+    const haystack = [item.id, item.name, item.description, item.asset_key].join(' ').toLowerCase();
+    return (!search || haystack.includes(search)) &&
+      (category === 'all' || item.category_id === category) &&
+      (slot === 'all' || item.slot === slot);
+  }).sort((left, right) => Number(cosmeticPackSelection.has(right.id)) - Number(cosmeticPackSelection.has(left.id)));
+}
+
+function updateCosmeticPackSelectionCount(shownCount=filteredCosmeticPackItems().length) {
+  document.getElementById('cosmeticPackSelectionCount').textContent =
+    `${cosmeticPackSelection.size} selected · ${shownCount} shown of ${cosmeticAdminCatalog.items.length} items`;
+}
+
 function renderCosmeticPackItemPicker(selectedIDs) {
-  const selected = new Set(selectedIDs || []);
   const root = document.getElementById('cosmeticPackItems');
   const items = cosmeticAdminCatalog.items;
-  root.innerHTML = items.length ? items.map(item => `
+  if (Array.isArray(selectedIDs)) cosmeticPackSelection = new Set(selectedIDs);
+  const validIDs = new Set(items.map(item => item.id));
+  cosmeticPackSelection = new Set(Array.from(cosmeticPackSelection).filter(itemID => validIDs.has(itemID)));
+  const filtered = filteredCosmeticPackItems();
+  root.innerHTML = filtered.length ? filtered.map(item => `
     <label>
-      <input type="checkbox" data-cosmetic-pack-item value="${escAttr(item.id)}" ${selected.has(item.id) ? 'checked' : ''}>
-      <span>${esc(item.name || item.id)} <span class="muted">(${esc(item.slot || '')})</span></span>
-    </label>`).join('') : '<span class="muted">Create an item before building a pack.</span>';
+      <input type="checkbox" data-cosmetic-pack-item value="${escAttr(item.id)}" ${cosmeticPackSelection.has(item.id) ? 'checked' : ''} onchange="toggleCosmeticPackItemSelection(this)">
+      <span>${esc(item.name || item.id)} <span class="muted">(${esc(item.slot || '')} · ${esc(item.category_id || '')})</span></span>
+    </label>`).join('') : '<span class="muted">No items match these set filters.</span>';
+  updateCosmeticPackSelectionCount(filtered.length);
+}
+
+function toggleCosmeticPackItemSelection(input) {
+  if (input.checked) cosmeticPackSelection.add(input.value);
+  else cosmeticPackSelection.delete(input.value);
+  updateCosmeticPackSelectionCount();
+}
+
+function resetCosmeticPackItemFilters() {
+  document.getElementById('cosmeticPackItemSearch').value = '';
+  document.getElementById('cosmeticPackItemCategoryFilter').value = 'all';
+  document.getElementById('cosmeticPackItemSlotFilter').value = 'all';
+  renderCosmeticPackItemPicker();
 }
 
 function setCosmeticFormBusy(form, busy) {
@@ -4813,7 +5186,7 @@ async function saveCosmeticPack(event) {
     price_cents: isFree ? 0 : Number(document.getElementById('cosmeticPackPrice').value || 0),
     currency: document.getElementById('cosmeticPackCurrency').value.trim().toUpperCase(),
     sort_order: Number(document.getElementById('cosmeticPackSort').value || 0),
-    item_ids: Array.from(document.querySelectorAll('[data-cosmetic-pack-item]:checked')).map(input => input.value),
+    item_ids: Array.from(cosmeticPackSelection),
     is_free: isFree,
     is_purchasable: !isFree && document.getElementById('cosmeticPackPurchasable').checked,
     is_active: document.getElementById('cosmeticPackActive').checked,
@@ -4836,6 +5209,17 @@ async function saveCosmeticPack(event) {
   }
 }
 
+function openCosmeticItemEditor(focusID, editorID='cosmeticItemEditor') {
+  const editor = document.getElementById(editorID);
+  const field = document.getElementById(focusID);
+  if (!editor || !field) return;
+  editor.open = true;
+  if (typeof editor.scrollIntoView === 'function') editor.scrollIntoView({block:'nearest'});
+  const focusField = () => field.focus();
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(focusField);
+  else focusField();
+}
+
 function resetCosmeticItemForm() {
   const form = document.getElementById('cosmeticItemForm');
   form.reset();
@@ -4848,8 +5232,7 @@ function resetCosmeticItemForm() {
 
 function startCosmeticItemCreate() {
   resetCosmeticItemForm();
-  document.getElementById('cosmeticItemEditor').open = true;
-  document.getElementById('cosmeticItemID').focus();
+  openCosmeticItemEditor('cosmeticItemID');
 }
 
 function editCosmeticItem(id) {
@@ -4871,7 +5254,7 @@ function editCosmeticItem(id) {
   document.getElementById('cosmeticItemFree').checked = item.is_free === true;
   document.getElementById('cosmeticItemPurchasable').checked = item.is_purchasable === true;
   document.getElementById('cosmeticItemActive').checked = item.is_active === true;
-  document.getElementById('cosmeticItemEditor').open = true;
+  openCosmeticItemEditor('cosmeticItemName');
 }
 
 async function saveCosmeticItem(event) {
@@ -4962,16 +5345,14 @@ async function loadCosmeticCatalog() {
   const select = document.getElementById('cosmeticGrantItem');
   if (!select) return;
   try {
-    const res = await fetch(getPublicAPIBase() + '/cosmetics/catalog', {headers:{'Accept':'application/json'}});
-    if (!res.ok) throw new Error('catalog request failed (' + res.status + ')');
-    const data = await res.json();
-    const items = Array.isArray(data.items) ? data.items : [];
-    select.innerHTML = '<option value="">Select a cosmetic</option>' + items.map(item => {
-      const state = item.is_free ? 'free' : (item.is_purchasable ? 'sale-ready' : 'preview');
-      return `<option value="${escAttr(item.id||'')}">${esc(item.name||item.id||'Unknown')} · ${esc(item.slot||'')} · ${state}</option>`;
-    }).join('');
+    const data = await fetchPublicCosmeticCatalog();
+    setCosmeticPublicProjection(data);
+    populateCosmeticGrantCatalog(data);
+    return data;
   } catch(e) {
-    select.innerHTML = '<option value="">Catalog unavailable</option>';
+    clearCosmeticPublicProjection();
+    select.innerHTML = '<option value="">Public catalog unavailable</option>';
+    return null;
   }
 }
 
@@ -6173,8 +6554,10 @@ const urlTab = new URLSearchParams(window.location.search).get('tab');
         return;
       }
       // SSO endpoint exists but not authenticated — show SSO button
-      ssoEnabled = true;
-      document.getElementById('ssoSection').style.display = '';
+      if (data.login_enabled !== false) {
+        ssoEnabled = true;
+        document.getElementById('ssoSection').style.display = '';
+      }
     }
   } catch(e) {
     // SSO endpoint not available (OIDC disabled) — hide SSO button

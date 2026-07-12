@@ -418,6 +418,73 @@ func TestAdmissionReceivesOneAuthoritativeLoadoutConfirmation(t *testing.T) {
 	}
 }
 
+func TestPostAdmissionCosmeticRefreshClosesReversalNegotiationGap(t *testing.T) {
+	withWSIntegrityConfig(t)
+	previousMaxBots := config.C.MaxBots
+	config.C.MaxBots = 10
+	t.Cleanup(func() { config.C.MaxBots = previousMaxBots })
+	engine := game.NewGameEngine()
+	bot := &game.BotState{
+		BotID: "admission-cosmetic-race",
+		Cosmetics: map[string]string{
+			"bot_skin": "now_refunded_skin",
+		},
+		SendChan: make(chan []byte, 1),
+		TickChan: make(chan []byte, 1),
+	}
+
+	// The reversal snapshot happens while loadout negotiation is in progress,
+	// so this connection is not yet visible to ConnectedBotIDs.
+	if got := engine.ConnectedBotIDs(); len(got) != 0 {
+		t.Fatalf("pre-admission reversal snapshot = %v, want empty", got)
+	}
+	// The durable reversal commits, then this connection completes admission.
+	if !engine.AddBot(bot) {
+		t.Fatal("bot admission failed")
+	}
+	loaderCalls := 0
+	current, err := refreshAdmittedBotCosmetics(context.Background(), engine, bot.BotID, func(_ context.Context, botID string) (map[string]string, error) {
+		loaderCalls++
+		if botID != bot.BotID {
+			t.Fatalf("loader bot ID = %q, want %q", botID, bot.BotID)
+		}
+		return map[string]string{"bot_skin": "standard", "weapon_skin": "standard", "attachment": "none"}, nil
+	})
+	if err != nil || !current || loaderCalls != 1 {
+		t.Fatalf("post-admission refresh = current %t, calls %d, err %v", current, loaderCalls, err)
+	}
+	if got := engine.Bots[bot.BotID].Cosmetics["bot_skin"]; got != "standard" {
+		t.Fatalf("admitted bot retained pre-reversal cosmetic %q", got)
+	}
+}
+
+func TestPostAdmissionCosmeticReadFailureClearsPotentiallyRevokedVisuals(t *testing.T) {
+	withWSIntegrityConfig(t)
+	previousMaxBots := config.C.MaxBots
+	config.C.MaxBots = 10
+	t.Cleanup(func() { config.C.MaxBots = previousMaxBots })
+	engine := game.NewGameEngine()
+	bot := &game.BotState{
+		BotID:     "admission-cosmetic-failure",
+		Cosmetics: map[string]string{"bot_skin": "possibly_refunded_skin"},
+		SendChan:  make(chan []byte, 1),
+		TickChan:  make(chan []byte, 1),
+	}
+	if !engine.AddBot(bot) {
+		t.Fatal("bot admission failed")
+	}
+	wantErr := errors.New("temporary cosmetics read failure")
+	current, err := refreshAdmittedBotCosmetics(context.Background(), engine, bot.BotID, func(context.Context, string) (map[string]string, error) {
+		return nil, wantErr
+	})
+	if !current || !errors.Is(err, wantErr) {
+		t.Fatalf("post-admission failure = current %t, err %v", current, err)
+	}
+	if len(engine.Bots[bot.BotID].Cosmetics) != 0 {
+		t.Fatalf("read failure retained potentially revoked visuals: %+v", engine.Bots[bot.BotID].Cosmetics)
+	}
+}
+
 type loadoutConfirmation struct {
 	Type   string `json:"type"`
 	Weapon string `json:"weapon"`
