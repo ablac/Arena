@@ -40,8 +40,8 @@ type AdminHandler struct {
 	Shutdown      func()
 	// ChatHub, when set, lets chat moderation purge hidden messages from
 	// the live ring and connected clients, not just the database.
-	ChatHub       *ws.ChatHub
-	startTime     time.Time
+	ChatHub   *ws.ChatHub
+	startTime time.Time
 	// resetLeaderboardData is injectable so the destructive endpoint can be
 	// contract-tested without connecting to a production-like database.
 	resetLeaderboardData func(context.Context) error
@@ -158,6 +158,17 @@ func (h *AdminHandler) IsValidAdminToken(token string) bool {
 // This is the legacy standalone version for backward compatibility.
 var AdminAuthMiddleware = MakeAdminAuthMiddleware(nil)
 
+type adminPrincipalContextKey struct{}
+
+func withAdminPrincipal(ctx context.Context, principal string) context.Context {
+	return context.WithValue(ctx, adminPrincipalContextKey{}, principal)
+}
+
+func adminPrincipalFromContext(ctx context.Context) string {
+	principal, _ := ctx.Value(adminPrincipalContextKey{}).(string)
+	return strings.TrimSpace(principal)
+}
+
 // MakeAdminAuthMiddleware creates an admin auth middleware that checks both the
 // env var token and any dynamically created tokens via the handler.
 // If an OIDCHandler is provided and OIDC is enabled, valid session cookies are
@@ -175,14 +186,16 @@ func MakeAdminAuthMiddlewareWithOIDC(handler *AdminHandler, oidcHandler *OIDCHan
 
 			// Check localhost bypass.
 			if cfg.AdminLocalhostBypass && isLocalhost(r) {
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(w, r.WithContext(withAdminPrincipal(r.Context(), "localhost-bypass")))
 				return
 			}
 
 			// Check OIDC session cookie.
-			if oidcHandler != nil && oidcHandler.IsAuthenticated(r) {
-				next.ServeHTTP(w, r)
-				return
+			if oidcHandler != nil {
+				if session := oidcHandler.GetSession(r); session != nil {
+					next.ServeHTTP(w, r.WithContext(withAdminPrincipal(r.Context(), "oidc:"+session.Email)))
+					return
+				}
 			}
 
 			token := r.Header.Get("X-Admin-Token")
@@ -199,13 +212,17 @@ func MakeAdminAuthMiddlewareWithOIDC(handler *AdminHandler, oidcHandler *OIDCHan
 
 			// Check env var token.
 			if cfg.AdminToken != "" && constantTimeEqual(token, cfg.AdminToken) {
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(w, r.WithContext(withAdminPrincipal(r.Context(), "admin-token:environment")))
 				return
 			}
 
 			// Check dynamic tokens via handler.
 			if handler != nil && handler.IsValidAdminToken(token) {
-				next.ServeHTTP(w, r)
+				fingerprint := hashToken(token)
+				if len(fingerprint) > 12 {
+					fingerprint = fingerprint[:12]
+				}
+				next.ServeHTTP(w, r.WithContext(withAdminPrincipal(r.Context(), "admin-token:"+fingerprint)))
 				return
 			}
 

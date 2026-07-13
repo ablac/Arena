@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"arena-server/internal/config"
 	"arena-server/internal/db"
@@ -36,6 +37,10 @@ type cosmeticsStore interface {
 	EquipLicense(context.Context, string, string, string) (*db.CosmeticLicense, error)
 	GrantLicense(context.Context, string, string, string, string) (*db.CosmeticLicense, bool, error)
 	RevokeLicense(context.Context, string) (*db.CosmeticAssignmentChange, bool, error)
+	AdminAccess(context.Context, string) (*db.CosmeticAdminAccess, error)
+	CreateAdminMembership(context.Context, string, time.Time, string, string) (*db.CosmeticAdminMembership, int, error)
+	RevokeAdminMembership(context.Context, string, string, string) (*db.CosmeticAdminMembership, []string, bool, error)
+	ExpireAdminMembershipsForEmail(context.Context, string, time.Time) (int, []string, error)
 }
 
 type databaseCosmeticsStore struct{}
@@ -100,6 +105,18 @@ func (databaseCosmeticsStore) GrantLicense(ctx context.Context, email, cosmeticI
 }
 func (databaseCosmeticsStore) RevokeLicense(ctx context.Context, licenseID string) (*db.CosmeticAssignmentChange, bool, error) {
 	return db.RevokeCosmeticLicense(ctx, licenseID)
+}
+func (databaseCosmeticsStore) AdminAccess(ctx context.Context, email string) (*db.CosmeticAdminAccess, error) {
+	return db.GetCosmeticAdminAccessByEmail(ctx, email)
+}
+func (databaseCosmeticsStore) CreateAdminMembership(ctx context.Context, email string, expiresAt time.Time, note, actor string) (*db.CosmeticAdminMembership, int, error) {
+	return db.CreateCosmeticAdminMembership(ctx, email, expiresAt, note, actor)
+}
+func (databaseCosmeticsStore) RevokeAdminMembership(ctx context.Context, membershipID, actor, reason string) (*db.CosmeticAdminMembership, []string, bool, error) {
+	return db.RevokeCosmeticAdminMembership(ctx, membershipID, actor, reason)
+}
+func (databaseCosmeticsStore) ExpireAdminMembershipsForEmail(ctx context.Context, email string, now time.Time) (int, []string, error) {
+	return db.ExpireCustomerCosmeticAdminMemberships(ctx, email, now)
 }
 
 // CosmeticsHandler owns catalog, entitlement, and equip HTTP behavior. The
@@ -314,7 +331,7 @@ func decodeCosmeticGrant(r *http.Request) (cosmeticGrantRequest, error) {
 	if _, err := db.NormalizeCustomerEmail(req.Email); err != nil {
 		return req, errors.New("invalid cosmetic grant")
 	}
-	if req.CosmeticID == "" || len(req.CosmeticID) > 80 ||
+	if req.CosmeticID == "" || len(req.CosmeticID) > 80 || req.Source != "manual" ||
 		!entitlementSourcePattern.MatchString(req.Source) || len(req.ExternalReference) > 160 {
 		return req, errors.New("invalid cosmetic grant")
 	}
@@ -378,6 +395,10 @@ func (h *CosmeticsHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, db.ErrNoDatabase) {
 			writeError(w, http.StatusServiceUnavailable, "database not available")
+			return
+		}
+		if errors.Is(err, db.ErrCosmeticAdminMembershipLicense) {
+			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to revoke cosmetic")

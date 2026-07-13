@@ -611,6 +611,12 @@ func ListBotCosmetics(ctx context.Context, botID string) ([]BotCosmeticItem, err
 		         SELECT 1 FROM cosmetic_licenses owned_license
 		         WHERE owned_license.cosmetic_id = i.id
 		           AND owned_license.status = 'active'
+		           AND NOT EXISTS (
+		             SELECT 1 FROM cosmetic_admin_membership_licenses admin_mapping
+		             JOIN cosmetic_admin_memberships admin_membership ON admin_membership.id = admin_mapping.membership_id
+		             WHERE admin_mapping.license_id = owned_license.id
+		               AND (admin_membership.status <> 'active' OR admin_membership.expires_at <= NOW())
+		           )
 		           AND (
 		             owned_license.assigned_bot_id = $1 OR EXISTS (
 		               SELECT 1 FROM cosmetic_license_assignments owned_assignment
@@ -672,7 +678,13 @@ func GetEquippedCosmetics(ctx context.Context, botID string) (map[string]string,
 		WHERE l.bot_id = $1 AND i.is_active = true AND c.is_active = true
 		  AND (
 		    i.is_free = true OR
-		    (cl.id IS NOT NULL AND cl.cosmetic_id = i.id AND cl.status = 'active' AND (
+		    (cl.id IS NOT NULL AND cl.cosmetic_id = i.id AND cl.status = 'active'
+		      AND NOT EXISTS (
+		        SELECT 1 FROM cosmetic_admin_membership_licenses admin_mapping
+		        JOIN cosmetic_admin_memberships admin_membership ON admin_membership.id = admin_mapping.membership_id
+		        WHERE admin_mapping.license_id = cl.id
+		          AND (admin_membership.status <> 'active' OR admin_membership.expires_at <= NOW())
+		      ) AND (
 		      (cl.account_id IS NULL AND cl.assigned_bot_id = l.bot_id) OR
 		      (cl.account_id IS NOT NULL AND cla.license_id IS NOT NULL)
 		    ))
@@ -731,7 +743,13 @@ func GetEquippedCosmeticsForBots(ctx context.Context, botIDs []string) (map[stri
 		WHERE l.bot_id = ANY($1::text[]) AND i.is_active = true AND c.is_active = true
 		  AND (
 		    i.is_free = true OR
-		    (cl.id IS NOT NULL AND cl.cosmetic_id = i.id AND cl.status = 'active' AND (
+		    (cl.id IS NOT NULL AND cl.cosmetic_id = i.id AND cl.status = 'active'
+		      AND NOT EXISTS (
+		        SELECT 1 FROM cosmetic_admin_membership_licenses admin_mapping
+		        JOIN cosmetic_admin_memberships admin_membership ON admin_membership.id = admin_mapping.membership_id
+		        WHERE admin_mapping.license_id = cl.id
+		          AND (admin_membership.status <> 'active' OR admin_membership.expires_at <= NOW())
+		      ) AND (
 		      (cl.account_id IS NULL AND cl.assigned_bot_id = l.bot_id) OR
 		      (cl.account_id IS NOT NULL AND cla.license_id IS NOT NULL)
 		    ))
@@ -815,6 +833,12 @@ func EquipCosmetic(ctx context.Context, botID, slot, cosmeticID string) (*Cosmet
 			FROM cosmetic_licenses cl
 			LEFT JOIN cosmetic_license_assignments cla ON cla.license_id = cl.id
 			WHERE cl.cosmetic_id = $2 AND cl.status = 'active'
+			  AND NOT EXISTS (
+			    SELECT 1 FROM cosmetic_admin_membership_licenses admin_mapping
+			    JOIN cosmetic_admin_memberships admin_membership ON admin_membership.id = admin_mapping.membership_id
+			    WHERE admin_mapping.license_id = cl.id
+			      AND (admin_membership.status <> 'active' OR admin_membership.expires_at <= NOW())
+			  )
 			  AND (cl.assigned_bot_id = $1 OR cla.bot_id = $1)
 			ORDER BY cl.granted_at, cl.id
 			LIMIT 1`, botID, cosmeticID).Scan(&assignedLicenseID, &assignedAccountID)
@@ -835,6 +859,12 @@ func EquipCosmetic(ctx context.Context, botID, slot, cosmeticID string) (*Cosmet
 			FROM cosmetic_licenses cl
 			LEFT JOIN cosmetic_license_assignments cla ON cla.license_id = cl.id
 			WHERE cl.id = $1 AND cl.cosmetic_id = $2 AND cl.status = 'active'
+			  AND NOT EXISTS (
+			    SELECT 1 FROM cosmetic_admin_membership_licenses admin_mapping
+			    JOIN cosmetic_admin_memberships admin_membership ON admin_membership.id = admin_mapping.membership_id
+			    WHERE admin_mapping.license_id = cl.id
+			      AND (admin_membership.status <> 'active' OR admin_membership.expires_at <= NOW())
+			  )
 			  AND (cl.assigned_bot_id = $3 OR cla.bot_id = $3)
 			FOR UPDATE OF cl`, assignedLicenseID, cosmeticID, botID).Scan(&lockedAccountID)
 		if errors.Is(err, pgx.ErrNoRows) {

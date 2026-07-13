@@ -99,7 +99,15 @@ const managedSchemaPreflightQuery = `
 			('cosmetic_subscriptions', 'last_provider_event_created_at'),
 			('cosmetic_subscriptions', 'last_provider_state_observed_at'),
 			('cosmetic_subscription_licenses', 'license_id'),
-			('cosmetic_subscription_events', 'payload_hash')
+			('cosmetic_subscription_events', 'payload_hash'),
+			('cosmetic_admin_memberships', 'id'),
+			('cosmetic_admin_memberships', 'account_id'),
+			('cosmetic_admin_memberships', 'status'),
+			('cosmetic_admin_memberships', 'expires_at'),
+			('cosmetic_admin_memberships', 'granted_by'),
+			('cosmetic_admin_membership_licenses', 'membership_id'),
+			('cosmetic_admin_membership_licenses', 'item_id'),
+			('cosmetic_admin_membership_licenses', 'license_id')
 	), missing AS (
 		SELECT required.table_name, required.column_name
 		FROM required
@@ -268,6 +276,9 @@ func main() {
 	}
 	game.GameEventHook = func(eventName string, data map[string]interface{}) {
 		api.EmitGameEvent(api.GlobalEventBus, eventName, data)
+	}
+	if db.Pool != nil {
+		go api.RunCosmeticAdminMembershipExpiryLoop(ctx, engine)
 	}
 	go engine.Run(ctx)
 
