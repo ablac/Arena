@@ -185,9 +185,15 @@ func GetBotLive(engine *game.GameEngine) http.HandlerFunc {
 			return
 		}
 
-		// Get arena status for context
-		gs := engine.GetFullGameState()
-		phase, _ := gs["round_phase"].(string)
+		// Get only the arena phase needed by this response. Building the full
+		// admin snapshot here needlessly copied every connected bot.
+		phase := "lobby"
+		switch engine.GetRoundPhase() {
+		case game.PhaseActive:
+			phase = "active"
+		case game.PhaseIntermission:
+			phase = "intermission"
+		}
 
 		// Build radar metrics (0-100 scale for visualization)
 		roundKills, _ := detail["round_kills"].(int)
