@@ -1,6 +1,9 @@
 package game
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestBuildHintsReportsDistanceInGridTiles(t *testing.T) {
 	originalTerrain := ActiveTerrain
@@ -43,5 +46,57 @@ func TestBuildHintsReportsDistanceInGridTiles(t *testing.T) {
 	wantTarget := enemy.Position.Scale(1 / ActiveTerrain.CellSize)
 	if reconstructedTarget != wantTarget {
 		t.Fatalf("hint reconstructs grid target %v, want %v; distance must not retain the 20x world-unit scale", reconstructedTarget, wantTarget)
+	}
+}
+
+func TestBuildHintsDeterministicallySelectsThreeEqualDistanceBots(t *testing.T) {
+	originalTerrain := ActiveTerrain
+	ActiveTerrain = NewTerrainGrid(800, 800, nil, 20, 0)
+	t.Cleanup(func() { ActiveTerrain = originalTerrain })
+
+	observer := &BotState{BotID: "observer", Position: NewVec2(400, 400), IsAlive: true}
+	offsets := []Vec2{
+		NewVec2(10, 0),
+		NewVec2(8, 6),
+		NewVec2(6, 8),
+		NewVec2(0, 10),
+		NewVec2(-6, 8),
+		NewVec2(-8, 6),
+		NewVec2(-10, 0),
+		NewVec2(-8, -6),
+	}
+	ids := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
+	candidates := make([]*BotState, len(ids))
+	for i, id := range ids {
+		candidates[i] = &BotState{
+			BotID:    id,
+			Position: observer.Position.Add(offsets[i].Scale(ActiveTerrain.CellSize)),
+			IsAlive:  true,
+		}
+	}
+
+	want := [][2]float64{{1, 0}, {0.8, 0.6}, {0.6, 0.8}}
+	for iteration := 0; iteration < 256; iteration++ {
+		allBots := map[string]*BotState{observer.BotID: observer}
+		for i := range candidates {
+			candidate := candidates[(i+iteration)%len(candidates)]
+			allBots[candidate.BotID] = candidate
+		}
+
+		hints := buildHints(observer, allBots, nil)
+		got := make([][2]float64, 0, 3)
+		for _, hint := range hints {
+			if hint["hint_type"] != "bot" {
+				continue
+			}
+			direction, ok := hint["direction"].([2]float64)
+			if !ok {
+				t.Fatalf("bot hint direction = %T, want [2]float64", hint["direction"])
+			}
+			got = append(got, direction)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("iteration %d bot hint directions = %v, want deterministic BotID tie order %v", iteration, got, want)
+		}
 	}
 }

@@ -17,9 +17,12 @@ curl -X POST https://arena.angel-serv.com/api/v1/keys/generate
 ```
 
 The request body must be empty (an empty JSON object is also accepted). Arena
-generates the token on the server, saves its bcrypt hash and bot record in the
-database, and returns the plaintext once. A token string invented by a caller
-will not authenticate.
+generates the high-entropy token on the server, saves a rollback-safe composite
+credential and bot record in the database, and returns the plaintext once. The
+credential keeps a bcrypt prefix for older server versions and appends a
+versioned digest for fast current authentication. Legacy bcrypt rows remain
+valid and migrate to this composite after successful use. A token string
+invented by a caller will not authenticate.
 
 Response:
 ```json

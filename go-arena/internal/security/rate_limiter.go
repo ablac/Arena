@@ -21,6 +21,20 @@ import (
 // side-effecting routes protected by FailClosedRateLimitMiddleware return 503.
 var RedisClient *redis.Client
 
+type rateLimitEvaluator interface {
+	Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd
+}
+
+const rateLimitLua = `
+local count = redis.call('INCR', KEYS[1])
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl < 0 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return {count, ttl}
+`
+
 // InitRedis connects to Redis using the host and port from the loaded config.
 // If the connection fails, it logs a warning and leaves RedisClient nil.
 // Individual middleware selects graceful degradation or fail-closed behavior.
@@ -45,8 +59,10 @@ func InitRedis() error {
 }
 
 // CheckRateLimit checks whether a request identified by key is within the
-// allowed rate. It uses the Redis INCR + EXPIRE pattern with a sliding window
-// of windowSecs seconds.
+// allowed rate. It uses a fixed Redis window that starts with the first request
+// and expires windowSecs later; later requests increment the count without
+// extending the expiry. Like any fixed-window limiter, it can allow one full
+// window's quota immediately before reset and another immediately after it.
 //
 // Returns:
 //   - allowed:   true if the request is within the limit
@@ -58,42 +74,31 @@ func CheckRateLimit(ctx context.Context, key string, maxPerWindow int, windowSec
 		// Redis unavailable -- allow everything.
 		return true, maxPerWindow, time.Now().Add(time.Duration(windowSecs) * time.Second), nil
 	}
+	return checkRateLimitWithEvaluator(ctx, RedisClient, key, maxPerWindow, windowSecs, time.Now())
+}
 
+func checkRateLimitWithEvaluator(ctx context.Context, evaluator rateLimitEvaluator, key string, maxPerWindow int, windowSecs int, now time.Time) (allowed bool, remaining int, resetAt time.Time, err error) {
 	redisKey := "ratelimit:" + key
-
-	count, err := RedisClient.Incr(ctx, redisKey).Result()
+	windowMillis := int64(windowSecs) * int64(time.Second/time.Millisecond)
+	result, err := evaluator.Eval(ctx, rateLimitLua, []string{redisKey}, windowMillis).Int64Slice()
 	if err != nil {
-		return true, maxPerWindow, time.Now().Add(time.Duration(windowSecs) * time.Second), fmt.Errorf("redis INCR failed: %w", err)
+		return true, maxPerWindow, now.Add(time.Duration(windowSecs) * time.Second), fmt.Errorf("redis rate limit script failed: %w", err)
+	}
+	if len(result) != 2 {
+		return true, maxPerWindow, now.Add(time.Duration(windowSecs) * time.Second), fmt.Errorf("redis rate limit script returned %d values", len(result))
 	}
 
-	// If this is the first request in the window, set the expiry.
-	if count == 1 {
-		if err := RedisClient.Expire(ctx, redisKey, time.Duration(windowSecs)*time.Second).Err(); err != nil {
-			slog.Warn("rate limiter: failed to set key expiry", "key", redisKey, "error", err)
-		}
+	count, ttlMillis := result[0], result[1]
+	if ttlMillis < 0 {
+		ttlMillis = windowMillis
 	}
+	resetAt = now.Add(time.Duration(ttlMillis) * time.Millisecond)
 
-	// Determine when the window resets.
-	ttl, err := RedisClient.TTL(ctx, redisKey).Result()
-	if err != nil || ttl < 0 {
-		// ttl == -1 means the key exists but has no expiry -- most likely the
-		// Expire call above failed transiently. Without this, the counter
-		// would never reset and every future request through this key would
-		// be permanently rate-limited. Self-heal by (re-)setting it now.
-		if err := RedisClient.Expire(ctx, redisKey, time.Duration(windowSecs)*time.Second).Err(); err != nil {
-			slog.Warn("rate limiter: failed to self-heal key expiry", "key", redisKey, "error", err)
-		}
-		resetAt = time.Now().Add(time.Duration(windowSecs) * time.Second)
-	} else {
-		resetAt = time.Now().Add(ttl)
-	}
-
-	currentCount := int(count)
-	if currentCount > maxPerWindow {
+	if count > int64(maxPerWindow) {
 		return false, 0, resetAt, nil
 	}
 
-	return true, maxPerWindow - currentCount, resetAt, nil
+	return true, maxPerWindow - int(count), resetAt, nil
 }
 
 // rateLimitResponse is the JSON body returned when a client exceeds the rate limit.
@@ -104,9 +109,10 @@ type rateLimitResponse struct {
 }
 
 // RateLimitMiddleware returns an HTTP middleware that enforces a per-IP rate
-// limit of rpm requests per 60-second window. If Redis is unavailable, all
-// requests are allowed through. Each endpoint gets its own rate-limit bucket
-// based on the request path, so different endpoints don't share counters.
+// limit of rpm requests per fixed 60-second window. If Redis is unavailable,
+// all requests are allowed through. Each endpoint gets its own rate-limit
+// bucket based on the request path, so different endpoints don't share
+// counters.
 func RateLimitMiddleware(rpm int) func(http.Handler) http.Handler {
 	return rateLimitMiddleware(rpm, false)
 }

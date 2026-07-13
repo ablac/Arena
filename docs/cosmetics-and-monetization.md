@@ -34,12 +34,15 @@ after submission and does not save it as ownership data.
 
 Bot creation remains independent from account registration. Get Started calls
 the public `POST /api/v1/keys/generate` endpoint with an empty body. Arena
-generates the token, atomically stores only its bcrypt hash/prefix and the new
-bot record, and returns the plaintext once. A caller cannot choose a token or
-make an arbitrary string authenticate. When the bot owner later wants to buy
-cosmetics, they verify an email in the Dashboard and submit that existing token
-once to `POST /api/v1/account/bots`. This claims the bot for the account without
-changing the token or recreating the bot.
+generates a high-entropy token, atomically stores only its rollback-safe
+composite credential, lookup prefix, and new bot record, and returns the
+plaintext once. The composite keeps a bcrypt prefix for old readers and appends
+a versioned digest for fast current authentication. Legacy bcrypt rows remain
+valid and migrate to the composite after successful use. A caller cannot choose
+a token or make an arbitrary string authenticate. When the bot owner later
+wants to buy cosmetics, they verify an email in the Dashboard and submit that
+existing token once to `POST /api/v1/account/bots`. This claims the bot for the
+account without changing the token or recreating the bot.
 
 Legacy bot-scoped entitlements are preserved as unclaimed licenses during the
 schema upgrade. A verified account can claim them by proving the original bot
@@ -280,9 +283,9 @@ keeps every issued-key record linked to the verified account, including revoked
 keys: five may be active, creation is limited to 10 per account per hour,
 revocation to 20 per account per hour, and the lifetime history is capped at
 100 records pending a support review. Both account and per-IP mutation limits
-are enforced before expensive key verification or bcrypt work. All Access
-Checkout uses the same embedded-or-hosted exclusive response shape. Billing
-Portal remains a Stripe-hosted `portal_url` redirect.
+are enforced before credential verification, including legacy bcrypt work. All
+Access Checkout uses the same embedded-or-hosted exclusive response shape.
+Billing Portal remains a Stripe-hosted `portal_url` redirect.
 
 Stripe posts signed events to the public provider endpoint; this route does not
 use a customer cookie or CSRF token because it authenticates the exact raw body
@@ -391,11 +394,11 @@ account_bot_links
   bots proven by API-key possession; each bot links to at most one account
 
 api_keys
-  server-issued bcrypt hash and lookup prefix for every bot token, including
-  tokens generated before an owner creates or signs into an account
+  rollback-safe composite credential and lookup prefix for every server-issued
+  bot token; legacy bcrypt rows remain accepted and migrate after successful use
 
 account_api_keys
-  durable account ownership for bcrypt-hashed API keys; unlinking a bot does not
+  durable account ownership for server-issued API keys; unlinking a bot does not
   erase ownership or bypass the five-active-key cap
 
 cosmetic_items

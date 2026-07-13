@@ -28,7 +28,7 @@ Security fixes target the current `main` branch unless a maintainer announces a 
 
 ## Authentication And Access Control
 
-- Bot API keys are random values stored as bcrypt hashes with short lookup prefixes. Plaintext bot keys are shown once and cannot be recovered.
+- Bot API keys are high-entropy server-issued values stored as rollback-safe composite credentials with short lookup prefixes. Each credential keeps a bcrypt prefix for older server versions and appends a versioned digest for fast current authentication. Legacy bcrypt rows remain valid and migrate to the composite after successful use; plaintext keys are shown once and cannot be recovered.
 - Admin APIs require `X-Admin-Token`, a database-issued admin token, or an OIDC/SSO session cookie when configured.
 - `ARENA_ADMIN_LOCALHOST_BYPASS` defaults to `true` for local development. Set it to `false` if a reverse proxy or container network could make untrusted traffic appear to originate from loopback.
 - Set `ARENA_ADMIN_TOKEN` to a strong random value in every deployment.

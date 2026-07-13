@@ -31,8 +31,8 @@ var (
 	ErrCustomerAPIKeyNotOwned     = errors.New("API key is not owned by this account")
 )
 
-// AccountAPIKey is the account-safe view of one credential. The plaintext and
-// bcrypt hash are intentionally absent.
+// AccountAPIKey is the account-safe view of one credential. Plaintext and all
+// stored verification material are intentionally absent.
 type AccountAPIKey struct {
 	ID         string     `json:"id"`
 	KeyPrefix  string     `json:"key_prefix"`

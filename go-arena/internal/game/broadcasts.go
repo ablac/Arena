@@ -7,6 +7,8 @@ import (
 	"sort"
 
 	"arena-server/internal/config"
+
+	"github.com/gorilla/websocket"
 )
 
 // marshalJSON is a package-level helper that serialises v to JSON bytes.
@@ -187,6 +189,19 @@ func SendRoundStart(bot *BotState, round RoundState, bots map[string]*BotState, 
 
 // SendLobbyUpdate sends a lobby status message to a bot.
 func SendLobbyUpdate(bot *BotState, connectedCount, minBots int, countdown *int, allBots map[string]*BotState) {
+	data, err := buildLobbyUpdatePayload(connectedCount, minBots, countdown, allBots)
+	if err != nil {
+		slog.Error("failed to marshal lobby update", "bot_id", bot.BotID, "error", err)
+		return
+	}
+	sendLobbyPayload(bot, data)
+}
+
+func buildLobbyUpdatePayload(connectedCount, minBots int, countdown *int, allBots map[string]*BotState) ([]byte, error) {
+	return marshalLobbyUpdatePayload(connectedCount, minBots, countdown, buildLobbyPlayers(allBots))
+}
+
+func buildLobbyPlayers(allBots map[string]*BotState) []map[string]interface{} {
 	players := make([]map[string]interface{}, 0, len(allBots))
 	for _, b := range allBots {
 		players = append(players, map[string]interface{}{
@@ -198,7 +213,10 @@ func SendLobbyUpdate(bot *BotState, connectedCount, minBots int, countdown *int,
 	sort.Slice(players, func(i, j int) bool {
 		return players[i]["name"].(string) < players[j]["name"].(string)
 	})
+	return players
+}
 
+func marshalLobbyUpdatePayload(connectedCount, minBots int, countdown *int, players []map[string]interface{}) ([]byte, error) {
 	var countdownVal interface{}
 	if countdown != nil {
 		countdownVal = *countdown
@@ -211,7 +229,14 @@ func SendLobbyUpdate(bot *BotState, connectedCount, minBots int, countdown *int,
 		"countdown":      countdownVal,
 		"players":        players,
 	}
-	SendToBot(bot, msg)
+	return marshalJSON(msg)
+}
+
+func sendLobbyPayload(bot *BotState, data []byte) {
+	if bot.SendChan == nil {
+		return
+	}
+	safeSend(bot.SendChan, data)
 }
 
 // BuildConnectedMessage returns the initial connection acknowledgement payload.
@@ -281,8 +306,34 @@ func SendLoadoutConfirmed(bot *BotState, derived DerivedStats) {
 // connection. Sends are non-blocking. Safe against closed channels
 // (spectator may disconnect between snapshot and send).
 func BroadcastToSpectators(spectators []*SpectatorConn, data []byte) {
+	if len(spectators) == 0 {
+		return
+	}
+	message, err := newSpectatorMessage(data)
+	if err != nil {
+		slog.Error("failed to prepare spectator message", "error", err)
+		return
+	}
 	for _, s := range spectators {
-		safeSend(s.SendChan, data)
+		if s != nil && s.SendChan != nil {
+			safeSendSpectator(s.SendChan, message)
+		}
+	}
+}
+
+func newSpectatorMessage(data []byte) (*SpectatorMessage, error) {
+	prepared, err := websocket.NewPreparedMessage(websocket.TextMessage, data)
+	if err != nil {
+		return nil, err
+	}
+	return &SpectatorMessage{Payload: data, Prepared: prepared}, nil
+}
+
+func safeSendSpectator(ch chan *SpectatorMessage, message *SpectatorMessage) {
+	defer func() { recover() }()
+	select {
+	case ch <- message:
+	default:
 	}
 }
 

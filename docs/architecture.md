@@ -61,8 +61,11 @@ For local experiments, `ARENA_DB_OPTIONAL=true` can let the server run in a degr
 ## Security Model
 
 - Public bot tokens are generated only by Arena at `POST /api/v1/keys/generate`.
-  The database atomically stores the bcrypt hash, lookup prefix, and bot; the
-  plaintext is returned once and arbitrary caller-chosen strings are invalid.
+  The database atomically stores a rollback-safe composite credential, lookup
+  prefix, and bot; the plaintext is returned once and arbitrary caller-chosen
+  strings are invalid. The composite keeps a bcrypt prefix for old readers and
+  appends a versioned digest for fast current authentication. Legacy bcrypt
+  rows remain valid and migrate to the composite after successful use.
 - Public generation does not require an account. A later verified-email
   Dashboard session can claim the existing bot by submitting its token once to
   `POST /api/v1/account/bots`; the form clears that proof after the request.
@@ -89,3 +92,19 @@ email, the owner proves the existing token once to claim that bot before
 purchasing, assigning, or equipping cosmetics.
 
 The complete public reference is in [BOT-GUIDE.md](../BOT-GUIDE.md) and the machine-readable endpoint `GET /api/v1/bot-setup`.
+
+## Runtime Capacity Signals
+
+The authenticated Admin endpoint `GET /api/v1/admin/debug/metrics` exposes the
+signals needed to tune connection capacity without load-testing production:
+
+- lifetime and trailing-one-minute WebSocket attempts, upgrades, admissions,
+  failures, average rates, single-second peaks, and admission latency for bot,
+  spectator, and chat endpoints
+- current game connections and configured tick rate
+- PostgreSQL pool capacity, acquired/idle connections, wait counts, and
+  cumulative acquire time
+
+These are observed process rates, not a universal WebSocket ceiling. Validate
+larger targets through the real TLS proxy/tunnel and database/Redis path in a
+staging environment before raising production connection limits.

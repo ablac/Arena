@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -206,10 +205,18 @@ type GameEngine struct {
 // Set by main to avoid circular imports.
 var GameEventHook func(eventName string, data map[string]interface{})
 
+// SpectatorMessage carries both the inspectable JSON payload and Gorilla's
+// cached wire representation. One message is shared by every spectator for a
+// broadcast, so compression is performed once per connection configuration.
+type SpectatorMessage struct {
+	Payload  []byte
+	Prepared *websocket.PreparedMessage
+}
+
 // SpectatorConn wraps a WebSocket connection for a spectator client.
 type SpectatorConn struct {
 	Conn        *websocket.Conn
-	SendChan    chan []byte
+	SendChan    chan *SpectatorMessage
 	Done        chan struct{}
 	IP          string
 	ConnectedAt time.Time
@@ -353,8 +360,13 @@ func (e *GameEngine) tickLobby(c *config.Config) {
 			}
 			countdown = &secs
 		}
-		for _, bot := range e.Bots {
-			SendLobbyUpdate(bot, connected, config.C.MinBotsToStart, countdown, e.Bots)
+		payload, err := buildLobbyUpdatePayload(connected, config.C.MinBotsToStart, countdown, e.Bots)
+		if err != nil {
+			slog.Error("failed to marshal lobby update", "error", err)
+		} else {
+			for _, bot := range e.Bots {
+				sendLobbyPayload(bot, payload)
+			}
 		}
 	}
 }
@@ -1279,6 +1291,13 @@ func (e *GameEngine) GetTickCount() int {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.TickCount
+}
+
+// GetRoundPhase returns the current round phase under the engine read lock.
+func (e *GameEngine) GetRoundPhase() RoundPhase {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.Round.Phase
 }
 
 // SpectatorCount returns the current number of connected spectators.
@@ -2335,17 +2354,7 @@ func (e *GameEngine) sendLobbyStateUpdate() {
 		lobbyBots = e.WaitingBots
 	}
 
-	players := make([]map[string]interface{}, 0, len(lobbyBots))
-	for _, bot := range lobbyBots {
-		players = append(players, map[string]interface{}{
-			"name":         bot.Name,
-			"avatar_color": bot.AvatarColor,
-			"weapon":       bot.Weapon,
-		})
-	}
-	sort.Slice(players, func(i, j int) bool {
-		return players[i]["name"].(string) < players[j]["name"].(string)
-	})
+	players := buildLobbyPlayers(lobbyBots)
 
 	var countdown interface{}
 	if e.Round.LobbyCountdownTicks > 0 {
@@ -2379,8 +2388,15 @@ func (e *GameEngine) sendLobbyStateUpdate() {
 	BroadcastToSpectators(specs, data)
 
 	// Also send lobby updates to waiting bots so they know they're queued.
-	for _, bot := range e.WaitingBots {
-		SendLobbyUpdate(bot, len(lobbyBots), c.MinBotsToStart, nil, lobbyBots)
+	if len(e.WaitingBots) > 0 {
+		payload, err := marshalLobbyUpdatePayload(len(lobbyBots), c.MinBotsToStart, nil, players)
+		if err != nil {
+			slog.Error("failed to marshal waiting-room lobby update", "error", err)
+			return
+		}
+		for _, bot := range e.WaitingBots {
+			sendLobbyPayload(bot, payload)
+		}
 	}
 }
 
@@ -2503,33 +2519,44 @@ func (e *GameEngine) sendEventMessages() {
 // Returns directions to the nearest 3 bots and the nearest pickup of each type.
 func buildHints(bot *BotState, allBots map[string]*BotState, pickups []Pickup) []map[string]interface{} {
 	type botDist struct {
+		id   string
 		dir  Vec2
 		dist float64
 	}
 
-	// Find nearest 3 alive bots.
-	var candidates []botDist
+	// Keep only the nearest three alive bots while scanning. BotID breaks
+	// equal-distance ties so map iteration order cannot change hint ordering.
+	nearest := make([]botDist, 0, 3)
 	for _, other := range allBots {
 		if other.BotID == bot.BotID || !other.IsAlive {
 			continue
 		}
 		dir, d := hintVectorInGrid(bot.Position, other.Position)
-		candidates = append(candidates, botDist{dir: dir, dist: d})
+		candidate := botDist{id: other.BotID, dir: dir, dist: d}
+
+		insertAt := len(nearest)
+		for i, current := range nearest {
+			if candidate.dist < current.dist || (candidate.dist == current.dist && candidate.id < current.id) {
+				insertAt = i
+				break
+			}
+		}
+		if insertAt >= 3 {
+			continue
+		}
+		if len(nearest) < 3 {
+			nearest = append(nearest, botDist{})
+		}
+		copy(nearest[insertAt+1:], nearest[insertAt:len(nearest)-1])
+		nearest[insertAt] = candidate
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].dist < candidates[j].dist
-	})
 
 	var hints []map[string]interface{}
-	limit := 3
-	if len(candidates) < limit {
-		limit = len(candidates)
-	}
-	for i := 0; i < limit; i++ {
+	for i := range nearest {
 		hints = append(hints, map[string]interface{}{
 			"hint_type": "bot",
-			"direction": [2]float64{round1(candidates[i].dir.X()), round1(candidates[i].dir.Y())},
-			"distance":  round1(candidates[i].dist),
+			"direction": [2]float64{round1(nearest[i].dir.X()), round1(nearest[i].dir.Y())},
+			"distance":  round1(nearest[i].dist),
 		})
 	}
 

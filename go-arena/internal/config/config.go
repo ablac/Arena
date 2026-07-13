@@ -193,17 +193,18 @@ type Config struct {
 	PickupCollectRadius             float64 `envconfig:"ARENA_PICKUP_COLLECT_RADIUS" default:"2.0"`
 
 	// Network / persistence
-	PersistIntervalSecs        float64 `envconfig:"ARENA_PERSIST_INTERVAL_SECS" default:"30"`
-	KillFeedSize               int     `envconfig:"ARENA_KILL_FEED_SIZE" default:"20"`
-	WSMessageMaxBytes          int     `envconfig:"ARENA_WS_MESSAGE_MAX_BYTES" default:"1024"`
-	WSMaxMessagesPerSec        int     `envconfig:"ARENA_WS_MAX_MESSAGES_PER_SEC" default:"25"`
-	ConnectionTimeout          float64 `envconfig:"ARENA_CONNECTION_TIMEOUT" default:"10"`
-	HeartbeatInterval          float64 `envconfig:"ARENA_HEARTBEAT_INTERVAL" default:"30"`
-	WSConnectRatePerMin        int     `envconfig:"ARENA_WS_CONNECT_RATE_PER_MIN" default:"3"`
-	LoadoutTimeoutSecs         float64 `envconfig:"ARENA_LOADOUT_TIMEOUT_SECS" default:"10"`
-	WSReconnectGraceSecs       float64 `envconfig:"ARENA_WS_RECONNECT_GRACE_SECS" default:"10"`
-	SpectatorBroadcastInterval int     `envconfig:"ARENA_SPECTATOR_BROADCAST_INTERVAL" default:"1"`
-	AFKTimeoutTicks            int     `envconfig:"ARENA_AFK_TIMEOUT_TICKS" default:"300"`
+	PersistIntervalSecs          float64 `envconfig:"ARENA_PERSIST_INTERVAL_SECS" default:"30"`
+	KillFeedSize                 int     `envconfig:"ARENA_KILL_FEED_SIZE" default:"20"`
+	WSMessageMaxBytes            int     `envconfig:"ARENA_WS_MESSAGE_MAX_BYTES" default:"1024"`
+	WSMaxMessagesPerSec          int     `envconfig:"ARENA_WS_MAX_MESSAGES_PER_SEC" default:"25"`
+	ConnectionTimeout            float64 `envconfig:"ARENA_CONNECTION_TIMEOUT" default:"10"`
+	HeartbeatInterval            float64 `envconfig:"ARENA_HEARTBEAT_INTERVAL" default:"30"`
+	WSConnectRatePerMin          int     `envconfig:"ARENA_WS_CONNECT_RATE_PER_MIN" default:"3"`
+	WSSpectatorConnectRatePerMin int     `envconfig:"ARENA_WS_SPECTATOR_CONNECT_RATE_PER_MIN" default:"60"`
+	LoadoutTimeoutSecs           float64 `envconfig:"ARENA_LOADOUT_TIMEOUT_SECS" default:"10"`
+	WSReconnectGraceSecs         float64 `envconfig:"ARENA_WS_RECONNECT_GRACE_SECS" default:"10"`
+	SpectatorBroadcastInterval   int     `envconfig:"ARENA_SPECTATOR_BROADCAST_INTERVAL" default:"1"`
+	AFKTimeoutTicks              int     `envconfig:"ARENA_AFK_TIMEOUT_TICKS" default:"300"`
 
 	// Admin
 	AdminKey             string `envconfig:"ARENA_ADMIN_KEY" default:"changeme_admin_key"`
@@ -253,7 +254,10 @@ type Config struct {
 	RateLimitBotConfigPerMin int `envconfig:"ARENA_RATE_LIMIT_BOT_CONFIG_PER_MIN" default:"120"`
 
 	// Security
-	APIKeyPrefix                string `envconfig:"ARENA_API_KEY_PREFIX" default:"arena_"`
+	APIKeyPrefix string `envconfig:"ARENA_API_KEY_PREFIX" default:"arena_"`
+	// BcryptRounds controls the rollback-compatible bcrypt prefix generated once
+	// per API key. Current readers verify the appended digest on the connection
+	// hot path and do not pay this cost on each authentication.
 	BcryptRounds                int    `envconfig:"ARENA_BCRYPT_ROUNDS" default:"12"`
 	TrustedProxyCIDRs           string `envconfig:"ARENA_TRUSTED_PROXY_CIDRS" default:"127.0.0.1/32,::1/128"`
 	TrustedCloudflareProxyCIDRs string `envconfig:"ARENA_TRUSTED_CLOUDFLARE_PROXY_CIDRS" default:""`

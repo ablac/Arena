@@ -28,7 +28,23 @@ var EventHook func(action, botName, botID, ip, apiKeyID, errMsg string, details 
 // WSMessageHook is a callback for WS message logging.
 var WSMessageHook func(botID, botName, action string, data map[string]interface{})
 
+// botAPIKeyVerifier is replaceable in focused handler tests. Production uses
+// the security package's version-aware digest and legacy bcrypt verifier.
+var botAPIKeyVerifier = security.VerifyAPIKey
+
+type botAPIKeyActiveCheck func(context.Context, string) (bool, error)
+
+// botAPIKeyActiveChecker is replaceable in focused admission tests. The
+// production check runs after AddBot, while the exact session is visible to
+// concurrent key-revocation code.
+var botAPIKeyActiveChecker botAPIKeyActiveCheck = db.IsAPIKeyActive
+
 type botCosmeticsLoader func(context.Context, string) (map[string]string, error)
+
+// Gorilla keeps an upgrader write buffer for the lifetime of a connection
+// unless a pool is configured. Bot payloads can be large, so share those
+// 64 KiB buffers across active writes instead of pinning one per bot.
+var botWriteBufferPool sync.Pool
 
 // refreshAdmittedBotCosmetics closes the gap between the pre-admission DB read
 // and AddBot. A terminal payment reversal can commit while loadout negotiation
@@ -44,10 +60,28 @@ func refreshAdmittedBotCosmetics(ctx context.Context, engine *game.GameEngine, b
 	return engine.UpdateBotCosmetics(botID, cosmetics), err
 }
 
+// registerBotWithActiveAPIKeyCheck closes the revocation/admission race. Once
+// AddBot succeeds, a revocation must either be visible to this database read or
+// find this session through KickBot. Inactive, missing, and indeterminate keys
+// all roll back only this exact session; a concurrent reconnect is untouched.
+func registerBotWithActiveAPIKeyCheck(ctx context.Context, engine *game.GameEngine, bot *game.BotState, check botAPIKeyActiveCheck) (registered, active bool, err error) {
+	if !engine.AddBot(bot) {
+		return false, false, nil
+	}
+	active, err = check(ctx, bot.APIKeyID)
+	if err != nil || !active {
+		engine.RemoveBot(bot.BotID, bot)
+		return true, false, err
+	}
+	return true, true, nil
+}
+
 // upgrader is the shared WebSocket upgrader for bot connections.
 var upgrader = websocket.Upgrader{
+	HandshakeTimeout:  5 * time.Second,
 	ReadBufferSize:    4096,
 	WriteBufferSize:   65536,
+	WriteBufferPool:   &botWriteBufferPool,
 	EnableCompression: true,
 	CheckOrigin: func(r *http.Request) bool {
 		return true // allow all origins for now
@@ -78,11 +112,15 @@ func botKeyConnectRateLimit(botID, apiKeyID string, resume bool) (key string, li
 // engine registration, and the read/write message loops.
 func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		admission := beginWebSocketAdmission(websocketEndpointBot)
+		defer admission.finish()
+
 		ip := security.ExtractClientIP(r)
 		remoteAddr := r.RemoteAddr
 
 		// Check IP ban.
 		if engine.IsIPBanned(ip) {
+			admission.fail(websocketFailureAuth)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -106,6 +144,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			if err != nil {
 				slog.Warn("ws rate limit check error, allowing", "error", err, "ip", ip)
 			} else if !allowed {
+				admission.fail(websocketFailureRateLimit)
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("Retry-After", "60")
 				w.WriteHeader(http.StatusTooManyRequests)
@@ -129,8 +168,12 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// If the client already presented a key in the HTTP upgrade request,
 		// validate it before upgrading so invalid keys fail as plain HTTP 401s
 		// instead of noisy websocket auth errors.
+		var preAuthenticatedBot *db.Bot
 		if presentedKey := presentedAPIKey(r); presentedKey != "" {
-			if _, err := security.VerifyAPIKey(r.Context(), presentedKey); err != nil {
+			var err error
+			preAuthenticatedBot, err = botAPIKeyVerifier(r.Context(), presentedKey)
+			if err != nil {
+				admission.fail(websocketFailureAuth)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				json.NewEncoder(w).Encode(map[string]interface{}{
@@ -146,12 +189,14 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
+			admission.fail(websocketFailureUpgrade)
 			slog.Error("websocket upgrade failed", "error", err, "client_ip", ip, "remote", remoteAddr)
 			if EventHook != nil {
 				EventHook("ws_upgrade_failed", "", "", ip, "", err.Error(), nil)
 			}
 			return
 		}
+		admission.upgraded()
 		cfg := &config.C
 		// Bound every client-controlled frame from the first WebSocket read,
 		// including authentication and loadout negotiation.
@@ -168,8 +213,9 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// ----------------------------------------------------------------
 		// 1. Authenticate
 		// ----------------------------------------------------------------
-		botRecord, err := authenticateBot(r, conn, cfg)
+		botRecord, err := authenticateBot(r, conn, cfg, preAuthenticatedBot)
 		if err != nil {
+			admission.fail(websocketFailureAuth)
 			slog.Warn("bot auth failed", "error", err, "client_ip", ip, "remote", remoteAddr)
 			sendWSErrorStructured(conn, err.Error(), "AUTH_FAILED", map[string]interface{}{
 				"ip": ip,
@@ -182,6 +228,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 
 		// Check if the bot's API key is banned.
 		if engine.IsKeyBanned(botRecord.APIKeyID) {
+			admission.fail(websocketFailureAuth)
 			slog.Warn("banned bot attempted reconnection", "bot", botRecord.Name, "client_ip", ip, "remote", remoteAddr)
 			sendWSErrorStructured(conn, "your API key has been banned", "KEY_BANNED", map[string]interface{}{
 				"api_key_id": botRecord.APIKeyID,
@@ -192,6 +239,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			return
 		}
 		if rejectTemporarilyLockedBot(conn, botRecord.Name, botRecord.ID, ip, botRecord.APIKeyID) {
+			admission.fail(websocketFailureAuth)
 			return
 		}
 
@@ -203,6 +251,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			if err != nil {
 				slog.Warn("key rate limit check error, allowing", "error", err)
 			} else if !allowed {
+				admission.fail(websocketFailureRateLimit)
 				slog.Warn("bot reconnecting too fast", "bot", botRecord.Name, "key_id", botRecord.APIKeyID)
 				sendWSErrorStructured(conn, "reconnecting too fast, wait a few seconds", "RECONNECT_TOO_FAST", map[string]interface{}{
 					"retry_after": windowSecs,
@@ -308,18 +357,41 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// while this connection was in loadout negotiation. Recheck at the actual
 		// admission boundary so an already-locked key cannot wait its way in.
 		if rejectPermanentlyBannedBot(engine, conn, bot.Name, bot.BotID, ip, bot.APIKeyID) {
+			admission.fail(websocketFailureAuth)
 			return
 		}
 		if rejectTemporarilyLockedBot(conn, bot.Name, bot.BotID, ip, bot.APIKeyID) {
+			admission.fail(websocketFailureAuth)
 			return
 		}
-		if !engine.AddBot(bot) {
+		registered, keyActive, keyActiveErr := registerBotWithActiveAPIKeyCheck(ctx, engine, bot, botAPIKeyActiveChecker)
+		if !registered {
+			admission.fail(websocketFailureCapacity)
 			slog.Warn("bot rejected: server at capacity", "bot", bot.Name, "client_ip", ip, "remote", remoteAddr)
 			sendWSErrorStructured(conn, "server at capacity", "SERVER_FULL", map[string]interface{}{
 				"max_bots": config.C.MaxBots,
 			})
 			if EventHook != nil {
 				EventHook("server_full", bot.Name, bot.BotID, ip, bot.APIKeyID, "server at capacity", nil)
+			}
+			return
+		}
+		if !keyActive {
+			admission.fail(websocketFailureAuth)
+			message := "API key is no longer active"
+			code := "API_KEY_REVOKED"
+			if keyActiveErr != nil {
+				message = "unable to confirm API key status"
+				code = "AUTH_UNAVAILABLE"
+				slog.Error("final API key admission check failed closed", "error", keyActiveErr, "bot_id", bot.BotID, "api_key_id", bot.APIKeyID)
+			} else {
+				slog.Warn("revoked API key rejected at final bot admission check", "bot_id", bot.BotID, "api_key_id", bot.APIKeyID)
+			}
+			sendWSErrorStructured(conn, message, code, nil)
+			if EventHook != nil {
+				EventHook("auth_failed", bot.Name, bot.BotID, ip, bot.APIKeyID, message, map[string]interface{}{
+					"final_active_check": true,
+				})
 			}
 			return
 		}
@@ -335,6 +407,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// exact admitted session. RemoveBot is pointer-checked against reconnects.
 		if rejectPermanentlyBannedBot(engine, conn, bot.Name, bot.BotID, ip, bot.APIKeyID) ||
 			rejectTemporarilyLockedBot(conn, bot.Name, bot.BotID, ip, bot.APIKeyID) {
+			admission.fail(websocketFailureAuth)
 			engine.RemoveBot(bot.BotID, bot)
 			return
 		}
@@ -350,6 +423,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			engine.RemoveBot(bot.BotID, bot)
 			return
 		}
+		admission.admitted()
 
 		// Log successful connection. The session ID ties admission to the exact
 		// disconnect even when the same bot reconnects several times per second.
@@ -437,8 +511,11 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 // authenticateBot extracts an API key from the request (query param, header,
 // or initial auth message) and verifies it against the database. Returns the
 // associated bot record on success.
-func authenticateBot(r *http.Request, conn *websocket.Conn, cfg *config.Config) (*db.Bot, error) {
+func authenticateBot(r *http.Request, conn *websocket.Conn, cfg *config.Config, preAuthenticated *db.Bot) (*db.Bot, error) {
 	ctx := r.Context()
+	if preAuthenticated != nil {
+		return preAuthenticated, nil
+	}
 
 	// Try query parameter first.
 	apiKey := presentedAPIKey(r)
@@ -467,7 +544,7 @@ func authenticateBot(r *http.Request, conn *websocket.Conn, cfg *config.Config) 
 		conn.SetReadDeadline(time.Time{})
 	}
 
-	bot, err := security.VerifyAPIKey(ctx, apiKey)
+	bot, err := botAPIKeyVerifier(ctx, apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
