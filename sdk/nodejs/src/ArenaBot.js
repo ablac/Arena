@@ -390,7 +390,8 @@ export default class ArenaBot {
       socket.on('close', (code, reason) => {
         closed = true;
         pendingMessages.length = 0;
-        console.log(`[ArenaBot] Disconnected (code=${code})`);
+        const closeReason = reason?.length ? `, reason=${reason.toString()}` : '';
+        console.log(`[ArenaBot] Disconnected (code=${code}${closeReason})`);
         if (!ready) {
           const suffix = reason?.length ? `: ${reason.toString()}` : '';
           const error = new Error(`Arena connection closed before loadout confirmation (code=${code})${suffix}`);

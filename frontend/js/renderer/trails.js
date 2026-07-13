@@ -9,7 +9,7 @@
 
 import { isEnabled } from '../settings.js';
 
-const MAX_HISTORY = 12;
+const MAX_HISTORY = 18;
 // Spectator positions arrive at 10 Hz. Sampling three times faster rebuilt the
 // same ribbon geometry from interpolated points without adding useful truth.
 const SAMPLE_INTERVAL = 0.1;
@@ -43,7 +43,21 @@ function particleStyle(emitRate, gravityY, options = {}) {
 }
 
 function trailStyle(key, primary, secondary, width, alpha, particles) {
-  return Object.freeze({key, primary, secondary, width, alpha, particles});
+  // Paid trails must remain identifiable from spectator zoom, not merely tint
+  // the free wake. Scale each authored signature while retaining its relative
+  // width/opacity/emission character and the renderer's existing hard caps.
+  const emphasizedParticles = particles && Object.freeze({
+    ...particles,
+    emitRate: Math.max(24, particles.emitRate * 1.5),
+  });
+  return Object.freeze({
+    key,
+    primary,
+    secondary,
+    width: Math.max(1.2, width * 1.35),
+    alpha: Math.max(0.58, alpha * 1.55),
+    particles: emphasizedParticles,
+  });
 }
 
 // Every server-provided asset key resolves through this fixed local allowlist.
@@ -97,6 +111,13 @@ function cosmeticTrailKey(entry) {
 
 function pageHidden() {
   return typeof document !== 'undefined' && document.hidden === true;
+}
+
+function entryPosition(entry) {
+  if (entry?.root?.parent && typeof entry.root.getAbsolutePosition === 'function') {
+    return entry.root.getAbsolutePosition();
+  }
+  return entry?.root?.position;
 }
 
 export class TrailRenderer {
@@ -233,9 +254,14 @@ export class TrailRenderer {
       trail.timer = 0;
       trail.history.length = 0;
       if (entry?._interpReady) {
-        trail.history.push({x: entry.root.position.x, z: entry.root.position.z});
+        const position = entryPosition(entry);
+        if (position && this.options.previewPath === true) {
+          trail.history.push({x: position.x - 15, z: position.z}, {x: position.x, z: position.z});
+        } else if (position) {
+          trail.history.push({x: position.x, z: position.z});
+        }
       }
-      trail.dirty = false;
+      trail.dirty = this.options.previewPath === true;
       trail.moving = this.options.staticPreview === true;
       this._hideTrail(trail);
     }
@@ -249,7 +275,8 @@ export class TrailRenderer {
       left.push(new B.Vector3(x, TRAIL_Y, z));
       right.push(new B.Vector3(x, TRAIL_Y, z));
     }
-    const history = this.options.staticPreview
+    const seededPreview = this.options.staticPreview === true || this.options.previewPath === true;
+    const history = seededPreview
       ? [{x: x - 15, z}, {x, z}]
       : [{x, z}];
     return {
@@ -261,7 +288,7 @@ export class TrailRenderer {
       left,
       right,
       colors: null,
-      dirty: this.options.staticPreview === true,
+      dirty: seededPreview,
       moving: this.options.staticPreview === true,
       entry,
       botId,
@@ -293,8 +320,10 @@ export class TrailRenderer {
     // purchased trail. A small existing-trail bonus prevents edge thrash.
     for (const [botId, entry] of botEntries) {
       if (!entry.isAlive || !entry._interpReady) continue;
-      const dx = hasCameraTarget ? entry.root.position.x - cameraTarget.x : 0;
-      const dz = hasCameraTarget ? entry.root.position.z - cameraTarget.z : 0;
+      const position = entryPosition(entry);
+      if (!position) continue;
+      const dx = hasCameraTarget ? position.x - cameraTarget.x : 0;
+      const dz = hasCameraTarget ? position.z - cameraTarget.z : 0;
       entry._trailPriorityScore = dx * dx + dz * dz
         - (this.trails.has(botId) ? TRAIL_SELECTION_HYSTERESIS_SQ : 0);
       if (resolveTrailStyle(cosmeticTrailKey(entry)).key === 'standard') standard.push(botId);
@@ -343,8 +372,10 @@ export class TrailRenderer {
       const style = resolveTrailStyle(cosmeticTrailKey(entry));
       seen.add(botId);
 
-      const x = entry.root.position.x;
-      const z = entry.root.position.z;
+      const position = entryPosition(entry);
+      if (!position) continue;
+      const x = position.x;
+      const z = position.z;
       let trail = this.trails.get(botId);
       if (!trail) {
         trail = this._createTrail(botId, entry, x, z, style);

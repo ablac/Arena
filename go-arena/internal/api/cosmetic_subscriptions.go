@@ -11,7 +11,7 @@ import (
 import "arena-server/internal/db"
 
 type cosmeticSubscriptionStore interface {
-	Create(context.Context, string) (*db.CosmeticSubscription, error)
+	Reserve(context.Context, string, CosmeticCheckoutPresentation) (*db.CosmeticSubscription, bool, error)
 	Attach(context.Context, string, string, string) (*db.CosmeticSubscription, error)
 	ExpireCheckout(context.Context, string, string, string) (*db.CosmeticSubscription, error)
 	Process(context.Context, db.CosmeticSubscriptionEventInput) (*db.CosmeticSubscriptionEventResult, error)
@@ -20,8 +20,8 @@ type cosmeticSubscriptionStore interface {
 
 type databaseCosmeticSubscriptionStore struct{}
 
-func (databaseCosmeticSubscriptionStore) Create(ctx context.Context, accountID string) (*db.CosmeticSubscription, error) {
-	return db.CreateCosmeticSubscription(ctx, accountID)
+func (databaseCosmeticSubscriptionStore) Reserve(ctx context.Context, accountID string, presentation CosmeticCheckoutPresentation) (*db.CosmeticSubscription, bool, error) {
+	return db.ReserveCosmeticSubscriptionCheckout(ctx, accountID, string(presentation))
 }
 
 func (databaseCosmeticSubscriptionStore) Attach(ctx context.Context, accountID, subscriptionID, checkoutSessionID string) (*db.CosmeticSubscription, error) {
@@ -56,6 +56,10 @@ type cosmeticSubscriptionStateRetriever interface {
 	RetrieveCosmeticSubscription(context.Context, string) (*CosmeticSubscriptionProviderState, error)
 }
 
+type cosmeticSubscriptionCheckoutBody struct {
+	Presentation CosmeticCheckoutPresentation `json:"presentation"`
+}
+
 func newCosmeticCommerceHandlerWithSubscriptionStore(
 	store cosmeticCommerceStore,
 	subscriptions cosmeticSubscriptionStore,
@@ -86,8 +90,29 @@ func (h *CosmeticCommerceHandler) SubscriptionCheckout(w http.ResponseWriter, r 
 		writeError(w, http.StatusUnauthorized, "customer authentication required")
 		return
 	}
-	subscription, ok := h.createCosmeticSubscriptionCheckoutRecord(w, r, session.AccountID)
+	presentation := CosmeticCheckoutPresentationEmbedded
+	if r.ContentLength != 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		var request cosmeticSubscriptionCheckoutBody
+		if err := decodeStrictCosmeticAdminJSON(r, &request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid cosmetic subscription checkout request")
+			return
+		}
+		var valid bool
+		presentation, valid = normalizeCosmeticCheckoutPresentation(request.Presentation)
+		if !valid {
+			writeError(w, http.StatusBadRequest, "presentation must be embedded or hosted")
+			return
+		}
+	}
+	subscription, reservedNew, ok := h.createCosmeticSubscriptionCheckoutRecord(w, r, session.AccountID, presentation)
 	if !ok {
+		return
+	}
+	presentation, valid := storedCosmeticCheckoutPresentation(subscription.CheckoutPresentation)
+	if !valid {
+		slog.Error("cosmetic subscription has an invalid persisted checkout presentation", "subscription_id", subscription.ID)
+		writeError(w, http.StatusInternalServerError, "failed to create cosmetic subscription")
 		return
 	}
 	provider := h.provider.(cosmeticSubscriptionCheckoutProvider)
@@ -101,13 +126,13 @@ func (h *CosmeticCommerceHandler) SubscriptionCheckout(w http.ResponseWriter, r 
 		checkout, err := retriever.RetrieveSubscriptionCheckoutSession(providerCtx, subscription.CheckoutSessionID)
 		cancel()
 		if err != nil || !validRetrievedCosmeticSubscriptionCheckout(checkout, subscription) {
-			slog.Error("failed to retrieve hosted cosmetic subscription checkout", "subscription_id", subscription.ID, "error", err)
+			slog.Error("failed to retrieve cosmetic subscription checkout", "subscription_id", subscription.ID, "error", err)
 			writeError(w, http.StatusBadGateway, "failed to resume cosmetic subscription checkout")
 			return
 		}
 		switch checkout.Status {
 		case CosmeticCheckoutSessionStatusOpen:
-			if !validHostedCheckoutSession(checkout) {
+			if !validCosmeticCheckoutSession(checkout) {
 				writeError(w, http.StatusBadGateway, "failed to resume cosmetic subscription checkout")
 				return
 			}
@@ -125,8 +150,13 @@ func (h *CosmeticCommerceHandler) SubscriptionCheckout(w http.ResponseWriter, r 
 				writeError(w, http.StatusInternalServerError, "failed to replace expired cosmetic subscription checkout")
 				return
 			}
-			subscription, ok = h.createCosmeticSubscriptionCheckoutRecord(w, r, session.AccountID)
+			subscription, reservedNew, ok = h.createCosmeticSubscriptionCheckoutRecord(w, r, session.AccountID, presentation)
 			if !ok {
+				return
+			}
+			presentation, valid = storedCosmeticCheckoutPresentation(subscription.CheckoutPresentation)
+			if !valid {
+				writeError(w, http.StatusInternalServerError, "failed to create cosmetic subscription")
 				return
 			}
 		default:
@@ -143,9 +173,11 @@ func (h *CosmeticCommerceHandler) SubscriptionCheckout(w http.ResponseWriter, r 
 		SubscriptionID: subscription.ID,
 		AccountID:      subscription.AccountID,
 		CustomerEmail:  subscription.AccountEmail,
+		CustomerID:     subscription.CustomerID,
+		Presentation:   presentation,
 	})
 	cancel()
-	if err != nil || !validHostedCheckoutSession(checkout) {
+	if err != nil || !validCosmeticCheckoutSession(checkout) || checkout.Presentation != presentation {
 		// A provider timeout can be an ambiguous success. Keep the local record
 		// retryable so the subscription-ID idempotency key recovers the same
 		// Checkout Session instead of creating a parallel payable session.
@@ -161,17 +193,25 @@ func (h *CosmeticCommerceHandler) SubscriptionCheckout(w http.ResponseWriter, r 
 		writeError(w, http.StatusInternalServerError, "failed to save cosmetic subscription checkout")
 		return
 	}
-	writeCosmeticSubscriptionCheckoutResponse(w, http.StatusCreated, subscription.ID, checkout, false)
+	status := http.StatusCreated
+	if !reservedNew {
+		status = http.StatusOK
+	}
+	writeCosmeticSubscriptionCheckoutResponse(w, status, subscription.ID, checkout, !reservedNew)
 }
 
 func validRetrievedCosmeticSubscriptionCheckout(checkout *CosmeticCheckoutSession, subscription *db.CosmeticSubscription) bool {
-	return checkout != nil && subscription != nil && checkout.ID == subscription.CheckoutSessionID &&
+	if checkout == nil || subscription == nil {
+		return false
+	}
+	presentation, ok := storedCosmeticCheckoutPresentation(subscription.CheckoutPresentation)
+	return ok && checkout.ID == subscription.CheckoutSessionID &&
 		checkout.Mode == "subscription" && checkout.SubscriptionID == subscription.ID &&
-		checkout.AccountID == subscription.AccountID
+		checkout.AccountID == subscription.AccountID && checkout.Presentation == presentation
 }
 
-func (h *CosmeticCommerceHandler) createCosmeticSubscriptionCheckoutRecord(w http.ResponseWriter, r *http.Request, accountID string) (*db.CosmeticSubscription, bool) {
-	subscription, err := h.subscriptionStore.Create(r.Context(), accountID)
+func (h *CosmeticCommerceHandler) createCosmeticSubscriptionCheckoutRecord(w http.ResponseWriter, r *http.Request, accountID string, presentation CosmeticCheckoutPresentation) (*db.CosmeticSubscription, bool, bool) {
+	subscription, created, err := h.subscriptionStore.Reserve(r.Context(), accountID, presentation)
 	if err != nil {
 		switch {
 		case errors.Is(err, db.ErrCosmeticSubscriptionExists):
@@ -191,23 +231,21 @@ func (h *CosmeticCommerceHandler) createCosmeticSubscriptionCheckoutRecord(w htt
 			slog.Error("failed to create cosmetic subscription", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to create cosmetic subscription")
 		}
-		return nil, false
+		return nil, false, false
 	}
 	if subscription == nil || subscription.ID == "" || subscription.AccountID != accountID ||
 		subscription.PriceCents != db.CosmeticSubscriptionPriceCents ||
 		subscription.Currency != db.CosmeticSubscriptionCurrency ||
 		subscription.Interval != db.CosmeticSubscriptionInterval {
 		writeError(w, http.StatusInternalServerError, "failed to create cosmetic subscription")
-		return nil, false
+		return nil, false, false
 	}
-	return subscription, true
+	return subscription, created, true
 }
 
 func writeCosmeticSubscriptionCheckoutResponse(w http.ResponseWriter, status int, subscriptionID string, checkout *CosmeticCheckoutSession, resumed bool) {
-	response := map[string]interface{}{
-		"subscription_id": subscriptionID,
-		"checkout_url":    checkout.URL,
-	}
+	response := map[string]interface{}{"subscription_id": subscriptionID}
+	addCosmeticCheckoutResponseFields(response, checkout)
 	if resumed {
 		response["resumed"] = true
 	}

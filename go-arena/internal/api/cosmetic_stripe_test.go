@@ -72,14 +72,16 @@ func TestStripeCosmeticPaymentProviderBuildsServerControlledCheckout(t *testing.
 		UnitAmount:      1299,
 		Currency:        "USD",
 		Quantity:        2,
+		Presentation:    CosmeticCheckoutPresentationHosted,
 	})
 	if err != nil {
 		t.Fatalf("CreateCheckoutSession() error = %v", err)
 	}
 	if want := (&CosmeticCheckoutSession{
-		ID:        "cs_test_arena",
-		URL:       "https://checkout.stripe.test/c/pay/cs_test_arena",
-		ExpiresAt: time.Unix(1_900_000_000, 0).UTC(),
+		ID:           "cs_test_arena",
+		URL:          "https://checkout.stripe.test/c/pay/cs_test_arena",
+		Presentation: CosmeticCheckoutPresentationHosted,
+		ExpiresAt:    time.Unix(1_900_000_000, 0).UTC(),
 	}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("CreateCheckoutSession() = %#v, want %#v", got, want)
 	}
@@ -145,11 +147,12 @@ func TestStripeCosmeticPaymentProviderBuildsFixedMonthlySubscriptionCheckout(t *
 
 	got, err := provider.CreateSubscriptionCheckoutSession(context.Background(), CosmeticSubscriptionCheckoutRequest{
 		SubscriptionID: "subscription-record", AccountID: "account-456", CustomerEmail: "owner@example.com",
+		Presentation: CosmeticCheckoutPresentationHosted,
 	})
 	if err != nil {
 		t.Fatalf("CreateSubscriptionCheckoutSession() error = %v", err)
 	}
-	if got == nil || got.ID != "cs_subscription" || got.URL == "" {
+	if got == nil || got.ID != "cs_subscription" || got.URL == "" || got.Presentation != CosmeticCheckoutPresentationHosted {
 		t.Fatalf("subscription checkout result = %#v", got)
 	}
 	params := creator.params
@@ -159,6 +162,9 @@ func TestStripeCosmeticPaymentProviderBuildsFixedMonthlySubscriptionCheckout(t *
 	if stripe.StringValue(params.ClientReferenceID) != "subscription-record" ||
 		stripe.StringValue(params.CustomerEmail) != "owner@example.com" {
 		t.Fatalf("subscription Checkout identity = %#v", params)
+	}
+	if params.Customer != nil {
+		t.Fatalf("new subscription Checkout unexpectedly pinned customer %q", stripe.StringValue(params.Customer))
 	}
 	wantMetadata := map[string]string{
 		"commerce_kind": "cosmetic_subscription", "subscription_id": "subscription-record", "account_id": "account-456",
@@ -186,6 +192,31 @@ func TestStripeCosmeticPaymentProviderBuildsFixedMonthlySubscriptionCheckout(t *
 	if price.ProductData == nil ||
 		stripe.StringValue(price.ProductData.Description) != "Every current and future Arena cosmetic set and trail, for up to five API keys." {
 		t.Fatalf("subscription line-item disclosure = %#v", price.ProductData)
+	}
+}
+
+func TestStripeCosmeticPaymentProviderReusesExistingCustomerForResubscribe(t *testing.T) {
+	creator := &recordingStripeCheckoutCreator{session: &stripe.CheckoutSession{
+		ID: "cs_resubscribe", URL: "https://checkout.stripe.test/c/pay/cs_resubscribe",
+	}}
+	provider := newStripeCosmeticPaymentProviderWithCreator(
+		creator, []string{"whsec_current"},
+		"https://arena.example/dashboard?checkout=success",
+		"https://arena.example/dashboard?checkout=cancelled", false,
+	)
+
+	_, err := provider.CreateSubscriptionCheckoutSession(context.Background(), CosmeticSubscriptionCheckoutRequest{
+		SubscriptionID: "subscription-replacement", AccountID: "account-456", CustomerEmail: "owner@example.com",
+		CustomerID: "cus_existing_owner", Presentation: CosmeticCheckoutPresentationHosted,
+	})
+	if err != nil {
+		t.Fatalf("CreateSubscriptionCheckoutSession() error = %v", err)
+	}
+	if creator.params == nil || stripe.StringValue(creator.params.Customer) != "cus_existing_owner" {
+		t.Fatalf("subscription Checkout customer = %#v", creator.params)
+	}
+	if creator.params.CustomerEmail != nil {
+		t.Fatalf("subscription Checkout sent both customer and customer_email: %q", stripe.StringValue(creator.params.CustomerEmail))
 	}
 }
 
@@ -290,7 +321,7 @@ func TestStripeCosmeticPaymentProviderRetrievesOpenCheckoutURLWithoutPersistingI
 		t.Fatalf("RetrieveSubscriptionCheckoutSession: %v", err)
 	}
 	if retriever.id != "cs_resume" || session == nil || session.ID != "cs_resume" ||
-		session.Status != CosmeticCheckoutSessionStatusOpen || session.URL == "" || session.Mode != "subscription" ||
+		session.Status != CosmeticCheckoutSessionStatusOpen || session.URL == "" || session.Presentation != CosmeticCheckoutPresentationHosted || session.Mode != "subscription" ||
 		session.SubscriptionID != "subscription-record" || session.AccountID != "account-1" ||
 		session.ExpiresAt.Unix() != 1_900_000_000 {
 		t.Fatalf("retrieved checkout session = %+v", session)

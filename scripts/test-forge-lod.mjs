@@ -5,11 +5,21 @@ const rigSource = readFileSync(new URL('../frontend/js/renderer/character-rig.js
 const rosterSource = readFileSync(new URL('../frontend/js/renderer/character-roster.js', import.meta.url), 'utf8');
 const botSource = readFileSync(new URL('../frontend/js/renderer/bots.js', import.meta.url), 'utf8');
 const {
+  FORGE_FAR_LOD_PROXY_PARTS,
   FORGE_FAR_LOD_ENTER_DISTANCE,
   FORGE_FAR_LOD_EXIT_DISTANCE,
   setForgeCharacterLOD,
   updateForgeCharacterLOD,
 } = await import(new URL('../frontend/js/renderer/character-rig.js?lod-runtime-test', import.meta.url));
+
+assert.deepEqual(
+  new Set(FORGE_FAR_LOD_PROXY_PARTS.map(part => part.role)),
+  new Set(['torso', 'head', 'arm-left', 'arm-right', 'leg-left', 'leg-right']),
+  'the far proxy must preserve a complete humanoid silhouette instead of collapsing into a tapered shard',
+);
+assert.ok(FORGE_FAR_LOD_PROXY_PARTS.every(part => Array.isArray(part.position)
+  && Array.isArray(part.scaling)),
+  'every far-proxy body part needs a deterministic transform for the shared merged template');
 
 assert.ok(FORGE_FAR_LOD_ENTER_DISTANCE > FORGE_FAR_LOD_EXIT_DISTANCE,
   'far LOD needs hysteresis so camera movement cannot flicker detail levels');
@@ -80,6 +90,11 @@ assert.equal(updateForgeCharacterLOD(presentationEntry, {
 
 assert.match(rigSource, /lowDetail[^\n]*resources\.[A-Za-z]+\.createInstance|resources\.[A-Za-z]+\.createInstance\([^)]*forge-low/,
   'low-detail Forge bodies must instance one scene-owned proxy template');
+assert.match(rigSource, /Mesh\.MergeMeshes\(/,
+  'the complete far silhouette must be merged once so each distant bot still uses one shared proxy instance');
+assert.doesNotMatch(rigSource,
+  /CreateCylinder\('forge-low-template'[\s\S]{0,180}diameterTop:\s*0\.62[\s\S]{0,120}tessellation:\s*6/,
+  'the old tapered six-sided cylinder reads as a blue triangle and must not return');
 assert.match(rigSource, /setLOD\(far\s*=\s*this\._forgeFarLOD\)/,
   'entries must let refreshed cosmetic groups reapply the current LOD without arguments');
 assert.doesNotMatch(rosterSource, /drawCallBudget|\blod:\s*Object\.freeze/,

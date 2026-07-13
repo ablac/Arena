@@ -160,6 +160,17 @@ func TestPostgresCosmeticSubscriptionLifecycleAndFutureSetSync(t *testing.T) {
 	if err != nil || staleResult.Applied || staleResult.Subscription.HasAccess || !staleResult.Subscription.Terminal {
 		t.Fatalf("stale active event after cancellation = (%+v, %v)", staleResult, err)
 	}
+
+	replacement, reservationCreated, err := ReserveCosmeticSubscriptionCheckout(ctx, account.ID, CosmeticCheckoutPresentationHosted)
+	if err != nil || !reservationCreated || replacement.ID == subscription.ID ||
+		replacement.CheckoutPresentation != CosmeticCheckoutPresentationHosted || replacement.CustomerID != "cus_provider" || replacement.CanManage {
+		t.Fatalf("replacement subscription reservation = (%+v, %v, %v)", replacement, reservationCreated, err)
+	}
+	replayed, reservationCreated, err := ReserveCosmeticSubscriptionCheckout(ctx, account.ID, CosmeticCheckoutPresentationEmbedded)
+	if err != nil || reservationCreated || replayed.ID != replacement.ID ||
+		replayed.CheckoutPresentation != CosmeticCheckoutPresentationHosted || replayed.CustomerID != "cus_provider" {
+		t.Fatalf("replacement subscription replay = (%+v, %v, %v)", replayed, reservationCreated, err)
+	}
 }
 
 func TestPostgresCosmeticSubscriptionAutomaticallyAddsNewlyPublishedTrail(t *testing.T) {

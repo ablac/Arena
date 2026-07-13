@@ -7,6 +7,8 @@ import heapq
 import json
 import logging
 import urllib.request
+from collections import deque
+from contextlib import suppress
 from typing import Any
 
 import websockets
@@ -385,81 +387,130 @@ class ArenaBot:
     async def _game_loop(self) -> None:
         """Main loop: receive messages, dispatch to handlers, send actions."""
         self._running = True
-        while self._running and self._ws:
+        socket = self._ws
+        if socket is None:
+            return
+
+        max_pending_messages = 64
+        pending: deque[dict[str, Any]] = deque()
+        pending_changed = asyncio.Condition()
+        receiver_finished = False
+        receiver_error: Exception | None = None
+
+        async def receive_messages() -> None:
+            nonlocal receiver_error, receiver_finished
             try:
-                raw = await self._ws.recv()
-            except websockets.ConnectionClosed:
-                logger.info("Connection closed")
-                break
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                logger.warning("Invalid JSON received")
-                continue
-            msg_type = msg.get("type")
-            if msg_type == "map_init":
-                # Legacy: server no longer sends this, but handle if it does
-                terrain = msg.get("terrain", [])
-                width = msg.get("width", 0)
-                height = msg.get("height", 0)
-                self._cell_size = msg.get("cell_size", 1)
-                try:
-                    await self.on_map_init(terrain, width, height)
-                except Exception:
-                    logger.exception("on_map_init error")
-            elif msg_type == "round_start":
-                # Fetch fresh terrain via REST API
-                if self.fetch_map():
+                while self._running and self._ws is socket:
+                    raw = await socket.recv()
                     try:
-                        await self.on_map_init(self._terrain, self._map_width, self._map_height)
+                        msg = json.loads(raw)
+                    except json.JSONDecodeError:
+                        logger.warning("Invalid JSON received")
+                        continue
+
+                    async with pending_changed:
+                        # Keep lifecycle frames in order, but an action for an
+                        # older adjacent tick has no value after the next tick.
+                        if msg.get("type") == "tick" and pending and pending[-1].get("type") == "tick":
+                            pending[-1] = msg
+                        else:
+                            await pending_changed.wait_for(
+                                lambda: len(pending) < max_pending_messages
+                                or not self._running
+                                or self._ws is not socket
+                            )
+                            if not self._running or self._ws is not socket:
+                                return
+                            pending.append(msg)
+                        pending_changed.notify_all()
+            except websockets.ConnectionClosed as exc:
+                logger.info("Connection closed (code=%s, reason=%s)", exc.code, exc.reason)
+            except Exception as exc:
+                receiver_error = exc
+            finally:
+                async with pending_changed:
+                    receiver_finished = True
+                    pending_changed.notify_all()
+
+        receiver_task = asyncio.create_task(receive_messages())
+        try:
+            while self._running and self._ws is socket:
+                async with pending_changed:
+                    await pending_changed.wait_for(lambda: pending or receiver_finished)
+                    if not pending:
+                        if receiver_error is not None:
+                            raise receiver_error
+                        return
+                    msg = pending.popleft()
+                    pending_changed.notify_all()
+                msg_type = msg.get("type")
+                if msg_type == "map_init":
+                    # Legacy: server no longer sends this, but handle if it does
+                    terrain = msg.get("terrain", [])
+                    width = msg.get("width", 0)
+                    height = msg.get("height", 0)
+                    self._cell_size = msg.get("cell_size", 1)
+                    try:
+                        await self.on_map_init(terrain, width, height)
                     except Exception:
-                        logger.exception("on_map_init error after REST fetch")
-            elif msg_type == "tick":
-                if isinstance(msg.get("service_status"), dict):
-                    await self._handle_service_status(msg["service_status"])
-                self._tick_number = msg.get("tick_number", msg.get("tick", 0))
-                state = msg.get("your_state", {})
-                self._last_pos = state.get("position", [0, 0])
-                self._last_action_result = state.get("last_action_result")
-                # Team number in team-based game modes (0 = no team / FFA).
-                self._team = state.get("team", 0)
-                # Dead bots keep receiving state snapshots for observation, but
-                # submitting actions wastes bandwidth and can amplify reconnect
-                # or rate-limit incidents. A later round explicitly restores
-                # ``is_alive`` before agent logic resumes.
-                if state.get("is_alive") is not True:
-                    continue
-                nearby = msg.get("nearby_entities", [])
-                safe_zone = {
-                    "center": state.get("zone_center", [0, 0]),
-                    "radius": state.get("zone_radius", 100),
-                    "in_safe_zone": state.get("in_safe_zone", True),
-                    "distance_to_edge": state.get("distance_to_zone_edge", 0),
-                    "fog_radius": state.get("fog_radius", 0),
-                }
-                try:
-                    action = await self.on_tick(state, nearby, safe_zone)
-                except Exception:
-                    logger.exception("on_tick error")
-                    action = self.idle()
-                payload = {"type": "action", "tick": self._tick_number}
-                payload.update(action)
-                await self._ws.send(json.dumps(payload))
-            elif msg_type == "death":
-                await self.on_death(msg)
-            elif msg_type == "respawn":
-                self._last_pos = msg.get("position", [0, 0])
-                await self.on_respawn(msg)
-            elif msg_type == "round_end":
-                await self.on_round_end(msg)
-            elif msg_type == "service_status":
-                await self._handle_service_status(msg)
-            elif msg_type == "error":
-                logger.error("Server error: %s", msg.get("message"))
-            elif msg_type == "kick":
-                logger.error("Kicked: %s", msg.get("reason"))
-                self._running = False
-                self._kicked = True
+                        logger.exception("on_map_init error")
+                elif msg_type == "round_start":
+                    # Fetch fresh terrain via REST API
+                    if self.fetch_map():
+                        try:
+                            await self.on_map_init(self._terrain, self._map_width, self._map_height)
+                        except Exception:
+                            logger.exception("on_map_init error after REST fetch")
+                elif msg_type == "tick":
+                    if isinstance(msg.get("service_status"), dict):
+                        await self._handle_service_status(msg["service_status"])
+                    self._tick_number = msg.get("tick_number", msg.get("tick", 0))
+                    state = msg.get("your_state", {})
+                    self._last_pos = state.get("position", [0, 0])
+                    self._last_action_result = state.get("last_action_result")
+                    # Team number in team-based game modes (0 = no team / FFA).
+                    self._team = state.get("team", 0)
+                    # Dead bots keep receiving state snapshots for observation, but
+                    # submitting actions wastes bandwidth and can amplify reconnect
+                    # or rate-limit incidents. A later round explicitly restores
+                    # ``is_alive`` before agent logic resumes.
+                    if state.get("is_alive") is not True:
+                        continue
+                    nearby = msg.get("nearby_entities", [])
+                    safe_zone = {
+                        "center": state.get("zone_center", [0, 0]),
+                        "radius": state.get("zone_radius", 100),
+                        "in_safe_zone": state.get("in_safe_zone", True),
+                        "distance_to_edge": state.get("distance_to_zone_edge", 0),
+                        "fog_radius": state.get("fog_radius", 0),
+                    }
+                    try:
+                        action = await self.on_tick(state, nearby, safe_zone)
+                    except Exception:
+                        logger.exception("on_tick error")
+                        action = self.idle()
+                    payload = {"type": "action", "tick": self._tick_number}
+                    payload.update(action)
+                    await socket.send(json.dumps(payload))
+                elif msg_type == "death":
+                    await self.on_death(msg)
+                elif msg_type == "respawn":
+                    self._last_pos = msg.get("position", [0, 0])
+                    await self.on_respawn(msg)
+                elif msg_type == "round_end":
+                    await self.on_round_end(msg)
+                elif msg_type == "service_status":
+                    await self._handle_service_status(msg)
+                elif msg_type == "error":
+                    logger.error("Server error: %s", msg.get("message"))
+                elif msg_type == "kick":
+                    logger.error("Kicked: %s", msg.get("reason"))
+                    self._running = False
+                    self._kicked = True
+        finally:
+            receiver_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await receiver_task
 
     async def run(self) -> None:
         """Start the bot with reconnection logic (exponential backoff)."""

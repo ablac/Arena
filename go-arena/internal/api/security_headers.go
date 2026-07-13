@@ -13,12 +13,13 @@ import (
 // compilation — tightening further would require a frontend refactor.
 const contentSecurityPolicy = "" +
 	"default-src 'self'; " +
-	"script-src 'self' https://cdn.babylonjs.com 'unsafe-inline' 'unsafe-eval'; " +
+	"script-src 'self' https://cdn.babylonjs.com https://js.stripe.com https://*.js.stripe.com https://checkout.stripe.com 'unsafe-inline' 'unsafe-eval'; " +
 	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
 	"font-src 'self' https://fonts.gstatic.com; " +
-	"img-src 'self' data: blob:; " +
-	"connect-src 'self' ws: wss: https:; " +
+	"img-src 'self' data: blob: https://*.stripe.com https://*.link.com; " +
+	"connect-src 'self' ws: wss: https://cdn.babylonjs.com https://api.stripe.com https://checkout.stripe.com https://link.com https://*.link.com; " +
 	"worker-src 'self' blob:; " +
+	"frame-src 'self' https://checkout.stripe.com https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com https://link.com https://*.link.com; " +
 	"frame-ancestors 'self'; " +
 	"base-uri 'self'; " +
 	"form-action 'self'"
@@ -60,7 +61,7 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 		// blocks ALL framing including same-origin, which breaks that embed.
 		h.Set("X-Frame-Options", "SAMEORIGIN")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(self \"https://checkout.stripe.com\" \"https://*.stripe.com\" \"https://link.com\" \"https://*.link.com\")")
 		// Only takes effect over HTTPS (browsers ignore it over plain HTTP), so
 		// it's safe to always send even behind a proxy that terminates TLS.
 		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")

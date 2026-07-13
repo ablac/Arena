@@ -5,6 +5,8 @@ const source = readFileSync(new URL('../frontend/js/renderer/trails.js', import.
 
 assert.match(source, /const SAMPLE_INTERVAL = 0\.1(?:0+)?;/,
   'movement trails should sample at the 10 Hz authoritative state cadence');
+assert.match(source, /const MAX_HISTORY = 18;/,
+  'paid ribbons need a longer but still fixed history to remain legible at wide spectator zoom');
 assert.match(source, /const MAX_RENDERED_TRAILS = 48;/,
   'large rosters need a hard streaming-geometry budget');
 assert.match(source, /queue\.length\s*<\s*MAX_RENDERED_TRAILS/,

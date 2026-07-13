@@ -20,13 +20,13 @@ assert.match(cosmeticsSource, /forceEnabled/,
   'cosmetic application must expose an explicit shop-preview override');
 assert.doesNotMatch(botBodySource, /swordsman-body\.js|weapons\.js|animations\.js/,
   'the Shop entry path must not load retired character systems');
-assert.match(previewSource, /bot-body\.js\?v=20260713b/);
+assert.match(previewSource, /bot-body\.js\?v=20260713c/);
 assert.match(previewSource, /cosmetics\.js\?v=20260712c/);
 assert.doesNotMatch(previewSource, /swordsman-anims\.js|updateSwordsmanAnim|isSwordsman/,
   'preview must execute only the Forge presentation path');
 assert.match(previewSource, /character-anims\.js\?v=20260712c/,
   'preview must use the allocation-stable Forge animation module');
-assert.match(previewSource, /trails\.js\?v=20260713b/,
+assert.match(previewSource, /trails\.js\?v=20260713c/,
   'preview must use the same bounded cosmetic trail renderer as the live arena');
 assert.doesNotMatch(previewSource, /ArenaEngine|BotRenderer/,
   'shop preview must not construct the live spectator renderer');
@@ -150,6 +150,7 @@ globalThis.__previewCreateCount = createCount;
 globalThis.__previewCreateOptions = null;
 globalThis.__previewAnimationCount = 0;
 globalThis.__previewTrailRenderCount = 0;
+globalThis.__previewTrailOptions = null;
 globalThis.__previewCreateError = false;
 
 let isolatedPreviewSource = previewSource
@@ -159,6 +160,7 @@ let isolatedPreviewSource = previewSource
     'const updateForgeCharacter = () => { globalThis.__previewAnimationCount += 1; };\n')
   .replace(/import \{ TrailRenderer \} from '[^']+';\r?\n/, `
     class TrailRenderer {
+      constructor(scene, options) { globalThis.__previewTrailOptions = options; }
       render(entries) {
         globalThis.__previewTrailRenderCount += 1;
         globalThis.__previewTrailEntries = entries;
@@ -285,6 +287,11 @@ assert.equal(canvas.tabIndex, -1,
 assert.equal(preview.engine.hardwareScalingLevel, 1, 'preview must cap HiDPI rendering at 1x');
 assert.equal(resizeObservers[0].target, canvas);
 assert.equal(intersectionObservers[0].target, canvas);
+assert.deepEqual(globalThis.__previewTrailOptions, {
+  forceEnabled: true,
+  showStandard: false,
+  previewPath: true,
+}, 'the running preview needs an immediate bounded ribbon path without forcing static particles');
 
 preview.setLoadout({bot_skin: 'skin-a', weapon_skin: 'weapon-a', attachment: 'attachment-a', trail: 'ember_sparks'});
 preview.setLoadout({bot_skin: 'skin-b'});
@@ -298,12 +305,19 @@ assert.deepEqual(applyCalls.at(-1).bot.cosmetics, {
 });
 
 const initialRotation = preview.turntable.rotation.y;
+const initialRunPosition = {...preview.entry.root.position};
+preview._lastFrame -= 100;
 preview.engine.renderCallback();
 assert.equal(preview.scene.renderCount, 1);
 assert.equal(globalThis.__previewAnimationCount, 2, 'visible preview must apply the production idle pose');
 assert.equal(globalThis.__previewTrailRenderCount, 1,
   'visible preview must render the selected trail through the production trail path');
 assert.ok(preview.turntable.rotation.y >= initialRotation, 'visible preview may auto-rotate');
+assert.notDeepEqual(
+  {x: preview.entry.root.position.x, z: preview.entry.root.position.z},
+  {x: initialRunPosition.x, z: initialRunPosition.z},
+  'the showroom bot must run a real loop so a selected trail can be evaluated in motion',
+);
 intersectionObservers[0].callback([{isIntersecting: false}]);
 preview.engine.renderCallback();
 assert.equal(preview.scene.renderCount, 1, 'offscreen preview must skip GPU rendering');
@@ -320,12 +334,19 @@ document.hidden = false;
 mediaQuery.matches = true;
 mediaQuery.listener({matches: true});
 const reducedMotionRotation = preview.turntable.rotation.y;
+const reducedMotionPosition = {...preview.entry.root.position};
+preview._lastFrame -= 100;
 preview.engine.renderCallback();
 assert.equal(preview.scene.renderCount, 2);
 assert.equal(globalThis.__previewAnimationCount, 3,
   'reduced motion must still apply the production sampler in its restrained mode');
 assert.equal(preview.turntable.rotation.y, reducedMotionRotation,
   'reduced motion must suppress automatic rotation and idle pose updates');
+assert.deepEqual(
+  {x: preview.entry.root.position.x, z: preview.entry.root.position.z},
+  {x: reducedMotionPosition.x, z: reducedMotionPosition.z},
+  'reduced motion must freeze the running loop while retaining the last static trail shape',
+);
 preview.rotateBy(Math.PI / 4);
 assert.equal(preview.turntable.rotation.y, reducedMotionRotation + Math.PI / 4);
 preview.resetRotation();

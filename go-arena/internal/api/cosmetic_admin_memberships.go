@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -122,43 +124,57 @@ func (h *CosmeticsHandler) RevokeAdminCosmeticMembership(w http.ResponseWriter, 
 		writeAdminCosmeticMembershipError(w, err, "failed to revoke cosmetic membership")
 		return
 	}
-	if revoked {
-		markCosmeticMembershipCacheRepair()
-	}
-	refreshed, refreshFailures := h.refreshAllConnectedMembershipVisuals(r)
+	refreshed, refreshFailures := h.refreshMembershipVisuals(r.Context(), affectedBotIDs)
 	if refreshFailures > 0 {
-		writeError(w, http.StatusServiceUnavailable, "membership changed, but live cosmetic refresh is incomplete; retry this request")
-		return
+		markCosmeticMembershipCacheRepair()
+		slog.Warn("queued cosmetic membership visual cache repair", "failures", refreshFailures)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"revoked": revoked, "membership_id": membershipID, "membership": membership,
-		"affected_bots": affectedBotIDs, "live_refreshed": refreshed,
+		"affected_bots": affectedBotIDs, "live_refreshed": refreshed, "live_refresh_failures": refreshFailures,
 	})
 }
 
 func (h *CosmeticsHandler) reconcileAdminMembershipExpiryForEmail(r *http.Request, email string) error {
-	expired, _, err := h.store.ExpireAdminMembershipsForEmail(r.Context(), email, time.Now().UTC())
+	expired, affectedBotIDs, err := h.store.ExpireAdminMembershipsForEmail(r.Context(), email, time.Now().UTC())
 	if err != nil {
 		return err
 	}
-	if expired > 0 {
-		markCosmeticMembershipCacheRepair()
+	if expired == 0 {
+		return nil
 	}
-	_, refreshFailures := h.refreshAllConnectedMembershipVisuals(r)
+	_, refreshFailures := h.refreshMembershipVisuals(r.Context(), affectedBotIDs)
 	if refreshFailures > 0 {
-		return errors.New("live cosmetic refresh is incomplete")
+		markCosmeticMembershipCacheRepair()
+		slog.Warn("queued expired cosmetic membership visual cache repair", "failures", refreshFailures)
 	}
 	return nil
 }
 
-func (h *CosmeticsHandler) refreshAllConnectedMembershipVisuals(r *http.Request) (int, int) {
-	if h.engine == nil {
+func (h *CosmeticsHandler) refreshMembershipVisuals(ctx context.Context, botIDs []string) (int, int) {
+	if h.engine == nil || len(botIDs) == 0 {
 		return 0, 0
 	}
+	connected := make(map[string]struct{})
+	for _, botID := range h.engine.ConnectedBotIDs() {
+		connected[botID] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(botIDs))
 	refreshed := 0
 	failed := 0
-	for _, botID := range h.engine.ConnectedBotIDs() {
-		equipped, err := h.store.Equipped(r.Context(), botID)
+	for _, rawBotID := range botIDs {
+		botID := strings.TrimSpace(rawBotID)
+		if botID == "" {
+			continue
+		}
+		if _, duplicate := seen[botID]; duplicate {
+			continue
+		}
+		seen[botID] = struct{}{}
+		if _, ok := connected[botID]; !ok {
+			continue
+		}
+		equipped, err := h.store.Equipped(ctx, botID)
 		if err != nil {
 			failed++
 			continue

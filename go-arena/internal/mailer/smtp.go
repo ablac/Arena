@@ -130,17 +130,61 @@ func buildMagicLinkMessage(from, to *mail.Address, displayName, magicLink string
 	if name := strings.TrimSpace(displayName); name != "" {
 		greeting = "Hello " + name + ","
 	}
-	plain := fmt.Sprintf("%s\n\nUse this one-time link to sign in or create your Arena account and manage cosmetics:\n\n%s\n\nThis link expires in %d minutes and can be used once. If you did not request it, you can ignore this email.\n", greeting, magicLink, minutes)
-	htmlBody := fmt.Sprintf(`<!doctype html><html><body><p>%s</p><p><a href="%s">Sign in to Arena</a></p><p>This one-time link expires in %d minutes. If you did not request it, you can ignore this email.</p></body></html>`, html.EscapeString(greeting), html.EscapeString(magicLink), minutes)
+	plain := fmt.Sprintf(`ARENA ACCOUNT ACCESS
+
+%s
+
+Sign in to your Arena Dashboard with this one-time link:
+
+%s
+
+This link expires in %d minutes and can be used once. Never share this link. Arena staff will never ask you for it.
+
+If you did not request this email, you can safely ignore it. No changes will be made to your account.
+`, greeting, magicLink, minutes)
+	escapedGreeting := html.EscapeString(greeting)
+	escapedLink := html.EscapeString(magicLink)
+	htmlBody := fmt.Sprintf(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Your Arena sign-in link</title>
+</head>
+<body style="margin:0;background:#050912;color:#dcecff;font-family:Arial,Helvetica,sans-serif;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">Your one-time Arena Dashboard sign-in link expires in %d minutes.</div>
+  <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" border="0" style="background:#050912;">
+    <tr><td align="center" style="padding:32px 16px;">
+      <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;background:#0b1424;border:1px solid #203a5c;border-radius:16px;overflow:hidden;">
+        <tr><td style="padding:18px 28px;background:#10243b;border-bottom:1px solid #203a5c;color:#62d9ff;font-size:12px;font-weight:700;letter-spacing:2px;">ARENA ACCOUNT ACCESS</td></tr>
+        <tr><td style="padding:32px 28px;">
+          <p style="margin:0 0 18px;color:#dcecff;font-size:16px;line-height:1.6;">%s</p>
+          <h1 style="margin:0 0 14px;color:#ffffff;font-size:26px;line-height:1.25;">Sign in to your Arena Dashboard</h1>
+          <p style="margin:0 0 24px;color:#a9bed5;font-size:15px;line-height:1.6;">Use this secure, one-time link to manage your bots and account-owned cosmetics.</p>
+          <p style="margin:0 0 26px;"><a href="%s" style="display:inline-block;padding:14px 22px;border-radius:9px;background:#36c9f4;color:#041019;text-decoration:none;font-size:16px;font-weight:700;">Sign in to your Arena Dashboard</a></p>
+          <p style="margin:0 0 8px;color:#a9bed5;font-size:13px;line-height:1.5;">If the button does not work: Copy and paste this address into your browser.</p>
+          <div style="margin:0 0 24px;padding:12px;border-radius:8px;background:#07101d;border:1px solid #203a5c;color:#b8eaff;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.5;word-break:break-all;">%s</div>
+          <div style="padding:14px 16px;border-radius:9px;background:#171a24;border-left:4px solid #f3bd4f;color:#d5dbe5;font-size:13px;line-height:1.55;"><strong style="color:#ffffff;">Security note:</strong> This link expires in %d minutes and can be used once. Never share this link. Arena staff will never ask you for it.</div>
+          <p style="margin:22px 0 0;color:#8399b2;font-size:13px;line-height:1.55;">If you did not request this email, you can safely ignore it. No changes will be made to your account.</p>
+        </td></tr>
+        <tr><td style="padding:18px 28px;background:#08111e;border-top:1px solid #203a5c;color:#71879f;font-size:12px;line-height:1.5;">Arena by Angel-Serv &middot; Transactional account email</td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`, minutes, escapedGreeting, escapedLink, escapedLink, minutes)
 
 	var message bytes.Buffer
 	writer := multipart.NewWriter(&message)
 	boundary := writer.Boundary()
 	fmt.Fprintf(&message, "From: %s\r\n", from.String())
+	fmt.Fprintf(&message, "Reply-To: %s\r\n", from.String())
 	fmt.Fprintf(&message, "To: %s\r\n", to.String())
-	fmt.Fprint(&message, "Subject: Sign in to Arena\r\n")
+	fmt.Fprint(&message, "Subject: Your Arena sign-in link\r\n")
 	fmt.Fprintf(&message, "Date: %s\r\n", sentAt.Format(time.RFC1123Z))
 	fmt.Fprintf(&message, "Message-ID: %s\r\n", messageID)
+	fmt.Fprint(&message, "Auto-Submitted: auto-generated\r\n")
+	fmt.Fprint(&message, "X-Auto-Response-Suppress: All\r\n")
 	fmt.Fprint(&message, "MIME-Version: 1.0\r\n")
 	fmt.Fprintf(&message, "Content-Type: multipart/alternative; boundary=%q\r\n\r\n", boundary)
 	plainHeader := make(textproto.MIMEHeader)

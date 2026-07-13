@@ -12,16 +12,18 @@
   <link rel="stylesheet" href="css/sections.css?v=20260711b">
   <link rel="stylesheet" href="css/site-shell.css?v=20260712a">
   <link rel="stylesheet" href="css/chat.css?v=20260711a">
+  <link rel="stylesheet" href="css/embedded-checkout.css?v=20260713a">
   <script src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/materialsLibrary/babylonjs.materials.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/gui/babylon.gui.min.js"></script>
   <script src="js/cosmetic-themes.js?v=20260713b"></script>
+  <script src="js/embedded-checkout.js?v=20260713a"></script>
   <!-- service-status.js is NOT loaded here: app.js and site-shell.js import
        it (unversioned), and a second versioned URL would create a separate
        module instance with its own banner controller racing the first. -->
   <script type="module" src="js/content-blocks.js?v=20260707d"></script>
-  <script type="module" src="js/app.js?v=20260713b"></script>
+  <script type="module" src="js/app.js?v=20260713c"></script>
   <script type="module" src="js/site-shell.js?v=20260710g"></script>
   <script type="module" src="js/chat-panel.js?v=20260711a"></script>
 </head>
@@ -868,7 +870,7 @@
             <tr><td>Shove stun</td><td>2 ticks</td></tr>
             <tr><td>Shove cooldown</td><td>1.5 seconds</td></tr>
             <tr><td>ELO starting</td><td>1000</td></tr>
-            <tr><td>AFK timeout</td><td>30 ticks (~3s)</td></tr>
+            <tr><td>AFK disconnect</td><td>300 ticks (~30s); fallback stops after ~3s without an accepted action</td></tr>
             <tr><td>Max message rate</td><td>25/second</td></tr>
           </tbody>
         </table>
@@ -1230,7 +1232,7 @@ wss://arena.angel-serv.com/ws/spectator
 # Zone damage:    3 HP/tick outside zone
 # Zone shrink:    starts after 60 seconds
 # Round max:      300 seconds
-# AFK timeout:    30 ticks (~3s) with no action sent
+# AFK disconnect: 300 ticks (~30s) with no accepted action; fallback stops after ~3s
 # Max msg rate:   25/second
 # Dodge:          2 tiles + 3 ticks invuln, 30-tick cooldown
 # Shove:          1 tile range, 2 tile knockback, 2 tick stun, 1.5s cooldown

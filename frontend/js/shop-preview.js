@@ -1,14 +1,17 @@
 'use strict';
 
-import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260713b';
+import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260713c';
 import { applyBotCosmetics, disposeBotCosmetics } from './renderer/cosmetics.js?v=20260712c';
 import { updateForgeCharacter } from './renderer/character-anims.js?v=20260712c';
-import { TrailRenderer } from './renderer/trails.js?v=20260713b';
+import { TrailRenderer } from './renderer/trails.js?v=20260713c';
 
 const DEFAULT_ALPHA = -Math.PI / 2;
 const DEFAULT_BETA = 1.12;
 const DEFAULT_RADIUS = 42;
 const SHOP_FRAME_INTERVAL_MS = 1000 / 30;
+const PREVIEW_RUN_RADIUS_X = 8;
+const PREVIEW_RUN_RADIUS_Z = 4;
+const PREVIEW_RUN_RADIANS_PER_SECOND = 1.05;
 const DEFAULT_LOADOUT = Object.freeze({
   bot_skin: 'standard',
   weapon_skin: 'standard',
@@ -47,6 +50,16 @@ export class CosmeticShopPreview {
     this._pageSuspended = false;
     this._renderRequested = true;
     this._lastRenderedAt = 0;
+    this._runElapsed = 0;
+  }
+
+  _positionEntryOnRunLoop(entry = this.entry) {
+    if (!entry?.root?.position) return;
+    entry.root.position.set(
+      Math.sin(this._runElapsed) * PREVIEW_RUN_RADIUS_X,
+      0,
+      Math.cos(this._runElapsed) * PREVIEW_RUN_RADIUS_Z,
+    );
   }
 
   init() {
@@ -125,6 +138,7 @@ export class CosmeticShopPreview {
     };
     this.entry = createBotEntry(this.bot, this.scene, {presentationOnly: true});
     this.entry.root.parent = this.turntable;
+    this._positionEntryOnRunLoop(this.entry);
     this.entry.isAlive = true;
     this.entry._interpReady = true;
     this.entry.botData = this.bot;
@@ -134,7 +148,7 @@ export class CosmeticShopPreview {
     this.trailRenderer = new TrailRenderer(this.scene, {
       forceEnabled: true,
       showStandard: false,
-      staticPreview: true,
+      previewPath: true,
     });
 
     this._motionQuery = typeof window.matchMedia === 'function'
@@ -215,6 +229,10 @@ export class CosmeticShopPreview {
         this.turntable.rotation.y += dt * this.rotationSpeed;
       }
       if (this.entry) {
+        if (!this._reducedMotion) {
+          this._runElapsed = (this._runElapsed + dt * PREVIEW_RUN_RADIANS_PER_SECOND) % (Math.PI * 2);
+          this._positionEntryOnRunLoop(this.entry);
+        }
         updateForgeCharacter(this.entry, dt, this._reducedMotion);
       }
       if (this.trailRenderer) this.trailRenderer.render(this._trailEntries, dt);
@@ -269,6 +287,7 @@ export class CosmeticShopPreview {
     };
     this.entry = createBotEntry(this.bot, this.scene, {presentationOnly: true});
     this.entry.root.parent = this.turntable;
+    this._positionEntryOnRunLoop(this.entry);
     this.entry.isAlive = true;
     this.entry._interpReady = true;
     this.entry.botData = this.bot;

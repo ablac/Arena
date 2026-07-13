@@ -45,22 +45,32 @@ func effectiveMoveSpeed(bot *BotState) float64 {
 func terrainMoveCellsPerTick(bot *BotState) float64 {
 	referencePoints := float64(config.C.StatBudget) / 4
 	referenceSpeed := config.C.StatSpeedBase + referencePoints*config.C.StatSpeedPerPoint
-	if referenceSpeed <= 0 {
+	if math.IsNaN(referenceSpeed) || math.IsInf(referenceSpeed, 0) || referenceSpeed <= 0 {
 		referenceSpeed = 1
 	}
 
 	speed := effectiveMoveSpeed(bot)
-	if speed <= 0 {
+	if math.IsNaN(speed) || math.IsInf(speed, 0) || speed <= 0 {
 		speed = referenceSpeed
 	}
-	return 0.5 * speed / referenceSpeed
+	basePace := config.C.TerrainMoveCellsPerTick
+	if math.IsNaN(basePace) || math.IsInf(basePace, 0) || basePace <= 0 || basePace > config.MaxTerrainMoveCellsPerTick {
+		basePace = config.DefaultTerrainMoveCellsPerTick
+	}
+	pace := basePace * speed / referenceSpeed
+	if math.IsNaN(pace) || math.IsInf(pace, 0) || pace <= 0 {
+		return config.DefaultTerrainMoveCellsPerTick
+	}
+	// Eight cells in one tick still covers deliberate high-speed effects while
+	// providing a hard work bound if runtime bot state is ever corrupted.
+	return math.Min(pace, 8)
 }
 
 // gridMoveCellsForTick converts continuous MoveSpeed into grid-cell movement
-// credits. A balanced loadout (one quarter of the stat budget in speed)
-// preserves the previous half-cell-per-tick cadence, while lower and higher
-// allocations now move proportionally slower or faster. Fractional credits
-// carry across ticks so small stat differences are not rounded away.
+// credits. A balanced loadout (one quarter of the stat budget in speed) uses
+// the configured base cadence, while lower and higher allocations move
+// proportionally slower or faster. Fractional credits carry across ticks so
+// small stat differences are not rounded away.
 func gridMoveCellsForTick(bot *BotState) int {
 	bot.MoveProgress += terrainMoveCellsPerTick(bot)
 	cells := int(math.Floor(bot.MoveProgress + 1e-9))

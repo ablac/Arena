@@ -26,14 +26,20 @@ func TestBuildMagicLinkMessageIsMultipartAndEscapesCustomerName(t *testing.T) {
 	text := string(message)
 	for _, required := range []string{
 		"From: \"Arena\" <noreply@angel-serv.com>",
+		"Reply-To: \"Arena\" <noreply@angel-serv.com>",
 		"To: <pilot@example.com>",
-		"Subject: Sign in to Arena",
+		"Subject: Your Arena sign-in link",
 		"Date: Sat, 11 Jul 2026 20:00:00 +0000",
 		"Message-ID: <message-id@angel-serv.com>",
+		"Auto-Submitted: auto-generated",
 		"multipart/alternative",
 		"text/plain; charset=utf-8",
 		"text/html; charset=utf-8",
 		"expires in 15 minutes",
+		"ARENA ACCOUNT ACCESS",
+		"Sign in to your Arena Dashboard",
+		"Copy and paste this address",
+		"Never share this link",
 		"https://arena.angel-serv.com/dashboard/#email_token=secret-token",
 	} {
 		if !strings.Contains(text, required) {
@@ -46,6 +52,9 @@ func TestBuildMagicLinkMessageIsMultipartAndEscapesCustomerName(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(htmlPart), []byte("Pilot &lt;script&gt;alert(1)&lt;/script&gt;")) {
 		t.Fatalf("escaped HTML greeting missing:\n%s", text)
+	}
+	if strings.Count(htmlPart, `<a href=`) != 1 {
+		t.Fatalf("HTML email must contain one primary CTA link:\n%s", htmlPart)
 	}
 }
 

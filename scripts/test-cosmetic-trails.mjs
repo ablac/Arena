@@ -58,6 +58,10 @@ const resolved = paidAssets.map(asset => trails.resolveTrailStyle(asset));
 assert.equal(resolved.length, 24);
 assert.ok(resolved.every(style => style && style.key !== 'standard'),
   'every paid catalog key must resolve to a non-default local trail style');
+assert.ok(resolved.every(style => style.width >= 1.2 && style.alpha >= 0.58),
+  'every paid trail must remain clearly wider and more opaque than the free standard wake');
+assert.ok(resolved.every(style => style.particles?.emitRate >= 24),
+  'paid particle signatures need enough emission to remain legible at spectator zoom');
 assert.ok(resolved.every(style => /^#[0-9a-f]{6}$/i.test(style.primary)
   && /^#[0-9a-f]{6}$/i.test(style.secondary)),
   'every trail style needs two bounded local colors');
@@ -204,6 +208,18 @@ assert.equal(reducedRenderer.particleSystemCount, 0,
 assert.equal(reducedRenderer.trails.get('reduced-bot').mesh.isEnabled(), true,
   'reduced motion must retain the static ribbon preview');
 reducedRenderer.dispose();
+
+const previewPathRenderer = new trails.TrailRenderer({}, {
+  forceEnabled: true,
+  previewPath: true,
+  reducedMotion: true,
+});
+previewPathRenderer.render(new Map([['preview-bot', entryFor('preview-bot', 'ember_sparks')]]), 0.016);
+assert.equal(previewPathRenderer.particleSystemCount, 0,
+  'the static reduced-motion preview path must not allocate particles');
+assert.equal(previewPathRenderer.trails.get('preview-bot').mesh.isEnabled(), true,
+  'the preview must retain a visible paid ribbon before motion begins');
+previewPathRenderer.dispose();
 
 const motionRenderer = new trails.TrailRenderer({}, {forceEnabled: true});
 const motionEntry = entryFor('moving-bot', 'ember_sparks');

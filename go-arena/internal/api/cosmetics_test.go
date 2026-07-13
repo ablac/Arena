@@ -20,40 +20,42 @@ import (
 )
 
 type fakeCosmeticsStore struct {
-	publicCatalog  *db.CosmeticCatalog
-	adminCatalog   *db.CosmeticCatalog
-	audit          []db.CosmeticCatalogAudit
-	items          []db.BotCosmeticItem
-	equipped       map[string]string
-	equippedErr    error
-	equipItem      *db.CosmeticItem
-	equipErr       error
-	grantCreated   bool
-	grantErr       error
-	revoked        bool
-	revokeErr      error
-	inventory      *db.CustomerCosmeticsInventory
-	linkBot        *db.AccountBot
-	assignment     *db.CosmeticAssignmentChange
-	license        *db.CosmeticLicense
-	lastBotID      string
-	lastAccount    string
-	lastLicense    string
-	lastSlot       string
-	lastCosmetic   string
-	lastActor      string
-	lastLimit      int
-	adminAccess    *db.CosmeticAdminAccess
-	membership     *db.CosmeticAdminMembership
-	licensesMade   int
-	affectedBots   []string
-	lastEmail      string
-	lastNote       string
-	lastReason     string
-	lastMembership string
-	lastExpiry     time.Time
-	lastSource     string
-	lastReference  string
+	publicCatalog      *db.CosmeticCatalog
+	adminCatalog       *db.CosmeticCatalog
+	audit              []db.CosmeticCatalogAudit
+	items              []db.BotCosmeticItem
+	equipped           map[string]string
+	equippedErr        error
+	equippedBotIDs     []string
+	equipItem          *db.CosmeticItem
+	equipErr           error
+	grantCreated       bool
+	grantErr           error
+	revoked            bool
+	revokeErr          error
+	inventory          *db.CustomerCosmeticsInventory
+	linkBot            *db.AccountBot
+	assignment         *db.CosmeticAssignmentChange
+	license            *db.CosmeticLicense
+	lastBotID          string
+	lastAccount        string
+	lastLicense        string
+	lastSlot           string
+	lastCosmetic       string
+	lastActor          string
+	lastLimit          int
+	adminAccess        *db.CosmeticAdminAccess
+	membership         *db.CosmeticAdminMembership
+	licensesMade       int
+	affectedBots       []string
+	lastEmail          string
+	lastNote           string
+	lastReason         string
+	lastMembership     string
+	lastExpiry         time.Time
+	lastSource         string
+	lastReference      string
+	expiredMemberships int
 }
 
 func (f *fakeCosmeticsStore) PublicCatalog(context.Context) (*db.CosmeticCatalog, error) {
@@ -93,7 +95,8 @@ func (f *fakeCosmeticsStore) ListAudit(_ context.Context, limit int) ([]db.Cosme
 func (f *fakeCosmeticsStore) ListForBot(context.Context, string) ([]db.BotCosmeticItem, error) {
 	return f.items, nil
 }
-func (f *fakeCosmeticsStore) Equipped(context.Context, string) (map[string]string, error) {
+func (f *fakeCosmeticsStore) Equipped(_ context.Context, botID string) (map[string]string, error) {
+	f.equippedBotIDs = append(f.equippedBotIDs, botID)
 	return f.equipped, f.equippedErr
 }
 func (f *fakeCosmeticsStore) Equip(_ context.Context, botID, slot, cosmeticID string) (*db.CosmeticItem, error) {
@@ -131,6 +134,55 @@ func TestAccountCosmeticsInventoryAccountQuotaStopsStoreWork(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"code":"ACCOUNT_COSMETICS_RATE_LIMIT"`) {
 		t.Fatalf("inventory quota response=%s", recorder.Body.String())
+	}
+}
+
+func TestAccountCosmeticsInventoryReconcilesTimedMembershipBeforeReadback(t *testing.T) {
+	store := &fakeCosmeticsStore{
+		inventory:          &db.CustomerCosmeticsInventory{},
+		expiredMemberships: 1,
+	}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/account/cosmetics", nil)
+	request = request.WithContext(withCustomerSession(request.Context(), &CustomerSession{
+		AccountID: "account-expiry",
+		Email:     "Member@Example.com",
+	}))
+	handler.AccountInventory(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if store.lastEmail != "Member@Example.com" || store.lastAccount != "account-expiry" {
+		t.Fatalf("expiry/readback order email=%q account=%q", store.lastEmail, store.lastAccount)
+	}
+}
+
+func TestAccountCosmeticsInventoryExpiryRefreshIsScopedAndNonBlocking(t *testing.T) {
+	store := &fakeCosmeticsStore{
+		inventory:          &db.CustomerCosmeticsInventory{},
+		expiredMemberships: 1,
+		affectedBots:       []string{"affected-bot"},
+		equippedErr:        errors.New("temporary visual cache read failure"),
+	}
+	engine := game.NewGameEngine()
+	engine.Bots["affected-bot"] = &game.BotState{BotID: "affected-bot"}
+	engine.Bots["unrelated-bot"] = &game.BotState{BotID: "unrelated-bot"}
+	handler := newCosmeticsHandlerWithStore(store, engine)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/account/cosmetics", nil)
+	request = request.WithContext(withCustomerSession(request.Context(), &CustomerSession{
+		AccountID: "account-expiry",
+		Email:     "member@example.com",
+	}))
+
+	handler.AccountInventory(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := strings.Join(store.equippedBotIDs, ","); got != "affected-bot" {
+		t.Fatalf("visual refresh bots=%q, want only affected-bot", got)
 	}
 }
 func (f *fakeCosmeticsStore) LinkBot(_ context.Context, accountID, botID string) (*db.AccountBot, error) {
@@ -184,7 +236,7 @@ func (f *fakeCosmeticsStore) ExpireAdminMembershipsForEmail(
 	_ context.Context, email string, _ time.Time,
 ) (int, []string, error) {
 	f.lastEmail = email
-	return 0, f.affectedBots, f.revokeErr
+	return f.expiredMemberships, f.affectedBots, f.revokeErr
 }
 
 func requestWithBot(method, target string, body []byte, bot *db.Bot) *http.Request {
