@@ -169,15 +169,27 @@ func navigationPosition(msg map[string]interface{}) ([2]float64, float64, bool) 
 }
 
 func navigationStallLimit(speed float64) int {
-	if speed <= 0 {
-		return 3
-	}
 	referencePoints := float64(config.C.StatBudget) / 4
 	referenceSpeed := config.C.StatSpeedBase + referencePoints*config.C.StatSpeedPerPoint
-	if referenceSpeed <= 0 {
-		return 3
+	if math.IsNaN(referenceSpeed) || math.IsInf(referenceSpeed, 0) || referenceSpeed <= 0 {
+		referenceSpeed = 1
 	}
-	limit := int(math.Ceil(2 * referenceSpeed / speed))
+	if math.IsNaN(speed) || math.IsInf(speed, 0) || speed <= 0 {
+		speed = referenceSpeed
+	}
+	basePace := config.C.TerrainMoveCellsPerTick
+	if math.IsNaN(basePace) || math.IsInf(basePace, 0) || basePace <= 0 || basePace > config.MaxTerrainMoveCellsPerTick {
+		basePace = config.DefaultTerrainMoveCellsPerTick
+	}
+	pace := basePace * speed / referenceSpeed
+	if math.IsNaN(pace) || math.IsInf(pace, 0) || pace <= 0 {
+		pace = config.DefaultTerrainMoveCellsPerTick
+	}
+	// The authoritative movement system accrues fractional cell credits. Wait
+	// for two complete server-paced cells before treating unchanged coordinates
+	// as a wall stall; otherwise slower loadouts are "recovered" immediately
+	// before their first legitimate movement credit becomes usable.
+	limit := int(math.Ceil(2 / pace))
 	return max(2, limit)
 }
 

@@ -1,6 +1,10 @@
 package demobots
 
-import "testing"
+import (
+	"testing"
+
+	"arena-server/internal/config"
+)
 
 func navigationTick(tick int, position [2]float64, speed float64) map[string]interface{} {
 	return map[string]interface{}{
@@ -99,17 +103,42 @@ func TestNavigationStateBreaksAlternatingLoopAcrossFractionalPacing(t *testing.T
 	}
 }
 
-func TestNavigationStateAllowsFractionalMovementPacing(t *testing.T) {
+func TestNavigationStateAllowsServerFractionalMovementPacing(t *testing.T) {
 	setTerrain(t, 20, 20, nil)
+	previousConfig := config.C
+	config.C.StatBudget = 20
+	config.C.StatSpeedBase = 3
+	config.C.StatSpeedPerPoint = 0.5
+	config.C.TerrainMoveCellsPerTick = config.DefaultTerrainMoveCellsPerTick
+	t.Cleanup(func() { config.C = previousConfig })
 
-	var navigation navigationState
-	requested := moveDir([2]float64{1, 0})
-	position := [2]float64{5, 5}
-	for tick := 1; tick <= 3; tick++ {
-		got := navigation.stabilize(navigationTick(tick, position, 4.5), requested, "paced-bot")
-		if got.Direction == nil || *got.Direction != *requested.Direction {
-			t.Fatalf("tick %d treated normal fractional movement pacing as a stall: %+v", tick, got)
-		}
+	tests := []struct {
+		name               string
+		speed              float64
+		stationaryTicks    int
+		expectedStallLimit int
+	}{
+		{name: "fortress", speed: 4.5, stationaryTicks: 4, expectedStallLimit: 7},
+		{name: "shredder", speed: 6.5, stationaryTicks: 3, expectedStallLimit: 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := navigationStallLimit(tt.speed); got != tt.expectedStallLimit {
+				t.Fatalf("navigationStallLimit(%v) = %d, want server-paced %d", tt.speed, got, tt.expectedStallLimit)
+			}
+			var navigation navigationState
+			requested := moveDir([2]float64{1, 0})
+			position := [2]float64{5, 5}
+			for tick := 1; tick <= tt.stationaryTicks; tick++ {
+				got := navigation.stabilize(navigationTick(tick, position, tt.speed), requested, tt.name+"-paced-bot")
+				if got.Direction == nil || *got.Direction != *requested.Direction {
+					t.Fatalf("tick %d treated normal server movement-credit pacing as a stall: %+v", tick, got)
+				}
+				if navigation.recovery != nil {
+					t.Fatalf("tick %d armed recovery before server movement credit could produce a cell: %+v", tick, navigation.recovery)
+				}
+			}
+		})
 	}
 }
 

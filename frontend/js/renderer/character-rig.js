@@ -19,12 +19,13 @@ const _sceneResources = new WeakMap();
 
 // Separate enter/exit distances prevent rapid camera movement near the
 // boundary from flipping an entire crowd between detail levels each frame.
-export const FORGE_FAR_LOD_ENTER_DISTANCE = 520;
-export const FORGE_FAR_LOD_EXIT_DISTANCE = 440;
+export const FORGE_FAR_LOD_ENTER_DISTANCE = 1320;
+export const FORGE_FAR_LOD_EXIT_DISTANCE = 1140;
 
 // A distant bot still needs to read as a character at a glance. These six
-// normalized pieces are merged once per scene, then instanced per live bot;
-// the extra silhouette information therefore costs no additional draw calls.
+// normalized pieces are merged once per scene, then share geometry across live
+// bots. A tiny per-bot material keeps avatar identity without restoring the
+// articulated body's much larger draw/update cost.
 export const FORGE_FAR_LOD_PROXY_PARTS = Object.freeze([
   Object.freeze({role: 'torso', shape: 'box', position: [0, 0.57, 0], scaling: [0.56, 0.48, 0.32]}),
   Object.freeze({role: 'head', shape: 'sphere', position: [0, 0.88, 0], scaling: [0.30, 0.26, 0.29]}),
@@ -78,6 +79,23 @@ function createFarSilhouetteTemplate(B, scene, material) {
   merged.isPickable = false;
   merged.setEnabled(false);
   return merged;
+}
+
+function readableFarColor(B, color) {
+  const maxChannel = Math.max(color.r, color.g, color.b, 0.001);
+  const saturationScale = maxChannel < 0.82 ? 0.82 / maxChannel : 1;
+  let red = Math.min(1, color.r * saturationScale);
+  let green = Math.min(1, color.g * saturationScale);
+  let blue = Math.min(1, color.b * saturationScale);
+  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  const targetLuminance = 0.56;
+  if (luminance < targetLuminance) {
+    const whiteMix = (targetLuminance - luminance) / Math.max(0.001, 1 - luminance);
+    red += (1 - red) * whiteMix;
+    green += (1 - green) * whiteMix;
+    blue += (1 - blue) * whiteMix;
+  }
+  return new B.Color3(red, green, blue);
 }
 
 function getResources(scene) {
@@ -136,8 +154,8 @@ function getResources(scene) {
   plate.isPickable = false;
   plate.setEnabled(false);
 
-  // One merged humanoid silhouette replaces every articulated mesh on distant
-  // live bots. Instances share both geometry and material with this template.
+  // One merged humanoid silhouette replaces the articulated body on distant
+  // live bots. Clones share this geometry and add one identity material each.
   const low = createFarSilhouetteTemplate(B, scene, farSilhouette);
 
   resources = {graphite, gunmetal, farSilhouette, selector, box, head, plate, low};
@@ -196,7 +214,8 @@ export function setForgeCharacterLOD(entry, far) {
   if (!entry) return false;
 
   entry._forgeFarLOD = useFar;
-  for (const mesh of entry._forgeMeshes || []) setNodeEnabled(mesh, !useFar);
+  const farMeshes = new Set(entry._forgeFarMeshes || []);
+  for (const mesh of entry._forgeMeshes || []) setNodeEnabled(mesh, !useFar || farMeshes.has(mesh));
   setNodeEnabled(entry.selector, !useFar);
   setNodeEnabled(entry.lowDetail, useFar);
   for (const group of entry._cosmeticState?.groups || []) setNodeEnabled(group, !useFar);
@@ -211,22 +230,30 @@ export function updateForgeCharacterLOD(entry, camera) {
     if (entry._forgeFarLOD === useFar) return useFar;
     return setForgeCharacterLOD(entry, useFar);
   }
+  const cameraRadius = Number(camera?.radius);
   const cameraPosition = camera?.globalPosition || camera?.position;
   const rootPosition = typeof entry.root?.getAbsolutePosition === 'function'
     ? entry.root.getAbsolutePosition()
     : entry.root?.position;
-  if (!cameraPosition || !rootPosition) {
+  if ((!Number.isFinite(cameraRadius) || cameraRadius <= 0) && (!cameraPosition || !rootPosition)) {
     if (entry._forgeFarLOD === useFar) return useFar;
     return setForgeCharacterLOD(entry, useFar);
   }
 
-  const dx = cameraPosition.x - rootPosition.x;
-  const dy = cameraPosition.y - rootPosition.y;
-  const dz = cameraPosition.z - rootPosition.z;
   const boundary = entry._forgeFarLOD
     ? FORGE_FAR_LOD_EXIT_DISTANCE
     : FORGE_FAR_LOD_ENTER_DISTANCE;
-  useFar = dx * dx + dy * dy + dz * dz > boundary * boundary;
+  if (Number.isFinite(cameraRadius) && cameraRadius > 0) {
+    // ArcRotate radius is the spectator's actual zoom level. Using per-bot
+    // camera distance made edge-of-map characters turn into proxies while a
+    // same-sized bot near the camera target retained its authored rig.
+    useFar = cameraRadius > boundary;
+  } else {
+    const dx = cameraPosition.x - rootPosition.x;
+    const dy = cameraPosition.y - rootPosition.y;
+    const dz = cameraPosition.z - rootPosition.z;
+    useFar = dx * dx + dy * dy + dz * dz > boundary * boundary;
+  }
   if (entry._forgeFarLOD === useFar) return useFar;
   return setForgeCharacterLOD(entry, useFar);
 }
@@ -472,6 +499,7 @@ export function createForgeCharacter(bot, scene, options = {}) {
 
   let selector = null;
   let lowDetail = null;
+  let lowDetailMat = null;
   if (!presentationOnly) {
     selector = B.MeshBuilder.CreateCylinder(`forge-selector-${id}`, {
       height: bodyY + headY + headHeight + 2,
@@ -486,8 +514,20 @@ export function createForgeCharacter(bot, scene, options = {}) {
     selector.metadata = {botId: id};
 
     const lowHeight = bodyY + headY + headHeight * 0.64;
-    lowDetail = resources.low.createInstance(`forge-low-${id}`);
+    const lowColor = readableFarColor(B, color);
+    lowDetailMat = makeMat(`forge-low-identity-${id}`, scene, lowColor, {
+      emissiveFactor: 1,
+      noLight: true,
+      specular: new B.Color3(0.20, 0.24, 0.30),
+      backFace: true,
+    });
+    lowDetailMat.backFaceCulling = true;
+    lowDetailMat.freeze();
+    // A clone keeps the single merged scene geometry while allowing each bot
+    // to retain its own readable avatar color at extreme spectator zoom.
+    lowDetail = resources.low.clone(`forge-low-${id}`);
     lowDetail.parent = root;
+    lowDetail.material = lowDetailMat;
     lowDetail.position.y = 0;
     lowDetail.scaling.set(
       Math.max(torsoWidth, pelvisWidth, headWidth) * 1.34 / 0.9,
@@ -566,8 +606,9 @@ export function createForgeCharacter(bot, scene, options = {}) {
     weaponBase,
     weaponPoseNodes,
     weaponBases,
-    _forgeMaterials: [bodyMat, headMat],
+    _forgeMaterials: [bodyMat, headMat, lowDetailMat].filter(Boolean),
     _forgeMeshes: visibleMeshes,
+    _forgeFarMeshes: [...weapon._forgeMeshes],
     _visibleMeshCount: visibleMeshes.length,
     presentationOnly,
     lowDetail,

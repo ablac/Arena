@@ -54,6 +54,12 @@ class FakeNode {
     instance.sourceMesh = this;
     return instance;
   }
+  clone(name) {
+    const clone = new FakeNode(name, this.scene);
+    clone.material = this.material;
+    clone.geometrySource = this;
+    return clone;
+  }
   getScene() { return this.scene; }
   getChildMeshes() { return nodes.filter(node => node.parent === this); }
   setEnabled(enabled) { this.enabled = enabled; }
@@ -94,11 +100,12 @@ const {BotRenderer} = await import(
 );
 
 const weapons = ['sword', 'bow', 'spear', 'daggers', 'staff', 'shield', 'grapple'];
+const avatarColors = ['#ff5c72', '#74f28c', '#ffd166', '#c77dff', '#ff9f45', '#5ce1e6', '#f783ff'];
 const scene = {};
-const entries = weapons.map(weapon => createForgeCharacter({
+const entries = weapons.map((weapon, index) => createForgeCharacter({
   bot_id: `visibility-test-${weapon}`,
   name: `Visibility Test ${weapon}`,
-  avatar_color: '#22ccff',
+  avatar_color: avatarColors[index],
   weapon,
 }, scene));
 
@@ -159,12 +166,19 @@ if (focus === 'all' || focus === 'far') {
       entry.mountMetrics.headDepth,
     ) * 1.10, 'far LOD must deepen the proxy enough to retain a solid silhouette');
   }
-  const farMaterial = entries[0].lowDetail.material;
-  assert.ok(entries.every(entry => entry.lowDetail.material === farMaterial),
-    'far visibility must use shared geometry and one scene-owned material, not per-bot resources');
+  const farMaterials = entries.map(entry => entry.lowDetail.material);
+  assert.equal(new Set(farMaterials).size, entries.length,
+    'far LOD must keep per-bot avatar materials instead of painting every bot the same blue');
+  assert.equal(new Set(farMaterials.map(material => [
+    material.diffuseColor.r.toFixed(4),
+    material.diffuseColor.g.toFixed(4),
+    material.diffuseColor.b.toFixed(4),
+  ].join(','))).size, entries.length,
+  'far LOD colors must preserve each bot identity at overview distance');
 
-  const farEmissive = farMaterial.emissiveColor.clone();
   const statusEntry = entries[0];
+  const farMaterial = statusEntry.lowDetail.material;
+  const farEmissive = farMaterial.emissiveColor.clone();
   BotRenderer.prototype._updateStatusEffects.call({}, statusEntry, {
     is_alive: true, is_dodging: true, is_stunned: true, hp: 12, max_hp: 100,
   }, 100);
@@ -177,7 +191,7 @@ if (focus === 'all' || focus === 'far') {
   assert.equal(statusEntry.headMat.alpha, 0.5,
     'dodge feedback must use the bot-owned core material');
   assert.deepEqual(farMaterial.emissiveColor, farEmissive,
-    'stun and wounded status must not mutate the shared far-visibility floor');
+    'stun and wounded status must not mutate the bot identity far-visibility floor');
   BotRenderer.prototype._updateStatusEffects.call({}, statusEntry, {
     is_alive: true, is_dodging: false, is_stunned: false, hp: 100, max_hp: 100,
   }, 200);
