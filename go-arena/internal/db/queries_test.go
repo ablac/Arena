@@ -24,6 +24,12 @@ func TestAuthQueries_NilPool_ReturnErrorNotPanic(t *testing.T) {
 	if _, err := GetAPIKeyByPrefix(ctx, "arena_abcd1234"); err == nil {
 		t.Error("GetAPIKeyByPrefix: expected an error when Pool is nil, got nil")
 	}
+	if _, _, err := GetAPIKeyAndBotByPrefix(ctx, "arena_abcd1234"); err == nil {
+		t.Error("GetAPIKeyAndBotByPrefix: expected an error when Pool is nil, got nil")
+	}
+	if _, err := IsAPIKeyActive(ctx, "some-key-id"); err == nil {
+		t.Error("IsAPIKeyActive: expected an error when Pool is nil, got nil")
+	}
 	if _, err := GetBotByAPIKeyID(ctx, "some-bot-id"); err == nil {
 		t.Error("GetBotByAPIKeyID: expected an error when Pool is nil, got nil")
 	}

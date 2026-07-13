@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const postgresIntegrationEnv = "ARENA_TEST_DATABASE_URL"
@@ -141,6 +142,46 @@ func TestPostgresFreshSchemaCosmeticsAndLeaderboardResetSmoke(t *testing.T) {
 	}
 	if err := CreateAPIKeyAndBot(ctx, bot.APIKeyID, "integration-hash", "arena_integration_prefix", "127.0.0.1", bot); err != nil {
 		t.Fatalf("CreateAPIKeyAndBot: %v", err)
+	}
+	joinedKey, joinedBot, err := GetAPIKeyAndBotByPrefix(ctx, "arena_integration_prefix")
+	if err != nil {
+		t.Fatalf("GetAPIKeyAndBotByPrefix: %v", err)
+	}
+	if joinedKey == nil || joinedKey.ID != bot.APIKeyID || joinedBot == nil || joinedBot.ID != bot.ID {
+		t.Fatalf("joined authentication lookup = key %#v bot %#v", joinedKey, joinedBot)
+	}
+	active, err := IsAPIKeyActive(ctx, bot.APIKeyID)
+	if err != nil || !active {
+		t.Fatalf("IsAPIKeyActive active row = (%v, %v), want (true, nil)", active, err)
+	}
+	if err := DeactivateAPIKey(ctx, bot.APIKeyID); err != nil {
+		t.Fatalf("DeactivateAPIKey: %v", err)
+	}
+	active, err = IsAPIKeyActive(ctx, bot.APIKeyID)
+	if err != nil || active {
+		t.Fatalf("IsAPIKeyActive revoked row = (%v, %v), want (false, nil)", active, err)
+	}
+	active, err = IsAPIKeyActive(ctx, "missing-integration-key")
+	if err != nil || active {
+		t.Fatalf("IsAPIKeyActive missing row = (%v, %v), want (false, nil)", active, err)
+	}
+	if _, err := Pool.Exec(ctx, `UPDATE api_keys SET is_active = true WHERE id = $1`, bot.APIKeyID); err != nil {
+		t.Fatalf("reactivate integration API key: %v", err)
+	}
+	rollbackHash, err := bcrypt.GenerateFromPassword([]byte("integration-key-secret"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("generate rollback-compatible credential fixture: %v", err)
+	}
+	migratedHash := string(rollbackHash) + "sha256:v1:" + strings.Repeat("a", 64)
+	if err := UpdateAPIKeyHashAndLastSeen(ctx, bot.APIKeyID, migratedHash); err != nil {
+		t.Fatalf("UpdateAPIKeyHashAndLastSeen: %v", err)
+	}
+	joinedKey, joinedBot, err = GetAPIKeyAndBotByPrefix(ctx, "arena_integration_prefix")
+	if err != nil {
+		t.Fatalf("GetAPIKeyAndBotByPrefix after migration: %v", err)
+	}
+	if joinedKey == nil || joinedKey.KeyHash != migratedHash || joinedKey.LastSeen == nil || joinedBot == nil || joinedBot.ID != bot.ID {
+		t.Fatalf("post-migration authentication lookup = key %#v bot %#v", joinedKey, joinedBot)
 	}
 
 	created, err := GrantCosmeticEntitlement(ctx, bot.ID, "skin-neon-grid", "integration", "grant-1")

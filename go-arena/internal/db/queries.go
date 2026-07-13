@@ -9,6 +9,7 @@ import (
 	"arena-server/internal/config"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // weaponBalanceAlgorithmVersion prevents statistically incompatible state
@@ -828,6 +829,18 @@ func GetAllAdminTokenHashes(ctx context.Context) ([]string, error) {
 const getActiveAPIKeyByPrefixSQL = `SELECT id, key_hash, key_prefix, created_at, last_seen, is_active, ip_created
  FROM api_keys WHERE key_prefix = $1 AND is_active = true`
 
+const isAPIKeyActiveSQL = `SELECT is_active FROM api_keys WHERE id = $1`
+
+const getActiveAPIKeyAndBotByPrefixSQL = `SELECT
+ k.id, k.key_hash, k.key_prefix, k.created_at, k.last_seen, k.is_active, k.ip_created,
+ COALESCE(b.id, ''), COALESCE(b.api_key_id, ''), COALESCE(b.name, ''),
+ COALESCE(b.avatar_color, ''), COALESCE(b.default_weapon, ''),
+ COALESCE(b.default_stats, '{}'::jsonb), COALESCE(b.default_fallback, ''),
+ COALESCE(b.created_at, to_timestamp(0)), COALESCE(b.updated_at, to_timestamp(0))
+ FROM api_keys k
+ LEFT JOIN bots b ON b.api_key_id = k.id
+ WHERE k.key_prefix = $1 AND k.is_active = true`
+
 // GetAPIKeyByPrefix retrieves an active API key by its prefix.
 func GetAPIKeyByPrefix(ctx context.Context, prefix string) (*ApiKey, error) {
 	if Pool == nil {
@@ -843,6 +856,52 @@ func GetAPIKeyByPrefix(ctx context.Context, prefix string) (*ApiKey, error) {
 		return nil, fmt.Errorf("GetAPIKeyByPrefix: %w", err)
 	}
 	return k, nil
+}
+
+// GetAPIKeyAndBotByPrefix retrieves the active API key and its associated bot
+// in one database round trip. Authentication still verifies the stored
+// credential before returning the bot to a caller.
+func GetAPIKeyAndBotByPrefix(ctx context.Context, prefix string) (*ApiKey, *Bot, error) {
+	if Pool == nil {
+		return nil, nil, ErrNoDatabase
+	}
+
+	key := &ApiKey{}
+	bot := &Bot{}
+	err := Pool.QueryRow(ctx, getActiveAPIKeyAndBotByPrefixSQL, prefix).Scan(
+		&key.ID, &key.KeyHash, &key.KeyPrefix, &key.CreatedAt, &key.LastSeen, &key.IsActive, &key.IPCreated,
+		&bot.ID, &bot.APIKeyID, &bot.Name, &bot.AvatarColor, &bot.DefaultWeapon,
+		&bot.DefaultStats, &bot.DefaultFallback, &bot.CreatedAt, &bot.UpdatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("GetAPIKeyAndBotByPrefix: %w", err)
+	}
+	if bot.ID == "" {
+		bot = nil
+	}
+	return key, bot, nil
+}
+
+// IsAPIKeyActive performs an exact-id, fail-closed admission recheck after a
+// bot becomes visible to the engine. A missing row is inactive; callers can
+// distinguish database failures and reject the admission without guessing.
+func IsAPIKeyActive(ctx context.Context, id string) (bool, error) {
+	if Pool == nil {
+		return false, ErrNoDatabase
+	}
+
+	var active bool
+	err := Pool.QueryRow(ctx, isAPIKeyActiveSQL, id).Scan(&active)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return false, nil
+		}
+		return false, fmt.Errorf("IsAPIKeyActive: %w", err)
+	}
+	return active, nil
 }
 
 // CreateAPIKey inserts a new API key row.
@@ -881,6 +940,34 @@ func UpdateAPIKeyLastSeen(ctx context.Context, id string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("UpdateAPIKeyLastSeen: %w", err)
+	}
+	return nil
+}
+
+const updateAPIKeyHashAndLastSeenSQL = `UPDATE api_keys
+ SET key_hash = $2, last_seen = NOW()
+ WHERE id = $1`
+
+type apiKeyAuthExecer interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+// UpdateAPIKeyHashAndLastSeen atomically upgrades a verified legacy bcrypt
+// credential to the rollback-safe composite and records its successful use in
+// one database write.
+func UpdateAPIKeyHashAndLastSeen(ctx context.Context, id, keyHash string) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
+	return updateAPIKeyHashAndLastSeen(ctx, Pool, id, keyHash)
+}
+
+func updateAPIKeyHashAndLastSeen(ctx context.Context, execer apiKeyAuthExecer, id, keyHash string) error {
+	if keyHash == "" {
+		return fmt.Errorf("UpdateAPIKeyHashAndLastSeen: replacement hash is required")
+	}
+	if _, err := execer.Exec(ctx, updateAPIKeyHashAndLastSeenSQL, id, keyHash); err != nil {
+		return fmt.Errorf("UpdateAPIKeyHashAndLastSeen: %w", err)
 	}
 	return nil
 }
