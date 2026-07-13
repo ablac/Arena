@@ -9,6 +9,7 @@
 
 import { isEnabled } from '../settings.js';
 import { makeMat, parseColor } from './utils.js';
+import {bodyFormForAsset} from './body-form-roster.js?v=20260713b';
 
 const ALLOWED = {
   bot_skin: new Set(['standard', 'neon_grid', 'carbon_armor']),
@@ -25,6 +26,8 @@ const DEFAULTS = {
 /** Resolve a legacy or procedural asset key without accepting URLs or paths. */
 export function resolveCosmeticAsset(slot, value) {
   const fallback = DEFAULTS[slot] || 'standard';
+  const bodyForm = slot === 'bot_skin' ? bodyFormForAsset(value) : null;
+  if (bodyForm) return {kind: 'body-form', key: bodyForm.assetKey, bodyForm, theme: null};
   if (typeof value === 'string' && ALLOWED[slot]?.has(value)) {
     return {kind: 'legacy', key: value, theme: null};
   }
@@ -279,7 +282,9 @@ function buildProceduralSkin(state, asset, group, bot, scene) {
 
 function buildBotSkin(state, asset, entry, bot, scene) {
   const assetKey = asset.key;
-  if (assetKey === 'standard') return;
+  // Full-body geometry is constructed on the shared articulated skeleton and
+  // owns its far proxy. It is intentionally not an overlay cosmetic group.
+  if (assetKey === 'standard' || asset.kind === 'body-form') return;
   if (isForgeEntry(entry)) {
     buildForgeBotSkin(state, asset, entry, bot, scene);
     return;

@@ -1,0 +1,128 @@
+:root {
+  --arena-brand-ink: var(--text-primary, #ecf4ff);
+  --arena-brand-muted: var(--text-muted, #91a6bd);
+  --arena-brand-accent: var(--accent-blue, #47d7ff);
+  --arena-brand-font: var(--font-sans, 'Space Grotesk', sans-serif);
+  --arena-brand-mono: var(--font-mono, 'IBM Plex Mono', monospace);
+}
+
+.arena-brand {
+  display: inline-grid;
+  grid-template-rows: auto auto;
+  align-content: center;
+  justify-items: start;
+  gap: 4px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 3px 4px;
+  border-radius: 6px;
+  color: var(--arena-brand-ink);
+  line-height: 1;
+  text-decoration: none;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.9);
+  transition: color 180ms ease, text-shadow 180ms ease;
+}
+
+.arena-brand-name {
+  display: block;
+  max-width: none;
+  overflow: visible;
+  color: currentColor;
+  font: 700 clamp(0.82rem, 1.1vw, 1rem)/1 var(--arena-brand-font);
+  letter-spacing: 0.015em;
+  white-space: nowrap;
+}
+
+.arena-brand-product {
+  display: block;
+  max-width: none;
+  overflow: visible;
+  color: var(--arena-brand-muted);
+  font: 600 clamp(0.52rem, 0.65vw, 0.62rem)/1 var(--arena-brand-mono);
+  letter-spacing: 0.22em;
+  white-space: nowrap;
+}
+
+.arena-brand:hover {
+  color: #ffffff;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.9), 0 0 22px color-mix(in srgb, var(--arena-brand-accent) 35%, transparent);
+}
+
+.arena-brand:hover .arena-brand-product {
+  color: var(--arena-brand-accent);
+}
+
+.arena-brand:focus-visible {
+  outline: 2px solid var(--arena-brand-accent);
+  outline-offset: 4px;
+}
+
+.dashboard-arena-brand {
+  position: absolute;
+  inset-block-start: max(16px, env(safe-area-inset-top));
+  inset-inline-start: max(18px, env(safe-area-inset-left));
+  z-index: 30;
+}
+
+body:not(.dashboard-embedded) #app {
+  padding-top: 84px;
+}
+
+.dashboard-embedded .dashboard-arena-brand {
+  display: none;
+}
+
+.shop-site-header .arena-brand {
+  gap: 4px;
+}
+
+#tb-brand.arena-brand {
+  display: inline-grid;
+  flex: 0 1 auto;
+  justify-content: start;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0;
+}
+
+#tb-brand .arena-brand-name {
+  font-size: clamp(0.58rem, 2.7vw, 0.72rem);
+}
+
+#tb-brand .arena-brand-product {
+  font-size: clamp(0.42rem, 2vw, 0.5rem);
+}
+
+@media (max-width: 420px) {
+  .site-header .arena-brand,
+  .shop-site-header .arena-brand {
+    flex: 0 1 auto;
+  }
+
+  .arena-brand-name {
+    font-size: 0.68rem;
+  }
+
+  .arena-brand-product {
+    font-size: 0.46rem;
+  }
+
+  .site-brand > .arena-brand-product {
+    max-width: none;
+  }
+
+  .dashboard-arena-brand {
+    inset-block-start: max(10px, env(safe-area-inset-top));
+    inset-inline-start: max(10px, env(safe-area-inset-left));
+  }
+
+  body:not(.dashboard-embedded) #app {
+    padding-top: 72px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arena-brand {
+    transition-duration: 0.01ms;
+  }
+}

@@ -186,11 +186,11 @@ func TestStripeCosmeticPaymentProviderBuildsFixedMonthlySubscriptionCheckout(t *
 		t.Fatalf("subscription price = %#v", price)
 	}
 	if params.SubscriptionData == nil ||
-		stripe.StringValue(params.SubscriptionData.Description) != "Arena Cosmetics Pass: every current and future cosmetic set and trail." {
+		stripe.StringValue(params.SubscriptionData.Description) != "Arena Cosmetics Pass: every current and future cosmetic set, full-body skin, and trail." {
 		t.Fatalf("subscription disclosure = %#v", params.SubscriptionData)
 	}
 	if price.ProductData == nil ||
-		stripe.StringValue(price.ProductData.Description) != "Every current and future Arena cosmetic set and trail, for up to five API keys." {
+		stripe.StringValue(price.ProductData.Description) != "Every current and future Arena cosmetic set, full-body skin, and trail, for up to five API keys." {
 		t.Fatalf("subscription line-item disclosure = %#v", price.ProductData)
 	}
 }

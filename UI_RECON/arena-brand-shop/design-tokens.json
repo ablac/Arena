@@ -1,0 +1,49 @@
+{
+  "source": {
+    "image": "screenshots/source.png",
+    "designSize": "2550x105",
+    "designSizeSource": "inferred-from-image-pixels"
+  },
+  "color": {
+    "primaryText": "#ecf4ff",
+    "secondaryText": "#91a6bd",
+    "accent": "#47d7ff",
+    "hoverText": "#ffffff",
+    "textShadow": "0 2px 18px rgba(0, 0, 0, 0.9)"
+  },
+  "typography": {
+    "organization": {
+      "family": "Space Grotesk, sans-serif",
+      "weight": 700,
+      "size": "clamp(0.82rem, 1.1vw, 1rem)",
+      "letterSpacing": "0.015em"
+    },
+    "product": {
+      "family": "IBM Plex Mono, monospace",
+      "weight": 600,
+      "size": "clamp(0.52rem, 0.65vw, 0.62rem)",
+      "letterSpacing": "0.22em",
+      "transform": "uppercase"
+    }
+  },
+  "spacing": {
+    "lineGap": "4px",
+    "paddingBlock": "3px",
+    "paddingInline": "4px",
+    "minimumHitHeight": "44px"
+  },
+  "shape": {
+    "focusRadius": "6px",
+    "focusWidth": "2px",
+    "focusOffset": "4px"
+  },
+  "motion": {
+    "duration": "180ms",
+    "reducedMotionDuration": "0.01ms"
+  },
+  "responsive": {
+    "narrowBreakpoint": "420px",
+    "mobileOrganizationSize": "0.68rem",
+    "mobileProductSize": "0.46rem"
+  }
+}

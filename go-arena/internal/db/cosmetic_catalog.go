@@ -82,6 +82,7 @@ type CosmeticCatalogAudit struct {
 
 var launchCosmeticCategories = []CosmeticCategory{
 	{ID: "chassis", Name: "Chassis", Description: "Presentation-only bot body finishes.", IsActive: true, SortOrder: 10},
+	{ID: CosmeticBodyFormCategoryID, Name: "Body Forms", Description: "Original presentation-only silhouettes that completely transform a bot's appearance.", IsActive: true, SortOrder: 15},
 	{ID: "weapon-finishes", Name: "Weapon Finishes", Description: "Presentation-only weapon materials.", IsActive: true, SortOrder: 20},
 	{ID: "attachments", Name: "Attachments", Description: "Presentation-only bot accessories.", IsActive: true, SortOrder: 30},
 	{ID: CosmeticTrailCategoryID, Name: "Trails", Description: "Presentation-only movement ribbons and particle wakes.", IsActive: true, SortOrder: 35},
@@ -273,6 +274,16 @@ func buildStarterCosmeticPacks() []CosmeticPack {
 			SortOrder: (index + 1) * 10, ItemIDs: []string{"trail-" + idSlug},
 		})
 	}
+	for index, seed := range bodyFormCosmeticSeeds {
+		idSlug := strings.ReplaceAll(seed.Key, "_", "-")
+		packs = append(packs, CosmeticPack{
+			ID: "body-" + idSlug + "-pack", CategoryID: CosmeticBodyFormCategoryID,
+			Name:        seed.Name + " Body Form",
+			Description: seed.Description + " Includes one independently assignable full-body cosmetic license.",
+			PriceCents:  CosmeticPackPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true,
+			SortOrder: (index + 1) * 10, ItemIDs: []string{"skin-body-" + idSlug},
+		})
+	}
 	for index := range packs {
 		packs[index].IsBuiltin = true
 	}
@@ -327,6 +338,10 @@ func ValidateCosmeticItem(item CosmeticItem) error {
 	if item.Slot == CosmeticSlotTrail && !item.IsFree && item.PriceCents != CosmeticTrailPriceCents {
 		return fmt.Errorf("%w: paid trail item metadata must be $0.99 USD", ErrCosmeticCatalogInvalid)
 	}
+	isBodyFormAsset := item.Slot == CosmeticSlotBotSkin && supportedBodyFormAssets[item.AssetKey]
+	if isBodyFormAsset != (item.CategoryID == CosmeticBodyFormCategoryID) {
+		return fmt.Errorf("%w: body-form asset and category must match", ErrCosmeticCatalogInvalid)
+	}
 	return nil
 }
 
@@ -338,9 +353,9 @@ func ValidateCosmeticPack(pack CosmeticPack) error {
 		return ErrCosmeticCatalogInvalid
 	}
 	wantPrice := CosmeticPackPriceForCategory(pack.CategoryID)
-	if pack.CategoryID == CosmeticTrailCategoryID {
+	if pack.CategoryID == CosmeticTrailCategoryID || pack.CategoryID == CosmeticBodyFormCategoryID {
 		if len(pack.ItemIDs) != 1 {
-			return fmt.Errorf("%w: a trail product must contain exactly one item", ErrCosmeticCatalogInvalid)
+			return fmt.Errorf("%w: a trail or body-form product must contain exactly one item", ErrCosmeticCatalogInvalid)
 		}
 	}
 	if pack.IsPurchasable && !pack.IsFree && (pack.PriceCents != wantPrice || pack.Currency != "USD") {
@@ -682,11 +697,15 @@ func UpsertCosmeticPack(ctx context.Context, pack CosmeticPack, actor string) (*
 	if !categoryExists {
 		return nil, fmt.Errorf("%w: category does not exist", ErrCosmeticCatalogInvalid)
 	}
-	var itemCount, trailItemCount int
+	var itemCount, trailItemCount, bodyFormItemCount int
 	if len(pack.ItemIDs) > 0 {
 		if err := tx.QueryRow(ctx, `
-			SELECT COUNT(*), COUNT(*) FILTER (WHERE slot = $2)
-			FROM cosmetic_items WHERE id = ANY($1)`, pack.ItemIDs, CosmeticSlotTrail).Scan(&itemCount, &trailItemCount); err != nil {
+			SELECT COUNT(*),
+			       COUNT(*) FILTER (WHERE slot = $2),
+			       COUNT(*) FILTER (WHERE category_id = $3 AND slot = $4)
+			FROM cosmetic_items WHERE id = ANY($1)`,
+			pack.ItemIDs, CosmeticSlotTrail, CosmeticBodyFormCategoryID, CosmeticSlotBotSkin).
+			Scan(&itemCount, &trailItemCount, &bodyFormItemCount); err != nil {
 			return nil, fmt.Errorf("check cosmetic pack items: %w", err)
 		}
 	}
@@ -694,11 +713,15 @@ func UpsertCosmeticPack(ctx context.Context, pack CosmeticPack, actor string) (*
 		return nil, fmt.Errorf("%w: pack contains an unknown item", ErrCosmeticCatalogInvalid)
 	}
 	if pack.CategoryID == CosmeticTrailCategoryID {
-		if itemCount != 1 || trailItemCount != 1 {
+		if itemCount != 1 || trailItemCount != 1 || bodyFormItemCount != 0 {
 			return nil, fmt.Errorf("%w: a trail product must contain exactly one trail item", ErrCosmeticCatalogInvalid)
 		}
-	} else if trailItemCount != 0 {
-		return nil, fmt.Errorf("%w: non-trail products cannot contain trail items", ErrCosmeticCatalogInvalid)
+	} else if pack.CategoryID == CosmeticBodyFormCategoryID {
+		if itemCount != 1 || bodyFormItemCount != 1 || trailItemCount != 0 {
+			return nil, fmt.Errorf("%w: a body-form product must contain exactly one body-form item", ErrCosmeticCatalogInvalid)
+		}
+	} else if trailItemCount != 0 || bodyFormItemCount != 0 {
+		return nil, fmt.Errorf("%w: body-form and trail items require their matching product category", ErrCosmeticCatalogInvalid)
 	}
 	before, existed, err := cosmeticEntitySnapshot(ctx, tx, "pack", pack.ID)
 	if err != nil {

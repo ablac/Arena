@@ -410,6 +410,7 @@ func ReserveCosmeticOrderCheckout(ctx context.Context, accountID, packID string,
 	}
 	items := make([]CosmeticOrderItem, 0)
 	trailItemCount := 0
+	bodyFormItemCount := 0
 	for rows.Next() {
 		var item CosmeticOrderItem
 		var itemCategoryID string
@@ -419,13 +420,22 @@ func ReserveCosmeticOrderCheckout(ctx context.Context, accountID, packID string,
 			rows.Close()
 			return nil, false, fmt.Errorf("ReserveCosmeticOrderCheckout item scan: %w", err)
 		}
+		isBodyFormAsset := item.Slot == CosmeticSlotBotSkin && supportedBodyFormAssets[item.AssetKey]
 		if !itemActive || !itemCategoryActive || !IsValidCosmeticSlot(item.Slot) ||
+			!IsSupportedCosmeticAsset(item.Slot, item.AssetKey) ||
 			((item.Slot == CosmeticSlotTrail) != (itemCategoryID == CosmeticTrailCategoryID)) {
+			rows.Close()
+			return nil, false, ErrCosmeticOrderPackUnavailable
+		}
+		if isBodyFormAsset != (itemCategoryID == CosmeticBodyFormCategoryID) {
 			rows.Close()
 			return nil, false, ErrCosmeticOrderPackUnavailable
 		}
 		if item.Slot == CosmeticSlotTrail {
 			trailItemCount++
+		}
+		if itemCategoryID == CosmeticBodyFormCategoryID {
+			bodyFormItemCount++
 		}
 		items = append(items, item)
 	}
@@ -438,10 +448,14 @@ func ReserveCosmeticOrderCheckout(ctx context.Context, accountID, packID string,
 		return nil, false, ErrCosmeticOrderPackUnavailable
 	}
 	if categoryID == CosmeticTrailCategoryID {
-		if len(items) != 1 || trailItemCount != 1 {
+		if len(items) != 1 || trailItemCount != 1 || bodyFormItemCount != 0 {
 			return nil, false, ErrCosmeticOrderPackUnavailable
 		}
-	} else if trailItemCount != 0 {
+	} else if categoryID == CosmeticBodyFormCategoryID {
+		if len(items) != 1 || bodyFormItemCount != 1 || trailItemCount != 0 {
+			return nil, false, ErrCosmeticOrderPackUnavailable
+		}
+	} else if trailItemCount != 0 || bodyFormItemCount != 0 {
 		return nil, false, ErrCosmeticOrderPackUnavailable
 	}
 
