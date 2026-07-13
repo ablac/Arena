@@ -26,8 +26,6 @@ LOADOUT = {
     "weapon": "staff",
     "stats": {"hp": 6, "speed": 5, "attack": 7, "defense": 2},
     "fallback_behavior": "aggressive",
-    "bot_name": "Anismin",
-    "avatar_color": "#3498db"
 }
 
 # Game constants
@@ -356,7 +354,7 @@ async def run():
                         if a:
                             await ws.send(json.dumps(a))
                         else:
-                            # Send idle to prevent AFK kick (30 tick timeout!)
+                            # Keep the accepted-action stream active while idle.
                             await ws.send(json.dumps({"type": "action", "tick": msg.get("tick", 0), "action": "idle"}))
 
                     elif mt == "kill":

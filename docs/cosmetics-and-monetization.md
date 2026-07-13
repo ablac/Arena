@@ -88,6 +88,13 @@ ARENA_SMTP_PASSWORD=replace-with-send-only-app-password
 ARENA_SMTP_FROM=Arena <noreply@angel-serv.com>
 ```
 
+Arena sends a multipart text/HTML message with one branded call to action, a
+copyable fallback URL, an explicit expiry, and security guidance. The subject,
+From identity, Message-ID domain, and Reply-To remain stable. Template quality
+does not replace sender authentication: after any mail-server or DNS change,
+inspect a received message and require SPF, at least one aligned DKIM signature,
+and DMARC to pass before treating deliverability as healthy.
+
 The private submission address is deliberately separate from the TLS server
 name. Arena verifies the `mail.angel-serv.com` certificate with TLS 1.2 or
 newer and never uses `InsecureSkipVerify` or public port 25. The production
@@ -232,12 +239,14 @@ DELETE also requires the `X-CSRF-Token` returned by the session endpoint.
 ```text
 GET    /api/v1/dashboard/login
 POST   /api/v1/dashboard/logout
+GET    /api/v1/cosmetics/checkout/config
 GET    /api/v1/account/session
 POST   /api/v1/account/email/start
 POST   /api/v1/account/email/verify
 GET    /api/v1/account/cosmetics
 GET    /api/v1/account/cosmetics/orders
 POST   /api/v1/account/cosmetics/checkout
+POST   /api/v1/account/cosmetics/orders/{order_id}/checkout
 POST   /api/v1/account/cosmetics/subscription/checkout
 POST   /api/v1/account/cosmetics/subscription/portal
 GET    /api/v1/account/keys
@@ -255,9 +264,13 @@ Claiming/linking an anonymously created bot submits its server-issued proof as
 after the request. Assignment submits
 `{"bot_id":"BOT_UUID"}`. Explicit account equip submits
 `{"license_id":"LICENSE_UUID"}`. Checkout submits a catalog identity, never a
-price: `{"pack_id":"arena-set-003-ember-vanguard-pack","quantity":1}`. Arena
-creates a pending order from the current server-side pack snapshot, then returns
-the HTTPS `checkout_url` for Stripe-hosted Checkout.
+price: `{"pack_id":"arena-set-003-ember-vanguard-pack","quantity":1,"presentation":"embedded"}`.
+Arena creates a pending order from the current server-side pack snapshot. The
+default embedded response contains a Checkout Session `client_secret` and no
+redirect URL; an explicitly requested hosted fallback contains an HTTPS
+`checkout_url` and no client secret. An attached pending order can reopen its
+same provider session through the order-scoped checkout route without choosing
+a new presentation or creating another order.
 
 As an optional alternative to public Get Started issuance, direct Dashboard
 account-key creation submits `{"bot_name":"MyBot"}` and returns the full
@@ -268,8 +281,8 @@ keys: five may be active, creation is limited to 10 per account per hour,
 revocation to 20 per account per hour, and the lifetime history is capped at
 100 records pending a support review. Both account and per-IP mutation limits
 are enforced before expensive key verification or bcrypt work. All Access
-checkout and customer-portal requests return HTTPS `checkout_url` and
-`portal_url` redirects respectively.
+Checkout uses the same embedded-or-hosted exclusive response shape. Billing
+Portal remains a Stripe-hosted `portal_url` redirect.
 
 Stripe posts signed events to the public provider endpoint; this route does not
 use a customer cookie or CSRF token because it authenticates the exact raw body
@@ -446,8 +459,11 @@ provide useful errors, but the database remains the final exclusivity boundary.
 
 ## Stripe fulfillment and reversal rules
 
-Arena uses [Stripe-hosted Checkout](https://docs.stripe.com/api/checkout/sessions/create),
-so payment details never enter Arena's frontend or backend. A signed paid event
+Arena uses [Stripe Embedded Checkout](https://docs.stripe.com/payments/accept-a-payment?platform=web&ui=embedded-form)
+inside a top-level Arena dialog, with Stripe-hosted Checkout as an explicit
+pre-session fallback. Payment details never enter Arena's frontend or backend.
+Closing the dialog leaves an attached open session resumable from Recent
+Purchases. A signed paid event
 must match the pending order's account, Checkout Session, currency, and minimum
 server-side subtotal before fulfillment. Automatic tax may raise the final
 amount. Unpaid `checkout.session.completed` events remain processing until an
@@ -517,10 +533,12 @@ quota, then add:
 ```dotenv
 ARENA_COSMETICS_CHECKOUT_ENABLED=true
 ARENA_COSMETICS_CHECKOUT_RPM=10
-ARENA_STRIPE_SECRET_KEY=sk_live_replace_me
+ARENA_STRIPE_SECRET_KEY=rk_live_replace_me
+ARENA_STRIPE_PUBLISHABLE_KEY=pk_live_replace_me
 ARENA_STRIPE_WEBHOOK_SECRETS=whsec_current,whsec_previous
 ARENA_STRIPE_SUCCESS_URL=https://YOUR_ARENA_HOST/dashboard/?tab=cosmetics&checkout=success&session_id={CHECKOUT_SESSION_ID}
 ARENA_STRIPE_CANCEL_URL=https://YOUR_ARENA_HOST/dashboard/?tab=cosmetics&checkout=cancel
+ARENA_STRIPE_RETURN_URL=https://YOUR_ARENA_HOST/dashboard/?tab=cosmetics&checkout=return&session_id={CHECKOUT_SESSION_ID}
 ARENA_STRIPE_PORTAL_RETURN_URL=https://YOUR_ARENA_HOST/dashboard/?tab=cosmetics
 ARENA_STRIPE_AUTOMATIC_TAX=false
 ```
@@ -536,22 +554,26 @@ orders finish and cancellations, delinquency, plan corrections, and renewals
 reconcile safely. For an `/arena` deployment, use the prefixed dashboard and
 webhook paths.
 
-Before switching from `sk_test_...` to live credentials:
+Before switching from test-mode credentials to live credentials:
 
 1. Provision the dedicated Stalwart mailbox/app password, persist it through
    the `nimbus-infra` Arena role, and complete one real registration email and
    one expired/replayed-link exercise. Do not use a recovery-admin credential.
 2. Apply the idempotent schema migration with the release migrator and confirm
    the managed-schema preflight passes.
-3. Complete a test purchase, duplicate webhook delivery, quantity-two purchase,
-   asynchronous payment, partial refund, full refund, and dispute exercise.
-4. Confirm the account order history and protected Admin order search show the
+3. Register the Arena hostname as a Stripe Payment Method Domain in sandbox and
+   live mode, then verify the public checkout-config endpoint exposes only the
+   matching publishable key and embedded presentation.
+4. Complete a test purchase, abandoned-session resume, duplicate webhook
+   delivery, quantity-two purchase, asynchronous payment, partial refund, full
+   refund, and dispute exercise.
+5. Confirm the account order history and protected Admin order search show the
    same amount, currency, provider IDs, status, and fulfillment count.
-5. Confirm full reversals remove the exact licenses from a three-piece set or
+6. Confirm full reversals remove the exact licenses from a three-piece set or
    one-item trail while another order's licenses remain equipped and usable.
-6. Configure Stripe receipts, tax registrations/Stripe Tax policy, statement
+7. Configure Stripe receipts, tax registrations/Stripe Tax policy, statement
    descriptor, customer support/refund terms, and production alerting.
-7. Enable checkout, fetch `/api/v1/cosmetics/catalog`, and verify
+8. Enable checkout, fetch `/api/v1/cosmetics/catalog`, and verify
    `checkout_enabled:true` only after the provider configuration is active.
 
 Customer sessions remain process-local, so a restart asks the browser to sign

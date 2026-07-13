@@ -14,6 +14,9 @@ import (
 )
 
 const (
+	CosmeticCheckoutPresentationEmbedded = "embedded"
+	CosmeticCheckoutPresentationHosted   = "hosted"
+
 	CosmeticOrderStatusCreated       = "created"
 	CosmeticOrderStatusCheckout      = "checkout_pending"
 	CosmeticOrderStatusProcessing    = "processing"
@@ -51,6 +54,7 @@ var (
 	ErrCosmeticPaymentEventRetryable = errors.New("cosmetic payment event should be retried")
 	ErrCosmeticPaymentEventConflict  = errors.New("cosmetic payment event payload conflicts with an existing event")
 	ErrCosmeticPaymentEventRejected  = errors.New("cosmetic payment event was previously rejected")
+	ErrCosmeticCheckoutPresentation  = errors.New("cosmetic checkout presentation must be embedded or hosted")
 )
 
 var cosmeticPaymentHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -71,6 +75,7 @@ type CosmeticOrder struct {
 	AmountRefundedCents   int64               `json:"amount_refunded_cents"`
 	Currency              string              `json:"currency"`
 	Status                string              `json:"status"`
+	CheckoutPresentation  string              `json:"checkout_presentation"`
 	CheckoutSessionID     string              `json:"checkout_session_id,omitempty"`
 	PaymentIntentID       string              `json:"payment_intent_id,omitempty"`
 	LastError             string              `json:"last_error,omitempty"`
@@ -154,6 +159,7 @@ func EnsureCosmeticOrdersSchema(ctx context.Context) error {
 			status TEXT NOT NULL DEFAULT 'created' CHECK (status IN (
 				'created','checkout_pending','processing','paid','payment_failed','expired','refund_review','refunded','disputed'
 			)),
+			checkout_presentation TEXT NOT NULL DEFAULT 'hosted' CHECK (checkout_presentation IN ('embedded','hosted')),
 			stripe_checkout_session_id TEXT,
 			stripe_payment_intent_id TEXT,
 			last_error TEXT NOT NULL DEFAULT '',
@@ -164,6 +170,8 @@ func EnsureCosmeticOrdersSchema(ctx context.Context) error {
 		)`,
 		`ALTER TABLE cosmetic_orders ADD COLUMN IF NOT EXISTS cumulative_charge_refunded_cents BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE cosmetic_orders ADD COLUMN IF NOT EXISTS pack_description TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE cosmetic_orders ADD COLUMN IF NOT EXISTS checkout_presentation TEXT NOT NULL DEFAULT 'hosted'
+			CHECK (checkout_presentation IN ('embedded','hosted'))`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_cosmetic_orders_checkout_session
 			ON cosmetic_orders (stripe_checkout_session_id) WHERE stripe_checkout_session_id IS NOT NULL`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_cosmetic_orders_payment_intent
@@ -252,6 +260,7 @@ func cosmeticOrderSelect() string {
 	return `SELECT o.id, o.account_id, o.account_email, o.pack_id, o.pack_name, o.pack_description,
 		o.unit_price_cents, o.quantity, o.expected_subtotal_cents,
 		o.amount_received_cents, o.amount_refunded_cents, o.currency, o.status,
+		o.checkout_presentation,
 		COALESCE(o.stripe_checkout_session_id, ''), COALESCE(o.stripe_payment_intent_id, ''),
 		o.last_error, o.created_at, o.updated_at, o.paid_at, o.terminal_at,
 		(SELECT COUNT(*) FROM cosmetic_order_licenses ol WHERE ol.order_id = o.id)
@@ -263,6 +272,7 @@ func scanCosmeticOrder(row cosmeticOrderScanner) (*CosmeticOrder, error) {
 	err := row.Scan(&order.ID, &order.AccountID, &order.AccountEmail, &order.PackID, &order.PackName, &order.PackDescription,
 		&order.UnitPriceCents, &order.Quantity, &order.ExpectedSubtotalCents,
 		&order.AmountReceivedCents, &order.AmountRefundedCents, &order.Currency, &order.Status,
+		&order.CheckoutPresentation,
 		&order.CheckoutSessionID, &order.PaymentIntentID, &order.LastError,
 		&order.CreatedAt, &order.UpdatedAt, &order.PaidAt, &order.TerminalAt,
 		&order.FulfilledLicenseCount)
@@ -309,24 +319,57 @@ func loadCosmeticOrder(ctx context.Context, q cosmeticOrderQuerier, orderID stri
 	return order, nil
 }
 
-// CreateCosmeticOrder snapshots a verified account, an available non-free
-// pack, its server-side price, and every active member item in one transaction.
+// CreateCosmeticOrder preserves the legacy internal helper with a hosted
+// presentation. Checkout HTTP paths use ReserveCosmeticOrderCheckout so the
+// browser-selected presentation is committed before provider IO.
 func CreateCosmeticOrder(ctx context.Context, accountID, packID string, quantity int) (*CosmeticOrder, error) {
+	order, _, err := ReserveCosmeticOrderCheckout(ctx, accountID, packID, quantity, CosmeticCheckoutPresentationHosted)
+	return order, err
+}
+
+// ReserveCosmeticOrderCheckout snapshots a verified purchase and its Checkout
+// presentation. A retryable order for the same account, pack, and quantity is
+// returned unchanged, preserving its idempotency key and UI mode.
+func ReserveCosmeticOrderCheckout(ctx context.Context, accountID, packID string, quantity int, presentation string) (*CosmeticOrder, bool, error) {
 	if Pool == nil {
-		return nil, ErrNoDatabase
+		return nil, false, ErrNoDatabase
 	}
 	if quantity < 1 || quantity > 10 {
-		return nil, ErrCosmeticOrderQuantity
+		return nil, false, ErrCosmeticOrderQuantity
+	}
+	presentation = strings.ToLower(strings.TrimSpace(presentation))
+	if presentation != CosmeticCheckoutPresentationEmbedded && presentation != CosmeticCheckoutPresentationHosted {
+		return nil, false, ErrCosmeticCheckoutPresentation
 	}
 	packID = strings.TrimSpace(packID)
 	tx, err := Pool.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("CreateCosmeticOrder begin: %w", err)
+		return nil, false, fmt.Errorf("ReserveCosmeticOrderCheckout begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	account, err := lockCustomerAccount(ctx, tx, strings.TrimSpace(accountID), true)
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	var existingID string
+	err = tx.QueryRow(ctx, `
+		SELECT id FROM cosmetic_orders
+		WHERE account_id = $1 AND pack_id = $2 AND quantity = $3
+		  AND (status = 'checkout_pending' OR
+		       (status IN ('created','payment_failed') AND stripe_checkout_session_id IS NULL))
+		ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE`, account.ID, packID, quantity).Scan(&existingID)
+	if err == nil {
+		order, loadErr := loadCosmeticOrder(ctx, tx, existingID, false)
+		if loadErr != nil {
+			return nil, false, fmt.Errorf("ReserveCosmeticOrderCheckout existing load: %w", loadErr)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, fmt.Errorf("ReserveCosmeticOrderCheckout existing commit: %w", err)
+		}
+		return order, false, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, fmt.Errorf("ReserveCosmeticOrderCheckout existing: %w", err)
 	}
 
 	var packName, packDescription, categoryID, currency string
@@ -340,10 +383,10 @@ func CreateCosmeticOrder(ctx context.Context, accountID, packID string, quantity
 		FOR SHARE OF p, c`, packID).
 		Scan(&packName, &packDescription, &categoryID, &price, &currency, &packFree, &packPurchasable, &packActive, &categoryActive)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrCosmeticOrderPackUnavailable
+		return nil, false, ErrCosmeticOrderPackUnavailable
 	}
 	if err != nil {
-		return nil, fmt.Errorf("CreateCosmeticOrder pack: %w", err)
+		return nil, false, fmt.Errorf("ReserveCosmeticOrderCheckout pack: %w", err)
 	}
 	currency = strings.ToUpper(strings.TrimSpace(currency))
 	wantPrice := int64(CosmeticPackPriceCents)
@@ -351,7 +394,7 @@ func CreateCosmeticOrder(ctx context.Context, accountID, packID string, quantity
 		wantPrice = CosmeticTrailPriceCents
 	}
 	if packFree || !packPurchasable || !packActive || !categoryActive || price != wantPrice || currency != "USD" {
-		return nil, ErrCosmeticOrderPackUnavailable
+		return nil, false, ErrCosmeticOrderPackUnavailable
 	}
 
 	rows, err := tx.Query(ctx, `
@@ -363,7 +406,7 @@ func CreateCosmeticOrder(ctx context.Context, accountID, packID string, quantity
 		ORDER BY pi.sort_order, i.sort_order, i.id
 		FOR SHARE OF pi, i, c`, packID)
 	if err != nil {
-		return nil, fmt.Errorf("CreateCosmeticOrder items: %w", err)
+		return nil, false, fmt.Errorf("ReserveCosmeticOrderCheckout items: %w", err)
 	}
 	items := make([]CosmeticOrderItem, 0)
 	trailItemCount := 0
@@ -374,12 +417,12 @@ func CreateCosmeticOrder(ctx context.Context, accountID, packID string, quantity
 		item.Position = len(items)
 		if err := rows.Scan(&item.ID, &item.Name, &item.Slot, &item.AssetKey, &item.Rarity, &itemCategoryID, &itemActive, &itemCategoryActive); err != nil {
 			rows.Close()
-			return nil, fmt.Errorf("CreateCosmeticOrder item scan: %w", err)
+			return nil, false, fmt.Errorf("ReserveCosmeticOrderCheckout item scan: %w", err)
 		}
 		if !itemActive || !itemCategoryActive || !IsValidCosmeticSlot(item.Slot) ||
 			((item.Slot == CosmeticSlotTrail) != (itemCategoryID == CosmeticTrailCategoryID)) {
 			rows.Close()
-			return nil, ErrCosmeticOrderPackUnavailable
+			return nil, false, ErrCosmeticOrderPackUnavailable
 		}
 		if item.Slot == CosmeticSlotTrail {
 			trailItemCount++
@@ -389,17 +432,17 @@ func CreateCosmeticOrder(ctx context.Context, accountID, packID string, quantity
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return nil, fmt.Errorf("CreateCosmeticOrder item rows: %w", err)
+		return nil, false, fmt.Errorf("ReserveCosmeticOrderCheckout item rows: %w", err)
 	}
 	if len(items) == 0 {
-		return nil, ErrCosmeticOrderPackUnavailable
+		return nil, false, ErrCosmeticOrderPackUnavailable
 	}
 	if categoryID == CosmeticTrailCategoryID {
 		if len(items) != 1 || trailItemCount != 1 {
-			return nil, ErrCosmeticOrderPackUnavailable
+			return nil, false, ErrCosmeticOrderPackUnavailable
 		}
 	} else if trailItemCount != 0 {
-		return nil, ErrCosmeticOrderPackUnavailable
+		return nil, false, ErrCosmeticOrderPackUnavailable
 	}
 
 	orderID := uuid.NewString()
@@ -407,11 +450,12 @@ func CreateCosmeticOrder(ctx context.Context, accountID, packID string, quantity
 	_, err = tx.Exec(ctx, `
 		INSERT INTO cosmetic_orders
 			(id, account_id, account_email, pack_id, pack_name, pack_description, unit_price_cents, quantity,
-			 expected_subtotal_cents, currency, status, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())`,
-		orderID, account.ID, account.Email, packID, packName, packDescription, price, quantity, subtotal, currency, CosmeticOrderStatusCreated)
+			 expected_subtotal_cents, currency, status, checkout_presentation, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),NOW())`,
+		orderID, account.ID, account.Email, packID, packName, packDescription, price, quantity, subtotal, currency,
+		CosmeticOrderStatusCreated, presentation)
 	if err != nil {
-		return nil, fmt.Errorf("CreateCosmeticOrder insert: %w", err)
+		return nil, false, fmt.Errorf("ReserveCosmeticOrderCheckout insert: %w", err)
 	}
 	for _, item := range items {
 		_, err = tx.Exec(ctx, `
@@ -420,17 +464,17 @@ func CreateCosmeticOrder(ctx context.Context, accountID, packID string, quantity
 			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
 			orderID, item.Position, item.ID, item.Name, item.Slot, item.AssetKey, item.Rarity)
 		if err != nil {
-			return nil, fmt.Errorf("CreateCosmeticOrder snapshot item %s: %w", item.ID, err)
+			return nil, false, fmt.Errorf("ReserveCosmeticOrderCheckout snapshot item %s: %w", item.ID, err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("CreateCosmeticOrder commit: %w", err)
+		return nil, false, fmt.Errorf("ReserveCosmeticOrderCheckout commit: %w", err)
 	}
 	order, err := loadCosmeticOrder(ctx, Pool, orderID, false)
 	if err != nil {
-		return nil, fmt.Errorf("CreateCosmeticOrder load: %w", err)
+		return nil, false, fmt.Errorf("ReserveCosmeticOrderCheckout load: %w", err)
 	}
-	return order, nil
+	return order, true, nil
 }
 
 func AttachCosmeticOrderCheckout(ctx context.Context, accountID, orderID, checkoutSessionID string) (*CosmeticOrder, error) {
@@ -525,6 +569,32 @@ func truncateCosmeticOrderError(message string) string {
 
 func ListCustomerCosmeticOrders(ctx context.Context, accountID string, limit int) ([]CosmeticOrder, error) {
 	return listCosmeticOrders(ctx, `o.account_id = $1`, []any{strings.TrimSpace(accountID)}, limit)
+}
+
+// GetCustomerCosmeticOrder returns an order only when it belongs to the
+// authenticated account. A mismatched owner is intentionally indistinguishable
+// from an unknown order so account-scoped callers cannot enumerate purchases.
+func GetCustomerCosmeticOrder(ctx context.Context, accountID, orderID string) (*CosmeticOrder, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
+	accountID = strings.TrimSpace(accountID)
+	orderID = strings.TrimSpace(orderID)
+	if accountID == "" || orderID == "" {
+		return nil, ErrCosmeticOrderNotFound
+	}
+	order, err := scanCosmeticOrder(Pool.QueryRow(ctx,
+		cosmeticOrderSelect()+` WHERE o.id = $1 AND o.account_id = $2`, orderID, accountID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrCosmeticOrderNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("GetCustomerCosmeticOrder query: %w", err)
+	}
+	if err := loadCosmeticOrderItems(ctx, Pool, order); err != nil {
+		return nil, fmt.Errorf("GetCustomerCosmeticOrder items: %w", err)
+	}
+	return order, nil
 }
 
 func ListAdminCosmeticOrders(ctx context.Context, query, status string, limit int) ([]CosmeticOrder, error) {

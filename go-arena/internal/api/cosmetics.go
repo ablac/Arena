@@ -478,6 +478,10 @@ func (h *CosmeticsHandler) AccountInventory(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
+	if err := h.reconcileAdminMembershipExpiryForEmail(r, session.Email); err != nil {
+		writeAdminCosmeticMembershipError(w, err, "failed to reconcile expired cosmetic access")
+		return
+	}
 	inventory, err := h.store.AccountInventory(r.Context(), session.AccountID)
 	if err != nil {
 		if errors.Is(err, db.ErrNoDatabase) {

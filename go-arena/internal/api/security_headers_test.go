@@ -36,5 +36,31 @@ func TestSecurityHeadersMiddleware_AllowsSameOriginFraming(t *testing.T) {
 		t.Errorf("CSP contains frame-ancestors 'none', which blocks the same-origin dashboard iframe: %q", csp)
 	} else if !strings.Contains(csp, "frame-ancestors 'self'") {
 		t.Errorf("CSP missing frame-ancestors 'self': %q", csp)
+	} else if !strings.Contains(csp, "frame-src 'self'") {
+		t.Errorf("CSP frame-src must allow the same-origin dashboard iframe: %q", csp)
+	}
+}
+
+func TestSecurityHeadersMiddleware_AllowsStripeEmbeddedCheckout(t *testing.T) {
+	config.C.SecurityHeadersEnabled = true
+	handler := SecurityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	for _, directive := range []string{
+		"script-src 'self' https://cdn.babylonjs.com https://js.stripe.com https://*.js.stripe.com https://checkout.stripe.com",
+		"frame-src 'self' https://checkout.stripe.com https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com https://link.com https://*.link.com",
+		"connect-src 'self' ws: wss: https://cdn.babylonjs.com https://api.stripe.com https://checkout.stripe.com https://link.com https://*.link.com",
+		"img-src 'self' data: blob: https://*.stripe.com https://*.link.com",
+	} {
+		if !strings.Contains(csp, directive) {
+			t.Errorf("CSP missing Stripe Embedded Checkout directive %q: %q", directive, csp)
+		}
+	}
+	if policy := rec.Header().Get("Permissions-Policy"); !strings.Contains(policy, `payment=(self "https://checkout.stripe.com"`) {
+		t.Errorf("Permissions-Policy blocks Stripe wallet payments: %q", policy)
 	}
 }

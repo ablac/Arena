@@ -337,7 +337,8 @@ async def run():
                     try:
                         raw = await asyncio.wait_for(ws.recv(), timeout=25)
                     except asyncio.TimeoutError:
-                        await ws.send(json.dumps({"type":"action","action":"idle"}))
+                        # No server tick means there is no valid action tick to
+                        # echo. The websocket library handles transport pings.
                         continue
 
                     msg = json.loads(raw)
@@ -347,6 +348,7 @@ async def run():
                         state  = msg.get("your_state", {})
                         nearby = msg.get("nearby_entities") or []
                         action = brain.decide(state, nearby)
+                        action["tick"] = msg.get("tick_number", msg.get("tick", 0))
                         await ws.send(json.dumps(action))
                         # Periodic status log
                         if brain.tick_count % 50 == 1:

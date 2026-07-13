@@ -127,6 +127,8 @@ assert.match(accessWorkspace, /id="cosmeticMembershipDurationDays"[^>]*type="num
   'membership grants need a positive duration in days');
 assert.match(accessWorkspace, /id="cosmeticMembershipExpiresAt"[^>]*type="datetime-local"/,
   'membership grants need an explicit expiry option');
+assert.match(html, /\.cosmetics-grant-form \[hidden\]\{display:none!important\}/,
+  'membership duration and exact-expiry fields must honor their hidden state');
 assert.doesNotMatch(accessWorkspace, /<input[^>]*id="cosmeticRevokeLicense"/,
   'license revocation must not require pasting a raw UUID');
 assert.doesNotMatch(accessWorkspace, /<input[^>]*id="cosmeticMembershipRevoke[^>]*>/,
@@ -171,6 +173,12 @@ assert.match(membershipGrant, /duration_days\s*:\s*durationDays/, 'membership su
 assert.match(membershipGrant, /expires_at\s*:\s*expiresAt/, 'membership submission must carry the explicit expiry when supplied');
 assert.match(membershipGrant, /!durationDays\s*&&\s*!expiresAt/,
   'membership submission must require a duration or explicit expiry');
+assert.match(html, /function fmtDateTime\(ts\)[\s\S]*year:\s*'numeric'[\s\S]*timeZoneName:\s*'short'/,
+  'membership expiries need a full date, time, and timezone formatter');
+assert.match(accessLookup, /expires \$\{esc\(fmtDateTime\(membership\.expires_at \|\| ''\)\)\}/,
+  'loaded memberships must show the expiry date and timezone, not only the wall-clock time');
+assert.match(membershipGrant, /'Membership granted until ' \+ fmtDateTime\(membership\?\.expires_at \|\| expiresAt\)/,
+  'membership grant confirmation must show the expiry date and timezone');
 assert.match(membershipGrant, /api\('\/cosmetics\/memberships',\s*\{method:'POST'/,
   'membership grants must use the protected admin membership endpoint');
 assert.doesNotMatch(membershipGrant, /api[_-]?key|stripe|billing/i,

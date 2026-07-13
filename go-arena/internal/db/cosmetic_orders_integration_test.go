@@ -127,6 +127,13 @@ func TestPostgresCosmeticOrderSnapshotsServerPriceAndFulfillsQuantityExactlyOnce
 	if err != nil || attachedAgain.CheckoutSessionID != order.CheckoutSessionID {
 		t.Fatalf("idempotent checkout attach = (%+v, %v)", attachedAgain, err)
 	}
+	ownedOrder, err := GetCustomerCosmeticOrder(ctx, account.ID, order.ID)
+	if err != nil || ownedOrder.ID != order.ID || ownedOrder.CheckoutSessionID != "cs_snapshot" {
+		t.Fatalf("account-owned order lookup = (%+v, %v)", ownedOrder, err)
+	}
+	if _, err := GetCustomerCosmeticOrder(ctx, other.ID, order.ID); !errors.Is(err, ErrCosmeticOrderNotFound) {
+		t.Fatalf("cross-account order lookup error = %v, want not found", err)
+	}
 
 	paidInput := paidCommerceEvent(order, "evt_snapshot_paid", commerceEventHash("b"), 418)
 	result, err := ProcessCosmeticPaymentEvent(ctx, paidInput)
@@ -185,6 +192,36 @@ func TestPostgresCosmeticOrderSnapshotsServerPriceAndFulfillsQuantityExactlyOnce
 	conflictingPayload.PayloadHash = commerceEventHash("d")
 	if _, err := ProcessCosmeticPaymentEvent(ctx, conflictingPayload); !errors.Is(err, ErrCosmeticPaymentEventConflict) {
 		t.Fatalf("same event id with another payload error = %v", err)
+	}
+}
+
+func TestPostgresCosmeticCheckoutReservationPinsPresentationAcrossAmbiguousRetries(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	account := createCommerceTestAccount(t, ctx, "checkout-reservation")
+
+	first, created, err := ReserveCosmeticOrderCheckout(ctx, account.ID, "neon-signal-pack", 1, CosmeticCheckoutPresentationEmbedded)
+	if err != nil || !created || first.CheckoutPresentation != CosmeticCheckoutPresentationEmbedded {
+		t.Fatalf("first reservation = (%+v, %v, %v)", first, created, err)
+	}
+	if _, err := MarkCosmeticOrderCheckoutFailed(ctx, account.ID, first.ID, "ambiguous provider timeout"); err != nil {
+		t.Fatalf("mark ambiguous checkout failure: %v", err)
+	}
+	retried, created, err := ReserveCosmeticOrderCheckout(ctx, account.ID, "neon-signal-pack", 1, CosmeticCheckoutPresentationHosted)
+	if err != nil || created || retried.ID != first.ID || retried.CheckoutPresentation != CosmeticCheckoutPresentationEmbedded ||
+		retried.Status != CosmeticOrderStatusPaymentFailed {
+		t.Fatalf("ambiguous retry reservation = (%+v, %v, %v)", retried, created, err)
+	}
+	attached, err := AttachCosmeticOrderCheckout(ctx, account.ID, first.ID, "cs_reserved_retry")
+	if err != nil {
+		t.Fatalf("attach replayed checkout: %v", err)
+	}
+	resumed, created, err := ReserveCosmeticOrderCheckout(ctx, account.ID, "neon-signal-pack", 1, CosmeticCheckoutPresentationHosted)
+	if err != nil || created || resumed.ID != first.ID || resumed.CheckoutSessionID != attached.CheckoutSessionID ||
+		resumed.CheckoutPresentation != CosmeticCheckoutPresentationEmbedded {
+		t.Fatalf("attached reservation replay = (%+v, %v, %v)", resumed, created, err)
 	}
 }
 

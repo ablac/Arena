@@ -48,6 +48,7 @@ func TestAdminCosmeticAccessLooksUpNormalizedEmail(t *testing.T) {
 
 func TestAdminCosmeticMembershipAcceptsDurationOrExactExpiryAndRecordsActor(t *testing.T) {
 	exactExpiry := time.Now().UTC().Add(180 * 24 * time.Hour).Truncate(time.Second)
+	offsetExpiry := exactExpiry.In(time.FixedZone("UTC-05", -5*60*60))
 	tests := []struct {
 		name       string
 		body       string
@@ -66,6 +67,13 @@ func TestAdminCosmeticMembershipAcceptsDurationOrExactExpiryAndRecordsActor(t *t
 			body: `{"email":"member@example.com","expires_at":"` + exactExpiry.Format(time.RFC3339) + `","note":"Support credit"}`,
 			wantExpiry: func(expiry time.Time) bool {
 				return expiry.Equal(exactExpiry)
+			},
+		},
+		{
+			name: "exact expiry with offset is stored as UTC",
+			body: `{"email":"member@example.com","expires_at":"` + offsetExpiry.Format(time.RFC3339) + `","note":"Support credit"}`,
+			wantExpiry: func(expiry time.Time) bool {
+				return expiry.Equal(offsetExpiry) && expiry.Location() == time.UTC
 			},
 		},
 	}
@@ -166,11 +174,12 @@ func TestAdminRejectsDirectMembershipLicenseRevocation(t *testing.T) {
 	}
 }
 
-func TestAdminMembershipRevokeRetryRepairsConnectedVisuals(t *testing.T) {
+func TestAdminMembershipRevokeCommitsAndQueuesFailedVisualRepair(t *testing.T) {
 	store := &fakeCosmeticsStore{
-		membership:  &db.CosmeticAdminMembership{ID: "membership-retry", Status: "revoked"},
-		revoked:     true,
-		equippedErr: errors.New("temporary database read failure"),
+		membership:   &db.CosmeticAdminMembership{ID: "membership-retry", Status: "revoked"},
+		revoked:      true,
+		affectedBots: []string{"bot-retry"},
+		equippedErr:  errors.New("temporary database read failure"),
 	}
 	engine := game.NewGameEngine()
 	engine.Bots["bot-retry"] = &game.BotState{BotID: "bot-retry"}
@@ -181,18 +190,10 @@ func TestAdminMembershipRevokeRetryRepairsConnectedVisuals(t *testing.T) {
 	router.ServeHTTP(first, httptest.NewRequest(
 		http.MethodDelete, "/cosmetics/memberships/membership-retry", nil,
 	))
-	if first.Code != http.StatusServiceUnavailable {
+	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `"live_refresh_failures":1`) {
 		t.Fatalf("first revoke status=%d body=%s", first.Code, first.Body.String())
 	}
-
-	store.revoked = false
-	store.equippedErr = nil
-	store.equipped = map[string]string{db.CosmeticSlotBotSkin: "standard"}
-	second := httptest.NewRecorder()
-	router.ServeHTTP(second, httptest.NewRequest(
-		http.MethodDelete, "/cosmetics/memberships/membership-retry", nil,
-	))
-	if second.Code != http.StatusOK {
-		t.Fatalf("retry status=%d body=%s", second.Code, second.Body.String())
+	if got := strings.Join(store.equippedBotIDs, ","); got != "bot-retry" {
+		t.Fatalf("visual refresh bots=%q, want only bot-retry", got)
 	}
 }

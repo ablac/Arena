@@ -23,34 +23,40 @@ import (
 )
 
 type fakeCosmeticCommerceStore struct {
-	order              *db.CosmeticOrder
-	orders             []db.CosmeticOrder
-	result             *db.CosmeticPaymentEventResult
-	createErr          error
-	attachErr          error
-	processErr         error
-	listErr            error
-	createdAccount     string
-	createdPack        string
-	createdQty         int
-	attachedID         string
-	attachedCS         string
-	failedID           string
-	failedMessage      string
-	processed          db.CosmeticPaymentEventInput
-	listAccount        string
-	adminQuery         string
-	adminStatus        string
-	listLimit          int
-	equipped           map[string]map[string]string
-	equippedErr        error
-	equippedBots       []string
-	equippedBatchCalls int
+	order               *db.CosmeticOrder
+	getOrder            *db.CosmeticOrder
+	orders              []db.CosmeticOrder
+	result              *db.CosmeticPaymentEventResult
+	createErr           error
+	reserveReused       bool
+	attachErr           error
+	processErr          error
+	listErr             error
+	getErr              error
+	createdAccount      string
+	createdPack         string
+	createdQty          int
+	createdPresentation CosmeticCheckoutPresentation
+	attachedID          string
+	attachedCS          string
+	failedID            string
+	failedMessage       string
+	processed           db.CosmeticPaymentEventInput
+	listAccount         string
+	getAccount          string
+	getID               string
+	adminQuery          string
+	adminStatus         string
+	listLimit           int
+	equipped            map[string]map[string]string
+	equippedErr         error
+	equippedBots        []string
+	equippedBatchCalls  int
 }
 
-func (s *fakeCosmeticCommerceStore) CreateOrder(_ context.Context, accountID, packID string, quantity int) (*db.CosmeticOrder, error) {
-	s.createdAccount, s.createdPack, s.createdQty = accountID, packID, quantity
-	return s.order, s.createErr
+func (s *fakeCosmeticCommerceStore) ReserveOrder(_ context.Context, accountID, packID string, quantity int, presentation CosmeticCheckoutPresentation) (*db.CosmeticOrder, bool, error) {
+	s.createdAccount, s.createdPack, s.createdQty, s.createdPresentation = accountID, packID, quantity, presentation
+	return s.order, !s.reserveReused, s.createErr
 }
 
 func (s *fakeCosmeticCommerceStore) AttachCheckout(_ context.Context, accountID, orderID, checkoutSessionID string) (*db.CosmeticOrder, error) {
@@ -71,6 +77,14 @@ func (s *fakeCosmeticCommerceStore) ProcessEvent(_ context.Context, event db.Cos
 func (s *fakeCosmeticCommerceStore) ListCustomerOrders(_ context.Context, accountID string, limit int) ([]db.CosmeticOrder, error) {
 	s.listAccount, s.listLimit = accountID, limit
 	return s.orders, s.listErr
+}
+
+func (s *fakeCosmeticCommerceStore) GetCustomerOrder(_ context.Context, accountID, orderID string) (*db.CosmeticOrder, error) {
+	s.getAccount, s.getID = accountID, orderID
+	if s.getOrder != nil {
+		return s.getOrder, s.getErr
+	}
+	return s.order, s.getErr
 }
 
 func (s *fakeCosmeticCommerceStore) ListAdminOrders(_ context.Context, query, status string, limit int) ([]db.CosmeticOrder, error) {
@@ -137,6 +151,11 @@ func (p *fakeCosmeticPaymentProvider) RetrieveSubscriptionCheckoutSession(_ cont
 	return p.retrievedSession, p.retrieveSessionErr
 }
 
+func (p *fakeCosmeticPaymentProvider) RetrieveCheckoutSession(_ context.Context, checkoutSessionID string) (*CosmeticCheckoutSession, error) {
+	p.retrievedSessionID = checkoutSessionID
+	return p.retrievedSession, p.retrieveSessionErr
+}
+
 func (p *fakeCosmeticPaymentProvider) RetrieveCosmeticSubscription(_ context.Context, providerSubscriptionID string) (*CosmeticSubscriptionProviderState, error) {
 	p.retrievedStateID = providerSubscriptionID
 	return p.retrievedState, p.retrieveStateErr
@@ -148,33 +167,41 @@ func (p *fakeCosmeticPaymentProvider) CreateBillingPortalSession(_ context.Conte
 }
 
 type fakeCosmeticSubscriptionStore struct {
-	subscription    *db.CosmeticSubscription
-	createResults   []*db.CosmeticSubscription
-	result          *db.CosmeticSubscriptionEventResult
-	createErr       error
-	attachErr       error
-	processErr      error
-	createdFor      string
-	createCalls     int
-	attachedID      string
-	attachedCS      string
-	expiredID       string
-	expiredCS       string
-	processed       db.CosmeticSubscriptionEventInput
-	processedEvents []db.CosmeticSubscriptionEventInput
+	subscription          *db.CosmeticSubscription
+	createResults         []*db.CosmeticSubscription
+	reserveCreatedResults []bool
+	result                *db.CosmeticSubscriptionEventResult
+	createErr             error
+	reserveReused         bool
+	attachErr             error
+	processErr            error
+	createdFor            string
+	createCalls           int
+	reservedPresentation  CosmeticCheckoutPresentation
+	attachedID            string
+	attachedCS            string
+	expiredID             string
+	expiredCS             string
+	processed             db.CosmeticSubscriptionEventInput
+	processedEvents       []db.CosmeticSubscriptionEventInput
 }
 
-func (s *fakeCosmeticSubscriptionStore) Create(_ context.Context, accountID string) (*db.CosmeticSubscription, error) {
+func (s *fakeCosmeticSubscriptionStore) Reserve(_ context.Context, accountID string, presentation CosmeticCheckoutPresentation) (*db.CosmeticSubscription, bool, error) {
 	s.createdFor = accountID
+	s.reservedPresentation = presentation
 	s.createCalls++
+	created := !s.reserveReused
 	if len(s.createResults) > 0 {
 		index := s.createCalls - 1
 		if index >= len(s.createResults) {
 			index = len(s.createResults) - 1
 		}
-		return s.createResults[index], s.createErr
+		if index < len(s.reserveCreatedResults) {
+			created = s.reserveCreatedResults[index]
+		}
+		return s.createResults[index], created, s.createErr
 	}
-	return s.subscription, s.createErr
+	return s.subscription, created, s.createErr
 }
 
 func (s *fakeCosmeticSubscriptionStore) Attach(_ context.Context, accountID, subscriptionID, checkoutSessionID string) (*db.CosmeticSubscription, error) {
@@ -202,6 +229,7 @@ func commerceTestOrder() *db.CosmeticOrder {
 		ID: "order-1", AccountID: "account-1", AccountEmail: "owner@example.com",
 		PackID: "arena-set-003-ember-vanguard-pack", PackName: "Ember Vanguard Set",
 		UnitPriceCents: 199, Quantity: 2, ExpectedSubtotalCents: 398, Currency: "USD",
+		Status: db.CosmeticOrderStatusCreated, CheckoutPresentation: db.CosmeticCheckoutPresentationEmbedded,
 		Items: []db.CosmeticOrderItem{{ID: "skin-1"}, {ID: "weapon-1"}, {ID: "attachment-1"}},
 	}
 }
@@ -215,7 +243,8 @@ func TestCosmeticCommerceCheckoutUsesOnlyServerOrderSnapshot(t *testing.T) {
 	order := commerceTestOrder()
 	store := &fakeCosmeticCommerceStore{order: order}
 	provider := &fakeCosmeticPaymentProvider{session: &CosmeticCheckoutSession{
-		ID: "cs_test_1", URL: "https://checkout.stripe.com/c/pay/cs_test_1", ExpiresAt: time.Unix(1_900_000_000, 0).UTC(),
+		ID: "cs_test_1", Presentation: CosmeticCheckoutPresentationEmbedded,
+		ClientSecret: "cs_test_1_secret_browser", ExpiresAt: time.Unix(1_900_000_000, 0).UTC(),
 	}}
 	handler := newCosmeticCommerceHandlerWithStore(store, provider, true)
 	recorder := httptest.NewRecorder()
@@ -233,11 +262,13 @@ func TestCosmeticCommerceCheckoutUsesOnlyServerOrderSnapshot(t *testing.T) {
 	request := provider.request
 	if request.OrderID != order.ID || request.AccountID != order.AccountID || request.CustomerEmail != order.AccountEmail ||
 		request.PackID != order.PackID || request.PackName != order.PackName || request.UnitAmount != order.UnitPriceCents ||
-		request.Currency != order.Currency || request.Quantity != int64(order.Quantity) {
+		request.Currency != order.Currency || request.Quantity != int64(order.Quantity) ||
+		request.Presentation != CosmeticCheckoutPresentationEmbedded {
 		t.Fatalf("provider received non-snapshot checkout data: %+v", request)
 	}
 	if !strings.Contains(recorder.Body.String(), `"order_id":"order-1"`) ||
-		!strings.Contains(recorder.Body.String(), `"checkout_url":"https://checkout.stripe.com/c/pay/cs_test_1"`) {
+		!strings.Contains(recorder.Body.String(), `"client_secret":"cs_test_1_secret_browser"`) ||
+		!strings.Contains(recorder.Body.String(), `"presentation":"embedded"`) {
 		t.Fatalf("checkout response=%s", recorder.Body.String())
 	}
 	remaining := time.Until(provider.deadline)
@@ -246,15 +277,44 @@ func TestCosmeticCommerceCheckoutUsesOnlyServerOrderSnapshot(t *testing.T) {
 	}
 }
 
+func TestCosmeticCommerceCheckoutUsesReservedPresentationInsteadOfRetryRequest(t *testing.T) {
+	order := commerceTestOrder()
+	order.Status = db.CosmeticOrderStatusPaymentFailed
+	order.CheckoutPresentation = db.CosmeticCheckoutPresentationHosted
+	store := &fakeCosmeticCommerceStore{order: order, reserveReused: true}
+	provider := &fakeCosmeticPaymentProvider{session: &CosmeticCheckoutSession{
+		ID: "cs_reserved_hosted", Presentation: CosmeticCheckoutPresentationHosted,
+		URL: "https://checkout.stripe.com/c/pay/cs_reserved_hosted",
+	}}
+	recorder := httptest.NewRecorder()
+	newCosmeticCommerceHandlerWithStore(store, provider, true).Checkout(
+		recorder,
+		commerceCustomerRequest(http.MethodPost, "/", `{
+			"pack_id":"arena-set-003-ember-vanguard-pack", "quantity":2, "presentation":"embedded"
+		}`),
+	)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if provider.request.OrderID != order.ID || provider.request.Presentation != CosmeticCheckoutPresentationHosted {
+		t.Fatalf("provider request = %+v, want same order with persisted hosted presentation", provider.request)
+	}
+	if !strings.Contains(recorder.Body.String(), `"resumed":true`) ||
+		!strings.Contains(recorder.Body.String(), `"presentation":"hosted"`) {
+		t.Fatalf("retry response=%s", recorder.Body.String())
+	}
+}
+
 func TestCosmeticSubscriptionCheckoutAndPortalUseServerAccountSnapshot(t *testing.T) {
 	subscription := &db.CosmeticSubscription{
 		ID: "subscription-record", AccountID: "account-1", AccountEmail: "owner@example.com",
-		Status:     db.CosmeticSubscriptionStatusCreated,
+		Status: db.CosmeticSubscriptionStatusCreated, CheckoutPresentation: db.CosmeticCheckoutPresentationEmbedded,
 		PriceCents: 1999, Currency: "USD", Interval: "month", CustomerID: "cus_owner", CanManage: true,
 	}
 	store := &fakeCosmeticSubscriptionStore{subscription: subscription}
 	provider := &fakeCosmeticPaymentProvider{
-		session: &CosmeticCheckoutSession{ID: "cs_subscription", URL: "https://checkout.stripe.com/c/pay/cs_subscription"},
+		session: &CosmeticCheckoutSession{ID: "cs_subscription", Presentation: CosmeticCheckoutPresentationEmbedded, ClientSecret: "cs_subscription_secret_browser"},
 		portal:  &CosmeticPortalSession{URL: "https://billing.stripe.com/p/session/test"},
 	}
 	handler := newCosmeticCommerceHandlerWithSubscriptionStore(
@@ -268,15 +328,18 @@ func TestCosmeticSubscriptionCheckoutAndPortalUseServerAccountSnapshot(t *testin
 		t.Fatalf("subscription checkout status=%d store=%+v body=%s", checkout.Code, store, checkout.Body.String())
 	}
 	if provider.subscriptionRequest.SubscriptionID != subscription.ID || provider.subscriptionRequest.AccountID != "account-1" ||
-		provider.subscriptionRequest.CustomerEmail != "owner@example.com" {
+		provider.subscriptionRequest.CustomerEmail != "owner@example.com" ||
+		provider.subscriptionRequest.CustomerID != "cus_owner" ||
+		provider.subscriptionRequest.Presentation != CosmeticCheckoutPresentationEmbedded {
 		t.Fatalf("subscription provider request = %+v", provider.subscriptionRequest)
 	}
 	var checkoutBody struct {
 		SubscriptionID string `json:"subscription_id"`
-		CheckoutURL    string `json:"checkout_url"`
+		ClientSecret   string `json:"client_secret"`
+		Presentation   string `json:"presentation"`
 	}
 	if err := json.Unmarshal(checkout.Body.Bytes(), &checkoutBody); err != nil || checkoutBody.SubscriptionID != subscription.ID ||
-		checkoutBody.CheckoutURL != provider.session.URL {
+		checkoutBody.ClientSecret != provider.session.ClientSecret || checkoutBody.Presentation != "embedded" {
 		t.Fatalf("subscription checkout response = (%+v, %v)", checkoutBody, err)
 	}
 
@@ -285,6 +348,37 @@ func TestCosmeticSubscriptionCheckoutAndPortalUseServerAccountSnapshot(t *testin
 	if portal.Code != http.StatusOK || provider.portalCustomer != "cus_owner" ||
 		!strings.Contains(portal.Body.String(), `"portal_url":"https://billing.stripe.com/p/session/test"`) {
 		t.Fatalf("portal status=%d customer=%q body=%s", portal.Code, provider.portalCustomer, portal.Body.String())
+	}
+}
+
+func TestCosmeticSubscriptionCheckoutUsesPersistedPresentationAcrossRetry(t *testing.T) {
+	subscription := &db.CosmeticSubscription{
+		ID: "subscription-retry", AccountID: "account-1", AccountEmail: "owner@example.com",
+		Status: db.CosmeticSubscriptionStatusCreated, PriceCents: db.CosmeticSubscriptionPriceCents,
+		Currency: db.CosmeticSubscriptionCurrency, Interval: db.CosmeticSubscriptionInterval,
+		CheckoutPresentation: db.CosmeticCheckoutPresentationHosted,
+	}
+	store := &fakeCosmeticSubscriptionStore{subscription: subscription, reserveReused: true}
+	provider := &fakeCosmeticPaymentProvider{session: &CosmeticCheckoutSession{
+		ID: "cs_subscription_retry", Presentation: CosmeticCheckoutPresentationHosted,
+		URL: "https://checkout.stripe.com/c/pay/cs_subscription_retry",
+	}}
+	recorder := httptest.NewRecorder()
+	handler := newCosmeticCommerceHandlerWithSubscriptionStore(&fakeCosmeticCommerceStore{}, store, provider, true)
+	handler.SubscriptionCheckout(recorder, commerceCustomerRequest(
+		http.MethodPost, "/api/v1/account/cosmetics/subscription/checkout", `{"presentation":"embedded"}`,
+	))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if provider.subscriptionRequest.SubscriptionID != subscription.ID ||
+		provider.subscriptionRequest.Presentation != CosmeticCheckoutPresentationHosted {
+		t.Fatalf("subscription provider request = %+v", provider.subscriptionRequest)
+	}
+	if !strings.Contains(recorder.Body.String(), `"resumed":true`) ||
+		!strings.Contains(recorder.Body.String(), `"presentation":"hosted"`) {
+		t.Fatalf("subscription retry response=%s", recorder.Body.String())
 	}
 }
 
@@ -312,7 +406,8 @@ func pendingCommerceTestSubscription() *db.CosmeticSubscription {
 	return &db.CosmeticSubscription{
 		ID: "subscription-pending", AccountID: "account-1", AccountEmail: "owner@example.com",
 		Status: db.CosmeticSubscriptionStatusCheckoutPending, CheckoutSessionID: "cs_pending",
-		PriceCents: db.CosmeticSubscriptionPriceCents, Currency: db.CosmeticSubscriptionCurrency,
+		CheckoutPresentation: db.CosmeticCheckoutPresentationHosted,
+		PriceCents:           db.CosmeticSubscriptionPriceCents, Currency: db.CosmeticSubscriptionCurrency,
 		Interval: db.CosmeticSubscriptionInterval,
 	}
 }
@@ -322,7 +417,8 @@ func TestCosmeticSubscriptionCheckoutResumesAuthoritativeOpenSession(t *testing.
 	store := &fakeCosmeticSubscriptionStore{subscription: subscription}
 	provider := &fakeCosmeticPaymentProvider{retrievedSession: &CosmeticCheckoutSession{
 		ID: subscription.CheckoutSessionID, URL: "https://checkout.stripe.com/c/pay/cs_pending",
-		Status: CosmeticCheckoutSessionStatusOpen, ExpiresAt: time.Unix(1_900_000_000, 0).UTC(),
+		Presentation: CosmeticCheckoutPresentationHosted,
+		Status:       CosmeticCheckoutSessionStatusOpen, ExpiresAt: time.Unix(1_900_000_000, 0).UTC(),
 		Mode: "subscription", SubscriptionID: subscription.ID, AccountID: subscription.AccountID,
 	}}
 	handler := newCosmeticCommerceHandlerWithSubscriptionStore(&fakeCosmeticCommerceStore{}, store, provider, true)
@@ -345,6 +441,7 @@ func TestCosmeticSubscriptionCheckoutReplacesOnlyAuthoritativelyExpiredSession(t
 		ID: "subscription-replacement", AccountID: pending.AccountID, AccountEmail: pending.AccountEmail,
 		Status: db.CosmeticSubscriptionStatusCreated, PriceCents: db.CosmeticSubscriptionPriceCents,
 		Currency: db.CosmeticSubscriptionCurrency, Interval: db.CosmeticSubscriptionInterval,
+		CheckoutPresentation: db.CosmeticCheckoutPresentationEmbedded,
 	}
 	store := &fakeCosmeticSubscriptionStore{
 		subscription: pending, createResults: []*db.CosmeticSubscription{pending, replacement},
@@ -352,11 +449,13 @@ func TestCosmeticSubscriptionCheckoutReplacesOnlyAuthoritativelyExpiredSession(t
 	provider := &fakeCosmeticPaymentProvider{
 		retrievedSession: &CosmeticCheckoutSession{
 			ID: pending.CheckoutSessionID, Status: CosmeticCheckoutSessionStatusExpired,
-			Mode: "subscription", SubscriptionID: pending.ID, AccountID: pending.AccountID,
+			Presentation: CosmeticCheckoutPresentationHosted,
+			Mode:         "subscription", SubscriptionID: pending.ID, AccountID: pending.AccountID,
 		},
 		session: &CosmeticCheckoutSession{
-			ID: "cs_replacement", URL: "https://checkout.stripe.com/c/pay/cs_replacement",
-			Status: CosmeticCheckoutSessionStatusOpen,
+			ID: "cs_replacement", Presentation: CosmeticCheckoutPresentationEmbedded,
+			ClientSecret: "cs_replacement_secret_browser",
+			Status:       CosmeticCheckoutSessionStatusOpen,
 		},
 	}
 	handler := newCosmeticCommerceHandlerWithSubscriptionStore(&fakeCosmeticCommerceStore{}, store, provider, true)
@@ -375,7 +474,8 @@ func TestCosmeticSubscriptionCheckoutDoesNotReplaceCompletedSession(t *testing.T
 	store := &fakeCosmeticSubscriptionStore{subscription: pending}
 	provider := &fakeCosmeticPaymentProvider{retrievedSession: &CosmeticCheckoutSession{
 		ID: pending.CheckoutSessionID, Status: CosmeticCheckoutSessionStatusComplete,
-		Mode: "subscription", SubscriptionID: pending.ID, AccountID: pending.AccountID,
+		Presentation: CosmeticCheckoutPresentationHosted,
+		Mode:         "subscription", SubscriptionID: pending.ID, AccountID: pending.AccountID,
 	}}
 	handler := newCosmeticCommerceHandlerWithSubscriptionStore(&fakeCosmeticCommerceStore{}, store, provider, true)
 	recorder := httptest.NewRecorder()
@@ -394,7 +494,7 @@ func TestCosmeticSubscriptionCheckoutRejectsRetrievedSessionForAnotherAccount(t 
 	store := &fakeCosmeticSubscriptionStore{subscription: pending}
 	provider := &fakeCosmeticPaymentProvider{retrievedSession: &CosmeticCheckoutSession{
 		ID: pending.CheckoutSessionID, Status: CosmeticCheckoutSessionStatusOpen,
-		URL: "https://checkout.stripe.com/c/pay/cs_pending", Mode: "subscription",
+		URL: "https://checkout.stripe.com/c/pay/cs_pending", Mode: "subscription", Presentation: CosmeticCheckoutPresentationHosted,
 		SubscriptionID: pending.ID, AccountID: "another-account",
 	}}
 	handler := newCosmeticCommerceHandlerWithSubscriptionStore(&fakeCosmeticCommerceStore{}, store, provider, true)
@@ -414,7 +514,8 @@ func TestCosmeticSubscriptionCheckoutKeepsAmbiguousProviderAndAttachFailuresRetr
 	}{
 		{name: "provider timeout", provider: &fakeCosmeticPaymentProvider{createErr: errors.New("timeout")}, wantStatus: http.StatusBadGateway},
 		{name: "local attach failure", provider: &fakeCosmeticPaymentProvider{session: &CosmeticCheckoutSession{
-			ID: "cs_ambiguous", URL: "https://checkout.stripe.com/c/pay/cs_ambiguous",
+			ID: "cs_ambiguous", Presentation: CosmeticCheckoutPresentationEmbedded,
+			ClientSecret: "cs_ambiguous_secret_browser",
 		}}, attachErr: errors.New("database unavailable"), wantStatus: http.StatusInternalServerError},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -422,6 +523,7 @@ func TestCosmeticSubscriptionCheckoutKeepsAmbiguousProviderAndAttachFailuresRetr
 				ID: "subscription-retryable", AccountID: "account-1", AccountEmail: "owner@example.com",
 				Status: db.CosmeticSubscriptionStatusCreated, PriceCents: db.CosmeticSubscriptionPriceCents,
 				Currency: db.CosmeticSubscriptionCurrency, Interval: db.CosmeticSubscriptionInterval,
+				CheckoutPresentation: db.CosmeticCheckoutPresentationEmbedded,
 			}
 			store := &fakeCosmeticSubscriptionStore{subscription: subscription, attachErr: test.attachErr}
 			handler := newCosmeticCommerceHandlerWithSubscriptionStore(&fakeCosmeticCommerceStore{}, store, test.provider, true)
@@ -647,7 +749,9 @@ func TestCosmeticCommerceCheckoutFailsClosed(t *testing.T) {
 	} {
 		t.Run("unsafe provider redirect "+name, func(t *testing.T) {
 			store := &fakeCosmeticCommerceStore{order: commerceTestOrder()}
-			provider := &fakeCosmeticPaymentProvider{session: &CosmeticCheckoutSession{ID: "cs_bad", URL: redirectURL}}
+			provider := &fakeCosmeticPaymentProvider{session: &CosmeticCheckoutSession{
+				ID: "cs_bad", Presentation: CosmeticCheckoutPresentationHosted, URL: redirectURL,
+			}}
 			recorder := httptest.NewRecorder()
 			newCosmeticCommerceHandlerWithStore(store, provider, true).Checkout(
 				recorder, commerceCustomerRequest(http.MethodPost, "/", `{"pack_id":"arena-set-003-ember-vanguard-pack","quantity":2}`),
@@ -895,6 +999,7 @@ func TestCosmeticCommerceRoutesExistAtRootAndArenaPrefixes(t *testing.T) {
 			{method: http.MethodPost, path: "/cosmetics/webhooks/stripe", want: http.StatusServiceUnavailable},
 			{method: http.MethodGet, path: "/account/cosmetics/orders", want: http.StatusServiceUnavailable},
 			{method: http.MethodPost, path: "/account/cosmetics/checkout", want: http.StatusServiceUnavailable},
+			{method: http.MethodPost, path: "/account/cosmetics/orders/order-1/checkout", want: http.StatusServiceUnavailable},
 			{method: http.MethodPost, path: "/account/cosmetics/subscription/checkout", want: http.StatusServiceUnavailable},
 			{method: http.MethodPost, path: "/account/cosmetics/subscription/portal", want: http.StatusServiceUnavailable},
 			{method: http.MethodGet, path: "/admin/cosmetics/orders", want: http.StatusUnauthorized},
@@ -935,6 +1040,8 @@ func TestCosmeticCheckoutRouteFailsClosedAtBothPrefixesWithoutRedis(t *testing.T
 	for _, target := range []string{
 		"/api/v1/account/cosmetics/checkout",
 		"/arena/api/v1/account/cosmetics/checkout",
+		"/api/v1/account/cosmetics/orders/order-1/checkout",
+		"/arena/api/v1/account/cosmetics/orders/order-1/checkout",
 		"/api/v1/account/cosmetics/subscription/checkout",
 		"/arena/api/v1/account/cosmetics/subscription/checkout",
 		"/api/v1/account/cosmetics/subscription/portal",
@@ -947,8 +1054,8 @@ func TestCosmeticCheckoutRouteFailsClosedAtBothPrefixesWithoutRedis(t *testing.T
 			t.Fatalf("%s status=%d body=%s", target, recorder.Code, recorder.Body.String())
 		}
 	}
-	if store.createdAccount != "" || provider.request.OrderID != "" {
-		t.Fatalf("checkout side effects ran without limiter: store=%q provider=%+v", store.createdAccount, provider.request)
+	if store.createdAccount != "" || store.getID != "" || provider.request.OrderID != "" || provider.retrievedSessionID != "" {
+		t.Fatalf("checkout side effects ran without limiter: store=%q/%q provider=%+v retrieve=%q", store.createdAccount, store.getID, provider.request, provider.retrievedSessionID)
 	}
 }
 

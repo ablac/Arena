@@ -232,7 +232,7 @@ func BotSetup() http.HandlerFunc {
 					"damage_formula":    "weapon_damage * attack_multiplier * (1 - target_defense_reduction)",
 				},
 				"fallback_behaviors":   []string{"aggressive", "defensive", "opportunistic"},
-				"fallback_description": "When your bot doesn't send an action for a tick, the server runs this AI behavior for you.",
+				"fallback_description": "After your bot has acted, the server can run this AI behavior during a brief missed-action safety window; prolonged silence remains subject to the activity timeout.",
 			},
 
 			// ── Game Mechanics ───────────────────────────────────

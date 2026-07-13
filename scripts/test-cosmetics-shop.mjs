@@ -30,6 +30,10 @@ assert.ok(shopHTML.indexOf('babylon.js') < shopHTML.indexOf('cosmetic-themes.js'
 assert.equal((shopHTML.match(/<canvas\b/g) || []).length, 1, 'Shop must use one shared bot preview canvas');
 assert.match(shopHTML, /id="shop-preview-canvas"/, 'the large bot preview canvas needs a stable hook');
 assert.match(shopHTML, /data-shop-pack-list/, 'Shop needs a pack browser');
+assert.match(shopHTML, /data-shop-kind/, 'Shop needs a product-type filter');
+assert.match(shopHTML, /data-shop-kind[\s\S]{0,400}<option value="trails">Trails<\/option>/,
+  'Trails must be a first-class filter even when catalog collection metadata changes');
+assert.match(shopHTML, /data-shop-sort/, 'Shop needs an explicit sort control');
 assert.match(shopHTML, /data-shop-pack-detail/, 'Shop needs a selected-pack detail region');
 assert.match(shopHTML, /data-shop-item-list/, 'pack detail must expose its complete item list');
 assert.match(shopHTML, /data-shop-preview-pack/, 'customers need a full-pack preview control');
@@ -81,6 +85,21 @@ const pack = {
     {id: 'trail', slot: 'trail', asset_key: 'ember_sparks'},
   ],
 };
+
+const trailPack = {
+  id: 'trail-only', name: 'Comet Tail', category_id: 'trails', price_cents: 99,
+  items: [{id: 'trail-item', name: 'Comet Tail', slot: 'trail', asset_key: 'comet_tail'}],
+};
+assert.equal(shop.isTrailPack(trailPack), true);
+assert.equal(shop.isTrailPack(pack), false, 'a coordinated set containing a trail remains a set');
+assert.deepEqual(
+  shop.sortCosmeticPacks([
+    {id: 'zulu', name: 'Zulu', price_cents: 99},
+    {id: 'alpha', name: 'Alpha', price_cents: 199},
+  ], 'name').map(candidate => candidate.id),
+  ['alpha', 'zulu'],
+  'name sorting must be deterministic and must not mutate the catalog order',
+);
 
 assert.deepEqual(shop.packPreviewLoadout(pack), {
   bot_skin: 'arena_set_003_ember',
@@ -161,6 +180,8 @@ const detail = new FakeElement('aside');
 const itemList = new FakeElement('div');
 const search = new FakeElement('input');
 const category = new FakeElement('select');
+const kind = new FakeElement('select');
+const sort = new FakeElement('select');
 const summary = new FakeElement('p');
 const showMore = new FakeElement('button');
 const packName = new FakeElement('h2');
@@ -183,6 +204,8 @@ const root = new FakeRoot({
   '[data-shop-status]': status,
   '[data-shop-search]': search,
   '[data-shop-category]': category,
+  '[data-shop-kind]': kind,
+  '[data-shop-sort]': sort,
   '[data-shop-results-summary]': summary,
   '[data-shop-show-more]': showMore,
   '[data-shop-pack-list]': packList,
@@ -257,6 +280,7 @@ const catalog = {
   categories: [{id: 'season-one', name: 'Season One'}],
   packs: [
     {...pack, name: 'Ember Pack', category_id: 'season-one', price_cents: 199, currency: 'USD', is_purchasable: true},
+    {...trailPack, currency: 'USD', is_purchasable: true},
     ...bulkPacks,
   ],
 };
@@ -282,6 +306,24 @@ assert.equal(subscriptionAction.href, '/dashboard/?tab=cosmetics&plan=all-access
 assert.equal(subscriptionAction.hidden, false);
 assert.match(subscriptionState.textContent, /current and future/i);
 
+category.value = 'season-one';
+category.listeners.get('change')({currentTarget: category});
+assert.equal(controller.snapshot().filteredCount, 1, 'collection filters should remain active before switching product families');
+kind.value = 'trails';
+kind.listeners.get('change')({currentTarget: kind});
+assert.equal(controller.snapshot().filteredCount, 1, 'the Trails filter must isolate standalone trail products');
+assert.equal(controller.snapshot().selectedPackID, 'trail-only');
+assert.equal(packList.children[0].dataset.shopPackId, 'trail-only');
+assert.equal(category.value, 'all', 'switching product families must clear an incompatible collection filter');
+
+kind.value = 'all';
+kind.listeners.get('change')({currentTarget: kind});
+sort.value = 'name';
+sort.listeners.get('change')({currentTarget: sort});
+assert.equal(controller.snapshot().sort, 'name');
+assert.equal(packList.children[0].dataset.shopPackId, 'arena-set-100-apex-radiance-pack',
+  'changing sort order must visibly reorder the product browser and its active selection');
+
 search.value = 'set 100';
 search.listeners.get('input')({currentTarget: search});
 assert.equal(controller.snapshot().filteredCount, 1, 'natural spacing must find a hyphenated set number');
@@ -292,6 +334,14 @@ search.listeners.get('input')({currentTarget: search});
 assert.equal(packList.children.length, 24, 'the 100-pack Shop must keep its initial DOM page bounded');
 assert.equal(packList.children[0].dataset.shopPackId, 'arena-set-100-apex-radiance-pack',
   'the selected pack must stay visible when a broader filter is restored');
+
+const emberSortedButton = packList.children.find(button => button.dataset.shopPackId === 'ember-pack');
+emberSortedButton.click();
+search.value = '';
+search.listeners.get('input')({currentTarget: search});
+assert.equal(controller.snapshot().selectedPackID, 'ember-pack');
+assert.equal(packList.children[0].dataset.shopPackId, 'arena-set-100-apex-radiance-pack',
+  'preserving a selection must not move it ahead of the selected name/price sort');
 showMore.listeners.get('click')();
 assert.equal(packList.children.length, 48, 'Show more must reveal one bounded page at a time');
 

@@ -232,6 +232,10 @@ type BotState struct {
 	FallbackBehavior string
 	PendingAction    *Action
 	LastActionTick   int
+	// ReconnectActionGraceUntilTick gives a restored transport time to submit
+	// its first fresh action without rewriting LastActionTick, which is also a
+	// spectator animation edge. Fallback AI stays disabled during this grace.
+	ReconnectActionGraceUntilTick int
 	// Client action ticks are monotonic sequence numbers supplied by the bot.
 	// Tracking them separately from LastActionTick prevents replayed messages
 	// and same-tick last-write-wins overrides without weakening AFK tracking.
