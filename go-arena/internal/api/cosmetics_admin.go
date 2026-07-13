@@ -63,6 +63,10 @@ func registerCosmeticsAdminRoutes(router chi.Router, handler *CosmeticsHandler) 
 	router.Post("/cosmetics/grants", handler.Grant)
 	router.Delete("/cosmetics/grants", handler.Revoke)
 	router.Delete("/cosmetics/licenses/{license_id}", handler.Revoke)
+	router.Get("/cosmetics/access", handler.AdminCosmeticAccess)
+	router.Post("/cosmetics/memberships", handler.CreateAdminCosmeticMembership)
+	router.Delete("/cosmetics/memberships", handler.RevokeAdminCosmeticMembership)
+	router.Delete("/cosmetics/memberships/{membership_id}", handler.RevokeAdminCosmeticMembership)
 }
 
 func (h *CosmeticsHandler) AdminCatalog(w http.ResponseWriter, r *http.Request) {
@@ -261,6 +265,9 @@ func decodeStrictCosmeticAdminJSON(r *http.Request, destination interface{}) err
 }
 
 func cosmeticAdminActor(r *http.Request) string {
+	if principal := adminPrincipalFromContext(r.Context()); principal != "" {
+		return principal
+	}
 	if strings.TrimSpace(r.Header.Get("X-Admin-Token")) != "" {
 		return "admin-token"
 	}

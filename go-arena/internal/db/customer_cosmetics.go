@@ -581,6 +581,9 @@ func GetCustomerCosmeticsInventory(ctx context.Context, accountID string) (*Cust
 	if _, err := SyncCustomerCosmeticSubscriptionLicenses(ctx, accountID); err != nil {
 		return nil, err
 	}
+	if _, err := SyncCustomerCosmeticAdminMembershipLicenses(ctx, accountID); err != nil {
+		return nil, err
+	}
 	account, err := GetCustomerAccount(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -744,6 +747,11 @@ func AssignCosmeticLicense(ctx context.Context, accountID, licenseID string, bot
 	if owner == nil || *owner != accountID {
 		return nil, ErrCosmeticLicenseNotOwned
 	}
+	if blocked, err := cosmeticLicenseBlockedByAdminMembership(ctx, tx, licenseID); err != nil {
+		return nil, fmt.Errorf("AssignCosmeticLicense membership: %w", err)
+	} else if blocked {
+		return nil, ErrCosmeticInactive
+	}
 	var previous *string
 	err = tx.QueryRow(ctx, `
 		SELECT bot_id FROM cosmetic_license_assignments WHERE license_id = $1 FOR UPDATE`, licenseID).Scan(&previous)
@@ -833,6 +841,11 @@ func EquipCustomerCosmeticLicense(ctx context.Context, accountID, botID, license
 	if owner == nil || *owner != accountID {
 		return nil, ErrCosmeticLicenseNotOwned
 	}
+	if blocked, err := cosmeticLicenseBlockedByAdminMembership(ctx, tx, licenseID); err != nil {
+		return nil, fmt.Errorf("EquipCustomerCosmeticLicense membership: %w", err)
+	} else if blocked {
+		return nil, ErrCosmeticInactive
+	}
 	if status != "active" {
 		return nil, ErrCosmeticInactive
 	}
@@ -874,6 +887,18 @@ func EquipCustomerCosmeticLicense(ctx context.Context, accountID, botID, license
 func RevokeCosmeticLicense(ctx context.Context, licenseID string) (*CosmeticAssignmentChange, bool, error) {
 	if Pool == nil {
 		return nil, false, ErrNoDatabase
+	}
+	var membershipID string
+	err := Pool.QueryRow(ctx, `
+		SELECT membership_id FROM cosmetic_admin_membership_licenses WHERE license_id = $1`, licenseID).
+		Scan(&membershipID)
+	if err == nil {
+		return nil, false, ErrCosmeticAdminMembershipLicense
+	}
+	var pgErr *pgconn.PgError
+	membershipSchemaMissing := errors.As(err, &pgErr) && pgErr.Code == "42P01"
+	if !errors.Is(err, pgx.ErrNoRows) && !membershipSchemaMissing {
+		return nil, false, fmt.Errorf("RevokeCosmeticLicense membership: %w", err)
 	}
 	// Admin revocation does not receive an account ID. Read the current owner,
 	// then lock that account before locking the license. If a legacy claim races

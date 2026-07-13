@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"arena-server/internal/config"
 	"arena-server/internal/db"
@@ -19,28 +20,40 @@ import (
 )
 
 type fakeCosmeticsStore struct {
-	publicCatalog *db.CosmeticCatalog
-	adminCatalog  *db.CosmeticCatalog
-	audit         []db.CosmeticCatalogAudit
-	items         []db.BotCosmeticItem
-	equipped      map[string]string
-	equipItem     *db.CosmeticItem
-	equipErr      error
-	grantCreated  bool
-	grantErr      error
-	revoked       bool
-	revokeErr     error
-	inventory     *db.CustomerCosmeticsInventory
-	linkBot       *db.AccountBot
-	assignment    *db.CosmeticAssignmentChange
-	license       *db.CosmeticLicense
-	lastBotID     string
-	lastAccount   string
-	lastLicense   string
-	lastSlot      string
-	lastCosmetic  string
-	lastActor     string
-	lastLimit     int
+	publicCatalog  *db.CosmeticCatalog
+	adminCatalog   *db.CosmeticCatalog
+	audit          []db.CosmeticCatalogAudit
+	items          []db.BotCosmeticItem
+	equipped       map[string]string
+	equippedErr    error
+	equipItem      *db.CosmeticItem
+	equipErr       error
+	grantCreated   bool
+	grantErr       error
+	revoked        bool
+	revokeErr      error
+	inventory      *db.CustomerCosmeticsInventory
+	linkBot        *db.AccountBot
+	assignment     *db.CosmeticAssignmentChange
+	license        *db.CosmeticLicense
+	lastBotID      string
+	lastAccount    string
+	lastLicense    string
+	lastSlot       string
+	lastCosmetic   string
+	lastActor      string
+	lastLimit      int
+	adminAccess    *db.CosmeticAdminAccess
+	membership     *db.CosmeticAdminMembership
+	licensesMade   int
+	affectedBots   []string
+	lastEmail      string
+	lastNote       string
+	lastReason     string
+	lastMembership string
+	lastExpiry     time.Time
+	lastSource     string
+	lastReference  string
 }
 
 func (f *fakeCosmeticsStore) PublicCatalog(context.Context) (*db.CosmeticCatalog, error) {
@@ -81,7 +94,7 @@ func (f *fakeCosmeticsStore) ListForBot(context.Context, string) ([]db.BotCosmet
 	return f.items, nil
 }
 func (f *fakeCosmeticsStore) Equipped(context.Context, string) (map[string]string, error) {
-	return f.equipped, nil
+	return f.equipped, f.equippedErr
 }
 func (f *fakeCosmeticsStore) Equip(_ context.Context, botID, slot, cosmeticID string) (*db.CosmeticItem, error) {
 	f.lastBotID, f.lastSlot, f.lastCosmetic = botID, slot, cosmeticID
@@ -139,13 +152,39 @@ func (f *fakeCosmeticsStore) EquipLicense(_ context.Context, accountID, botID, l
 	f.lastAccount, f.lastBotID, f.lastLicense = accountID, botID, licenseID
 	return f.license, f.equipErr
 }
-func (f *fakeCosmeticsStore) GrantLicense(_ context.Context, email, cosmeticID, _, _ string) (*db.CosmeticLicense, bool, error) {
-	f.lastAccount, f.lastCosmetic = email, cosmeticID
+func (f *fakeCosmeticsStore) GrantLicense(_ context.Context, email, cosmeticID, source, reference string) (*db.CosmeticLicense, bool, error) {
+	f.lastAccount, f.lastCosmetic, f.lastSource, f.lastReference = email, cosmeticID, source, reference
 	return f.license, f.grantCreated, f.grantErr
 }
 func (f *fakeCosmeticsStore) RevokeLicense(_ context.Context, licenseID string) (*db.CosmeticAssignmentChange, bool, error) {
 	f.lastLicense = licenseID
 	return f.assignment, f.revoked, f.revokeErr
+}
+
+func (f *fakeCosmeticsStore) AdminAccess(_ context.Context, email string) (*db.CosmeticAdminAccess, error) {
+	f.lastEmail = email
+	return f.adminAccess, f.grantErr
+}
+
+func (f *fakeCosmeticsStore) CreateAdminMembership(
+	_ context.Context, email string, expiresAt time.Time, note, actor string,
+) (*db.CosmeticAdminMembership, int, error) {
+	f.lastEmail, f.lastExpiry, f.lastNote, f.lastActor = email, expiresAt, note, actor
+	return f.membership, f.licensesMade, f.grantErr
+}
+
+func (f *fakeCosmeticsStore) RevokeAdminMembership(
+	_ context.Context, membershipID, actor, reason string,
+) (*db.CosmeticAdminMembership, []string, bool, error) {
+	f.lastMembership, f.lastActor, f.lastReason = membershipID, actor, reason
+	return f.membership, f.affectedBots, f.revoked, f.revokeErr
+}
+
+func (f *fakeCosmeticsStore) ExpireAdminMembershipsForEmail(
+	_ context.Context, email string, _ time.Time,
+) (int, []string, error) {
+	f.lastEmail = email
+	return 0, f.affectedBots, f.revokeErr
 }
 
 func requestWithBot(method, target string, body []byte, bot *db.Bot) *http.Request {
@@ -154,6 +193,14 @@ func requestWithBot(method, target string, body []byte, bot *db.Bot) *http.Reque
 		req = req.WithContext(security.WithBotContext(req.Context(), bot))
 	}
 	return req
+}
+
+func TestCosmeticAdminActorUsesAuthenticatedPrincipal(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/cosmetics/catalog", nil)
+	request = request.WithContext(withAdminPrincipal(request.Context(), "oidc:operator@example.com"))
+	if actor := cosmeticAdminActor(request); actor != "oidc:operator@example.com" {
+		t.Fatalf("actor=%q", actor)
+	}
 }
 
 func requestWithCustomerParam(method, target string, body []byte, param, value string) *http.Request {
@@ -589,9 +636,21 @@ func TestGrantCosmeticIsIdempotentAndValidated(t *testing.T) {
 
 	good := httptest.NewRecorder()
 	handler.Grant(good, httptest.NewRequest(http.MethodPost, "/api/v1/admin/cosmetics/grants",
-		bytes.NewBufferString(`{"email":"owner@example.com","cosmetic_id":"skin-neon-grid","source":"stripe","external_reference":"evt_123"}`)))
+		bytes.NewBufferString(`{"email":"owner@example.com","cosmetic_id":"skin-neon-grid","source":"manual","external_reference":"evt_123"}`)))
 	if good.Code != http.StatusOK {
 		t.Fatalf("idempotent grant status = %d, body=%s", good.Code, good.Body.String())
+	}
+
+	manualStore := &fakeCosmeticsStore{grantCreated: true, license: &db.CosmeticLicense{ID: "manual-license"}}
+	manual := httptest.NewRecorder()
+	newCosmeticsHandlerWithStore(manualStore, nil).Grant(manual, httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/admin/cosmetics/grants",
+		bytes.NewBufferString(`{"email":"owner@example.com","cosmetic_id":"skin-neon-grid","external_reference":"support-123"}`),
+	))
+	if manual.Code != http.StatusCreated || manualStore.lastSource != "manual" || manualStore.lastReference != "support-123" {
+		t.Fatalf("default manual grant status=%d source=%q reference=%q body=%s",
+			manual.Code, manualStore.lastSource, manualStore.lastReference, manual.Body.String())
 	}
 }
 
