@@ -36,7 +36,7 @@ Requirements:
 
 - Docker and Docker Compose
 - Go 1.25 or newer if running the server outside Docker
-- Python 3.11 or newer for Python bots
+- Python 3.10 or newer for Python bots
 - Node.js 20 or newer for the Node SDK/examples
 
 Start the local stack:

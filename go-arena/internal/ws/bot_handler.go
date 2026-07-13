@@ -17,12 +17,13 @@ import (
 	"arena-server/internal/game"
 	"arena-server/internal/security"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
 // EventHook is a callback for dashboard event logging. Set by the api package
 // to avoid circular imports.
-var EventHook func(action, botName, botID, ip, apiKeyID, errMsg string)
+var EventHook func(action, botName, botID, ip, apiKeyID, errMsg string, details map[string]interface{})
 
 // WSMessageHook is a callback for WS message logging.
 var WSMessageHook func(botID, botName, action string, data map[string]interface{})
@@ -89,7 +90,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 				"code":  "IP_BANNED",
 			})
 			if EventHook != nil {
-				EventHook("ip_banned", "", "", ip, "", "IP banned")
+				EventHook("ip_banned", "", "", ip, "", "IP banned", nil)
 			}
 			return
 		}
@@ -119,7 +120,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 					},
 				})
 				if EventHook != nil {
-					EventHook("ws_rate_limited", "", "", ip, "", "too many connections")
+					EventHook("ws_rate_limited", "", "", ip, "", "too many connections", nil)
 				}
 				return
 			}
@@ -137,7 +138,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 					"code":  "INVALID_API_KEY",
 				})
 				if EventHook != nil {
-					EventHook("auth_failed", "", "", ip, "", err.Error())
+					EventHook("auth_failed", "", "", ip, "", err.Error(), nil)
 				}
 				return
 			}
@@ -147,7 +148,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		if err != nil {
 			slog.Error("websocket upgrade failed", "error", err, "client_ip", ip, "remote", remoteAddr)
 			if EventHook != nil {
-				EventHook("ws_upgrade_failed", "", "", ip, "", err.Error())
+				EventHook("ws_upgrade_failed", "", "", ip, "", err.Error(), nil)
 			}
 			return
 		}
@@ -174,7 +175,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 				"ip": ip,
 			})
 			if EventHook != nil {
-				EventHook("auth_failed", "", "", ip, "", err.Error())
+				EventHook("auth_failed", "", "", ip, "", err.Error(), nil)
 			}
 			return
 		}
@@ -186,7 +187,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 				"api_key_id": botRecord.APIKeyID,
 			})
 			if EventHook != nil {
-				EventHook("auth_banned", botRecord.Name, botRecord.ID, ip, botRecord.APIKeyID, "key banned")
+				EventHook("auth_banned", botRecord.Name, botRecord.ID, ip, botRecord.APIKeyID, "key banned", nil)
 			}
 			return
 		}
@@ -207,7 +208,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 					"retry_after": windowSecs,
 				})
 				if EventHook != nil {
-					EventHook("reconnect_rate_limited", botRecord.Name, botRecord.ID, ip, botRecord.APIKeyID, "reconnecting too fast")
+					EventHook("reconnect_rate_limited", botRecord.Name, botRecord.ID, ip, botRecord.APIKeyID, "reconnecting too fast", nil)
 				}
 				return
 			}
@@ -246,22 +247,23 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		// 3. Create BotState
 		// ----------------------------------------------------------------
 		bot := &game.BotState{
-			BotID:            botRecord.ID,
-			APIKeyID:         botRecord.APIKeyID,
-			Name:             botRecord.Name,
-			AvatarColor:      botRecord.AvatarColor,
-			Cosmetics:        cosmetics,
-			Weapon:           botRecord.DefaultWeapon,
-			Stats:            cloneStats(map[string]int(botRecord.DefaultStats)),
-			FallbackBehavior: botRecord.DefaultFallback,
-			Elo:              startingElo,
-			IsAlive:          false,
-			ConnectedAt:      time.Now(),
-			Conn:             conn,
-			SendChan:         make(chan []byte, 64),
-			TickChan:         make(chan []byte, 1),
-			ActiveEffects:    []game.Effect{},
-			HitsReceived:     []game.HitRecord{},
+			BotID:               botRecord.ID,
+			APIKeyID:            botRecord.APIKeyID,
+			Name:                botRecord.Name,
+			AvatarColor:         botRecord.AvatarColor,
+			Cosmetics:           cosmetics,
+			Weapon:              botRecord.DefaultWeapon,
+			Stats:               cloneStats(map[string]int(botRecord.DefaultStats)),
+			FallbackBehavior:    botRecord.DefaultFallback,
+			Elo:                 startingElo,
+			IsAlive:             false,
+			ConnectedAt:         time.Now(),
+			Conn:                conn,
+			SendChan:            make(chan []byte, 64),
+			TickChan:            make(chan []byte, 1),
+			TransportCloseCause: make(chan game.BotTransportCloseCause, 1),
+			ActiveEffects:       []game.Effect{},
+			HitsReceived:        []game.HitRecord{},
 		}
 
 		// ----------------------------------------------------------------
@@ -294,7 +296,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 				sendWSErrorStructured(conn, "loadout negotiation failed", "LOADOUT_FAILED", nil)
 			}
 			if EventHook != nil {
-				EventHook("loadout_failed", bot.Name, bot.BotID, ip, bot.APIKeyID, err.Error())
+				EventHook("loadout_failed", bot.Name, bot.BotID, ip, bot.APIKeyID, err.Error(), nil)
 			}
 			return
 		}
@@ -317,7 +319,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 				"max_bots": config.C.MaxBots,
 			})
 			if EventHook != nil {
-				EventHook("server_full", bot.Name, bot.BotID, ip, bot.APIKeyID, "server at capacity")
+				EventHook("server_full", bot.Name, bot.BotID, ip, bot.APIKeyID, "server at capacity", nil)
 			}
 			return
 		}
@@ -349,9 +351,14 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 			return
 		}
 
-		// Log successful connection.
+		// Log successful connection. The session ID ties admission to the exact
+		// disconnect even when the same bot reconnects several times per second.
+		sessionID := uuid.NewString()
+		sessionStartedAt := time.Now()
 		if EventHook != nil {
-			EventHook("connected", bot.Name, bot.BotID, ip, bot.APIKeyID, "")
+			EventHook("connected", bot.Name, bot.BotID, ip, bot.APIKeyID, "", map[string]interface{}{
+				"session_id": sessionID,
+			})
 		}
 
 		// ----------------------------------------------------------------
@@ -361,12 +368,13 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		defer cancel()
 
 		var wg sync.WaitGroup
+		writerEndCh := make(chan botSessionEnd, 1)
 
 		// Writer goroutine
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			botWriter(runCtx, conn, bot.SendChan, bot.TickChan)
+			writerEndCh <- botWriter(runCtx, conn, bot.SendChan, bot.TickChan)
 			// A write or ping failure must wake the reader immediately; otherwise
 			// the engine can retain a frozen half-open session until heartbeat expiry.
 			cancel()
@@ -374,7 +382,7 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		}()
 
 		// Reader loop (runs on this goroutine)
-		botReader(runCtx, cancel, conn, bot, engine, cfg)
+		readerEnd := botReader(runCtx, cancel, conn, bot, engine, cfg)
 
 		// ----------------------------------------------------------------
 		// 8. Cleanup on disconnect
@@ -394,9 +402,34 @@ func BotHandler(engine *game.GameEngine) http.HandlerFunc {
 		}
 
 		wg.Wait()
-		slog.Info("bot disconnected", "bot", bot.Name, "bot_id", bot.BotID, "reconnect_preserved", preserved)
+		writerEnd := <-writerEndCh
+		readerEnd = resolveBotSessionEnd(bot, readerEnd, writerEnd)
+		durationMS := time.Since(sessionStartedAt).Milliseconds()
+		slog.Info("bot disconnected",
+			"bot", bot.Name,
+			"bot_id", bot.BotID,
+			"session_id", sessionID,
+			"disconnect_source", readerEnd.Source,
+			"close_code", readerEnd.CloseCode,
+			"close_reason", readerEnd.CloseReason,
+			"duration_ms", durationMS,
+			"actions_received", readerEnd.ActionsReceived,
+			"reconnect_preserved", preserved,
+		)
 		if EventHook != nil {
-			EventHook("disconnected", bot.Name, bot.BotID, ip, bot.APIKeyID, "")
+			details := map[string]interface{}{
+				"session_id":          sessionID,
+				"disconnect_source":   readerEnd.Source,
+				"close_code":          readerEnd.CloseCode,
+				"close_reason":        readerEnd.CloseReason,
+				"duration_ms":         durationMS,
+				"actions_received":    readerEnd.ActionsReceived,
+				"reconnect_preserved": preserved,
+			}
+			if readerEnd.Err != nil && readerEnd.CloseCode == 0 {
+				details["transport_error"] = readerEnd.Err.Error()
+			}
+			EventHook("disconnected", bot.Name, bot.BotID, ip, bot.APIKeyID, "", details)
 		}
 	}
 }
@@ -536,13 +569,50 @@ func applyDerivedStats(bot *game.BotState) {
 	bot.DefenseReduction = derived.DefenseReduction
 }
 
+type botSessionEnd struct {
+	Source          string
+	CloseCode       int
+	CloseReason     string
+	Err             error
+	ActionsReceived int
+}
+
+func botSessionEndFromReadError(ctx context.Context, err error) botSessionEnd {
+	result := botSessionEnd{Source: "peer", Err: err}
+	if ctx.Err() != nil {
+		result.Source = "server_context"
+	}
+	var closeErr *websocket.CloseError
+	if errors.As(err, &closeErr) {
+		result.CloseCode = closeErr.Code
+		result.CloseReason = closeErr.Text
+	}
+	return result
+}
+
+func resolveBotSessionEnd(bot *game.BotState, readerEnd, writerEnd botSessionEnd) botSessionEnd {
+	if cause, ok := bot.ConsumeTransportCloseCause(); ok {
+		return botSessionEnd{
+			Source: cause.Source, CloseCode: cause.CloseCode, CloseReason: cause.CloseReason,
+			ActionsReceived: readerEnd.ActionsReceived,
+		}
+	}
+	if writerEnd.Source == "server_writer" && readerEnd.Source == "server_context" {
+		writerEnd.ActionsReceived = readerEnd.ActionsReceived
+		return writerEnd
+	}
+	return readerEnd
+}
+
 // botReader is the main read loop for a connected bot. It reads messages from
 // the WebSocket, rate-limits them, parses actions, and forwards them to the
-// game engine. It returns when the connection is closed or an error occurs.
-func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, bot *game.BotState, engine *game.GameEngine, cfg *config.Config) {
+// game engine. It reports why the session ended so expected peer closes are
+// visible instead of being indistinguishable from server-initiated cleanup.
+func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, bot *game.BotState, engine *game.GameEngine, cfg *config.Config) botSessionEnd {
 	defer cancel()
 
 	messageLimiter := newBotMessageLimiter(cfg.WSMaxMessagesPerSec)
+	actionsReceived := 0
 
 	// Set initial read deadline for heartbeat detection.
 	heartbeatTimeout := time.Duration(cfg.HeartbeatInterval*float64(time.Second)) * 2
@@ -557,7 +627,7 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return botSessionEnd{Source: "server_context", Err: ctx.Err(), ActionsReceived: actionsReceived}
 		default:
 		}
 
@@ -566,7 +636,9 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
 				slog.Warn("bot read error", "error", err, "bot", bot.Name)
 			}
-			return
+			result := botSessionEndFromReadError(ctx, err)
+			result.ActionsReceived = actionsReceived
+			return result
 		}
 
 		// Reset read deadline on any received message.
@@ -588,7 +660,7 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 				slog.Warn("sustained bot message flood", "bot", bot.Name, "dropped", decision.DroppedCount)
 				if rejectBotViolation(engine, bot, "Sustained message flood", "WS_RATE_LIMITED", details) {
 					closeForProtocolViolation(conn)
-					return
+					return botSessionEnd{Source: "server_policy", CloseCode: websocket.ClosePolicyViolation, CloseReason: "temporary protocol lock", ActionsReceived: actionsReceived}
 				}
 			}
 			continue
@@ -599,7 +671,7 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 		if err != nil {
 			if rejectBotViolation(engine, bot, "Invalid message", "INVALID_MESSAGE", map[string]interface{}{"error": err.Error()}) {
 				closeForProtocolViolation(conn)
-				return
+				return botSessionEnd{Source: "server_policy", CloseCode: websocket.ClosePolicyViolation, CloseReason: "temporary protocol lock", ActionsReceived: actionsReceived}
 			}
 			continue
 		}
@@ -610,7 +682,7 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 			if !ok {
 				if rejectBotViolation(engine, bot, "Invalid action message", "INVALID_ACTION", nil) {
 					closeForProtocolViolation(conn)
-					return
+					return botSessionEnd{Source: "server_policy", CloseCode: websocket.ClosePolicyViolation, CloseReason: "temporary protocol lock", ActionsReceived: actionsReceived}
 				}
 				continue
 			}
@@ -618,20 +690,21 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 			if err != nil {
 				if rejectBotViolation(engine, bot, "Action rejected", "INVALID_ACTION", map[string]interface{}{"error": err.Error()}) {
 					closeForProtocolViolation(conn)
-					return
+					return botSessionEnd{Source: "server_policy", CloseCode: websocket.ClosePolicyViolation, CloseReason: "temporary protocol lock", ActionsReceived: actionsReceived}
 				}
 				continue
 			}
 			if err := engine.SubmitBotActionForSession(bot.BotID, bot, actionMsg.Tick, action); err != nil {
 				if errors.Is(err, game.ErrActionSessionReplaced) {
-					return
+					return botSessionEnd{Source: "session_replaced", ActionsReceived: actionsReceived}
 				}
 				if sendActionSubmissionError(engine, bot, actionMsg.Tick, err) {
 					closeForProtocolViolation(conn)
-					return
+					return botSessionEnd{Source: "server_policy", CloseCode: websocket.ClosePolicyViolation, CloseReason: "temporary protocol lock", ActionsReceived: actionsReceived}
 				}
 				continue
 			}
+			actionsReceived++
 
 			// Log WS message for dashboard.
 			if WSMessageHook != nil {
@@ -645,7 +718,7 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 			// Loadout changes are only allowed during the initial phase.
 			if rejectBotViolation(engine, bot, "Cannot change loadout mid-game", "LOADOUT_LOCKED", nil) {
 				closeForProtocolViolation(conn)
-				return
+				return botSessionEnd{Source: "server_policy", CloseCode: websocket.ClosePolicyViolation, CloseReason: "temporary protocol lock", ActionsReceived: actionsReceived}
 			}
 
 		case "taunt":
@@ -671,7 +744,7 @@ func botReader(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 				"received_type": msgType,
 			}) {
 				closeForProtocolViolation(conn)
-				return
+				return botSessionEnd{Source: "server_policy", CloseCode: websocket.ClosePolicyViolation, CloseReason: "temporary protocol lock", ActionsReceived: actionsReceived}
 			}
 		}
 	}
@@ -729,7 +802,7 @@ func rejectTemporarilyLockedBot(conn *websocket.Conn, botName, botID, ip, apiKey
 		"retry_after": retrySeconds,
 	})
 	if EventHook != nil {
-		EventHook("protocol_temp_locked", botName, botID, ip, apiKeyID, "temporary protocol lock")
+		EventHook("protocol_temp_locked", botName, botID, ip, apiKeyID, "temporary protocol lock", nil)
 	}
 	return true
 }
@@ -738,7 +811,7 @@ func rejectPermanentlyBannedBot(engine *game.GameEngine, conn *websocket.Conn, b
 	if engine.IsIPBanned(ip) {
 		sendWSErrorStructured(conn, "your IP has been banned", "IP_BANNED", nil)
 		if EventHook != nil {
-			EventHook("ip_banned", botName, botID, ip, apiKeyID, "IP banned")
+			EventHook("ip_banned", botName, botID, ip, apiKeyID, "IP banned", nil)
 		}
 		return true
 	}
@@ -747,7 +820,7 @@ func rejectPermanentlyBannedBot(engine *game.GameEngine, conn *websocket.Conn, b
 			"api_key_id": apiKeyID,
 		})
 		if EventHook != nil {
-			EventHook("auth_banned", botName, botID, ip, apiKeyID, "key banned")
+			EventHook("auth_banned", botName, botID, ip, apiKeyID, "key banned", nil)
 		}
 		return true
 	}
@@ -811,7 +884,7 @@ func closeForProtocolViolation(conn *websocket.Conn) {
 // botWriter drains the bot's SendChan and writes each message to the
 // WebSocket connection. It returns when the context is cancelled or the
 // send channel is closed.
-func botWriter(ctx context.Context, conn *websocket.Conn, sendChan, tickChan <-chan []byte) {
+func botWriter(ctx context.Context, conn *websocket.Conn, sendChan, tickChan <-chan []byte) botSessionEnd {
 	// Ping every 20 seconds to keep the connection alive through proxies.
 	pingTicker := time.NewTicker(20 * time.Second)
 	defer pingTicker.Stop()
@@ -823,7 +896,7 @@ func botWriter(ctx context.Context, conn *websocket.Conn, sendChan, tickChan <-c
 				websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 			)
-			return
+			return botSessionEnd{Source: "server_context", Err: ctx.Err()}
 		default:
 		}
 
@@ -833,12 +906,12 @@ func botWriter(ctx context.Context, conn *websocket.Conn, sendChan, tickChan <-c
 		select {
 		case msg, ok := <-sendChan:
 			if !ok {
-				return
+				return botSessionEnd{Source: "server_context"}
 			}
 			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 				slog.Warn("bot write error", "error", err)
-				return
+				return botSessionEnd{Source: "server_writer", Err: err}
 			}
 			continue
 		default:
@@ -850,13 +923,13 @@ func botWriter(ctx context.Context, conn *websocket.Conn, sendChan, tickChan <-c
 				websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 			)
-			return
+			return botSessionEnd{Source: "server_context", Err: ctx.Err()}
 
 		case <-pingTicker.C:
 			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				slog.Warn("bot ping error", "error", err)
-				return
+				return botSessionEnd{Source: "server_writer", Err: err}
 			}
 
 		case msg, ok := <-sendChan:
@@ -865,24 +938,24 @@ func botWriter(ctx context.Context, conn *websocket.Conn, sendChan, tickChan <-c
 					websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 				)
-				return
+				return botSessionEnd{Source: "server_context"}
 			}
 
 			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 				slog.Warn("bot write error", "error", err)
-				return
+				return botSessionEnd{Source: "server_writer", Err: err}
 			}
 
 		case msg, ok := <-tickChan:
 			if !ok {
-				return
+				return botSessionEnd{Source: "server_context"}
 			}
 
 			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 				slog.Warn("bot tick write error", "error", err)
-				return
+				return botSessionEnd{Source: "server_writer", Err: err}
 			}
 		}
 	}

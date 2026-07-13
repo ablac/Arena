@@ -432,8 +432,8 @@ func writeStructuredError(w http.ResponseWriter, bus *EventBus, status int, mess
 	}
 }
 
-// EmitConnection logs a connection event.
-func EmitConnection(bus *EventBus, action, botName, botID, ip, apiKeyID string, err string) {
+// EmitConnection logs a connection event with optional transport diagnostics.
+func EmitConnection(bus *EventBus, action, botName, botID, ip, apiKeyID string, err string, details map[string]interface{}) {
 	if bus == nil {
 		return
 	}
@@ -441,16 +441,19 @@ func EmitConnection(bus *EventBus, action, botName, botID, ip, apiKeyID string, 
 	if err != "" {
 		evtType = EventAuthFailure
 	}
+	data := make(map[string]interface{}, len(details)+6)
+	for key, value := range details {
+		data[key] = value
+	}
+	data["action"] = action
+	data["bot_name"] = botName
+	data["bot_id"] = botID
+	data["ip"] = ip
+	data["api_key_id"] = apiKeyID
+	data["error"] = err
 	bus.Emit(DashboardEvent{
 		Type: evtType,
-		Data: map[string]interface{}{
-			"action":     action,
-			"bot_name":   botName,
-			"bot_id":     botID,
-			"ip":         ip,
-			"api_key_id": apiKeyID,
-			"error":      err,
-		},
+		Data: data,
 	})
 }
 

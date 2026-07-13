@@ -268,8 +268,8 @@ func main() {
 	router := api.NewRouter(engine, routerOpts...)
 
 	// Wire up event hooks for dashboard logging.
-	ws.EventHook = func(action, botName, botID, ip, apiKeyID, errMsg string) {
-		api.EmitConnection(api.GlobalEventBus, action, botName, botID, ip, apiKeyID, errMsg)
+	ws.EventHook = func(action, botName, botID, ip, apiKeyID, errMsg string, details map[string]interface{}) {
+		api.EmitConnection(api.GlobalEventBus, action, botName, botID, ip, apiKeyID, errMsg, details)
 	}
 	ws.WSMessageHook = func(botID, botName, action string, data map[string]interface{}) {
 		api.EmitWSMessage(api.GlobalEventBus, botID, botName, action, data)

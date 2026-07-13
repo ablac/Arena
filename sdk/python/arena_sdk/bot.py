@@ -8,6 +8,7 @@ import json
 import logging
 import urllib.request
 from collections import deque
+from collections.abc import Mapping
 from contextlib import suppress
 from typing import Any
 
@@ -16,6 +17,8 @@ import websockets
 from . import helpers
 
 logger = logging.getLogger("arena_sdk")
+
+_RECONNECT_BACKOFF_RESET_SECONDS = 30.0
 
 
 class ArenaBot:
@@ -62,40 +65,52 @@ class ArenaBot:
     async def connect(self) -> None:
         """Connect to arena via WebSocket."""
         url = f"{self.server_url}?key={self.api_key}"
-        self._ws = await websockets.connect(url)
-        # Wait for connected message
-        raw = await self._ws.recv()
-        msg = json.loads(raw)
-        if msg.get("type") != "connected":
-            raise ConnectionError(f"Expected 'connected', got '{msg.get('type')}'")
-        self._bot_id = msg.get("bot_id")
-        logger.info("Connected as bot %s", self._bot_id)
-        # Send loadout
-        await self._ws.send(json.dumps({
-            "type": "select_loadout",
-            "weapon": self._weapon,
-            "stats": self._stats,
-            "fallback_behavior": self._fallback,
-        }))
-        if isinstance(msg.get("service_status"), dict):
-            await self._handle_service_status(msg["service_status"])
-        # A broadcast can change during the handshake. Keep consuming control
-        # messages until the loadout confirmation arrives instead of treating
-        # the first additive service_status frame as the confirmation.
-        while True:
-            raw = await self._ws.recv()
+        socket = await websockets.connect(url)
+        self._ws = socket
+        try:
+            # Wait for connected message
+            raw = await socket.recv()
             msg = json.loads(raw)
-            if msg.get("type") == "loadout_confirmed":
-                break
-            if msg.get("type") == "service_status":
-                await self._handle_service_status(msg)
-                continue
-            if msg.get("type") == "error":
-                raise ConnectionError(msg.get("message", "loadout rejected"))
-            logger.debug("Waiting for loadout confirmation; received %s", msg.get("type"))
+            if msg.get("type") != "connected":
+                raise ConnectionError(f"Expected 'connected', got '{msg.get('type')}'")
+            self._bot_id = msg.get("bot_id")
+            logger.info("Connected as bot %s", self._bot_id)
+            # Send loadout
+            await socket.send(json.dumps({
+                "type": "select_loadout",
+                "weapon": self._weapon,
+                "stats": self._stats,
+                "fallback_behavior": self._fallback,
+            }))
+            if isinstance(msg.get("service_status"), dict):
+                await self._handle_service_status(msg["service_status"])
+            # A broadcast can change during the handshake. Keep consuming control
+            # messages until the loadout confirmation arrives instead of treating
+            # the first additive service_status frame as the confirmation.
+            while True:
+                raw = await socket.recv()
+                msg = json.loads(raw)
+                if msg.get("type") == "loadout_confirmed":
+                    break
+                if msg.get("type") == "service_status":
+                    await self._handle_service_status(msg)
+                    continue
+                if msg.get("type") == "error":
+                    raise ConnectionError(msg.get("message", "loadout rejected"))
+                logger.debug("Waiting for loadout confirmation; received %s", msg.get("type"))
 
-        # Fetch terrain via REST API (pre-generated during intermission)
-        self.fetch_map()
+            # Fetch terrain via REST API (pre-generated during intermission). The
+            # urllib request is blocking, so keep it off the WebSocket event loop.
+            if await asyncio.to_thread(self.fetch_map):
+                try:
+                    await self.on_map_init(
+                        self._terrain or [], self._map_width, self._map_height
+                    )
+                except Exception:
+                    logger.exception("on_map_init error after connect REST fetch")
+        except (Exception, asyncio.CancelledError):
+            await self._close_socket(socket)
+            raise
 
     async def on_tick(self, state: dict, nearby: list, safe_zone: dict) -> dict:
         """Override this! Called every tick. Return an action dict."""
@@ -456,9 +471,11 @@ class ArenaBot:
                         logger.exception("on_map_init error")
                 elif msg_type == "round_start":
                     # Fetch fresh terrain via REST API
-                    if self.fetch_map():
+                    if await asyncio.to_thread(self.fetch_map):
                         try:
-                            await self.on_map_init(self._terrain, self._map_width, self._map_height)
+                            await self.on_map_init(
+                                self._terrain or [], self._map_width, self._map_height
+                            )
                         except Exception:
                             logger.exception("on_map_init error after REST fetch")
                 elif msg_type == "tick":
@@ -489,16 +506,42 @@ class ArenaBot:
                     except Exception:
                         logger.exception("on_tick error")
                         action = self.idle()
-                    payload = {"type": "action", "tick": self._tick_number}
-                    payload.update(action)
-                    await socket.send(json.dumps(payload))
+                    try:
+                        if not isinstance(action, Mapping):
+                            raise TypeError("on_tick must return a mapping")
+                        action_data = dict(action)
+                        if not isinstance(action_data.get("action"), str) or not action_data["action"]:
+                            raise ValueError("on_tick result must include a non-empty action string")
+                        payload = dict(action_data)
+                        payload.update({"type": "action", "tick": self._tick_number})
+                        encoded_payload = json.dumps(payload, allow_nan=False)
+                    except Exception as exc:
+                        logger.warning(
+                            "Invalid on_tick result (%s); sending idle",
+                            exc,
+                        )
+                        encoded_payload = json.dumps({
+                            "type": "action",
+                            "tick": self._tick_number,
+                            "action": "idle",
+                        })
+                    await socket.send(encoded_payload)
                 elif msg_type == "death":
-                    await self.on_death(msg)
+                    try:
+                        await self.on_death(msg)
+                    except Exception:
+                        logger.exception("on_death error")
                 elif msg_type == "respawn":
                     self._last_pos = msg.get("position", [0, 0])
-                    await self.on_respawn(msg)
+                    try:
+                        await self.on_respawn(msg)
+                    except Exception:
+                        logger.exception("on_respawn error")
                 elif msg_type == "round_end":
-                    await self.on_round_end(msg)
+                    try:
+                        await self.on_round_end(msg)
+                    except Exception:
+                        logger.exception("on_round_end error")
                 elif msg_type == "service_status":
                     await self._handle_service_status(msg)
                 elif msg_type == "error":
@@ -517,19 +560,43 @@ class ArenaBot:
         self._kicked = False
         backoff = 1.0
         while not self._kicked:
+            connected_at = None
             try:
                 await self.connect()
-                backoff = 1.0
+                connected_at = asyncio.get_running_loop().time()
                 await self._game_loop()
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.exception("Disconnected")
+            finally:
+                socket = self._ws
+                if socket is not None:
+                    await self._close_socket(socket)
             if self._kicked:
                 break
+            if (
+                connected_at is not None
+                and asyncio.get_running_loop().time() - connected_at
+                >= _RECONNECT_BACKOFF_RESET_SECONDS
+            ):
+                backoff = 1.0
             retry_wait = max(0.0, self._maintenance_retry_until - asyncio.get_running_loop().time())
             wait_for = max(backoff, retry_wait)
             logger.info("Reconnecting in %.0fs...", wait_for)
             await asyncio.sleep(wait_for)
             backoff = min(backoff * 2, 30.0)
+
+    async def _close_socket(self, socket: Any) -> None:
+        """Close one owned socket without clearing a newer replacement."""
+        if self._ws is socket:
+            self._ws = None
+        try:
+            await socket.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Failed to close WebSocket")
 
     async def _handle_service_status(self, status: dict) -> None:
         revision = int(status.get("revision", 0) or 0)

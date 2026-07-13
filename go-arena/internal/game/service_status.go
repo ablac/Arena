@@ -162,18 +162,23 @@ func (e *GameEngine) NotifyServiceRestart(retryAfterSeconds int) {
 // with the single normal writer goroutine used by each connection.
 func (e *GameEngine) CloseAllWebSockets(reason string) {
 	deadline := time.Now().Add(2 * time.Second)
-	payload := websocket.FormatCloseMessage(websocket.CloseServiceRestart, reason)
+	closeReason := boundedWebSocketCloseReason(reason)
+	payload := websocket.FormatCloseMessage(websocket.CloseServiceRestart, closeReason)
 
+	type botConnection struct {
+		bot  *BotState
+		conn *websocket.Conn
+	}
 	e.mu.RLock()
-	botConns := make([]*websocket.Conn, 0, len(e.Bots)+len(e.WaitingBots))
+	botConns := make([]botConnection, 0, len(e.Bots)+len(e.WaitingBots))
 	for _, bot := range e.Bots {
 		if bot.Conn != nil {
-			botConns = append(botConns, bot.Conn)
+			botConns = append(botConns, botConnection{bot: bot, conn: bot.Conn})
 		}
 	}
 	for _, bot := range e.WaitingBots {
 		if bot.Conn != nil {
-			botConns = append(botConns, bot.Conn)
+			botConns = append(botConns, botConnection{bot: bot, conn: bot.Conn})
 		}
 	}
 	e.mu.RUnlock()
@@ -187,7 +192,14 @@ func (e *GameEngine) CloseAllWebSockets(reason string) {
 	}
 	e.spectatorsMu.RUnlock()
 
-	for _, conn := range append(botConns, specConns...) {
+	for _, current := range botConns {
+		current.bot.SignalTransportClose(BotTransportCloseCause{
+			Source: "service_restart", CloseCode: websocket.CloseServiceRestart, CloseReason: closeReason,
+		})
+		_ = current.conn.WriteControl(websocket.CloseMessage, payload, deadline)
+		_ = current.conn.Close()
+	}
+	for _, conn := range specConns {
 		_ = conn.WriteControl(websocket.CloseMessage, payload, deadline)
 		_ = conn.Close()
 	}
