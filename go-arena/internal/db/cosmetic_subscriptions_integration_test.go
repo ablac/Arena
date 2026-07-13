@@ -31,7 +31,34 @@ func subscriptionEventHash(char string) string {
 	return strings.Repeat(char, 64)
 }
 
-const launchSubscriptionCosmeticCount = 324
+var launchSubscriptionCosmeticCount = countLaunchSubscriptionCosmetics(DefaultCosmeticCatalogData())
+
+// Mirror the production candidate query instead of hard-coding a launch
+// catalog total. Adding an active purchasable pack should expand All Access
+// without requiring unrelated integration-test constants to be updated.
+func countLaunchSubscriptionCosmetics(catalog CosmeticCatalog) int {
+	activeCategories := make(map[string]bool, len(catalog.Categories))
+	for _, category := range catalog.Categories {
+		activeCategories[category.ID] = category.IsActive
+	}
+	items := make(map[string]CosmeticItem, len(catalog.Items))
+	for _, item := range catalog.Items {
+		items[item.ID] = item
+	}
+	eligible := make(map[string]bool)
+	for _, pack := range catalog.Packs {
+		if !pack.IsActive || !pack.IsPurchasable || pack.IsFree || !activeCategories[pack.CategoryID] {
+			continue
+		}
+		for _, itemID := range pack.ItemIDs {
+			item, ok := items[itemID]
+			if ok && item.IsActive && activeCategories[item.CategoryID] {
+				eligible[itemID] = true
+			}
+		}
+	}
+	return len(eligible)
+}
 
 func TestPostgresCosmeticSubscriptionLifecycleAndFutureSetSync(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
