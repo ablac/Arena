@@ -55,6 +55,26 @@
     phantom_smoke: 'linear-gradient(135deg, #242033, #766b99 52%, #c8bce8)',
     gear_sparks: 'linear-gradient(135deg, #47250d, #d67b31 52%, #f7df92)',
     bounty_flare: 'linear-gradient(135deg, #4d1909, #ff5a36 48%, #ffca3a)',
+    // Original full-body forms mirror their bounded renderer palettes so cards
+    // stay recognizable before the lazy 3D preview starts.
+    body_giant_chicken: 'linear-gradient(135deg, #7c241e, #f4eee2 48%, #f4bd35)',
+    body_highland_cow: 'linear-gradient(135deg, #30170e, #7c4327 48%, #f2d5a4)',
+    body_corgi: 'linear-gradient(135deg, #4d2713, #d9853f 48%, #61d7ff)',
+    body_tabby_cat: 'linear-gradient(135deg, #332c27, #8d7c6d 48%, #72e0ff)',
+    body_red_fox: 'linear-gradient(135deg, #4c1a0d, #d95c2f 48%, #4ad9ff)',
+    body_battle_rabbit: 'linear-gradient(135deg, #383641, #c9c7d2 48%, #ff6ea8)',
+    body_emperor_penguin: 'linear-gradient(135deg, #080d14, #222b3a 48%, #f2bd35)',
+    body_bullfrog: 'linear-gradient(135deg, #163316, #4f9b4f 48%, #f2d85c)',
+    body_land_shark: 'linear-gradient(135deg, #122934, #477b98 48%, #ff6a64)',
+    body_tyrant_rex: 'linear-gradient(135deg, #1d3216, #5f8f48 48%, #ff8b45)',
+    body_human_adventurer: 'linear-gradient(135deg, #172d49, #c58d69 48%, #e7ad4f)',
+    body_astronaut: 'linear-gradient(135deg, #273342, #e8eef5 48%, #48d8ff)',
+    body_knight: 'linear-gradient(135deg, #18202d, #9aa8b8 48%, #f0c54b)',
+    body_wizard: 'linear-gradient(135deg, #1c1234, #4e3a82 48%, #65e5ff)',
+    body_skeleton: 'linear-gradient(135deg, #151a24, #dedbd0 48%, #60ebff)',
+    body_stone_golem: 'linear-gradient(135deg, #252b2f, #69737b 48%, #ffb34e)',
+    body_slime_monarch: 'linear-gradient(135deg, #0e4738, #4bcf8d 48%, #f3d45b)',
+    body_spider_drone: 'linear-gradient(135deg, #101421, #657189 48%, #f15bff)',
   });
 
   function hashKey(value) {

@@ -53,6 +53,16 @@ for (const trail of [
   assert.match(themes.swatchStyle(trail), /^linear-gradient\(/,
     `paid trail ${trail} needs a local Shop and Dashboard swatch`);
 }
+for (const bodyForm of [
+  'body_giant_chicken', 'body_highland_cow', 'body_corgi', 'body_tabby_cat',
+  'body_red_fox', 'body_battle_rabbit', 'body_emperor_penguin', 'body_bullfrog',
+  'body_land_shark', 'body_tyrant_rex', 'body_human_adventurer', 'body_astronaut',
+  'body_knight', 'body_wizard', 'body_skeleton', 'body_stone_golem',
+  'body_slime_monarch', 'body_spider_drone',
+]) {
+  assert.match(themes.swatchStyle(bodyForm), /^linear-gradient\(/,
+    `full-body form ${bodyForm} needs a local Shop and Dashboard swatch`);
+}
 assert.equal(themes.swatchStyle('malformed'), '', 'invalid keys must not produce CSS');
 
 console.log('procedural cosmetic themes are deterministic, bounded, and reject malformed keys');

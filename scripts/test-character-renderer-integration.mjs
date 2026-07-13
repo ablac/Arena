@@ -87,7 +87,12 @@ const {getCharacterProfile} = await import(
 const {createForgeWeapon, disposeForgeWeapon} = await import(
   new URL('../frontend/js/renderer/forge-weapons.js?dagger-mount-test', import.meta.url)
 );
-const {cooldownActionStarted} = await import(
+const {
+  BODY_FORM_NEAR_CHARACTER_LIMIT,
+  bodyFormRenderState,
+  cooldownActionStarted,
+  selectNearBodyFormIDs,
+} = await import(
   new URL('../frontend/js/renderer/bots.js?grapple-edge-test', import.meta.url)
 );
 const scene = {};
@@ -122,6 +127,68 @@ assert.equal(cooldownActionStarted('grapple', 'grapple', 3.9, 4, 'grapple'), fal
   'repeated snapshots of the same grapple must not replay its pose or effect');
 assert.equal(cooldownActionStarted('grapple', 'grapple', 4, 0, 'grapple'), true,
   'a later grapple must be detected by its cooldown rising again');
+
+const configuredBodyFormBot = {
+  bot_id: 'body-form-setting',
+  cosmetics: {bot_skin: 'body_giant_chicken', trail: 'standard'},
+};
+assert.equal(bodyFormRenderState(configuredBodyFormBot, true).renderBot, configuredBodyFormBot,
+  'enabled body forms must preserve the exact live bot snapshot');
+const disabledBodyForm = bodyFormRenderState(configuredBodyFormBot, false);
+assert.equal(disabledBodyForm.bodyFormKey, 'standard',
+  'disabling chassis skins must suppress construction-time body geometry');
+assert.equal(disabledBodyForm.renderBot.cosmetics.bot_skin, 'standard');
+assert.equal(configuredBodyFormBot.cosmetics.bot_skin, 'body_giant_chicken',
+  'the settings projection must not mutate authoritative server state');
+
+assert.equal(BODY_FORM_NEAR_CHARACTER_LIMIT, 64,
+  'crowd-scale body forms need an explicit bounded near-detail budget');
+const bodyFormEntries = new Map();
+for (let index = 0; index < 6; index += 1) {
+  bodyFormEntries.set(`form-${index}`, {
+    bodyFormKey: 'giant_chicken',
+    root: {position: new FakeVector3(index * 10, 0, 0)},
+  });
+}
+bodyFormEntries.set('standard', {bodyFormKey: 'standard', root: {position: new FakeVector3()}});
+bodyFormEntries.set('preview', {
+  bodyFormKey: 'giant_chicken', presentationOnly: true, root: {position: new FakeVector3()},
+});
+const nearBodyForms = selectNearBodyFormIDs(
+  bodyFormEntries,
+  {target: new FakeVector3()},
+  3,
+  'form-5',
+);
+assert.deepEqual([...nearBodyForms], ['form-5', 'form-0', 'form-1'],
+  'the selected body form plus the closest candidates must win the bounded near-detail budget');
+assert.equal(nearBodyForms.has('standard'), false,
+  'standard instanced chassis must not consume the body-form budget');
+assert.equal(nearBodyForms.has('preview'), false,
+  'Shop and Dashboard presentation rigs must stay outside the live-crowd cap');
+
+const corpseCompetition = new Map([
+  ['hidden-corpse', {
+    bodyFormKey: 'giant_chicken',
+    isAlive: false,
+    root: {position: new FakeVector3(0, 0, 0), isEnabled: () => false},
+  }],
+  ['visible-death-animation', {
+    bodyFormKey: 'giant_chicken',
+    isAlive: false,
+    root: {position: new FakeVector3(1, 0, 0), isEnabled: () => true},
+  }],
+  ['living-form', {
+    bodyFormKey: 'giant_chicken',
+    isAlive: true,
+    root: {position: new FakeVector3(20, 0, 0), isEnabled: () => true},
+  }],
+]);
+assert.deepEqual(
+  [...selectNearBodyFormIDs(corpseCompetition, {target: new FakeVector3()}, 1)],
+  ['living-form'],
+  'a hidden corpse or nearby death animation must not displace a living body form from the near-detail budget',
+);
 assert.match(bots,
   /grappleJustStarted[\s\S]{0,350}cooldownActionStarted\([\s\S]{0,220}'grapple'[\s\S]{0,700}target_position[\s\S]{0,700}triggerForgeAttack[\s\S]{0,700}onGrapple/,
   'the grapple edge must animate once and support both bot and anchor-position targets');

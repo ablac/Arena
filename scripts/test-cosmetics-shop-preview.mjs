@@ -6,6 +6,11 @@ function dataModule(source) {
   return `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 }
 
+const bodyFormRosterURL = new URL(
+  '../frontend/js/renderer/body-form-roster.js?cosmetics-shop-preview-test',
+  import.meta.url,
+).href;
+
 const botBodySource = readFileSync(new URL('../frontend/js/renderer/bot-body.js', import.meta.url), 'utf8');
 const cosmeticsSource = readFileSync(new URL('../frontend/js/renderer/cosmetics.js', import.meta.url), 'utf8');
 const previewSource = readFileSync(new URL('../frontend/js/shop-preview.js', import.meta.url), 'utf8');
@@ -20,14 +25,18 @@ assert.match(cosmeticsSource, /forceEnabled/,
   'cosmetic application must expose an explicit shop-preview override');
 assert.doesNotMatch(botBodySource, /swordsman-body\.js|weapons\.js|animations\.js/,
   'the Shop entry path must not load retired character systems');
-assert.match(previewSource, /bot-body\.js\?v=20260713d/);
-assert.match(previewSource, /cosmetics\.js\?v=20260712c/);
+assert.match(previewSource, /bot-body\.js\?v=20260713f/);
+assert.match(previewSource, /cosmetics\.js\?v=20260713f/);
 assert.doesNotMatch(previewSource, /swordsman-anims\.js|updateSwordsmanAnim|isSwordsman/,
   'preview must execute only the Forge presentation path');
 assert.match(previewSource, /character-anims\.js\?v=20260712c/,
   'preview must use the allocation-stable Forge animation module');
 assert.match(previewSource, /trails\.js\?v=20260713c/,
   'preview must use the same bounded cosmetic trail renderer as the live arena');
+assert.match(previewSource, /const DEFAULT_RADIUS = 46;/,
+  'the shared Shop/Dashboard camera must leave headroom for the tallest body forms');
+assert.match(previewSource, /const DEFAULT_TARGET_Y = 11;/,
+  'the shared preview target must keep complete body forms vertically centered');
 assert.doesNotMatch(previewSource, /ArenaEngine|BotRenderer/,
   'shop preview must not construct the live spectator renderer');
 
@@ -92,7 +101,11 @@ let isolatedCosmeticsSource = cosmeticsSource
       return new window.BABYLON.Color3(parseInt(hex.slice(0,2),16)/255, parseInt(hex.slice(2,4),16)/255, parseInt(hex.slice(4,6),16)/255);
     };
     const makeMat = name => new window.FakeMaterial(name);
-  `);
+  `)
+  .replace(
+    /from '\.\/body-form-roster\.js[^']*';/,
+    `from '${bodyFormRosterURL}';`,
+  );
 const cosmetics = await import(dataModule(isolatedCosmeticsSource));
 const originalWeaponMaterial = new FakeMaterial('weapon-original');
 const weaponMesh = new FakeNode('blade');
@@ -167,7 +180,11 @@ let isolatedPreviewSource = previewSource
       }
       dispose() { globalThis.__previewEvents.push('dispose-trails'); }
     }
-  `);
+  `)
+  .replace(
+    /from '\.\/renderer\/body-form-roster\.js[^']*';/,
+    `from '${bodyFormRosterURL}';`,
+  );
 
 class PreviewVector {
   constructor(x = 0, y = 0, z = 0) { this.x = x; this.y = y; this.z = z; }

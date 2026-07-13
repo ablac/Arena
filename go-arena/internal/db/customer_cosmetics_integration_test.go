@@ -69,11 +69,22 @@ func TestPostgresCustomerCosmeticsAccountOwnershipAndExclusiveAssignment(t *test
 		t.Fatalf("provider grant without reference error = %v, want ErrCosmeticLicenseReferenceRequired", err)
 	}
 
-	if _, err := LinkBotToCustomerAccount(ctx, account.ID, botOne.ID); err != nil {
+	linkedBotOne, err := LinkBotToCustomerAccount(ctx, account.ID, botOne.ID)
+	if err != nil {
 		t.Fatalf("link bot one: %v", err)
+	}
+	if linkedBotOne.AvatarColor != botOne.AvatarColor || linkedBotOne.DefaultWeapon != botOne.DefaultWeapon {
+		t.Fatalf("linked bot one preview metadata = %+v, want color=%q weapon=%q", linkedBotOne, botOne.AvatarColor, botOne.DefaultWeapon)
 	}
 	if _, err := LinkBotToCustomerAccount(ctx, account.ID, botTwo.ID); err != nil {
 		t.Fatalf("link bot two: %v", err)
+	}
+	linkedBots, err := ListAccountBots(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("ListAccountBots: %v", err)
+	}
+	if len(linkedBots) != 2 || linkedBots[0].AvatarColor != botOne.AvatarColor || linkedBots[0].DefaultWeapon != botOne.DefaultWeapon {
+		t.Fatalf("linked bot inventory preview metadata = %+v", linkedBots)
 	}
 	change, err := AssignCosmeticLicense(ctx, account.ID, firstLicense.ID, &botOne.ID)
 	if err != nil || change.CurrentBotID == nil || *change.CurrentBotID != botOne.ID {

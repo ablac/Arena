@@ -1,7 +1,7 @@
 'use strict';
 
 import { apiPath, appPath } from './paths.js?v=20260710a';
-import { CosmeticShopPreview } from './shop-preview.js?v=20260713d';
+import { CosmeticShopPreview } from './shop-preview.js?v=20260713f';
 
 const PAGE_SIZE = 24;
 const SUPPORTED_SLOTS = new Set(['bot_skin', 'weapon_skin', 'attachment', 'trail']);
@@ -31,6 +31,15 @@ export function isTrailPack(pack) {
   const items = packItems(pack);
   return pack?.category_id === 'trails'
     || (items.length === 1 && items[0]?.slot === 'trail');
+}
+
+/** Singleton products that replace the complete articulated bot silhouette. */
+export function isBodyFormPack(pack) {
+  const items = packItems(pack);
+  return pack?.category_id === 'body-forms'
+    || (items.length === 1
+      && items[0]?.slot === 'bot_skin'
+      && String(items[0]?.asset_key || '').startsWith('body_'));
 }
 
 /** Return a sorted copy so catalog order remains the stable featured order. */
@@ -208,7 +217,8 @@ export function initCosmeticsShop(root, options = {}) {
     const matches = allPacks().filter(pack => {
       if (state.category !== 'all' && pack.category_id !== state.category) return false;
       if (state.kind === 'trails' && !isTrailPack(pack)) return false;
-      if (state.kind === 'sets' && isTrailPack(pack)) return false;
+      if (state.kind === 'body-forms' && !isBodyFormPack(pack)) return false;
+      if (state.kind === 'sets' && (isTrailPack(pack) || isBodyFormPack(pack))) return false;
       return !query || searchText(pack).includes(query);
     });
     return sortCosmeticPacks(matches, state.sort);
@@ -242,7 +252,7 @@ export function initCosmeticsShop(root, options = {}) {
     }
     if (elements.subscriptionState) {
       elements.subscriptionState.textContent = offer.enabled
-        ? `Every current and future set and trail, up to ${offer.max_api_keys} active API keys.`
+        ? `Every current and future set, full-body skin, and trail, up to ${offer.max_api_keys} active API keys.`
         : 'All Access checkout is not open yet.';
     }
     if (elements.subscription) elements.subscription.dataset.state = offer.enabled ? 'available' : 'unavailable';
@@ -352,7 +362,7 @@ export function initCosmeticsShop(root, options = {}) {
     if (style) swatch.style.background = style;
 
     const copy = createElement('span', 'shop-pack-card-copy');
-    const productType = isTrailPack(pack) ? 'Trail' : 'Set';
+    const productType = isTrailPack(pack) ? 'Trail' : isBodyFormPack(pack) ? 'Full-body skin' : 'Set';
     copy.append(
       createElement('strong', '', pack.name || pack.id || 'Cosmetic pack'),
       createElement('small', 'shop-pack-card-meta', `${productType}, ${packItems(pack).length} item${packItems(pack).length === 1 ? '' : 's'}, ${formatPrice(pack)}`),
@@ -464,9 +474,10 @@ export function initCosmeticsShop(root, options = {}) {
       elements.purchase.href = saleReady ? dashboardPurchasePath(pack.id, pathname) : appPath('/dashboard/?tab=cosmetics', pathname);
       elements.purchase.hidden = !saleReady;
       elements.purchase.setAttribute('aria-disabled', String(!saleReady));
+      const purchaseKind = isTrailPack(pack) ? 'trail' : isBodyFormPack(pack) ? 'skin' : 'pack';
       elements.purchase.textContent = pack.is_free
         ? 'Claim in Dashboard'
-        : `${isTrailPack(pack) ? 'Buy trail' : 'Buy pack'} — ${formatPrice(pack)}`;
+        : `Buy ${purchaseKind} — ${formatPrice(pack)}`;
       elements.purchase.dataset.shopPurchasePack = pack.id || '';
     }
   };

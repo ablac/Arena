@@ -155,33 +155,37 @@ The implementation enforces this in several places:
 
 ## Launch catalog
 
-The built-in catalog contains exactly 328 items. The existing 303 items remain:
+The built-in catalog contains exactly 346 items. The existing 303 items remain:
 three permanent defaults and 300 custom cosmetics arranged as 100 coordinated
 sets. Each set contains one chassis, one weapon finish, and one attachment. The
 original Neon Signal and Void Orbit packs remain sets 001 and 002; sets 003-100
 add 294 custom pieces across Elemental, Cosmic, Cyber, Wild, Arcane, Industrial,
 Royal, Abyssal, and Apex collections. A free Standard Wake fallback and 24 paid
-movement trails bring the catalog to 328 items and 124 purchasable products.
+movement trails plus 18 original full-body forms bring the catalog to 346 items
+and 142 purchasable products. Full-body forms include animals, humans, fantasy
+characters, and constructs. Each replaces the standard robot shell on the same
+articulated Arena skeleton and retains its own silhouette at spectator distance.
 
 Every coordinated set costs **$1.99 USD** regardless of rarity. Rarity remains
 presentation and catalog metadata; it does not change the one-time set price.
-Each trail is its own one-item product and costs **$0.99 USD**. Trail products
-cannot contain set pieces, and coordinated sets cannot contain trails.
+Each full-body form is its own one-item product and costs **$1.99 USD**. Each
+trail is its own one-item product and costs **$0.99 USD**. Trail and body-form
+products cannot contain set pieces, and coordinated sets cannot contain either.
 
-All Access costs **$19.99 USD per month** and grants every current cosmetic set
-and trail, every set or trail published later while access remains active, and
-up to five active account-owned API keys. Cancellation keeps access through the
-paid period. When service ends, subscription-provided licenses are removed from
-the account and from bots using them. Separately purchased $1.99 sets and $0.99
-trails remain owned.
+All Access costs **$19.99 USD per month** and grants every current cosmetic set,
+full-body form, and trail, plus every cosmetic published later while access
+remains active, and up to five active account-owned API keys. Cancellation keeps
+access through the paid period. When service ends, subscription-provided
+licenses are removed from the account and from bots using them. Separately
+purchased $1.99 sets and full-body forms and $0.99 trails remain owned.
 
 Set pieces are purchasable only as whole coordinated sets. Individual set pieces
 keep reference price and rarity metadata for Admin/search displays but cannot
-create an accidental single-item checkout. Trails are intentionally sold as
-one-item products. Quantity is bounded to 1-10; buying two sets creates six
-independent licenses, while buying two trails creates two independent licenses.
-Every price, currency, product membership, and quantity is snapshotted on the
-server before Stripe is called.
+create an accidental single-item checkout. Trails and full-body forms are
+intentionally sold as one-item products. Quantity is bounded to 1-10; buying two
+sets creates six independent licenses, while buying two trails or body forms
+creates two independent licenses. Every price, currency, product membership,
+and quantity is snapshotted on the server before Stripe is called.
 
 Set keys use the fixed `arena_set_NNN_slug` contract. A local deterministic
 theme mapper gives every set a bounded palette, chassis pattern, weapon finish,
@@ -190,13 +194,22 @@ Shop share one procedural renderer capped at 48 ribbon meshes and 24 particle
 systems, with one shared material and one shared procedural texture. No catalog
 row can load a remote image, model, script, texture, or gameplay behavior.
 Storefronts use bounded initial pages plus search/filter/show-more controls
-instead of inserting all 328 items into the DOM at once.
+instead of inserting all 346 items into the DOM at once.
 
 ## Asset source and intake policy
 
 The starter cosmetics are fixed, local procedural visuals already rendered by
 Arena. This catalog/admin work does not import a third-party archive or load
 remote art at runtime.
+
+The [`open-hotel/open-hotel-resources`](https://github.com/open-hotel/open-hotel-resources)
+distribution is not an Arena asset source. Its own build scripts describe
+downloading Habbo game data, while the official
+[Habbo Fansite Policy](https://help.habbo.com/hc/en-us/articles/360011512480-Habbo-Fansite-Policy)
+is aimed at non-commercial fan work. Arena's paid cosmetics therefore use only
+original procedural recipes; the repository may inform generic ideas such as
+layered slots or directional sprite atlases, but none of its art is copied or
+bundled.
 
 Good CC0 candidates for later reviewed drops include Kenney's
 [Rune Pack](https://kenney.nl/assets/rune-pack) for decals,
@@ -359,8 +372,8 @@ DELETE /api/v1/admin/cosmetics/memberships/{membership_id}
 Complimentary admin memberships are cosmetics-only access grants. A request
 provides an email and exactly one of `duration_days` or an RFC3339
 `expires_at`, plus an optional internal note. They materialize one independently
-assignable license for every item in current purchasable set and trail product,
-and sync future sets and trails while active. They do not create Stripe billing state or change API-key
+assignable license for every item in current purchasable set, full-body skin, and
+trail product, and sync future cosmetics while active. They do not create Stripe billing state or change API-key
 limits. Revocation or expiry removes only membership-issued assignments and
 loadouts; purchased and separately granted licenses remain intact.
 
@@ -488,7 +501,7 @@ signature before acting on an event; see [Stripe webhooks](https://docs.stripe.c
   `charge.refunded` cumulative totals do not double-count individual events.
 - Subscription Checkout uses a server-owned recurring `1999 USD/month` amount.
   `active` and `trialing` events materialize one license for every item in each
-  active set and trail product, including future products on the next inventory
+  active set, full-body skin, and trail product, including future products on the next inventory
   sync. A scheduled
   `cancel_at_period_end` keeps access while Stripe still reports `active`.
   `past_due`, `unpaid`, `paused`, canceled, and deleted states remove only the

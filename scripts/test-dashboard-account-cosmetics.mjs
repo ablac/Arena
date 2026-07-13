@@ -48,8 +48,8 @@ assert.equal(cosmetics.requestHeaders('GET', 'csrf-value', false)['X-CSRF-Token'
 const snapshot = cosmetics.normalizeSnapshot({
   account: {id: 'acct-1', email: 'Owner@Example.COM ', email_verified: true},
   bots: [
-    {id: 'bot-1', name: 'Alpha', key_prefix: 'arena_alpha'},
-    {id: 'bot-2', name: 'Beta', key_prefix: 'arena_beta'},
+    {id: 'bot-1', name: 'Alpha', key_prefix: 'arena_alpha', avatar_color: '#123456', default_weapon: 'bow'},
+    {id: 'bot-2', name: 'Beta', key_prefix: 'arena_beta', avatar_color: '#abcdef', default_weapon: 'staff'},
   ],
   licenses: [
     {
@@ -70,7 +70,135 @@ const snapshot = cosmetics.normalizeSnapshot({
 
 assert.equal(snapshot.account.email, 'owner@example.com');
 assert.equal(snapshot.licenses.length, 2, 'multiple purchased copies must remain separate licenses');
+assert.equal(snapshot.bots[0].avatar_color, '#123456', 'linked bots must retain the server-owned preview color');
+assert.equal(snapshot.bots[0].default_weapon, 'bow', 'linked bots must retain the server-owned preview weapon');
 assert.equal(cosmetics.slotLabel('trail'), 'Trails');
+
+const previewSnapshot = cosmetics.normalizeSnapshot({
+  account: {id:'acct-preview',email:'preview@example.com',email_verified:true},
+  bots: [
+    {id:'bot-preview',name:'Preview Bot',avatar_color:'#22ccff',default_weapon:'spear',key_is_active:true},
+    {id:'bot-other',name:'Other Bot',avatar_color:'#ff8844',default_weapon:'staff',key_is_active:false},
+  ],
+  licenses: [
+    {
+      id:'license-current-skin',status:'active',assigned_bot_id:'bot-preview',equipped:true,
+      item:{id:'skin-current',name:'Current Skin',slot:'bot_skin',asset_key:'arena_set_001_current',is_active:true},
+    },
+    {
+      id:'license-current-weapon',status:'active',assigned_bot_id:'bot-preview',equipped:true,
+      item:{id:'weapon-current',name:'Current Weapon',slot:'weapon_skin',asset_key:'arena_set_002_weapon',is_active:true},
+    },
+    {
+      id:'license-other-skin',status:'active',assigned_bot_id:'bot-other',equipped:false,
+      item:{id:'skin-other',name:'Other Skin',slot:'bot_skin',asset_key:'arena_set_003_other',is_active:true},
+    },
+    {
+      id:'license-preview-attachment',status:'active',equipped:false,
+      item:{id:'attachment-preview',name:'Preview Attachment',slot:'attachment',asset_key:'arena_set_004_attachment',is_active:true},
+    },
+    {
+      id:'license-ready-trail',status:'active',assigned_bot_id:'bot-preview',equipped:false,
+      item:{id:'trail-ready',name:'Ready Trail',slot:'trail',asset_key:'neon_rain',is_active:true},
+    },
+    {
+      id:'license-other-trail',status:'active',assigned_bot_id:'bot-other',equipped:true,
+      item:{id:'trail-other',name:'Other Trail',slot:'trail',asset_key:'ember_sparks',is_active:true},
+    },
+    {
+      id:'license-refunded',status:'refunded',assigned_bot_id:'bot-preview',equipped:true,
+      item:{id:'trail-refunded',name:'Refunded Trail',slot:'trail',asset_key:'void_rift',is_active:true},
+    },
+    {
+      id:'license-disabled-item',status:'active',assigned_bot_id:'bot-preview',equipped:true,
+      item:{id:'attachment-disabled',name:'Disabled Attachment',slot:'attachment',asset_key:'arena_set_005_disabled',is_active:false},
+    },
+    {
+      id:'license-long-asset',status:'active',equipped:false,
+      item:{id:'skin-long',name:'Invalid Asset',slot:'bot_skin',asset_key:'x'.repeat(97),is_active:true},
+    },
+  ],
+});
+
+assert.deepEqual(
+  JSON.parse(JSON.stringify(cosmetics.equippedLoadout(previewSnapshot, 'bot-preview'))),
+  {
+    bot_skin:'arena_set_001_current',
+    weapon_skin:'arena_set_002_weapon',
+    attachment:'none',
+    trail:'standard',
+  },
+  'current preview loadout must use only active equipped licenses assigned to that linked bot',
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(cosmetics.equippedLoadout(previewSnapshot, 'bot-other'))),
+  {bot_skin:'standard',weapon_skin:'standard',attachment:'none',trail:'ember_sparks'},
+  'equipped loadout must stay scoped to one linked bot even when its key is inactive',
+);
+
+const stagedPreview = cosmetics.previewModel(previewSnapshot, 'bot-preview', {
+  bot_skin:'license-other-skin',
+  attachment:'license-preview-attachment',
+  weapon_skin:'license-refunded',
+  trail:'license-preview-attachment',
+});
+assert.equal(stagedPreview.bot.id, 'bot-preview');
+assert.deepEqual(JSON.parse(JSON.stringify(stagedPreview.currentLoadout)), {
+  bot_skin:'arena_set_001_current',weapon_skin:'arena_set_002_weapon',attachment:'none',trail:'standard',
+});
+assert.deepEqual(JSON.parse(JSON.stringify(stagedPreview.previewLoadout)), {
+  bot_skin:'arena_set_003_other',
+  weapon_skin:'arena_set_002_weapon',
+  attachment:'arena_set_004_attachment',
+  trail:'standard',
+});
+assert.deepEqual(JSON.parse(JSON.stringify(stagedPreview.stagedBySlot)), {
+  bot_skin:'license-other-skin',
+  attachment:'license-preview-attachment',
+}, 'staging must accept only active owned license IDs whose item slot matches the requested slot');
+assert.equal(stagedPreview.hasStaged, true);
+assert.equal(stagedPreview.isDirty, true);
+assert.equal(stagedPreview.slots.bot_skin.canEquip, false,
+  'previewing a license assigned to another bot must not imply permission to equip it');
+assert.equal(stagedPreview.slots.attachment.canEquip, false,
+  'an unassigned preview license must remain a visual-only staged choice');
+assert.equal(
+  cosmetics.previewModel(previewSnapshot, 'bot-preview', {trail:'license-ready-trail'}).slots.trail.canEquip,
+  true,
+  'an active preview license assigned to the selected active bot may expose the existing explicit equip path',
+);
+
+const arbitraryAssetPreview = cosmetics.previewModel(previewSnapshot, 'bot-preview', {
+  bot_skin:'arena_set_999_not_a_license',
+  attachment:'license-disabled-item',
+  trail:'license-refunded',
+});
+assert.deepEqual(JSON.parse(JSON.stringify(arbitraryAssetPreview.stagedBySlot)), {},
+  'preview state must reject arbitrary asset keys, inactive items, and inactive licenses');
+assert.deepEqual(
+  JSON.parse(JSON.stringify(cosmetics.previewModel(previewSnapshot, 'missing-bot', {
+    bot_skin:'license-other-skin',
+  }).stagedBySlot)),
+  {},
+  'preview state must reject staging when the selected bot is not linked to the account',
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(cosmetics.previewModel(previewSnapshot, 'bot-preview', {
+    bot_skin:'license-long-asset',
+  }).stagedBySlot)),
+  {},
+  'preview state must reject asset keys beyond the renderer contract',
+);
+
+const previewHTML = cosmetics.renderPanel(previewSnapshot, {});
+assert.match(previewHTML, /data-license-preview="license-current-skin"/,
+  'active owned cosmetics must expose a preview action');
+assert.match(previewHTML, /data-license-preview="license-other-skin"/,
+  'a cosmetic assigned to another linked bot may still be previewed without moving it');
+assert.doesNotMatch(previewHTML, /data-license-preview="license-refunded"/,
+  'inactive licenses must not expose a preview action');
+assert.doesNotMatch(previewHTML, /data-license-preview="license-disabled-item"/,
+  'inactive catalog items must not expose a preview action');
 
 const subscriptionOffer = cosmetics.normalizeSubscriptionOffer({
   enabled:true,
@@ -207,7 +335,7 @@ assert.match(shopHTML, /data-pack-checkout="set-001-pack"/, 'enabled sale-ready 
 assert.match(shopHTML, /\$1\.99/, 'every one-time cosmetic set should display the $1.99 catalog price');
 assert.match(shopHTML, /All Access/);
 assert.match(shopHTML, /\$19\.99[\s\S]*month/);
-assert.match(shopHTML, /every current and future cosmetic set and trail/i);
+assert.match(shopHTML, /every current and future cosmetic set, full-body skin, and trail/i);
 assert.match(shopHTML, /up to 5 active API keys/i);
 assert.match(shopHTML, /subscription cosmetics are removed/i);
 assert.match(shopHTML, /data-subscription-checkout/, 'accounts without a managed subscription should be able to start All Access checkout');
@@ -455,7 +583,7 @@ const linkHandler = dashboardHTML.slice(
 assert.doesNotMatch(linkHandler, /saveKey|localStorage/, 'linking a bot must not persist the proof key in dashboard storage');
 
 recentPurchaseCheck('dashboard script cache version', () => {
-  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260713d/);
+  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260713f/);
   assert.match(dashboardHTML, /href="\.\.\/css\/embedded-checkout\.css\?v=20260713a"/);
   assert.match(dashboardHTML, /src="\.\.\/js\/embedded-checkout\.js\?v=20260713a"/);
 });

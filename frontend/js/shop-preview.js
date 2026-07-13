@@ -1,13 +1,15 @@
 'use strict';
 
-import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260713d';
-import { applyBotCosmetics, disposeBotCosmetics } from './renderer/cosmetics.js?v=20260712c';
+import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260713f';
+import { applyBotCosmetics, disposeBotCosmetics } from './renderer/cosmetics.js?v=20260713f';
 import { updateForgeCharacter } from './renderer/character-anims.js?v=20260712c';
 import { TrailRenderer } from './renderer/trails.js?v=20260713c';
+import {bodyFormKeyForBot} from './renderer/body-form-roster.js?v=20260713b';
 
 const DEFAULT_ALPHA = -Math.PI / 2;
 const DEFAULT_BETA = 1.12;
-const DEFAULT_RADIUS = 42;
+const DEFAULT_RADIUS = 46;
+const DEFAULT_TARGET_Y = 11;
 const SHOP_FRAME_INTERVAL_MS = 1000 / 30;
 const PREVIEW_RUN_RADIUS_X = 8;
 const PREVIEW_RUN_RADIUS_Z = 4;
@@ -62,6 +64,25 @@ export class CosmeticShopPreview {
     );
   }
 
+  _rebuildEntry() {
+    if (!this.ready || !this.entry || !this.bot) return;
+    // Weapon finishes own material clones, so tear cosmetic state down before
+    // the production chassis hierarchy is replaced.
+    disposeBotCosmetics(this.entry);
+    disposeBotEntry(this.entry);
+    this.entry = createBotEntry(this.bot, this.scene, {presentationOnly: true});
+    this.entry.root.parent = this.turntable;
+    this._positionEntryOnRunLoop(this.entry);
+    this.entry.isAlive = true;
+    this.entry._interpReady = true;
+    this.entry.botData = this.bot;
+    this._trailEntries.set(this.bot.bot_id, this.entry);
+    updateForgeCharacter(this.entry, 0, true);
+    applyBotCosmetics(this.entry, this.bot, this.scene, {forceEnabled: true});
+    this._lastFrame = performance.now();
+    this._renderRequested = true;
+  }
+
   init() {
     if (this._disposed) throw new Error('CosmeticShopPreview has been disposed');
     if (this.ready) return this;
@@ -94,7 +115,7 @@ export class CosmeticShopPreview {
       DEFAULT_ALPHA,
       DEFAULT_BETA,
       DEFAULT_RADIUS,
-      new B.Vector3(0, 10, 0),
+      new B.Vector3(0, DEFAULT_TARGET_Y, 0),
       this.scene,
     );
     this.camera.lowerRadiusLimit = 28;
@@ -248,16 +269,23 @@ export class CosmeticShopPreview {
   }
 
   setLoadout(loadout = {}) {
-    this.loadout = {
+    const previousBodyForm = bodyFormKeyForBot({cosmetics: this.loadout});
+    const nextLoadout = {
       bot_skin: assetKey(loadout.bot_skin, DEFAULT_LOADOUT.bot_skin),
       weapon_skin: assetKey(loadout.weapon_skin, DEFAULT_LOADOUT.weapon_skin),
       attachment: assetKey(loadout.attachment, DEFAULT_LOADOUT.attachment),
       trail: assetKey(loadout.trail, DEFAULT_LOADOUT.trail),
     };
+    const nextBodyForm = bodyFormKeyForBot({cosmetics: nextLoadout});
+    this.loadout = nextLoadout;
     if (this.ready && this.entry) {
       this.bot.cosmetics = {...this.loadout};
       this.entry.botData = this.bot;
-      applyBotCosmetics(this.entry, this.bot, this.scene, {forceEnabled: true});
+      if (previousBodyForm !== nextBodyForm) {
+        this._rebuildEntry();
+      } else {
+        applyBotCosmetics(this.entry, this.bot, this.scene, {forceEnabled: true});
+      }
       this._renderRequested = true;
     }
     return this;
@@ -275,27 +303,13 @@ export class CosmeticShopPreview {
     if (!this.ready || !this.entry || !this.bot) return this;
     if (this.bot.weapon === weapon && this.bot.avatar_color === avatarColor) return this;
 
-    // Weapon finishes own material clones, so always tear cosmetic state down
-    // before disposing the old chassis hierarchy.
-    disposeBotCosmetics(this.entry);
-    disposeBotEntry(this.entry);
     this.bot = {
       ...this.bot,
       weapon,
       avatar_color: avatarColor,
       cosmetics: {...this.loadout},
     };
-    this.entry = createBotEntry(this.bot, this.scene, {presentationOnly: true});
-    this.entry.root.parent = this.turntable;
-    this._positionEntryOnRunLoop(this.entry);
-    this.entry.isAlive = true;
-    this.entry._interpReady = true;
-    this.entry.botData = this.bot;
-    this._trailEntries.set(this.bot.bot_id, this.entry);
-    updateForgeCharacter(this.entry, 0, true);
-    applyBotCosmetics(this.entry, this.bot, this.scene, {forceEnabled: true});
-    this._lastFrame = performance.now();
-    this._renderRequested = true;
+    this._rebuildEntry();
     return this;
   }
 

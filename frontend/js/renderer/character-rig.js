@@ -14,6 +14,8 @@ import {parseColor, makeMat} from './utils.js';
 import {getCharacterProfile} from './character-roster.js?v=20260712c';
 import {ForgeAnimState} from './character-anims.js?v=20260712c';
 import {createForgeWeapon, disposeForgeWeapon} from './forge-weapons.js?v=20260713b';
+import {bodyFormForAsset} from './body-form-roster.js?v=20260713b';
+import {buildBodyFormGeometry, createBodyFormFarProxy} from './body-form-geometry.js?v=20260713b';
 
 const _sceneResources = new WeakMap();
 
@@ -222,14 +224,20 @@ export function setForgeCharacterLOD(entry, far) {
   return useFar;
 }
 
-/** Select a live Forge entry's LOD from its distance to the active camera. */
-export function updateForgeCharacterLOD(entry, camera) {
+/** Select a live Forge entry's LOD from zoom, with an optional crowd-cap override. */
+export function updateForgeCharacterLOD(entry, camera, forceFar = false) {
   if (!entry) return false;
   let useFar = false;
   if (!entry.isForgeCharacter || entry.presentationOnly || !entry.lowDetail) {
     if (entry._forgeFarLOD === useFar) return useFar;
     return setForgeCharacterLOD(entry, useFar);
   }
+  if (forceFar === true) {
+    useFar = true;
+    if (entry._forgeFarLOD === useFar) return useFar;
+    return setForgeCharacterLOD(entry, useFar);
+  }
+
   const cameraRadius = Number(camera?.radius);
   const cameraPosition = camera?.globalPosition || camera?.position;
   const rootPosition = typeof entry.root?.getAbsolutePosition === 'function'
@@ -313,6 +321,7 @@ function createHUD(bot, id, root, guiTexture) {
 export function createForgeCharacter(bot, scene, options = {}) {
   const B = window.BABYLON;
   const profile = getCharacterProfile(bot.weapon);
+  const bodyForm = bodyFormForAsset(bot?.cosmetics?.bot_skin);
   const id = bot.bot_id;
   const presentationOnly = options.presentationOnly === true;
   const resources = getResources(scene);
@@ -334,10 +343,20 @@ export function createForgeCharacter(bot, scene, options = {}) {
   });
   bodyMat.backFaceCulling = true;
   headMat.backFaceCulling = true;
+  bodyMat._forgeRestEmissive = bodyMat.emissiveColor.clone();
+  headMat._forgeRestEmissive = headMat.emissiveColor.clone();
 
   const root = new B.TransformNode(`forge-root-${id}`, scene);
+  // Forge's authored face (visor, chest core, toes, and weapon presentation)
+  // points down local -Z, while Babylon movement yaw treats +Z as forward.
+  // Correct that coordinate mismatch once below the gameplay/interpolation
+  // root so Shop orbits, live movement, attacks, cosmetics, and every future
+  // body form all share the same canonical facing convention.
+  const modelRoot = new B.TransformNode(`forge-model-root-${id}`, scene);
+  modelRoot.parent = root;
+  modelRoot.rotation.y = Math.PI;
   const cosmeticRoot = new B.TransformNode(`forge-cosmetic-root-${id}`, scene);
-  cosmeticRoot.parent = root;
+  cosmeticRoot.parent = modelRoot;
 
   const p = profile.proportions;
   const torsoWidth = 7.0 * p.shoulders;
@@ -368,6 +387,10 @@ export function createForgeCharacter(bot, scene, options = {}) {
     shoulderY,
     upperArmLength,
     forearmLength,
+    armWidth,
+    upperLegLength,
+    shinLength,
+    legWidth,
     headWidth,
     headHeight,
     headDepth,
@@ -375,7 +398,7 @@ export function createForgeCharacter(bot, scene, options = {}) {
   });
 
   const bodyJoint = new B.TransformNode(`forge-body-joint-${id}`, scene);
-  bodyJoint.parent = root;
+  bodyJoint.parent = modelRoot;
   bodyJoint.position.y = bodyY;
   // Preserve the legacy cosmetic builders' root-space coordinates while
   // making their geometry inherit the articulated chassis bob/lean.
@@ -514,26 +537,34 @@ export function createForgeCharacter(bot, scene, options = {}) {
     selector.metadata = {botId: id};
 
     const lowHeight = bodyY + headY + headHeight * 0.64;
-    const lowColor = readableFarColor(B, color);
-    lowDetailMat = makeMat(`forge-low-identity-${id}`, scene, lowColor, {
-      emissiveFactor: 1,
-      noLight: true,
-      specular: new B.Color3(0.20, 0.24, 0.30),
-      backFace: true,
-    });
-    lowDetailMat.backFaceCulling = true;
-    lowDetailMat.freeze();
-    // A clone keeps the single merged scene geometry while allowing each bot
-    // to retain its own readable avatar color at extreme spectator zoom.
-    lowDetail = resources.low.clone(`forge-low-${id}`);
-    lowDetail.parent = root;
-    lowDetail.material = lowDetailMat;
-    lowDetail.position.y = 0;
-    lowDetail.scaling.set(
-      Math.max(torsoWidth, pelvisWidth, headWidth) * 1.34 / 0.9,
-      lowHeight * 1.05,
-      Math.max(torsoDepth, headDepth) * 1.30 / 0.32,
-    );
+    if (bodyForm) {
+      lowDetail = createBodyFormFarProxy(bodyForm, scene, modelRoot, {
+        width: Math.max(torsoWidth, pelvisWidth, headWidth) * 1.48,
+        height: lowHeight * 1.05,
+        depth: Math.max(torsoDepth, headDepth) * 1.55,
+      });
+    } else {
+      const lowColor = readableFarColor(B, color);
+      lowDetailMat = makeMat(`forge-low-identity-${id}`, scene, lowColor, {
+        emissiveFactor: 1,
+        noLight: true,
+        specular: new B.Color3(0.20, 0.24, 0.30),
+        backFace: true,
+      });
+      lowDetailMat.backFaceCulling = true;
+      lowDetailMat.freeze();
+      // A clone keeps the single merged scene geometry while allowing each bot
+      // to retain its own readable avatar color at extreme spectator zoom.
+      lowDetail = resources.low.clone(`forge-low-${id}`);
+      lowDetail.parent = modelRoot;
+      lowDetail.material = lowDetailMat;
+      lowDetail.position.y = 0;
+      lowDetail.scaling.set(
+        Math.max(torsoWidth, pelvisWidth, headWidth) * 1.34 / 0.9,
+        lowHeight * 1.05,
+        Math.max(torsoDepth, headDepth) * 1.30 / 0.32,
+      );
+    }
     lowDetail.isPickable = true;
     lowDetail.metadata = {botId: id};
     lowDetail.setEnabled(false);
@@ -570,18 +601,55 @@ export function createForgeCharacter(bot, scene, options = {}) {
     kneePitch: 0.05 + profile.motion.weight * 0.04,
   };
 
-  const visibleMeshes = [
-    torso, chestPlate, pelvis, head, visor, core,
-    ...limbMeshes,
-    ...weapon._forgeMeshes,
-  ];
+  let renderedBody = torso;
+  let renderedHead = head;
+  let renderedBodyMat = bodyMat;
+  let renderedHeadMat = headMat;
+  let bodyFormMaterials = [];
+  let bodyFormMeshes = [];
+  if (bodyForm) {
+    const geometry = buildBodyFormGeometry(bodyForm, {
+      scene, id, joints, metrics: mountMetrics,
+    });
+    bodyFormMeshes = geometry.meshes;
+    bodyFormMaterials = geometry.materials;
+    renderedBody = geometry.body;
+    renderedHead = geometry.head;
+    renderedBodyMat = geometry.materials[0];
+    renderedHeadMat = geometry.materials[1];
+    joints.torso = renderedBody;
+    // The skeleton, semantic mounts, Arena core, and weapon stay shared, but
+    // the robot shell itself is removed so a full-body skin never overlays or
+    // reveals an invisible second character.
+    for (const mesh of [torso, chestPlate, pelvis, head, visor, ...limbMeshes]) mesh.dispose();
+    // The standard-shell accent material no longer has a mesh after the shell
+    // is removed. Release it immediately instead of retaining one dead mutable
+    // material for every full-body character in a large crowd.
+    bodyMat.dispose();
+  }
+
+  renderedBody.isPickable = !presentationOnly;
+  renderedBody.metadata = {botId: id};
+  renderedHead.isPickable = !presentationOnly;
+  renderedHead.metadata = {botId: id};
+
+  const visibleMeshes = bodyForm
+    ? [core, ...bodyFormMeshes, ...weapon._forgeMeshes]
+    : [torso, chestPlate, pelvis, head, visor, core, ...limbMeshes, ...weapon._forgeMeshes];
+  // Status feedback owns this exact per-bot list. Body forms retain the
+  // avatar-colored core/weapon accent plus all three form materials; generic
+  // far-proxy materials remain excluded so overview silhouettes stay readable.
+  const statusMaterials = bodyForm
+    ? [headMat, ...bodyFormMaterials]
+    : [bodyMat, headMat];
 
   return {
     root,
-    body: torso,
-    bodyMat,
-    head,
-    headMat,
+    modelRoot,
+    body: renderedBody,
+    bodyMat: renderedBodyMat,
+    head: renderedHead,
+    headMat: renderedHeadMat,
     lArm: arms.left.arm,
     rArm: arms.right.arm,
     lShoulder: arms.left.arm,
@@ -592,7 +660,7 @@ export function createForgeCharacter(bot, scene, options = {}) {
     hpContainer: hud.hpContainer,
     hpFill: hud.hpFill,
     nameLabel: hud.nameLabel,
-    pickMeshes: presentationOnly ? [] : [selector, torso, head, lowDetail].filter(Boolean),
+    pickMeshes: presentationOnly ? [] : [selector, renderedBody, renderedHead, lowDetail].filter(Boolean),
     anim: new ForgeAnimState(profile.weapon),
     isForgeCharacter: true,
     isAlive: true,
@@ -606,11 +674,18 @@ export function createForgeCharacter(bot, scene, options = {}) {
     weaponBase,
     weaponPoseNodes,
     weaponBases,
-    _forgeMaterials: [bodyMat, headMat, lowDetailMat].filter(Boolean),
+    _forgeMaterials: bodyForm
+      ? [headMat, lowDetailMat, ...bodyFormMaterials].filter(Boolean)
+      : [bodyMat, headMat, lowDetailMat].filter(Boolean),
+    _forgeStatusMaterials: statusMaterials,
     _forgeMeshes: visibleMeshes,
-    _forgeFarMeshes: [...weapon._forgeMeshes],
+    // A form-specific far proxy already communicates the complete character
+    // silhouette. Hiding its weapon/core at crowd scale bounds submissions;
+    // standard chassis keep the established distant weapon marker.
+    _forgeFarMeshes: bodyForm ? [] : [...weapon._forgeMeshes],
     _visibleMeshCount: visibleMeshes.length,
     presentationOnly,
+    bodyFormKey: bodyForm?.key || 'standard',
     lowDetail,
     _forgeFarLOD: false,
     setLOD(far = this._forgeFarLOD) {
