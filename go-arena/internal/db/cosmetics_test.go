@@ -9,8 +9,8 @@ import (
 
 func TestDefaultCosmeticCatalogIntegrity(t *testing.T) {
 	items := DefaultCosmeticCatalog()
-	if len(items) != 303 {
-		t.Fatalf("launch catalog has %d items, want 303", len(items))
+	if len(items) != 328 {
+		t.Fatalf("launch catalog has %d items, want 328", len(items))
 	}
 
 	ids := make(map[string]bool)
@@ -46,7 +46,7 @@ func TestDefaultCosmeticCatalogIntegrity(t *testing.T) {
 		}
 	}
 
-	for _, slot := range []string{CosmeticSlotBotSkin, CosmeticSlotWeaponSkin, CosmeticSlotAttachment} {
+	for _, slot := range []string{CosmeticSlotBotSkin, CosmeticSlotWeaponSkin, CosmeticSlotAttachment, CosmeticSlotTrail} {
 		if !freeBySlot[slot] {
 			t.Errorf("slot %q has no free fallback item", slot)
 		}
@@ -55,15 +55,15 @@ func TestDefaultCosmeticCatalogIntegrity(t *testing.T) {
 
 func TestLaunchCosmeticCatalogHasOneHundredCompleteSets(t *testing.T) {
 	catalog := DefaultCosmeticCatalogData()
-	if len(catalog.Items) != 303 {
-		t.Fatalf("launch items = %d, want 303", len(catalog.Items))
+	if len(catalog.Items) != 328 {
+		t.Fatalf("launch items = %d, want 328", len(catalog.Items))
 	}
-	if len(catalog.Packs) != 100 {
-		t.Fatalf("launch packs = %d, want 100", len(catalog.Packs))
+	if len(catalog.Packs) != 124 {
+		t.Fatalf("launch packs = %d, want 124", len(catalog.Packs))
 	}
 
 	defaultIDs := map[string]bool{
-		"skin-standard": true, "weapon-standard": true, "attachment-none": true,
+		"skin-standard": true, "weapon-standard": true, "attachment-none": true, "trail-standard": true,
 	}
 	itemsByID := make(map[string]CosmeticItem, len(catalog.Items))
 	customMemberships := make(map[string]int, 300)
@@ -72,7 +72,7 @@ func TestLaunchCosmeticCatalogHasOneHundredCompleteSets(t *testing.T) {
 			t.Fatalf("duplicate launch item id %q", item.ID)
 		}
 		itemsByID[item.ID] = item
-		if !defaultIDs[item.ID] {
+		if !defaultIDs[item.ID] && item.Slot != CosmeticSlotTrail {
 			customMemberships[item.ID] = 0
 		}
 	}
@@ -86,6 +86,9 @@ func TestLaunchCosmeticCatalogHasOneHundredCompleteSets(t *testing.T) {
 			t.Fatalf("duplicate launch pack id %q", pack.ID)
 		}
 		packIDs[pack.ID] = true
+		if pack.CategoryID == CosmeticTrailCategoryID {
+			continue
+		}
 		if len(pack.ItemIDs) != 3 || len(pack.Items) != 3 {
 			t.Fatalf("pack %q has ids=%d items=%d, want three of each", pack.ID, len(pack.ItemIDs), len(pack.Items))
 		}
@@ -125,14 +128,56 @@ func TestLaunchCosmeticCatalogHasOneHundredCompleteSets(t *testing.T) {
 	}
 }
 
-func TestEveryPurchasableCosmeticSetUsesFixedOneNinetyNinePrice(t *testing.T) {
+func TestLaunchCatalogHasTwentyFourIndividuallyPurchasableTrails(t *testing.T) {
+	catalog := DefaultCosmeticCatalogData()
+	itemsByID := make(map[string]CosmeticItem, len(catalog.Items))
+	for _, item := range catalog.Items {
+		itemsByID[item.ID] = item
+	}
+
+	trailPacks := 0
+	assetKeys := make(map[string]bool)
+	for _, pack := range catalog.Packs {
+		if pack.CategoryID != CosmeticTrailCategoryID {
+			continue
+		}
+		trailPacks++
+		if !pack.IsActive || !pack.IsPurchasable || pack.IsFree || pack.PriceCents != CosmeticTrailPriceCents || pack.Currency != "USD" {
+			t.Errorf("trail product %q is not a sale-ready $0.99 USD pack: %+v", pack.ID, pack)
+		}
+		if len(pack.ItemIDs) != 1 || len(pack.Items) != 1 {
+			t.Fatalf("trail product %q has ids=%d items=%d, want one of each", pack.ID, len(pack.ItemIDs), len(pack.Items))
+		}
+		item := itemsByID[pack.ItemIDs[0]]
+		if item.Slot != CosmeticSlotTrail || item.IsFree || item.PriceCents != CosmeticTrailPriceCents {
+			t.Errorf("trail product %q item is not a paid trail: %+v", pack.ID, item)
+		}
+		if assetKeys[item.AssetKey] {
+			t.Errorf("duplicate paid trail asset %q", item.AssetKey)
+		}
+		assetKeys[item.AssetKey] = true
+	}
+	if trailPacks != 24 || len(assetKeys) != 24 {
+		t.Fatalf("paid trail products/assets = %d/%d, want 24/24", trailPacks, len(assetKeys))
+	}
+	fallback := cosmeticItemByID(catalog.Items, "trail-standard")
+	if fallback == nil || fallback.Slot != CosmeticSlotTrail || fallback.AssetKey != "standard" || !fallback.IsFree || fallback.PriceCents != 0 {
+		t.Fatalf("trail fallback = %+v, want free Standard Wake", fallback)
+	}
+}
+
+func TestPurchasableCosmeticSetsAndTrailsUseFixedPrices(t *testing.T) {
 	catalog := DefaultCosmeticCatalogData()
 	for _, pack := range catalog.Packs {
 		if !pack.IsPurchasable || pack.IsFree {
 			continue
 		}
-		if pack.PriceCents != 199 || pack.Currency != "USD" {
-			t.Errorf("purchasable pack %q price = %d %s, want 199 USD", pack.ID, pack.PriceCents, pack.Currency)
+		want := CosmeticPackPriceCents
+		if pack.CategoryID == CosmeticTrailCategoryID {
+			want = CosmeticTrailPriceCents
+		}
+		if pack.PriceCents != want || pack.Currency != "USD" {
+			t.Errorf("purchasable pack %q price = %d %s, want %d USD", pack.ID, pack.PriceCents, pack.Currency, want)
 		}
 	}
 
@@ -143,6 +188,19 @@ func TestEveryPurchasableCosmeticSetUsesFixedOneNinetyNinePrice(t *testing.T) {
 	}
 	if err := ValidateCosmeticPack(nonStandard); !errors.Is(err, ErrCosmeticCatalogInvalid) {
 		t.Fatalf("future purchasable set with non-standard price error = %v, want ErrCosmeticCatalogInvalid", err)
+	}
+
+	trail := CosmeticPack{
+		ID: "future-trail", CategoryID: CosmeticTrailCategoryID, Name: "Future Trail",
+		PriceCents: CosmeticTrailPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true,
+		ItemIDs: []string{"trail-future"},
+	}
+	if err := ValidateCosmeticPack(trail); err != nil {
+		t.Fatalf("$0.99 trail product rejected: %v", err)
+	}
+	trail.PriceCents = CosmeticPackPriceCents
+	if err := ValidateCosmeticPack(trail); !errors.Is(err, ErrCosmeticCatalogInvalid) {
+		t.Fatalf("trail with set price error = %v, want ErrCosmeticCatalogInvalid", err)
 	}
 }
 
@@ -202,6 +260,9 @@ func TestSupportedCosmeticAssetValidation(t *testing.T) {
 		{CosmeticSlotBotSkin, "arena_set_001_alpha"},
 		{CosmeticSlotWeaponSkin, "arena_set_100_omega_paragon"},
 		{CosmeticSlotAttachment, "arena_set_999_last_set"},
+		{CosmeticSlotTrail, "standard"},
+		{CosmeticSlotTrail, "ember_sparks"},
+		{CosmeticSlotTrail, "phantom_smoke"},
 	}
 	for _, test := range valid {
 		if !IsSupportedCosmeticAsset(test.slot, test.key) {
@@ -217,6 +278,8 @@ func TestSupportedCosmeticAssetValidation(t *testing.T) {
 		{CosmeticSlotBotSkin, "arena_set_003_two__words"},
 		{CosmeticSlotBotSkin, "arena_set_003_Two_words"},
 		{"power", "arena_set_003_alpha"},
+		{CosmeticSlotTrail, "unknown_trail"},
+		{CosmeticSlotBotSkin, "ember_sparks"},
 	}
 	for _, test := range invalid {
 		if IsSupportedCosmeticAsset(test.slot, test.key) {
@@ -255,7 +318,7 @@ func TestCosmeticQueriesNilPoolReturnError(t *testing.T) {
 }
 
 func TestCosmeticSlotValidation(t *testing.T) {
-	for _, slot := range []string{CosmeticSlotBotSkin, CosmeticSlotWeaponSkin, CosmeticSlotAttachment, " BOT_SKIN "} {
+	for _, slot := range []string{CosmeticSlotBotSkin, CosmeticSlotWeaponSkin, CosmeticSlotAttachment, CosmeticSlotTrail, " BOT_SKIN "} {
 		if !IsValidCosmeticSlot(slot) {
 			t.Errorf("slot %q should be valid", slot)
 		}
@@ -272,8 +335,8 @@ func TestDefaultCosmeticCatalogDataIncludesOrderedSaleReadyPacks(t *testing.T) {
 	if len(catalog.Categories) < 4 {
 		t.Fatalf("starter categories = %d, want at least 4", len(catalog.Categories))
 	}
-	if len(catalog.Packs) != 100 {
-		t.Fatalf("launch packs = %d, want 100", len(catalog.Packs))
+	if len(catalog.Packs) != 124 {
+		t.Fatalf("launch packs = %d, want 124", len(catalog.Packs))
 	}
 
 	for index, pack := range catalog.Packs {
@@ -283,8 +346,12 @@ func TestDefaultCosmeticCatalogDataIncludesOrderedSaleReadyPacks(t *testing.T) {
 		if !pack.IsActive || !pack.IsPurchasable || pack.IsFree {
 			t.Errorf("pack %q sale metadata is inconsistent: %+v", pack.ID, pack)
 		}
-		if len(pack.Items) != 3 {
-			t.Errorf("pack %q has %d items, want 3", pack.ID, len(pack.Items))
+		wantItems := 3
+		if pack.CategoryID == CosmeticTrailCategoryID {
+			wantItems = 1
+		}
+		if len(pack.Items) != wantItems {
+			t.Errorf("pack %q has %d items, want %d", pack.ID, len(pack.Items), wantItems)
 		}
 		if index > 0 && catalog.Packs[index-1].CategoryID == pack.CategoryID && catalog.Packs[index-1].SortOrder > pack.SortOrder {
 			t.Errorf("packs in category %q are not ordered by sort_order", pack.CategoryID)
@@ -324,6 +391,9 @@ func TestCosmeticCatalogMetadataValidation(t *testing.T) {
 		{ID: "bad-currency", Name: "Bad", CategoryID: "attachments", Slot: CosmeticSlotAttachment, AssetKey: "arena_set_902_bad", Rarity: "common", PriceCents: 99, Currency: "usd", IsPurchasable: true},
 		{ID: "bad-currency-exponent", Name: "Bad", CategoryID: "attachments", Slot: CosmeticSlotAttachment, AssetKey: "arena_set_902_bad", Rarity: "common", PriceCents: 99, Currency: "JPY", IsPurchasable: true},
 		{ID: "bad-asset", Name: "Bad", CategoryID: "attachments", Slot: CosmeticSlotAttachment, AssetKey: "syntactically_valid_but_unknown", Rarity: "common", Currency: "USD"},
+		{ID: "trail-wrong-category", Name: "Wrong Trail", CategoryID: "attachments", Slot: CosmeticSlotTrail, AssetKey: "ember_sparks", Rarity: "common", Currency: "USD"},
+		{ID: "nontrail-wrong-category", Name: "Wrong Non-Trail", CategoryID: CosmeticTrailCategoryID, Slot: CosmeticSlotAttachment, AssetKey: "arena_set_902_bad", Rarity: "common", Currency: "USD"},
+		{ID: "trail-wrong-price", Name: "Wrong Trail Price", CategoryID: CosmeticTrailCategoryID, Slot: CosmeticSlotTrail, AssetKey: "ember_sparks", Rarity: "common", PriceCents: 199, Currency: "USD"},
 	}
 	for _, item := range invalidItems {
 		if err := ValidateCosmeticItem(item); err == nil {

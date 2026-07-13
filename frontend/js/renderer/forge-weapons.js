@@ -18,6 +18,9 @@ function sharedMaterial(scene, name, diffuse, emissive, specular) {
   material.emissiveColor = emissive;
   material.specularColor = specular;
   material.backFaceCulling = true;
+  // Weapon silhouettes need the same dark-sector visibility guarantee as the
+  // shared chassis. Bot-owned accent pieces remain independently animated.
+  material.disableLighting = true;
   material.freeze();
   return material;
 }
@@ -31,22 +34,22 @@ function getResources(scene) {
     steel: sharedMaterial(
       scene,
       'forge-weapon-steel',
-      new B.Color3(0.38, 0.44, 0.52),
-      new B.Color3(0.035, 0.05, 0.07),
+      new B.Color3(0.42, 0.52, 0.68),
+      new B.Color3(0.20, 0.27, 0.38),
       new B.Color3(0.62, 0.68, 0.76),
     ),
     dark: sharedMaterial(
       scene,
       'forge-weapon-dark',
-      new B.Color3(0.045, 0.055, 0.075),
-      new B.Color3(0.008, 0.012, 0.02),
+      new B.Color3(0.25, 0.33, 0.48),
+      new B.Color3(0.16, 0.22, 0.33),
       new B.Color3(0.22, 0.26, 0.32),
     ),
     cable: sharedMaterial(
       scene,
       'forge-weapon-cable',
-      new B.Color3(0.10, 0.13, 0.17),
-      new B.Color3(0.018, 0.025, 0.035),
+      new B.Color3(0.28, 0.38, 0.56),
+      new B.Color3(0.18, 0.25, 0.38),
       new B.Color3(0.16, 0.20, 0.24),
     ),
   };

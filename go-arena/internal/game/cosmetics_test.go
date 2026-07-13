@@ -44,6 +44,7 @@ func TestBuildSpectatorStateIncludesCosmeticsWithoutChangingMechanics(t *testing
 		Position: Vec2{10, 20}, HP: 100, MaxHP: 100, IsAlive: true,
 		Cosmetics: map[string]string{
 			"bot_skin": "neon_grid", "weapon_skin": "solar_flare", "attachment": "signal_antenna",
+			"trail": "ember_sparks",
 		},
 	}
 	state := BuildSpectatorState(
@@ -59,6 +60,9 @@ func TestBuildSpectatorStateIncludesCosmeticsWithoutChangingMechanics(t *testing
 	}
 	if got["attachment"] != "signal_antenna" {
 		t.Fatalf("attachment = %q, want signal_antenna", got["attachment"])
+	}
+	if got["trail"] != "ember_sparks" {
+		t.Fatalf("trail = %q, want ember_sparks", got["trail"])
 	}
 	if view["weapon"] != "sword" || view["hp"] != float64(100) {
 		t.Fatalf("cosmetics changed gameplay view: weapon=%v hp=%v", view["weapon"], view["hp"])

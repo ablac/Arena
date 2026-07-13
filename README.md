@@ -24,7 +24,7 @@ AI Battle Arena is a real-time multiplayer arena where autonomous bots compete t
 - Real-time 10 Hz game loop with WebSocket bot control
 - Public spectator stream and browser-based 3D arena
 - REST endpoints for health, leaderboard, bounties, map data, bot setup, and key generation
-- 300 fair-play custom cosmetics in 100 $1.99 sets, plus $19.99/month All Access for every current and future set, capped at five account-owned API keys with subscription-only cosmetics removed when service ends
+- 300 fair-play set pieces in 100 $1.99 sets plus 24 individual $0.99 particle trails; $19.99/month All Access includes every current and future set and trail, caps the account at five active API keys, and removes subscription-only cosmetics when service ends
 - Configurable weapons, stats, pickups, hazards, game modes, map shapes, and round modifiers
 - Python and Node.js SDKs for building bots
 - Admin controls for local/self-hosted operation

@@ -210,6 +210,7 @@
       bot_skin: 'Bot skins',
       weapon_skin: 'Weapon designs',
       attachment: 'Attachments',
+      trail: 'Trails',
     };
     return labels[slot] || (slot ? slot.replaceAll('_', ' ') : 'Cosmetics');
   }
@@ -400,7 +401,7 @@
       <div class="all-access-copy">
         <div class="cosmetic-kicker">Monthly collection pass</div>
         <h2 id="all-access-title">All Access</h2>
-        <p>Every current and future cosmetic set, with up to 5 active API keys.</p>
+        <p>Every current and future cosmetic set and trail, with up to 5 active API keys.</p>
         <p class="all-access-removal">Cancellation keeps access through the paid period. When service ends, subscription cosmetics are removed from your account and any bots using them.</p>
       </div>
       <div class="all-access-offer">
@@ -482,10 +483,11 @@
     const packID = cleanText(pack.id);
     const pending = checkoutState?.status === 'pending' && checkoutState.packID === packID;
     const purchasable = catalog.checkout_enabled && pack.is_purchasable === true;
+    const isTrail = pack.category_id === 'trails' && pack.items?.length === 1 && pack.items[0]?.slot === 'trail';
     const items = Array.isArray(pack.items) ? pack.items.slice(0, 3) : [];
     const contents = items.length
       ? items.map(item => `<span>${escapeHTML(item.name || item.id || 'Cosmetic')}</span>`).join('')
-      : '<span>Three-piece set</span>';
+      : `<span>${isTrail ? 'Individual trail' : 'Coordinated set'}</span>`;
     const swatch = shopSwatch(pack);
     const swatchAttribute = swatch ? ` style="background:${escapeHTML(swatch)}"` : '';
     const action = purchasable
@@ -494,9 +496,11 @@
     return `<article class="cosmetic-shop-pack" data-shop-pack="${escapeHTML(packID)}">
       <div class="cosmetic-shop-swatch" aria-hidden="true"${swatchAttribute}></div>
       <div class="cosmetic-shop-pack-copy">
-        <div class="cosmetic-kicker">Coordinated set</div>
-        <h3>${escapeHTML(pack.name || packID || 'Arena set')}</h3>
-        <p>${escapeHTML(pack.description || 'Three presentation-only cosmetics with no gameplay advantage.')}</p>
+        <div class="cosmetic-kicker">${isTrail ? 'Individual trail' : 'Coordinated set'}</div>
+        <h3>${escapeHTML(pack.name || packID || (isTrail ? 'Arena trail' : 'Arena set'))}</h3>
+        <p>${escapeHTML(pack.description || (isTrail
+          ? 'A presentation-only movement trail with no gameplay advantage.'
+          : 'Three presentation-only cosmetics with no gameplay advantage.'))}</p>
         <div class="cosmetic-shop-contents">${contents}</div>
       </div>
       <div class="cosmetic-shop-offer"><strong>${escapeHTML(formatPrice(pack))}</strong>${action}</div>
@@ -515,19 +519,19 @@
     } else if (checkoutState.status === 'error') {
       feedback = `<div class="tip warn" role="alert"><b>Checkout could not start:</b> ${escapeHTML(checkoutState.message || 'Try again in a moment.')}</div>`;
     } else if (checkoutState.status === 'disabled') {
-      feedback = `<div class="tip" role="status"><b>Checkout is not open yet.</b> Preview the sets now and return when sales are enabled.</div>`;
+      feedback = `<div class="tip" role="status"><b>Checkout is not open yet.</b> Preview the cosmetics now and return when sales are enabled.</div>`;
     }
 
     if (view.catalogError) {
       return `<section class="cosmetic-shop" aria-labelledby="cosmetic-shop-title">
-        <div class="cosmetic-inventory-head"><div><div class="cosmetic-kicker">Set shop</div><h2 id="cosmetic-shop-title">Cosmetic sets</h2></div></div>
+        <div class="cosmetic-inventory-head"><div><div class="cosmetic-kicker">Cosmetics shop</div><h2 id="cosmetic-shop-title">Sets and trails</h2></div></div>
         ${feedback}<div class="tip warn" role="alert"><b>Shop unavailable:</b> ${escapeHTML(view.catalogError)}</div>
       </section>`;
     }
     if (!catalog) {
       return `<section class="cosmetic-shop" aria-labelledby="cosmetic-shop-title">
-        <div class="cosmetic-inventory-head"><div><div class="cosmetic-kicker">Set shop</div><h2 id="cosmetic-shop-title">Cosmetic sets</h2></div></div>
-        ${feedback}<div class="cosmetic-loading">Loading cosmetic sets...</div>
+        <div class="cosmetic-inventory-head"><div><div class="cosmetic-kicker">Cosmetics shop</div><h2 id="cosmetic-shop-title">Sets and trails</h2></div></div>
+        ${feedback}<div class="cosmetic-loading">Loading cosmetic products...</div>
       </section>`;
     }
 
@@ -540,21 +544,21 @@
     });
     const visible = matches.slice(0, 12);
     const summary = matches.length
-      ? `Showing ${visible.length} of ${matches.length} sets`
-      : 'No cosmetic sets match';
+      ? `Showing ${visible.length} of ${matches.length} products`
+      : 'No cosmetic products match';
     const packs = visible.length
       ? visible.map(pack => renderShopPack(pack, catalog, checkoutState)).join('')
-      : `<div class="cosmetic-empty cosmetic-empty-inventory">No cosmetic sets match "${escapeHTML(query)}". Try a theme, set number, or item name.</div>`;
+      : `<div class="cosmetic-empty cosmetic-empty-inventory">No cosmetic products match "${escapeHTML(query)}". Try a theme, set number, trail, or item name.</div>`;
 
     return `<section class="cosmetic-shop" aria-labelledby="cosmetic-shop-title">
       <div class="cosmetic-inventory-head">
-        <div><div class="cosmetic-kicker">Set shop</div><h2 id="cosmetic-shop-title">Cosmetic sets</h2></div>
+        <div><div class="cosmetic-kicker">Cosmetics shop</div><h2 id="cosmetic-shop-title">Sets and trails</h2></div>
         <span>${escapeHTML(summary)}</span>
       </div>
       <p class="cosmetic-rule">Buying a pack grants one license for every included item. Each purchased item copy can be assigned to one bot at a time; items from the same pack can be assigned to different bots.</p>
       ${feedback}
-      <label class="cosmetic-shop-search" for="accountCosmeticSearch">Find a set
-        <input type="search" id="accountCosmeticSearch" data-account-shop-search value="${escapeHTML(query)}" placeholder="Search name, number, or item" autocomplete="off">
+      <label class="cosmetic-shop-search" for="accountCosmeticSearch">Find a cosmetic
+        <input type="search" id="accountCosmeticSearch" data-account-shop-search value="${escapeHTML(query)}" placeholder="Search set, trail, or item" autocomplete="off">
       </label>
       <div class="cosmetic-shop-grid">${packs}</div>
     </section>`;

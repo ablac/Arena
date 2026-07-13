@@ -1889,31 +1889,32 @@ tr:hover td{background:rgba(88,166,255,0.07)}
               </details>
 
               <details class="cosmetics-admin-editor" id="cosmeticPackEditor" data-cosmetic-editor="pack" ontoggle="updateCosmeticEditorVisibility()" hidden>
-                <summary>Set details and contents</summary>
+                <summary>Product details and contents</summary>
                 <form id="cosmeticPackForm" class="cosmetics-admin-form" onsubmit="saveCosmeticPack(event)">
                   <label>Pack ID<input id="cosmeticPackID" maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" required></label>
                   <label>Name<input id="cosmeticPackName" maxlength="100" required></label>
-                  <label>Category<select id="cosmeticPackCategory" required><option value="">Select category</option></select></label>
-                  <label>Set price (fixed)<input id="cosmeticPackPrice" type="number" value="199" readonly required></label>
+                  <label>Category<select id="cosmeticPackCategory" onchange="syncCosmeticPackCategoryRules()" required><option value="">Select category</option></select></label>
+                  <label>Product price (fixed by category)<input id="cosmeticPackPrice" type="number" value="199" readonly required></label>
                   <label>Currency<input id="cosmeticPackCurrency" value="USD" maxlength="3" pattern="[A-Z]{3}" readonly required></label>
                   <label>Sort order<input id="cosmeticPackSort" type="number" min="0" max="1000000" value="0" required></label>
                   <label class="cosmetics-form-wide">Description<textarea id="cosmeticPackDescription" maxlength="500" rows="3"></textarea></label>
                   <fieldset class="cosmetics-form-wide">
-                    <legend>Set contents</legend>
-                    <div class="cosmetics-picker-controls" aria-label="Filter set contents">
+                    <legend>Product contents</legend>
+                    <div class="cosmetics-picker-controls" aria-label="Filter product contents">
                       <label>Search items<input id="cosmeticPackItemSearch" type="search" placeholder="Name, ID, asset key..." oninput="renderCosmeticPackItemPicker()"></label>
                       <label>Category<select id="cosmeticPackItemCategoryFilter" onchange="renderCosmeticPackItemPicker()"><option value="all">All categories</option></select></label>
-                      <label>Slot<select id="cosmeticPackItemSlotFilter" onchange="renderCosmeticPackItemPicker()"><option value="all">All slots</option><option value="bot_skin">Bot skins</option><option value="weapon_skin">Weapon finishes</option><option value="attachment">Attachments</option></select></label>
+                      <label>Slot<select id="cosmeticPackItemSlotFilter" onchange="renderCosmeticPackItemPicker()"><option value="all">All slots</option><option value="bot_skin">Bot skins</option><option value="weapon_skin">Weapon finishes</option><option value="attachment">Attachments</option><option value="trail">Trails</option></select></label>
                       <button type="button" onclick="resetCosmeticPackItemFilters()">Clear filters</button>
                     </div>
                     <div id="cosmeticPackSelectionCount" class="cosmetics-picker-summary">0 selected</div>
+                    <div id="cosmeticPackRuleHint" class="muted" role="status">Sets contain non-trail items. Trails are separate one-item products.</div>
                     <div id="cosmeticPackItems" class="cosmetics-item-picker">Load the catalog to choose items.</div>
                   </fieldset>
                   <label class="cosmetics-check"><input id="cosmeticPackFree" type="checkbox"> Free pack</label>
                   <label class="cosmetics-check"><input id="cosmeticPackPurchasable" type="checkbox"> Sale-ready metadata</label>
                   <label class="cosmetics-check"><input id="cosmeticPackActive" type="checkbox" checked> Active in catalog</label>
                   <div class="cosmetics-form-actions cosmetics-form-wide">
-                    <button class="btn-success" type="submit">Save set</button>
+                    <button class="btn-success" type="submit">Save product</button>
                     <button type="button" onclick="resetCosmeticPackForm();closeCosmeticEditor('pack')">Cancel</button>
                   </div>
                 </form>
@@ -1925,15 +1926,15 @@ tr:hover td{background:rgba(88,166,255,0.07)}
                 <form id="cosmeticItemForm" class="cosmetics-admin-form" onsubmit="saveCosmeticItem(event)">
                   <label>Item ID<input id="cosmeticItemID" maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" required></label>
                   <label>Name<input id="cosmeticItemName" maxlength="100" required></label>
-                  <label>Category<select id="cosmeticItemCategory" required><option value="">Select category</option></select></label>
-                  <label>Slot<select id="cosmeticItemSlot" required><option value="bot_skin">Bot skin</option><option value="weapon_skin">Weapon finish</option><option value="attachment">Attachment</option></select></label>
+                  <label>Category<select id="cosmeticItemCategory" onchange="syncCosmeticItemCategoryAndSlot('category')" required><option value="">Select category</option></select></label>
+                  <label>Slot<select id="cosmeticItemSlot" onchange="syncCosmeticItemCategoryAndSlot('slot')" required><option value="bot_skin">Bot skin</option><option value="weapon_skin">Weapon finish</option><option value="attachment">Attachment</option><option value="trail">Trail</option></select></label>
                   <label>Local asset key<input id="cosmeticItemAssetKey" maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" required></label>
                   <label>Rarity<input id="cosmeticItemRarity" value="common" maxlength="32" pattern="[a-z][a-z0-9_-]*" required></label>
                   <label>Price (minor unit)<input id="cosmeticItemPrice" type="number" min="0" max="1000000" step="1" inputmode="numeric" value="0" required></label>
                   <label>Currency<input id="cosmeticItemCurrency" value="USD" maxlength="3" pattern="[A-Z]{3}" required></label>
                   <label>Sort order<input id="cosmeticItemSort" type="number" min="0" max="1000000" value="0" required></label>
                   <label class="cosmetics-form-wide">Description<textarea id="cosmeticItemDescription" maxlength="500" rows="3"></textarea></label>
-                  <label class="cosmetics-check"><input id="cosmeticItemFree" type="checkbox"> Free item</label>
+                  <label class="cosmetics-check"><input id="cosmeticItemFree" type="checkbox" onchange="syncCosmeticItemPrice()"> Free item</label>
                   <label class="cosmetics-check"><input id="cosmeticItemPurchasable" type="checkbox"> Sale-ready metadata</label>
                   <label class="cosmetics-check"><input id="cosmeticItemActive" type="checkbox" checked> Active in catalog</label>
                   <div class="cosmetics-form-actions cosmetics-form-wide">
@@ -1948,8 +1949,8 @@ tr:hover td{background:rgba(88,166,255,0.07)}
             <div id="cosmeticCatalogMaster" class="ops-card cosmetics-catalog-master">
               <section id="cosmeticEntityPanelPack" role="tabpanel" aria-labelledby="cosmeticEntityTabPack" data-cosmetic-entity-panel="pack">
                 <div class="cosmetics-admin-heading">
-                  <div><h3>Cosmetic Sets / Packs</h3><p class="muted">Build and publish the $1.99 sets customers see in the shop.</p></div>
-                  <button type="button" onclick="startCosmeticPackCreate()">New set</button>
+                  <div><h3>Cosmetic Products / Packs</h3><p class="muted">Build and publish $1.99 coordinated sets and individual $0.99 trails.</p></div>
+                  <button type="button" onclick="startCosmeticPackCreate()">New product</button>
                 </div>
                 <div id="cosmeticPackList" class="cosmetics-admin-list">Loading sets...</div>
               </section>
@@ -1961,7 +1962,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
                 <div class="cosmetics-filter-toolbar" aria-label="Filter cosmetic items">
                   <label>Search<input id="cosmeticItemSearch" type="search" placeholder="Name, ID, description, asset key..." oninput="renderCosmeticAdminCatalog()"></label>
                   <label>Category<select id="cosmeticItemCategoryFilter" onchange="renderCosmeticAdminCatalog()"><option value="all">All categories</option></select></label>
-                  <label>Slot<select id="cosmeticItemSlotFilter" onchange="renderCosmeticAdminCatalog()"><option value="all">All slots</option><option value="bot_skin">Bot skins</option><option value="weapon_skin">Weapon finishes</option><option value="attachment">Attachments</option></select></label>
+                  <label>Slot<select id="cosmeticItemSlotFilter" onchange="renderCosmeticAdminCatalog()"><option value="all">All slots</option><option value="bot_skin">Bot skins</option><option value="weapon_skin">Weapon finishes</option><option value="attachment">Attachments</option><option value="trail">Trails</option></select></label>
                   <label>Rarity<select id="cosmeticItemRarityFilter" onchange="renderCosmeticAdminCatalog()"><option value="all">All rarities</option></select></label>
                   <label>Lifecycle<select id="cosmeticItemLifecycleFilter" onchange="renderCosmeticAdminCatalog()"><option value="all">All lifecycle states</option><option value="live">Live</option><option value="inactive">Inactive</option><option value="hidden-category">Hidden by category</option><option value="unknown">Readiness unknown</option><option value="not-public">Not public</option></select></label>
                   <button type="button" onclick="resetCosmeticItemFilters()">Clear filters</button>
@@ -2009,7 +2010,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 
               <section class="ops-card">
                 <h3>Grant timed membership</h3>
-                <p class="muted">Cosmetics-only access includes all current and future purchasable sets until automatic expiry. It does not create billing, change payment status, or change API-key access or limits.</p>
+                <p class="muted">Cosmetics-only access includes all current and future purchasable sets and trails until automatic expiry. It does not create billing, change payment status, or change API-key access or limits.</p>
                 <form id="cosmeticMembershipForm" class="form-stack cosmetics-grant-form" onsubmit="grantCosmeticMembership(event)">
                   <label>Selected customer<input id="cosmeticMembershipEmail" type="email" readonly required placeholder="Look up an email first"></label>
                   <label>Duration preset<select id="cosmeticMembershipPreset" onchange="setCosmeticMembershipPreset(this.value)"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option><option value="365">1 year</option><option value="custom">Custom expiry</option></select></label>
@@ -5085,6 +5086,61 @@ function cosmeticCatalogState(entry) {
   return 'preview';
 }
 
+function cosmeticPackFixedPrice(categoryID) {
+  return categoryID === 'trails' ? 99 : 199;
+}
+
+function updateCosmeticPackFixedPrice() {
+  const categoryID = document.getElementById('cosmeticPackCategory')?.value || '';
+  const price = cosmeticPackFixedPrice(categoryID);
+  const field = document.getElementById('cosmeticPackPrice');
+  if (field) field.value = price;
+  return price;
+}
+
+function syncCosmeticItemCategoryAndSlot(changedField) {
+  const category = document.getElementById('cosmeticItemCategory');
+  const slot = document.getElementById('cosmeticItemSlot');
+  if (!category || !slot) return;
+	if (slot.disabled) {
+	  const lockedTrail = slot.value === 'trail';
+	  if ((category.value === 'trails') !== lockedTrail) {
+	    category.value = category.dataset.lockedCategory || (lockedTrail ? 'trails' : 'chassis');
+	  }
+	  syncCosmeticItemPrice();
+	  return;
+	}
+  const categoryForSlot = {
+    bot_skin: 'chassis',
+    weapon_skin: 'weapon-finishes',
+    attachment: 'attachments',
+  };
+  const slotForCategory = {
+    chassis: 'bot_skin',
+    'weapon-finishes': 'weapon_skin',
+    attachments: 'attachment',
+  };
+  if (changedField === 'category') {
+    if (category.value === 'trails') slot.value = 'trail';
+    else if (slot.value === 'trail') slot.value = slotForCategory[category.value] || 'bot_skin';
+  } else if (slot.value === 'trail') {
+    category.value = 'trails';
+  } else if (category.value === 'trails') {
+    category.value = categoryForSlot[slot.value] || 'chassis';
+  }
+	 syncCosmeticItemPrice();
+}
+
+function syncCosmeticItemPrice() {
+	const slot = document.getElementById('cosmeticItemSlot');
+	const price = document.getElementById('cosmeticItemPrice');
+	if (!slot || !price) return;
+	const trail = slot.value === 'trail';
+	const free = document.getElementById('cosmeticItemFree')?.checked === true;
+	price.readOnly = trail;
+	if (trail) price.value = free ? 0 : 99;
+}
+
 function cosmeticVisibilityState(entry, entityType) {
   if (entry?.is_active !== true) {
     return {key:'inactive', label:'Inactive', className:'is-inactive'};
@@ -5249,6 +5305,7 @@ function renderCosmeticAdminCatalog() {
   if (packEditorOpen && categories.some(category => category.id === preservedPackCategory)) {
     packCategorySelect.value = preservedPackCategory;
   }
+  if (typeof updateCosmeticPackFixedPrice === 'function') updateCosmeticPackFixedPrice();
   if (itemEditorOpen && categories.some(category => category.id === preservedItemCategory)) {
     itemCategorySelect.value = preservedItemCategory;
   }
@@ -5259,38 +5316,71 @@ function filteredCosmeticPackItems() {
   const search = cosmeticFilterValue('cosmeticPackItemSearch', '').trim().toLowerCase();
   const category = cosmeticFilterValue('cosmeticPackItemCategoryFilter');
   const slot = cosmeticFilterValue('cosmeticPackItemSlotFilter');
+  const trailProduct = cosmeticFilterValue('cosmeticPackCategory', '') === 'trails';
   return cosmeticAdminCatalog.items.filter(item => {
     const haystack = [item.id, item.name, item.description, item.asset_key].join(' ').toLowerCase();
     return (!search || haystack.includes(search)) &&
       (category === 'all' || item.category_id === category) &&
-      (slot === 'all' || item.slot === slot);
+      (slot === 'all' || item.slot === slot) &&
+      (trailProduct ? item.slot === 'trail' : item.slot !== 'trail');
   }).sort((left, right) => Number(cosmeticPackSelection.has(right.id)) - Number(cosmeticPackSelection.has(left.id)));
 }
 
 function updateCosmeticPackSelectionCount(shownCount=filteredCosmeticPackItems().length) {
   document.getElementById('cosmeticPackSelectionCount').textContent =
     `${cosmeticPackSelection.size} selected · ${shownCount} shown of ${cosmeticAdminCatalog.items.length} items`;
+  const hint = document.getElementById('cosmeticPackRuleHint');
+  if (hint) hint.textContent = cosmeticFilterValue('cosmeticPackCategory', '') === 'trails'
+    ? 'Trail products cost $0.99 and contain exactly one trail item.'
+    : 'Sets cost $1.99 and cannot contain trail items.';
 }
 
 function renderCosmeticPackItemPicker(selectedIDs) {
   const root = document.getElementById('cosmeticPackItems');
   const items = cosmeticAdminCatalog.items;
   if (Array.isArray(selectedIDs)) cosmeticPackSelection = new Set(selectedIDs);
-  const validIDs = new Set(items.map(item => item.id));
+  const trailProduct = cosmeticFilterValue('cosmeticPackCategory', '') === 'trails';
+  const validIDs = new Set(items.filter(item => trailProduct ? item.slot === 'trail' : item.slot !== 'trail').map(item => item.id));
   cosmeticPackSelection = new Set(Array.from(cosmeticPackSelection).filter(itemID => validIDs.has(itemID)));
+  if (trailProduct && cosmeticPackSelection.size > 1) {
+    cosmeticPackSelection = new Set([cosmeticPackSelection.values().next().value]);
+  }
   const filtered = filteredCosmeticPackItems();
   root.innerHTML = filtered.length ? filtered.map(item => `
     <label>
       <input type="checkbox" data-cosmetic-pack-item value="${escAttr(item.id)}" ${cosmeticPackSelection.has(item.id) ? 'checked' : ''} onchange="toggleCosmeticPackItemSelection(this)">
       <span>${esc(item.name || item.id)} <span class="muted">(${esc(item.slot || '')} · ${esc(item.category_id || '')})</span></span>
-    </label>`).join('') : '<span class="muted">No items match these set filters.</span>';
+    </label>`).join('') : '<span class="muted">No items match these product filters.</span>';
   updateCosmeticPackSelectionCount(filtered.length);
 }
 
 function toggleCosmeticPackItemSelection(input) {
+  const trailProduct = cosmeticFilterValue('cosmeticPackCategory', '') === 'trails';
+  if (input.checked && trailProduct) {
+    cosmeticPackSelection.clear();
+    cosmeticPackSelection.add(input.value);
+    renderCosmeticPackItemPicker();
+    return;
+  }
   if (input.checked) cosmeticPackSelection.add(input.value);
   else cosmeticPackSelection.delete(input.value);
   updateCosmeticPackSelectionCount();
+}
+
+function syncCosmeticPackCategoryRules(selectedIDs) {
+  const trailProduct = cosmeticFilterValue('cosmeticPackCategory', '') === 'trails';
+  const slotFilter = document.getElementById('cosmeticPackItemSlotFilter');
+	const categoryFilter = document.getElementById('cosmeticPackItemCategoryFilter');
+  if (slotFilter) {
+    if (trailProduct) slotFilter.value = 'trail';
+    else if (slotFilter.value === 'trail') slotFilter.value = 'all';
+  }
+	if (categoryFilter) {
+	  if (trailProduct) categoryFilter.value = 'trails';
+	  else if (categoryFilter.value === 'trails') categoryFilter.value = 'all';
+  }
+  updateCosmeticPackFixedPrice();
+  renderCosmeticPackItemPicker(selectedIDs);
 }
 
 function resetCosmeticPackItemFilters() {
@@ -5375,18 +5465,18 @@ function startCosmeticPackCreate() {
 function editCosmeticPack(id) {
   const pack = cosmeticAdminCatalog.packs.find(entry => entry.id === id);
   if (!pack) return;
+  const selectedIDs = Array.isArray(pack.item_ids) ? pack.item_ids : (pack.items || []).map(item => item.id);
   document.getElementById('cosmeticPackID').value = pack.id;
   document.getElementById('cosmeticPackID').readOnly = true;
   document.getElementById('cosmeticPackName').value = pack.name || '';
   document.getElementById('cosmeticPackCategory').value = pack.category_id || '';
-  document.getElementById('cosmeticPackPrice').value = 199;
   document.getElementById('cosmeticPackCurrency').value = 'USD';
   document.getElementById('cosmeticPackSort').value = Number(pack.sort_order || 0);
   document.getElementById('cosmeticPackDescription').value = pack.description || '';
   document.getElementById('cosmeticPackFree').checked = pack.is_free === true;
   document.getElementById('cosmeticPackPurchasable').checked = pack.is_purchasable === true;
   document.getElementById('cosmeticPackActive').checked = pack.is_active === true;
-  renderCosmeticPackItemPicker(Array.isArray(pack.item_ids) ? pack.item_ids : (pack.items || []).map(item => item.id));
+  syncCosmeticPackCategoryRules(selectedIDs);
   openCosmeticEditor('pack', 'cosmeticPackName');
 }
 
@@ -5396,11 +5486,12 @@ async function saveCosmeticPack(event) {
   if (form.querySelector('button[type="submit"]')?.disabled) return;
   const id = document.getElementById('cosmeticPackID').value.trim();
   const isFree = document.getElementById('cosmeticPackFree').checked;
+  const categoryID = document.getElementById('cosmeticPackCategory').value;
   const payload = {
     name: document.getElementById('cosmeticPackName').value.trim(),
-    category_id: document.getElementById('cosmeticPackCategory').value,
+    category_id: categoryID,
     description: document.getElementById('cosmeticPackDescription').value.trim(),
-    price_cents: isFree ? 0 : 199,
+    price_cents: isFree ? 0 : cosmeticPackFixedPrice(categoryID),
     currency: 'USD',
     sort_order: Number(document.getElementById('cosmeticPackSort').value || 0),
     item_ids: Array.from(cosmeticPackSelection),
@@ -5449,9 +5540,11 @@ function resetCosmeticItemForm() {
   form.reset();
   document.getElementById('cosmeticItemID').readOnly = false;
   document.getElementById('cosmeticItemSlot').disabled = false;
+	document.getElementById('cosmeticItemCategory').dataset.lockedCategory = '';
   document.getElementById('cosmeticItemAssetKey').readOnly = false;
   document.getElementById('cosmeticItemCurrency').value = 'USD';
   document.getElementById('cosmeticItemRarity').value = 'common';
+	syncCosmeticItemPrice();
 }
 
 function startCosmeticItemCreate() {
@@ -5466,6 +5559,7 @@ function editCosmeticItem(id) {
   document.getElementById('cosmeticItemID').readOnly = true;
   document.getElementById('cosmeticItemName').value = item.name || '';
   document.getElementById('cosmeticItemCategory').value = item.category_id || '';
+	document.getElementById('cosmeticItemCategory').dataset.lockedCategory = item.category_id || '';
   document.getElementById('cosmeticItemSlot').value = item.slot || 'bot_skin';
   document.getElementById('cosmeticItemSlot').disabled = true;
   document.getElementById('cosmeticItemAssetKey').value = item.asset_key || '';
@@ -5478,6 +5572,7 @@ function editCosmeticItem(id) {
   document.getElementById('cosmeticItemFree').checked = item.is_free === true;
   document.getElementById('cosmeticItemPurchasable').checked = item.is_purchasable === true;
   document.getElementById('cosmeticItemActive').checked = item.is_active === true;
+	syncCosmeticItemPrice();
   openCosmeticItemEditor('cosmeticItemName');
 }
 
@@ -5653,7 +5748,7 @@ function renderCosmeticCustomerAccess(data, email) {
     <article class="cosmetics-access-row">
       <div class="cosmetics-access-row-main">
         <div class="cosmetics-access-row-title">Timed cosmetics membership <span class="cosmetics-admin-badge ${membership.status === 'active' ? 'is-live' : 'is-inactive'}">${esc(membership.status || 'active')}</span></div>
-        <div class="cosmetics-access-row-meta">Current and future purchasable sets · expires ${esc(fmtTime(membership.expires_at || ''))}${membership.note ? ' · ' + esc(membership.note) : ''}</div>
+        <div class="cosmetics-access-row-meta">Current and future purchasable sets and trails · expires ${esc(fmtTime(membership.expires_at || ''))}${membership.note ? ' · ' + esc(membership.note) : ''}</div>
       </div>
       ${membership.status === 'active' ? `<button type="button" class="btn-danger" data-membership-id="${escAttr(membership.id)}" onclick="revokeCosmeticMembership(this.dataset.membershipId)">Revoke membership</button>` : '<span class="muted">Membership ended</span>'}
     </article>`).join('') : '<div class="muted">No timed cosmetics memberships found.</div>';
