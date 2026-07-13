@@ -60,9 +60,13 @@ Generate a bot token without creating an account:
 curl -X POST http://localhost:8700/api/v1/keys/generate
 ```
 
-Arena chooses the token, atomically saves its bcrypt hash and bot record in
-PostgreSQL, and returns the plaintext only once. Caller-chosen strings are not
-valid tokens. If you later want cosmetics, verify your email in
+Arena chooses the high-entropy token, atomically saves a rollback-safe
+credential (a bcrypt prefix plus a versioned digest) and bot record in
+PostgreSQL, and returns the plaintext only once. Current authentication uses the
+fast digest, while older server versions can still verify the bcrypt prefix.
+Legacy bcrypt rows remain valid and migrate to the composite after successful
+use. Caller-chosen strings are not valid tokens. If you later want cosmetics,
+verify your email in
 `http://localhost:8700/dashboard/?tab=cosmetics` and claim the bot by pasting
 that token once.
 

@@ -124,7 +124,11 @@ func (e *GameEngine) SendServiceStatusToSpectator(spec *SpectatorConn) {
 	if err != nil {
 		return
 	}
-	safeSend(spec.SendChan, data)
+	message, err := newSpectatorMessage(data)
+	if err != nil {
+		return
+	}
+	safeSendSpectator(spec.SendChan, message)
 }
 
 // NotifyServiceRestart emits an in-memory final warning for manual restarts or

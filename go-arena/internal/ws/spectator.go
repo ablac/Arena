@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"sync"
 	"time"
 
 	"arena-server/internal/config"
@@ -14,6 +17,13 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+var spectatorWriteBufferPool sync.Pool
+
+type spectatorRateLimitCheck func(context.Context, string, int, int) (bool, int, time.Time, error)
+
+// spectatorRateLimitChecker is replaceable in focused pre-upgrade tests.
+var spectatorRateLimitChecker spectatorRateLimitCheck = security.CheckRateLimit
 
 const (
 	// How often to send WebSocket ping frames to spectators.
@@ -32,12 +42,21 @@ const (
 	// At the normal 10 Hz broadcast rate this holds more than twice the
 	// delayed window while keeping a stalled connection's memory bounded.
 	maxDelayedSpectatorMessages = 128
+	// A full server asks browsers to retry shortly rather than paying for a
+	// WebSocket upgrade known to have no available spectator slot.
+	spectatorCapacityRetryAfterSeconds = 5
 )
+
+func spectatorUpgradeRateLimit(ip string) (string, int) {
+	return "ws:spectator:connect:" + ip, config.C.WSSpectatorConnectRatePerMin
+}
 
 // spectatorUpgrader is the shared WebSocket upgrader for spectator connections.
 var spectatorUpgrader = websocket.Upgrader{
+	HandshakeTimeout:  5 * time.Second,
 	ReadBufferSize:    1024,
 	WriteBufferSize:   4096,
+	WriteBufferPool:   &spectatorWriteBufferPool,
 	EnableCompression: true,
 	CheckOrigin: func(r *http.Request) bool {
 		return true // allow all origins for now
@@ -49,6 +68,9 @@ var spectatorUpgrader = websocket.Upgrader{
 // engine but do not send meaningful messages.
 func SpectatorHandler(engine *game.GameEngine) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		admission := beginWebSocketAdmission(websocketEndpointSpectator)
+		defer admission.finish()
+
 		cfg := &config.C
 		clientIP := security.ExtractClientIP(r)
 
@@ -56,15 +78,43 @@ func SpectatorHandler(engine *game.GameEngine) http.HandlerFunc {
 		// spectator "Ban IP" action would otherwise disconnect only the current
 		// socket while allowing the same client to reconnect immediately.
 		if engine.IsIPBanned(clientIP) {
+			admission.fail(websocketFailureAuth)
 			http.Error(w, "IP banned", http.StatusForbidden)
 			return
 		}
 
+		// This is an inexpensive best-effort guard for an already-full server.
+		// TryAddSpectator remains authoritative after upgrade because capacity can
+		// change between this snapshot and registration.
+		if engine.SpectatorCount() >= cfg.MaxSpectators {
+			admission.fail(websocketFailureCapacity)
+			w.Header().Set("Retry-After", strconv.Itoa(spectatorCapacityRetryAfterSeconds))
+			http.Error(w, "spectator limit reached", http.StatusServiceUnavailable)
+			return
+		}
+
+		// Bound anonymous upgrade work before Gorilla allocates a connection.
+		// Loopback remains exempt for local demos and health/smoke tooling.
+		if cfg.WSSpectatorConnectRatePerMin > 0 && !isLoopbackIP(clientIP) {
+			limitKey, limit := spectatorUpgradeRateLimit(clientIP)
+			allowed, _, _, err := spectatorRateLimitChecker(r.Context(), limitKey, limit, 60)
+			if err != nil {
+				slog.Warn("spectator websocket rate limit check error, allowing", "error", err, "ip", clientIP)
+			} else if !allowed {
+				admission.fail(websocketFailureRateLimit)
+				w.Header().Set("Retry-After", "60")
+				http.Error(w, "too many spectator connections", http.StatusTooManyRequests)
+				return
+			}
+		}
+
 		conn, err := spectatorUpgrader.Upgrade(w, r, nil)
 		if err != nil {
+			admission.fail(websocketFailureUpgrade)
 			slog.Error("spectator websocket upgrade failed", "error", err, "remote", r.RemoteAddr)
 			return
 		}
+		admission.upgraded()
 
 		defer func() {
 			if p := recover(); p != nil {
@@ -76,7 +126,7 @@ func SpectatorHandler(engine *game.GameEngine) http.HandlerFunc {
 		// Create spectator connection with buffered send channel.
 		spec := &game.SpectatorConn{
 			Conn:        conn,
-			SendChan:    make(chan []byte, 32),
+			SendChan:    make(chan *game.SpectatorMessage, 32),
 			Done:        make(chan struct{}),
 			IP:          clientIP,
 			ConnectedAt: time.Now(),
@@ -85,6 +135,7 @@ func SpectatorHandler(engine *game.GameEngine) http.HandlerFunc {
 		// Admission and capacity checking must be one atomic engine operation;
 		// otherwise simultaneous upgrades can all pass a separate count check.
 		if !engine.TryAddSpectator(spec, cfg.MaxSpectators) {
+			admission.fail(websocketFailureCapacity)
 			_ = conn.WriteControl(
 				websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "spectator limit reached"),
@@ -92,6 +143,7 @@ func SpectatorHandler(engine *game.GameEngine) http.HandlerFunc {
 			)
 			return
 		}
+		admission.admitted()
 		slog.Info("spectator connected", "remote", r.RemoteAddr)
 		engine.SendServiceStatusToSpectator(spec)
 
@@ -164,7 +216,7 @@ func spectatorWriterWithIntervals(ctx context.Context, spec *game.SpectatorConn,
 }
 
 type delayedSpectatorMessage struct {
-	payload   []byte
+	message   *game.SpectatorMessage
 	releaseAt time.Time
 }
 
@@ -210,11 +262,11 @@ func spectatorWriterWithTimings(ctx context.Context, spec *game.SpectatorConn, i
 
 		case now := <-delayReady:
 			for len(delayed) > 0 && !delayed[0].releaseAt.After(now) {
-				if err := writeSpectatorMessage(spec.Conn, websocket.TextMessage, delayed[0].payload); err != nil {
+				if err := writePreparedSpectatorMessage(spec.Conn, delayed[0].message); err != nil {
 					slog.Warn("spectator delayed-state write error", "error", err)
 					return
 				}
-				delayed[0].payload = nil
+				delayed[0].message = nil
 				delayed = delayed[1:]
 			}
 			if len(delayed) == 0 {
@@ -235,14 +287,14 @@ func spectatorWriterWithTimings(ctx context.Context, spec *game.SpectatorConn, i
 				return
 			}
 
-			if stateDelay > 0 && isDelayedSpectatorState(msg) {
+			if stateDelay > 0 && isDelayedSpectatorState(msg.Payload) {
 				if len(delayed) >= maxDelayedSpectatorMessages {
 					// Preserve the oldest/keyframe messages and shed only excess
 					// newest frames until the writer catches up.
 					continue
 				}
 				delayed = append(delayed, delayedSpectatorMessage{
-					payload:   msg,
+					message:   msg,
 					releaseAt: time.Now().Add(stateDelay),
 				})
 				if len(delayed) == 1 {
@@ -252,7 +304,7 @@ func spectatorWriterWithTimings(ctx context.Context, spec *game.SpectatorConn, i
 				continue
 			}
 
-			if err := writeSpectatorMessage(spec.Conn, websocket.TextMessage, msg); err != nil {
+			if err := writePreparedSpectatorMessage(spec.Conn, msg); err != nil {
 				slog.Warn("spectator write error", "error", err)
 				return
 			}
@@ -288,4 +340,14 @@ func writeSpectatorMessage(conn *websocket.Conn, messageType int, payload []byte
 		return err
 	}
 	return conn.WriteMessage(messageType, payload)
+}
+
+func writePreparedSpectatorMessage(conn *websocket.Conn, message *game.SpectatorMessage) error {
+	if message == nil || message.Prepared == nil {
+		return errors.New("spectator message is not prepared")
+	}
+	if err := conn.SetWriteDeadline(time.Now().Add(spectatorWriteTimeout)); err != nil {
+		return err
+	}
+	return conn.WritePreparedMessage(message.Prepared)
 }

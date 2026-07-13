@@ -10,7 +10,7 @@ func TestServiceStatusBroadcastReachesBotsAndSpectators(t *testing.T) {
 	engine := NewGameEngine()
 	active := &BotState{BotID: "active", SendChan: make(chan []byte, 2)}
 	waiting := &BotState{BotID: "waiting", SendChan: make(chan []byte, 2)}
-	spectator := &SpectatorConn{SendChan: make(chan []byte, 2), Done: make(chan struct{})}
+	spectator := &SpectatorConn{SendChan: make(chan *SpectatorMessage, 2), Done: make(chan struct{})}
 	engine.Bots[active.BotID] = active
 	engine.WaitingBots[waiting.BotID] = waiting
 	engine.Spectators = append(engine.Spectators, spectator)
@@ -23,7 +23,6 @@ func TestServiceStatusBroadcastReachesBotsAndSpectators(t *testing.T) {
 	for name, ch := range map[string]chan []byte{
 		"active bot":  active.SendChan,
 		"waiting bot": waiting.SendChan,
-		"spectator":   spectator.SendChan,
 	} {
 		select {
 		case data := <-ch:
@@ -37,6 +36,21 @@ func TestServiceStatusBroadcastReachesBotsAndSpectators(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatalf("%s did not receive service status", name)
 		}
+	}
+	select {
+	case message := <-spectator.SendChan:
+		if message == nil || message.Prepared == nil {
+			t.Fatal("spectator service status was not prepared")
+		}
+		var status ServiceStatus
+		if err := json.Unmarshal(message.Payload, &status); err != nil {
+			t.Fatalf("spectator decode: %v", err)
+		}
+		if status.Type != "service_status" || status.Revision != 4 || status.Broadcast == nil || status.Broadcast.Message != "hello" {
+			t.Fatalf("spectator status = %#v", status)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("spectator did not receive service status")
 	}
 }
 

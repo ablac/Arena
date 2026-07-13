@@ -486,9 +486,13 @@ func stripDefaultPort(host, scheme string) string {
 	return host
 }
 
+var chatWriteBufferPool sync.Pool
+
 var chatUpgrader = websocket.Upgrader{
+	HandshakeTimeout:  5 * time.Second,
 	ReadBufferSize:    1024,
 	WriteBufferSize:   4096,
+	WriteBufferPool:   &chatWriteBufferPool,
 	EnableCompression: true,
 	CheckOrigin: func(r *http.Request) bool {
 		// Reads are public (mirrors the spectator stream); identity is
@@ -502,6 +506,9 @@ var chatUpgrader = websocket.Upgrader{
 // handler so this package stays decoupled from the api package.
 func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*http.Request) *ChatIdentity) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		admission := beginWebSocketAdmission(websocketEndpointChat)
+		defer admission.finish()
+
 		cfg := &config.C
 		if !cfg.ChatEnabled {
 			http.Error(w, "chat is disabled", http.StatusNotFound)
@@ -510,6 +517,7 @@ func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*htt
 
 		clientIP := security.ExtractClientIP(r)
 		if engine != nil && engine.IsIPBanned(clientIP) {
+			admission.fail(websocketFailureAuth)
 			http.Error(w, "IP banned", http.StatusForbidden)
 			return
 		}
@@ -519,6 +527,7 @@ func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*htt
 		// is exempt.
 		if cfg.WSConnectRatePerMin > 0 && !isLoopbackIP(clientIP) {
 			if allowed, _, _, err := security.CheckRateLimit(r.Context(), "ws:chat:ip:"+clientIP, cfg.WSConnectRatePerMin, 60); err == nil && !allowed {
+				admission.fail(websocketFailureRateLimit)
 				http.Error(w, "too many connections, try again shortly", http.StatusTooManyRequests)
 				return
 			}
@@ -534,9 +543,11 @@ func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*htt
 
 		conn, err := chatUpgrader.Upgrade(w, r, nil)
 		if err != nil {
+			admission.fail(websocketFailureUpgrade)
 			slog.Error("chat websocket upgrade failed", "error", err, "remote", r.RemoteAddr)
 			return
 		}
+		admission.upgraded()
 		conn.SetReadLimit(chatReadLimit)
 
 		defer func() {
@@ -573,6 +584,7 @@ func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*htt
 		client.send <- hub.historyPayload()
 
 		if !hub.register(client, cfg.ChatMaxClients) {
+			admission.fail(websocketFailureCapacity)
 			_ = conn.WriteControl(
 				websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "chat is full"),
@@ -580,6 +592,7 @@ func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*htt
 			)
 			return
 		}
+		admission.admitted()
 		// Cleanup on the deferred path so a panic in the reader pipeline still
 		// unregisters the client and closes its send channel. remove is
 		// idempotent; defers run LIFO so cancel fires before remove, matching

@@ -1,8 +1,10 @@
 package security
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,97 @@ import (
 
 	"github.com/redis/go-redis/v9"
 )
+
+type recordingRateLimitEvaluator struct {
+	calls  int
+	script string
+	keys   []string
+	args   []interface{}
+	result []interface{}
+	err    error
+}
+
+func (e *recordingRateLimitEvaluator) Eval(_ context.Context, script string, keys []string, args ...interface{}) *redis.Cmd {
+	e.calls++
+	e.script = script
+	e.keys = append([]string(nil), keys...)
+	e.args = append([]interface{}(nil), args...)
+	return redis.NewCmdResult(e.result, e.err)
+}
+
+func TestCheckRateLimitUsesOneAtomicRedisRoundTrip(t *testing.T) {
+	evaluator := &recordingRateLimitEvaluator{
+		result: []interface{}{int64(2), int64(42_000)},
+	}
+	now := time.Unix(1_700_000_000, 0)
+
+	allowed, remaining, resetAt, err := checkRateLimitWithEvaluator(
+		context.Background(), evaluator, "bot:connect", 5, 60, now,
+	)
+	if err != nil {
+		t.Fatalf("checkRateLimitWithEvaluator: %v", err)
+	}
+	if !allowed || remaining != 3 {
+		t.Fatalf("decision = allowed %t remaining %d, want true/3", allowed, remaining)
+	}
+	if want := now.Add(42 * time.Second); !resetAt.Equal(want) {
+		t.Fatalf("resetAt = %v, want %v", resetAt, want)
+	}
+	if evaluator.calls != 1 {
+		t.Fatalf("Redis calls = %d, want exactly 1", evaluator.calls)
+	}
+	if len(evaluator.keys) != 1 || evaluator.keys[0] != "ratelimit:bot:connect" {
+		t.Fatalf("Redis keys = %#v", evaluator.keys)
+	}
+	if len(evaluator.args) != 1 || evaluator.args[0] != int64(60_000) {
+		t.Fatalf("Redis args = %#v, want 60000ms expiry", evaluator.args)
+	}
+	if !strings.Contains(evaluator.script, "INCR") || !strings.Contains(evaluator.script, "PTTL") || !strings.Contains(evaluator.script, "PEXPIRE") {
+		t.Fatalf("rate-limit script does not atomically increment and repair expiry: %q", evaluator.script)
+	}
+}
+
+func TestCheckRateLimitRedisIntegration(t *testing.T) {
+	addr := strings.TrimSpace(os.Getenv("ARENA_TEST_REDIS_ADDR"))
+	if addr == "" {
+		t.Skip("set ARENA_TEST_REDIS_ADDR to run Redis integration test")
+	}
+
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	ctx := context.Background()
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
+		t.Fatalf("ping test Redis: %v", err)
+	}
+	previous := RedisClient
+	RedisClient = client
+	key := "integration:" + strings.ReplaceAll(t.Name(), "/", ":") + ":" + time.Now().Format("150405.000000000")
+	t.Cleanup(func() {
+		_ = client.Del(ctx, "ratelimit:"+key).Err()
+		_ = client.Close()
+		RedisClient = previous
+	})
+
+	for attempt, wantAllowed := range []bool{true, true, false} {
+		allowed, remaining, _, err := CheckRateLimit(ctx, key, 2, 1)
+		if err != nil {
+			t.Fatalf("attempt %d: %v", attempt+1, err)
+		}
+		if allowed != wantAllowed {
+			t.Fatalf("attempt %d allowed = %t, want %t (remaining %d)", attempt+1, allowed, wantAllowed, remaining)
+		}
+	}
+
+	ttl, err := client.PTTL(ctx, "ratelimit:"+key).Result()
+	if err != nil || ttl <= 0 || ttl > time.Second {
+		t.Fatalf("rate-limit TTL = %v, error %v", ttl, err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	allowed, remaining, _, err := CheckRateLimit(ctx, key, 2, 1)
+	if err != nil || !allowed || remaining != 1 {
+		t.Fatalf("post-expiry decision = allowed %t remaining %d error %v", allowed, remaining, err)
+	}
+}
 
 func setTrustedProxyCIDRs(t *testing.T, cidrs string) {
 	t.Helper()

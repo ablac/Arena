@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"math"
 	"net/http"
 	"sort"
@@ -18,16 +19,17 @@ type weaponMetaRaw struct {
 
 // GetWeaponStats handles GET /api/v1/weapon-stats.
 func GetWeaponStats(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	defaultWeaponStatsCache.ServeHTTP(w, r)
+}
 
+func loadWeaponStats(ctx context.Context) (WeaponStatsResponse, error) {
 	killMap := map[string]db.WeaponKillStats{}
 	recentMap := map[string]db.WeaponRecentPerformance{}
 	historyMap := map[string][]WeaponBalanceHistoryPoint{}
 	if db.Pool != nil {
 		rows, err := db.ListWeaponKillStats(ctx)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to get weapon stats")
-			return
+			return WeaponStatsResponse{}, newWeaponStatsLoadError("failed to get weapon stats", err)
 		}
 		for _, row := range rows {
 			killMap[row.Weapon] = row
@@ -35,8 +37,7 @@ func GetWeaponStats(w http.ResponseWriter, r *http.Request) {
 
 		recentRows, err := db.ListRecentWeaponPerformance(ctx, 10)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to get recent weapon performance")
-			return
+			return WeaponStatsResponse{}, newWeaponStatsLoadError("failed to get recent weapon performance", err)
 		}
 		for _, row := range recentRows {
 			recentMap[row.Weapon] = row
@@ -44,8 +45,7 @@ func GetWeaponStats(w http.ResponseWriter, r *http.Request) {
 
 		historyRows, err := db.ListWeaponBalanceHistory(ctx, 50)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to get weapon history")
-			return
+			return WeaponStatsResponse{}, newWeaponStatsLoadError("failed to get weapon history", err)
 		}
 		for _, row := range historyRows {
 			baseWC, _ := game.GetBaseWeaponConfig(row.Weapon)
@@ -227,10 +227,10 @@ func GetWeaponStats(w http.ResponseWriter, r *http.Request) {
 		updatedAt = time.Now()
 	}
 
-	writeJSON(w, http.StatusOK, WeaponStatsResponse{
+	return WeaponStatsResponse{
 		Entries:   entries,
 		UpdatedAt: updatedAt,
-	})
+	}, nil
 }
 
 func computeWeaponMetaScore(entry WeaponStatsEntry, totalKills, maxKills24h, maxKills1h int, dpsNorm, reachNorm float64) float64 {
