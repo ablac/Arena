@@ -275,6 +275,7 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 			"avatar_color":             bot.AvatarColor,
 			"cosmetics":                bot.Cosmetics,
 			"last_action":              lastAction,
+			"last_action_tick":         bot.LastActionTick,
 			"action":                   lastAction,
 			"target_id":                botTargetID(bot),
 			"target_position":          botTargetPosition(bot),

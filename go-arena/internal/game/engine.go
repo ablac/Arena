@@ -2440,8 +2440,7 @@ func buildHints(bot *BotState, allBots map[string]*BotState, pickups []Pickup) [
 		if other.BotID == bot.BotID || !other.IsAlive {
 			continue
 		}
-		d := bot.Position.DistanceTo(other.Position)
-		dir := other.Position.Sub(bot.Position).Normalized()
+		dir, d := hintVectorInGrid(bot.Position, other.Position)
 		candidates = append(candidates, botDist{dir: dir, dist: d})
 	}
 	sort.Slice(candidates, func(i, j int) bool {
@@ -2469,8 +2468,7 @@ func buildHints(bot *BotState, allBots map[string]*BotState, pickups []Pickup) [
 	}
 	bestPickup := make(map[PickupType]*pickupDist)
 	for _, p := range pickups {
-		d := bot.Position.DistanceTo(p.Position)
-		dir := p.Position.Sub(bot.Position).Normalized()
+		dir, d := hintVectorInGrid(bot.Position, p.Position)
 		if existing, ok := bestPickup[p.Type]; !ok || d < existing.dist {
 			bestPickup[p.Type] = &pickupDist{pType: p.Type, dir: dir, dist: d}
 		}
@@ -2485,6 +2483,16 @@ func buildHints(bot *BotState, allBots map[string]*BotState, pickups []Pickup) [
 	}
 
 	return hints
+}
+
+// hintVectorInGrid converts both endpoints at the public bot-protocol
+// boundary. Nearby positions and bot movement are expressed in grid tiles, so
+// hint distances must use the same unit rather than leaking world units.
+func hintVectorInGrid(from, to Vec2) (Vec2, float64) {
+	fromGrid := posToGrid(from)
+	toGrid := posToGrid(to)
+	delta := NewVec2(float64(toGrid[0]-fromGrid[0]), float64(toGrid[1]-fromGrid[1]))
+	return delta.Normalized(), delta.Length()
 }
 
 // --------------------------------------------------------------------------

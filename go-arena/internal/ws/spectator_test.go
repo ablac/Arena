@@ -17,11 +17,15 @@ import (
 )
 
 func TestSpectatorHandler_RejectsAdminBannedIPBeforeUpgrade(t *testing.T) {
+	previousTrustedProxies := config.C.TrustedProxyCIDRs
+	config.C.TrustedProxyCIDRs = "192.0.2.1/32"
+	t.Cleanup(func() { config.C.TrustedProxyCIDRs = previousTrustedProxies })
+
 	engine := game.NewGameEngine()
 	engine.BanIP("203.0.113.25")
 
 	req := httptest.NewRequest(http.MethodGet, "/ws/spectator", nil)
-	req.Header.Set("CF-Connecting-IP", "203.0.113.25")
+	req.Header.Set("X-Forwarded-For", "203.0.113.25")
 	rec := httptest.NewRecorder()
 
 	SpectatorHandler(engine).ServeHTTP(rec, req)

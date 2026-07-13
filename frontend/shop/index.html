@@ -10,10 +10,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/arena.css?v=20260707c">
-  <link rel="stylesheet" href="../css/shop.css?v=20260712c">
+  <link rel="stylesheet" href="../css/shop.css?v=20260712d">
   <script defer src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
   <script defer src="../js/cosmetic-themes.js?v=20260711b"></script>
-  <script type="module" src="../js/cosmetics-shop.js?v=20260712c"></script>
+  <script type="module" src="../js/cosmetics-shop.js?v=20260712f"></script>
 </head>
 <body class="shop-page">
   <a class="shop-skip-link" href="#cosmetic-shop">Skip to the cosmetic shop</a>
@@ -36,7 +36,7 @@
     </nav>
   </header>
 
-  <main class="shop-main" id="cosmetic-shop">
+  <main class="shop-main" id="cosmetic-shop" tabindex="-1">
     <section class="shop-masthead" aria-labelledby="shop-title">
       <div>
         <p class="shop-kicker">Arena // Cosmetic Shop</p>
@@ -102,12 +102,25 @@
           <span class="shop-preview-corner shop-preview-corner-b" aria-hidden="true"></span>
         </div>
 
+        <fieldset class="shop-chassis-picker" data-shop-chassis-picker>
+          <legend>Choose a combat chassis</legend>
+          <div class="shop-chassis-grid">
+            <label class="shop-chassis-option"><input type="radio" name="shop-chassis" value="sword" checked><span><strong>Vanguard</strong><small>Sword</small></span></label>
+            <label class="shop-chassis-option"><input type="radio" name="shop-chassis" value="bow"><span><strong>Ranger</strong><small>Bow</small></span></label>
+            <label class="shop-chassis-option"><input type="radio" name="shop-chassis" value="spear"><span><strong>Lancer</strong><small>Spear</small></span></label>
+            <label class="shop-chassis-option"><input type="radio" name="shop-chassis" value="daggers"><span><strong>Skirmisher</strong><small>Daggers</small></span></label>
+            <label class="shop-chassis-option"><input type="radio" name="shop-chassis" value="staff"><span><strong>Arcanist</strong><small>Staff</small></span></label>
+            <label class="shop-chassis-option"><input type="radio" name="shop-chassis" value="shield"><span><strong>Bulwark</strong><small>Shield</small></span></label>
+            <label class="shop-chassis-option"><input type="radio" name="shop-chassis" value="grapple"><span><strong>Rigger</strong><small>Grapple</small></span></label>
+          </div>
+        </fieldset>
+
         <div class="shop-preview-controls" aria-label="Bot preview controls">
           <button type="button" data-shop-rotate-left aria-label="Rotate bot left"><span aria-hidden="true">&#8634;</span> Rotate left</button>
           <button type="button" data-shop-reset-view>Reset view</button>
           <button type="button" data-shop-rotate-right aria-label="Rotate bot right">Rotate right <span aria-hidden="true">&#8635;</span></button>
         </div>
-        <p class="shop-preview-help">Drag the stage to turn the bot, or use the rotation controls. Preview selection never changes a live bot.</p>
+        <p class="shop-preview-help">Switch chassis, click any pack item, and rotate the full model. Preview selection never changes a live bot.</p>
       </section>
 
       <aside class="shop-pack-index" aria-labelledby="shop-pack-index-title">

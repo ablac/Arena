@@ -3,45 +3,113 @@ import {existsSync, readFileSync} from 'node:fs';
 
 const mainHTML = readFileSync(new URL('../frontend/index.html', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../frontend/js/app.js', import.meta.url), 'utf8');
+const generatorURL = new URL('../frontend/js/key-generator.js', import.meta.url);
 const dashboardHTML = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8');
 const accountSource = readFileSync(new URL('../frontend/dashboard/account-cosmetics.js', import.meta.url), 'utf8');
-const debugHTML = readFileSync(new URL('../frontend/debug2.html', import.meta.url), 'utf8');
-const publicDocs = [
-  ['README.md', readFileSync(new URL('../README.md', import.meta.url), 'utf8')],
-  ['sdk/README.md', readFileSync(new URL('../sdk/README.md', import.meta.url), 'utf8')],
-  ['bots/anismin_bot/README.md', readFileSync(new URL('../bots/anismin_bot/README.md', import.meta.url), 'utf8')],
-  ['frontend/llms.txt', readFileSync(new URL('../frontend/llms.txt', import.meta.url), 'utf8')],
-];
 
-assert.doesNotMatch(mainHTML, /\/api\/v1\/keys\/generate|No signup required/i,
-  'public Arena UI must not advertise anonymous API-key generation');
-assert.match(mainHTML, /Create API key in Dashboard/i);
-assert.match(mainHTML, /href="dashboard\/\?tab=cosmetics"/,
-  'Get Started must send key creation through the authenticated Dashboard');
-assert.doesNotMatch(appSource, /key-generator|initKeyGenerator|keygen-card/,
-  'the public spectator app must not ship the anonymous key generator');
-assert.doesNotMatch(debugHTML, /key-generator|initKeyGenerator/,
-  'public debug pages must not import the retired anonymous key generator');
-assert.equal(existsSync(new URL('../frontend/js/key-generator.js', import.meta.url)), false,
-  'the obsolete anonymous key generator module should be removed');
-assert.equal(existsSync(new URL('../frontend/js/credential-events.js', import.meta.url)), false,
-  'the credential event helper should be removed with its only caller');
+assert.match(mainHTML, /id="keygen-card"/,
+  'Get Started must contain the public token generator');
+assert.match(mainHTML, /Generate API (?:key|token)/i);
+assert.match(mainHTML, /No (?:signup|account) required/i,
+  'public issuance must not be presented as requiring Dashboard login');
+assert.match(mainHTML, /link (?:it|the bot|your bot).*Dashboard|Dashboard.*link/i,
+  'Get Started must explain the later verified-email claim');
+assert.match(appSource, /import \{ initKeyGenerator \} from '.\/key-generator\.js[^']*'/);
+assert.match(appSource, /initKeyGenerator\(keygenEl\)/);
+assert.equal(existsSync(generatorURL), true, 'the public key generator module must exist');
 
-for (const [name, content] of publicDocs) {
-  assert.doesNotMatch(content, /\/api\/v1\/keys\/generate/i,
-    `${name} must not direct users to the retired anonymous key route`);
-  assert.match(content, /Dashboard/i, `${name} should direct users to authenticated Dashboard key creation`);
+let source = readFileSync(generatorURL, 'utf8');
+assert.match(source, /apiPath\('\/keys\/generate'\)/,
+  'the browser must call the server issuance endpoint, never fabricate a credential');
+assert.doesNotMatch(source, /localStorage|sessionStorage|indexedDB/i,
+  'one-time plaintext credentials must not be persisted in browser storage');
+source = source.replace(
+  /import \{ apiPath \} from '[^']+';\r?\n/,
+  "const apiPath = path => '/api/v1' + path;\n",
+);
+
+class FakeElement {
+  constructor() {
+    this.listeners = new Map();
+    this.disabled = false;
+    this.textContent = '';
+    this.value = '';
+    this.children = [];
+    this.html = '';
+  }
+  addEventListener(type, listener) { this.listeners.set(type, listener); }
+  async click() { await this.listeners.get('click')?.({currentTarget: this}); }
+  set innerHTML(value) {
+    this.html = value;
+    this.keyField = String(value).includes('id="key-display"') ? new FakeElement() : null;
+    if (this.keyField) this.keyField.value = 'arena_server_secret';
+    this.copyButton = String(value).includes('data-keygen-copy') ? new FakeElement() : null;
+    this.clearButton = String(value).includes('data-keygen-clear') ? new FakeElement() : null;
+    this.warning = String(value).includes('keygen-warning') ? new FakeElement() : null;
+  }
+  get innerHTML() { return this.html; }
+  querySelector(selector) {
+    if (selector === '#key-display') return this.keyField || null;
+    if (selector === '[data-keygen-copy]') return this.copyButton || null;
+    if (selector === '[data-keygen-clear]') return this.clearButton || null;
+    if (selector === '.keygen-warning') return this.warning || null;
+    return null;
+  }
+  replaceChildren(...children) {
+    this.children = children;
+    this.html = '';
+    this.keyField = null;
+  }
 }
 
-assert.match(accountSource, /keys:\s*'\/account\/keys'/);
-assert.match(accountSource, /key:\s*`\/account\/keys\/\$\{encoded\}`/);
-assert.match(dashboardHTML, /async function createAccountKey/);
-assert.match(dashboardHTML, /accountRoute\('keys'\)[\s\S]*method:'POST'/,
-  'Dashboard key creation must use the authenticated account route');
-assert.match(dashboardHTML, /async function revokeAccountKey/);
-assert.match(dashboardHTML, /accountRoute\('key', keyID\)[\s\S]*method:'DELETE'/,
-  'Dashboard key revocation must target one account-owned key');
-assert.match(dashboardHTML, /input\.value = '';/,
-  'one-time API-key values must be zeroed before removal from the Dashboard');
+const generateButton = new FakeElement();
+const result = new FakeElement();
+const container = {
+  querySelector(selector) {
+    if (selector === '.keygen-btn') return generateButton;
+    if (selector === '.keygen-result') return result;
+    return null;
+  },
+};
+const copied = [];
+Object.defineProperty(globalThis, 'navigator', {
+  configurable: true,
+  value: {clipboard: {writeText: async value => copied.push(value)}},
+});
+globalThis.document = {createElement: () => new FakeElement()};
+let failNextGeneration = false;
+globalThis.fetch = async (path, options) => {
+  assert.equal(path, '/api/v1/keys/generate');
+  assert.deepEqual(options, {method: 'POST'});
+  if (failNextGeneration) {
+    failNextGeneration = false;
+    return {ok: false, status: 503, json: async () => ({detail: 'registration temporarily unavailable'})};
+  }
+  return {ok: true, json: async () => ({api_key: 'arena_server_secret', bot_id: 'bot-1'})};
+};
 
-console.log('API-key creation is account-owned and available only in the authenticated Dashboard');
+const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+module.initKeyGenerator(container);
+await generateButton.click();
+assert.equal(result.keyField?.value, 'arena_server_secret');
+const plaintextField = result.keyField;
+await result.copyButton.click();
+assert.deepEqual(copied, ['arena_server_secret']);
+failNextGeneration = true;
+await generateButton.click();
+assert.equal(result.keyField, plaintextField,
+  'a failed replacement request must not discard the previous valid one-time token');
+assert.equal(plaintextField.value, 'arena_server_secret');
+assert.match(result.warning?.textContent || '', /Previous token kept/i);
+await result.clearButton.click();
+assert.equal(plaintextField.value, '', 'Clear must zero the plaintext before removing its field');
+assert.equal(result.keyField, null, 'Clear must zero and remove the plaintext token');
+
+assert.match(accountSource, /bots:\s*'\/account\/bots'/);
+assert.match(accountSource, /id="linkBotKey"/);
+assert.match(dashboardHTML, /accountRoute\('bots'\)[\s\S]*api_key/,
+  'verified Dashboard must claim a previously issued token and bot');
+assert.match(dashboardHTML, /\binput\.value\s*=\s*''/,
+  'Dashboard must clear the raw proof token after the claim request');
+
+console.log('Get Started issues a server token that can later be claimed by a verified Dashboard account');

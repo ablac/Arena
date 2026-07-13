@@ -39,29 +39,33 @@ func BotSetup() http.HandlerFunc {
 
 			// ── Getting Started ─────────────────────────────────
 			"getting_started": []map[string]interface{}{
-				{"step": 1, "title": "Create an Account API Key", "description": "Sign in with a verified email at /dashboard/, then create a server-issued key. The Dashboard uses authenticated POST /api/v1/account/keys with same-origin CSRF protection."},
+				{"step": 1, "title": "Generate an API Key", "description": "POST an empty JSON object to /api/v1/keys/generate. No account is required. Arena creates the bot and stores only the key hash; the plaintext key is returned once."},
 				{"step": 2, "title": "Configure Your Bot (optional)", "description": "PUT to /api/v1/bot/config with X-Arena-Key header to set your bot name, avatar color, and default loadout."},
-				{"step": 3, "title": "Fetch the Map (optional)", "description": "GET /api/v1/arena/map to pre-fetch terrain via REST. During intermission, features_pending is true: terrain and shape are ready, game_mode is omitted, and feature arrays/overlays are empty until round_start. Fetch again after round_start for pads, hazards, and objectives."},
-				{"step": 4, "title": "Connect via WebSocket", "description": "Connect to wss://arena.angel-serv.com/ws/bot?key=YOUR_API_KEY — you will receive a 'connected' message with arena info."},
-				{"step": 5, "title": "Select Loadout", "description": "Send a 'select_loadout' message choosing your weapon, stat allocation, and fallback behavior. You have 10 seconds."},
-				{"step": 6, "title": "Receive Ticks", "description": "The server sends 'tick' messages at " + fmt.Sprintf("%d", c.TickRate) + " Hz with your state, nearby entities, and safe zone info."},
-				{"step": 7, "title": "Send Actions", "description": "Each tick, send an 'action' message with your chosen action (move, attack, dodge, etc). One action per tick."},
+				{"step": 3, "title": "Claim Your Bot (optional)", "description": "Sign in with a verified email at /dashboard/, then prove the generated key once through POST /api/v1/account/bots. Claiming links the existing bot to your account for cosmetics; it does not replace the key."},
+				{"step": 4, "title": "Fetch the Map (optional)", "description": "GET /api/v1/arena/map to pre-fetch terrain via REST. During intermission, features_pending is true: terrain and shape are ready, game_mode is omitted, and feature arrays/overlays are empty until round_start. Fetch again after round_start for pads, hazards, and objectives."},
+				{"step": 5, "title": "Connect via WebSocket", "description": "Connect to wss://arena.angel-serv.com/ws/bot?key=YOUR_API_KEY — you will receive a 'connected' message with arena info."},
+				{"step": 6, "title": "Select Loadout", "description": "Send a 'select_loadout' message choosing your weapon, stat allocation, and fallback behavior. You have 10 seconds."},
+				{"step": 7, "title": "Receive Ticks", "description": "The server sends 'tick' messages at " + fmt.Sprintf("%d", c.TickRate) + " Hz with your state, nearby entities, and safe zone info."},
+				{"step": 8, "title": "Send Actions", "description": "Each tick, send an 'action' message with your chosen action (move, attack, dodge, etc). One action per tick."},
 			},
 
 			// ── Authentication ──────────────────────────────────
 			"authentication": map[string]interface{}{
 				"generate_key": map[string]interface{}{
 					"method":      "POST",
-					"path":        "/api/v1/account/keys",
-					"description": "Create a server-issued API key from the verified-email Dashboard. Requires a customer session and X-CSRF-Token.",
+					"path":        "/api/v1/keys/generate",
+					"description": "Create an unowned server-issued API key and bot. No account is required; submit an empty JSON object. The plaintext key is returned once and never stored by Arena.",
 					"response_example": map[string]interface{}{
-						"api_key": "arena_abc123...",
-						"key": map[string]interface{}{
-							"id": "uuid-here", "key_prefix": "arena_abc123", "bot_id": "uuid-here", "bot_name": "My Bot", "is_active": true,
-						},
-						"active_count": 1,
-						"limit":        5,
+						"api_key":    "arena_abc123...",
+						"bot_id":     "uuid-here",
+						"created_at": "2026-07-12T12:00:00Z",
 					},
+				},
+				"claim_bot": map[string]interface{}{
+					"method":          "POST",
+					"path":            "/api/v1/account/bots",
+					"description":     "After verified-email sign-in, prove a generated key once to link its existing bot to the account for cosmetics. Requires X-CSRF-Token.",
+					"request_example": map[string]string{"api_key": "arena_abc123..."},
 				},
 				"usage": map[string]interface{}{
 					"websocket":  "Connect with ?key=YOUR_API_KEY query parameter",
@@ -73,6 +77,7 @@ func BotSetup() http.HandlerFunc {
 			// ── Endpoints ───────────────────────────────────────
 			"endpoints": map[string]interface{}{
 				"public": []map[string]interface{}{
+					{"method": "POST", "path": "/api/v1/keys/generate", "description": "Generate a database-backed API key and bot; no account required, plaintext returned once"},
 					{"method": "GET", "path": "/api/v1/health", "description": "Health check — returns status and online bot count"},
 					{"method": "GET", "path": "/api/v1/leaderboard", "description": "Get leaderboard (supports ?limit=N&offset=N)"},
 					{"method": "GET", "path": "/api/v1/arena/status", "description": "Current arena status: round number, bots alive, safe zone"},
@@ -81,6 +86,7 @@ func BotSetup() http.HandlerFunc {
 					{"method": "GET", "path": "/api/v1/bot-setup", "description": "This endpoint — full bot-building reference"},
 				},
 				"authenticated": []map[string]interface{}{
+					{"method": "POST", "path": "/api/v1/account/bots", "description": "Claim an existing generated key and bot for cosmetics", "auth": "verified customer session + X-CSRF-Token"},
 					{"method": "GET", "path": "/api/v1/account/keys", "description": "List account-owned API keys without secret material", "auth": "verified customer session"},
 					{"method": "POST", "path": "/api/v1/account/keys", "description": "Create one account-owned API key and bot (maximum 5 active)", "auth": "verified customer session + X-CSRF-Token"},
 					{"method": "DELETE", "path": "/api/v1/account/keys/{key_id}", "description": "Revoke one account-owned API key", "auth": "verified customer session + X-CSRF-Token"},
@@ -141,7 +147,7 @@ func BotSetup() http.HandlerFunc {
 					},
 					"tick": map[string]interface{}{
 						"description": fmt.Sprintf("Sent every tick (%d times per second) with full game state visible to your bot", c.TickRate),
-						"fields":      "tick, round_tick, round_modifier, your_state{bot_id,position,hp,max_hp,speed,weapon,cooldown_remaining,weapon_ready,is_alive,kill_streak,round_kills,dodge_cooldown,invuln_ticks,stun_ticks,shield_absorb,recently_disrupted_ticks,brace_ready,bow_charge_ticks,bow_charge_level,charged_shot_ready,hazard_key_active,hazard_key_ticks,relay_battery_active,relay_battery_ticks,effects,last_action_result,hits_received,kill_feed,in_safe_zone,distance_to_zone_edge,zone_radius,zone_center,grapple_charges,grapple_cooldown,bounty_token_bonus}, nearby_entities[{type,id,name,position,hp,max_hp,weapon,is_alive,has_los,attack_range,can_attack,threat_score,recently_disrupted_ticks,brace_ready,bow_charge_level,charged_shot_ready,rear_exposed,near_impact_surface} | {type,pickup_id,pickup_type,position} | {type:'teleport_pad'|'hazard_zone'|'burn_field'|'capture_pad',position,progress_ticks,capture_ticks,owner_id,is_contested,contender_count,on_ticks,off_ticks,damage_per_tick,next_control_pulse_ticks,...}], safe_zone{center,radius,target_center,target_radius}, fog_radius, hints, nearby_mines",
+						"fields":      "tick, round_tick, round_modifier, your_state{bot_id,position,hp,max_hp,speed,weapon,cooldown_remaining,weapon_ready,is_alive,kill_streak,round_kills,dodge_cooldown,invuln_ticks,stun_ticks,shield_absorb,recently_disrupted_ticks,brace_ready,bow_charge_ticks,bow_charge_level,charged_shot_ready,hazard_key_active,hazard_key_ticks,relay_battery_active,relay_battery_ticks,effects,last_action_result,hits_received,kill_feed,in_safe_zone,distance_to_zone_edge,zone_radius,zone_center,grapple_charges,grapple_cooldown,bounty_token_bonus}, nearby_entities[{type,id,name,position,hp,max_hp,weapon,is_alive,has_los,attack_range,can_attack,threat_score,recently_disrupted_ticks,brace_ready,bow_charge_level,charged_shot_ready,rear_exposed,near_impact_surface} | {type,pickup_id,pickup_type,position} | {type:'teleport_pad'|'hazard_zone'|'burn_field'|'capture_pad',position,progress_ticks,capture_ticks,owner_id,is_contested,contender_count,on_ticks,off_ticks,damage_per_tick,next_control_pulse_ticks,...}], safe_zone{center,radius,target_center,target_radius}, fog_radius, hints[{hint_type,direction,distance}], nearby_mines",
 					},
 					"death": map[string]interface{}{
 						"description": "Sent when your bot dies",
@@ -236,7 +242,7 @@ func BotSetup() http.HandlerFunc {
 				"grid_cell_size": c.PathfindingCellSize,
 				"fog_of_war": map[string]interface{}{
 					"radius_tiles": c.FogRadius,
-					"description":  "You can only see entities within this radius (in grid tiles). The server sends hints for distant bots when none are visible.",
+					"description":  "You can only see entities within this radius (in grid tiles). The server sends hints for distant bots when none are visible; hint distance is also measured in grid tiles.",
 				},
 				"safe_zone": map[string]interface{}{
 					"initial_radius":       c.ZoneInitialRadius,
@@ -316,9 +322,22 @@ API_BASE = "https://arena.angel-serv.com"
 WS_URL = "wss://arena.angel-serv.com/ws/bot"
 
 async def main():
-    # Step 1: Create a key in the verified-email Dashboard, then load it securely.
+    # Step 1: Use a saved key, or generate one without creating an account.
     import urllib.request
-    api_key = os.environ["ARENA_API_KEY"]
+    api_key = os.environ.get("ARENA_API_KEY")
+    if not api_key:
+        key_req = urllib.request.Request(
+            f"{API_BASE}/api/v1/keys/generate",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(key_req) as resp:
+            generated = json.loads(resp.read())
+        api_key = generated["api_key"]
+        print("Generated one-time API key (copy it now; Arena cannot recover it):")
+        print(api_key)
+        print("Save this value as ARENA_API_KEY before closing this terminal.")
 
     # Step 2: Pre-fetch map via REST (optional, available before round_start)
     map_req = urllib.request.Request(f"{API_BASE}/api/v1/arena/map")

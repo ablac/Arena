@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"arena-server/internal/config"
@@ -177,36 +178,135 @@ func writeRateLimitUnavailable(w http.ResponseWriter) {
 	})
 }
 
-// ExtractClientIP returns the client's IP address, preferring X-Forwarded-For
-// if set (takes the first entry). Falls back to the RemoteAddr from the
-// request.
-//
-// NOTE: This trusts the first X-Forwarded-For entry because Caddy (our reverse
-// proxy) always overwrites this header with the real client IP. If the proxy
-// configuration changes, this function must be updated to validate the header.
+type trustedProxySet struct {
+	raw      string
+	prefixes []netip.Prefix
+}
+
+var trustedProxyCache atomic.Pointer[trustedProxySet]
+var trustedCloudflareProxyCache atomic.Pointer[trustedProxySet]
+
+// ExtractClientIP returns the validated client IP for rate limits and access
+// controls. Forwarded headers are accepted only when the immediate network
+// peer is inside ARENA_TRUSTED_PROXY_CIDRS; direct clients cannot select their
+// own identity by supplying proxy headers.
 func ExtractClientIP(r *http.Request) string {
-	// Prefer CF-Connecting-IP: Cloudflare Tunnels always set this to the
-	// real client IP, whereas X-Forwarded-For may contain intermediate
-	// Cloudflare edge IPs when using Tunnels.
-	if cfIP := r.Header.Get("CF-Connecting-IP"); cfIP != "" {
-		return strings.TrimSpace(cfIP)
+	remote, remoteValid := parseRemoteIP(r.RemoteAddr)
+	clientIP := strings.TrimSpace(r.RemoteAddr)
+	if remoteValid {
+		clientIP = remote.String()
 	}
 
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// X-Forwarded-For may contain multiple comma-separated IPs;
-		// the first one is the original client.
-		parts := strings.SplitN(xff, ",", 2)
-		ip := strings.TrimSpace(parts[0])
-		if ip != "" {
-			return ip
+	trusted := configuredTrustedProxies()
+	if !remoteValid || !isTrustedProxy(remote, trusted) {
+		return clientIP
+	}
+
+	// Only a peer explicitly identified as Cloudflare-controlled can make the
+	// vendor header authoritative. A generic Caddy/nginx proxy may preserve a
+	// client-supplied CF-Connecting-IP and must fall through to its XFF chain.
+	if raw := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); raw != "" &&
+		isTrustedProxy(remote, configuredTrustedCloudflareProxies()) {
+		if forwarded, ok := parseIP(raw); ok {
+			return forwarded.String()
+		}
+		return clientIP
+	}
+
+	if raw := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); raw != "" {
+		forwarded, ok := parseForwardedFor(raw)
+		if !ok {
+			return clientIP
+		}
+
+		// Walk toward the originating client, discarding only configured proxy
+		// hops. This avoids trusting a leftmost value injected before a proxy
+		// appends its own forwarding information.
+		for i := len(forwarded) - 1; i >= 0; i-- {
+			if !isTrustedProxy(forwarded[i], trusted) {
+				return forwarded[i].String()
+			}
 		}
 	}
 
-	// RemoteAddr is "ip:port"; strip the port.
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		// If SplitHostPort fails, RemoteAddr may already be a bare IP.
-		return r.RemoteAddr
+	return clientIP
+}
+
+func configuredTrustedProxies() []netip.Prefix {
+	return configuredProxyPrefixes(config.C.TrustedProxyCIDRs, &trustedProxyCache)
+}
+
+func configuredTrustedCloudflareProxies() []netip.Prefix {
+	return configuredProxyPrefixes(config.C.TrustedCloudflareProxyCIDRs, &trustedCloudflareProxyCache)
+}
+
+func configuredProxyPrefixes(raw string, cache *atomic.Pointer[trustedProxySet]) []netip.Prefix {
+	raw = strings.TrimSpace(raw)
+	if cached := cache.Load(); cached != nil && cached.raw == raw {
+		return cached.prefixes
 	}
-	return host
+
+	prefixes := make([]netip.Prefix, 0, strings.Count(raw, ",")+1)
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			slog.Warn("ignoring invalid trusted proxy CIDR", "cidr", value)
+			continue
+		}
+		prefixes = append(prefixes, prefix.Masked())
+	}
+
+	parsed := &trustedProxySet{raw: raw, prefixes: prefixes}
+	cache.Store(parsed)
+	return parsed.prefixes
+}
+
+func parseRemoteIP(remoteAddr string) (netip.Addr, bool) {
+	remoteAddr = strings.TrimSpace(remoteAddr)
+	if addrPort, err := netip.ParseAddrPort(remoteAddr); err == nil {
+		return normalizeIP(addrPort.Addr()), true
+	}
+	return parseIP(remoteAddr)
+}
+
+func parseIP(value string) (netip.Addr, bool) {
+	addr, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return normalizeIP(addr), true
+}
+
+func normalizeIP(addr netip.Addr) netip.Addr {
+	addr = addr.Unmap()
+	if addr.Zone() != "" {
+		addr = addr.WithZone("")
+	}
+	return addr
+}
+
+func parseForwardedFor(value string) ([]netip.Addr, bool) {
+	parts := strings.Split(value, ",")
+	addresses := make([]netip.Addr, 0, len(parts))
+	for _, part := range parts {
+		addr, ok := parseIP(part)
+		if !ok {
+			return nil, false
+		}
+		addresses = append(addresses, addr)
+	}
+	return addresses, len(addresses) > 0
+}
+
+func isTrustedProxy(addr netip.Addr, prefixes []netip.Prefix) bool {
+	for _, prefix := range prefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }

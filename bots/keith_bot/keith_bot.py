@@ -64,8 +64,23 @@ class AnisminBot:
         self.last_pos = [0, 0]
         self.stuck_ticks = 0
         self.shove_cd = 0
+        self.grid_width = 100
+        self.grid_height = 100
         # Enemy position tracking for interception
         self.enemy_history = {}  # bot_id -> list of last N positions
+
+    def configure_arena(self, connected):
+        """Remember the negotiated grid bounds used by every tick position."""
+        size = connected.get("grid_size") or []
+        if len(size) == 2 and all(isinstance(value, (int, float)) and value > 2 for value in size):
+            self.grid_width = int(size[0])
+            self.grid_height = int(size[1])
+
+    def _clamp_target(self, target):
+        return [
+            clamp(target[0], 1, self.grid_width - 2),
+            clamp(target[1], 1, self.grid_height - 2),
+        ]
 
     def _track_enemy(self, bot_id, pos):
         """Track enemy positions for movement prediction."""
@@ -106,7 +121,7 @@ class AnisminBot:
             enemy_pos[0] + enemy_vel_x * time_to_reach * 0.5,
             enemy_pos[1] + enemy_vel_y * time_to_reach * 0.5
         ]
-        return [clamp(intercept[0], 10, 1990), clamp(intercept[1], 10, 1990)]
+        return self._clamp_target(intercept)
 
     def decide(self, state):
         me = state.get("your_state") or {}
@@ -121,8 +136,8 @@ class AnisminBot:
         dodge_cd = me.get("dodge_cooldown", 0)
         stun = me.get("stun_ticks", 0)
         in_safe = me.get("in_safe_zone", True)
-        zone_center = me.get("zone_center", [1000, 1000])
-        zone_radius = me.get("zone_radius", 1000)
+        zone_center = me.get("zone_center", [self.grid_width / 2, self.grid_height / 2])
+        zone_radius = me.get("zone_radius", max(self.grid_width, self.grid_height) / 2)
         zone_edge_dist = me.get("distance_to_zone_edge", 999)
         # WHERE the zone is shrinking TO — this is where we should position
         zone_target = me.get("zone_target_center") or zone_center
@@ -186,9 +201,11 @@ class AnisminBot:
         if hp < max_hp * 0.20 and alive:
             avg_x = sum(e["position"][0] for e in alive) / len(alive)
             avg_y = sum(e["position"][1] for e in alive) / len(alive)
-            flee_x = clamp(pos[0] + (pos[0] - avg_x) * 3, 10, 1990)
-            flee_y = clamp(pos[1] + (pos[1] - avg_y) * 3, 10, 1990)
-            return act("move_to", tick=tick, target_position=[flee_x, flee_y])
+            flee = self._clamp_target([
+                pos[0] + (pos[0] - avg_x) * 3,
+                pos[1] + (pos[1] - avg_y) * 3,
+            ])
+            return act("move_to", tick=tick, target_position=flee)
 
         # ── P6: Health pickups when hurt ──
         if hp < max_hp * 0.6 and pickups:
@@ -253,20 +270,23 @@ class AnisminBot:
 
             # If enemies are far away and zone is shrinking, position at zone target
             # The zone will push everyone together — be there first
-            if hdist > 200 and zone_target_radius < 500:
+            far_threshold = max(24, zone_target_radius * 2)
+            closing_zone = zone_target_radius < min(self.grid_width, self.grid_height) * 0.35
+            if hdist > far_threshold and closing_zone:
                 # Go to zone target center and wait — enemies will come to us
                 return act("move_to", tick=tick, target_position=zone_target)
 
             # Otherwise chase the hint
-            target_x = pos[0] + hdir[0] * min(hdist, 60)
-            target_y = pos[1] + hdir[1] * min(hdist, 60)
-            return act("move_to", tick=tick, target_position=[clamp(target_x, 10, 1990), clamp(target_y, 10, 1990)])
+            target_x = pos[0] + hdir[0] * min(hdist, 20)
+            target_y = pos[1] + hdir[1] * min(hdist, 20)
+            return act("move_to", tick=tick, target_position=self._clamp_target([target_x, target_y]))
 
         # ── P11: Unstuck ──
         if self.stuck_ticks > 8:
             self.stuck_ticks = 0
             angle = random.uniform(0, 2*math.pi)
-            return act("move_to", tick=tick, target_position=[pos[0]+math.cos(angle)*40, pos[1]+math.sin(angle)*40])
+            target = self._clamp_target([pos[0]+math.cos(angle)*4, pos[1]+math.sin(angle)*4])
+            return act("move_to", tick=tick, target_position=target)
 
         # ── P12: Default — go to ZONE TARGET (where zone shrinks to) ──
         # This is the key difference — go where the action WILL be, not map center
@@ -308,6 +328,7 @@ async def run():
 
                     if mt == "connected":
                         print(f"[Anismin] Auth'd: {msg.get('bot_id', '?')[:8]}")
+                        bot.configure_arena(msg)
                         await ws.send(json.dumps(LOADOUT))
 
                     elif mt == "select_loadout":

@@ -6,9 +6,13 @@ The AI Battle Arena is a competitive platform where developers build autonomous 
 
 ## Quick Start
 1. Visit https://arena.angel-serv.com to watch live matches
-2. Verify an email account and create an account-owned API key in My Dashboard: https://arena.angel-serv.com/dashboard/?tab=cosmetics
+2. Generate a server-issued token with Get Started or `POST https://arena.angel-serv.com/api/v1/keys/generate` (empty body, no account required, plaintext returned once)
 3. Connect via WebSocket: `wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY`
 4. Send loadout, receive ticks, send actions
+5. To purchase cosmetics later, verify an email in My Dashboard and claim the existing bot with `POST /api/v1/account/bots` using that token once
+
+Arena persists the generated token's hash and bot record. Never invent or ask a
+user to choose an API token; arbitrary strings are not valid credentials.
 
 ## WebSocket Protocol
 
@@ -81,7 +85,7 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 - Obstacles: type, x, y, width, height
 
 ### Hints (entities outside view radius)
-- hint_type: "bot", direction: [x, y], distance: float
+- hint_type: "bot", direction: [x, y], distance: float measured in grid tiles
 
 ### Arena Features
 - **Landmines**: `place_mine` action, max 3/bot, arms after 1s, invisible to enemies, 1-tile blast radius, 40 damage
@@ -100,6 +104,8 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 - **Nearby Mines Warning**: `nearby_mines` field in tick payload counts armed enemy mines within 3 tiles
 
 ## REST API
+- `POST /api/v1/keys/generate` - Public server-issued token and bot registration (empty body; plaintext returned once)
+- `POST /api/v1/account/bots` - Claim/link an existing token's bot to the verified Dashboard account
 - `GET /api/v1/arena/status` — Arena status (lobby/active/intermission)
 - `GET /api/v1/arena/map` — Current terrain and active round features. During intermission, `features_pending: true` means only the next terrain/shape is final; `game_mode` is omitted, round-feature arrays are empty, and the terrain has no feature overlays until `round_start`.
 - `GET /api/v1/leaderboard` — Top bots by ELO

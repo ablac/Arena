@@ -205,9 +205,11 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountLicense)
 		})
 
-		// Anonymous key issuance is retired. Keys are created from the verified
-		// customer account route above so ownership and plan limits are durable.
-		api.Post("/keys/generate", RetiredAnonymousKeyGeneration)
+		// Public registration issues a server-generated, database-backed key and
+		// bot. Verified accounts can claim it later through /account/bots.
+		api.With(
+			security.FailClosedRateLimitMiddleware(config.C.RateLimitRegisterRPM),
+		).Post("/keys/generate", GenerateKey)
 
 		// Authenticated routes.
 		api.Group(func(auth chi.Router) {
@@ -309,7 +311,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				account.Delete("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
 				account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountLicense)
 			})
-			api.Post("/keys/generate", RetiredAnonymousKeyGeneration)
+			api.With(
+				security.FailClosedRateLimitMiddleware(config.C.RateLimitRegisterRPM),
+			).Post("/keys/generate", GenerateKey)
 			api.Group(func(auth chi.Router) {
 				auth.Use(security.AuthMiddleware)
 				auth.Delete("/keys/revoke", RevokeKey(engine))

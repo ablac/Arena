@@ -60,8 +60,14 @@ For local experiments, `ARENA_DB_OPTIONAL=true` can let the server run in a degr
 
 ## Security Model
 
-- Bot keys are generated only for verified customer accounts, durably linked to
-  that account, and stored as bcrypt hashes with lookup prefixes.
+- Public bot tokens are generated only by Arena at `POST /api/v1/keys/generate`.
+  The database atomically stores the bcrypt hash, lookup prefix, and bot; the
+  plaintext is returned once and arbitrary caller-chosen strings are invalid.
+- Public generation does not require an account. A later verified-email
+  Dashboard session can claim the existing bot by submitting its token once to
+  `POST /api/v1/account/bots`; the form clears that proof after the request.
+- The Dashboard may also create account-owned keys directly. Durable account
+  links and cosmetics survive key rotation or revocation.
 - Admin APIs require an admin token, a database-issued admin token, or configured OIDC/SSO.
 - Bot input is schema validated before it affects game state.
 - WebSocket and HTTP paths have size and rate controls.
@@ -71,11 +77,15 @@ For local experiments, `ARENA_DB_OPTIONAL=true` can let the server run in a degr
 
 Bots interact with the arena through a small loop:
 
-1. Generate an account-owned API key in the verified-email Dashboard, or load an existing key.
+1. Generate a server-issued token from Get Started or `POST /api/v1/keys/generate`, or load an existing token.
 2. Connect to `/ws/bot?key=...`.
 3. Receive `connected`.
 4. Send `select_loadout`.
 5. Receive `tick` messages.
 6. Send an `action` for the current tick.
+
+Account registration is a separate, optional commerce path: after verifying an
+email, the owner proves the existing token once to claim that bot before
+purchasing, assigning, or equipping cosmetics.
 
 The complete public reference is in [BOT-GUIDE.md](../BOT-GUIDE.md) and the machine-readable endpoint `GET /api/v1/bot-setup`.
