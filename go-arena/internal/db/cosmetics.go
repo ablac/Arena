@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	CosmeticSlotBotSkin     = "bot_skin"
-	CosmeticSlotWeaponSkin  = "weapon_skin"
-	CosmeticSlotAttachment  = "attachment"
-	CosmeticSlotTrail       = "trail"
-	CosmeticTrailCategoryID = "trails"
+	CosmeticSlotBotSkin        = "bot_skin"
+	CosmeticSlotWeaponSkin     = "weapon_skin"
+	CosmeticSlotAttachment     = "attachment"
+	CosmeticSlotTrail          = "trail"
+	CosmeticTrailCategoryID    = "trails"
+	CosmeticBodyFormCategoryID = "body-forms"
 )
 
 var (
@@ -106,6 +107,37 @@ type trailCosmeticSeed struct {
 	Rarity      string
 }
 
+type bodyFormCosmeticSeed struct {
+	Name        string
+	Key         string
+	Description string
+	Rarity      string
+}
+
+// bodyFormCosmeticSeeds is deliberately explicit. Each entry is an original,
+// locally rendered Arena silhouette with one stable, allowlisted asset key;
+// the catalog never accepts a caller-supplied model URL or arbitrary body key.
+var bodyFormCosmeticSeeds = []bodyFormCosmeticSeed{
+	{Name: "Giant Chicken", Key: "giant_chicken", Description: "A towering feathered fighter with a bold comb and oversized wings.", Rarity: "uncommon"},
+	{Name: "Highland Cow", Key: "highland_cow", Description: "A shaggy highland bruiser with broad horns and a sturdy silhouette.", Rarity: "uncommon"},
+	{Name: "Corgi", Key: "corgi", Description: "A compact corgi runner with bright ears and a confident stride.", Rarity: "uncommon"},
+	{Name: "Tabby Cat", Key: "tabby_cat", Description: "A nimble tabby combatant with striped markings and alert ears.", Rarity: "uncommon"},
+	{Name: "Red Fox", Key: "red_fox", Description: "A quick red fox form with a white chest and sweeping tail.", Rarity: "rare"},
+	{Name: "Battle Rabbit", Key: "battle_rabbit", Description: "An armored rabbit silhouette built around long ears and quick footwork.", Rarity: "rare"},
+	{Name: "Emperor Penguin", Key: "emperor_penguin", Description: "A stately penguin form with a crisp tuxedo palette and compact wings.", Rarity: "rare"},
+	{Name: "Bullfrog", Key: "bullfrog", Description: "A broad bullfrog brawler with powerful legs and bright watchful eyes.", Rarity: "rare"},
+	{Name: "Land Shark", Key: "land_shark", Description: "A finned land-shark form with a low center of gravity and toothy profile.", Rarity: "epic"},
+	{Name: "Tyrant Rex", Key: "tyrant_rex", Description: "A heavy tyrant-lizard silhouette with a massive head and counterbalancing tail.", Rarity: "epic"},
+	{Name: "Human Adventurer", Key: "human_adventurer", Description: "A classic human adventurer equipped for a long night in the Arena.", Rarity: "uncommon"},
+	{Name: "Astronaut", Key: "astronaut", Description: "A sealed astronaut suit with a reflective visor and compact life-support pack.", Rarity: "rare"},
+	{Name: "Knight", Key: "knight", Description: "A plated knight form with a crested helm and tournament-ready stance.", Rarity: "rare"},
+	{Name: "Wizard", Key: "wizard", Description: "A robed wizard silhouette with a tall hat and luminous arcane accents.", Rarity: "epic"},
+	{Name: "Skeleton", Key: "skeleton", Description: "A stylized skeletal fighter assembled from bright Arena-safe bones.", Rarity: "epic"},
+	{Name: "Stone Golem", Key: "stone_golem", Description: "A hulking stone construct held together by glowing runic seams.", Rarity: "legendary"},
+	{Name: "Slime Monarch", Key: "slime_monarch", Description: "A crowned translucent slime with a lively elastic silhouette.", Rarity: "legendary"},
+	{Name: "Spider Drone", Key: "spider_drone", Description: "A low mechanical spider platform with articulated legs and a bright sensor core.", Rarity: "legendary"},
+}
+
 var trailCosmeticSeeds = []trailCosmeticSeed{
 	{Name: "Ember Sparks", Slug: "ember_sparks", Description: "Hot cinders tumble through a narrow fire-red wake.", Rarity: "uncommon"},
 	{Name: "Frost Shards", Slug: "frost_shards", Description: "Ice-blue fragments drift and fall behind the chassis.", Rarity: "uncommon"},
@@ -151,11 +183,20 @@ var legacyCosmeticAssets = map[string]map[string]bool{
 }
 
 var supportedTrailAssets = buildSupportedTrailAssets()
+var supportedBodyFormAssets = buildSupportedBodyFormAssets()
 
 func buildSupportedTrailAssets() map[string]bool {
 	assets := map[string]bool{"standard": true}
 	for _, seed := range trailCosmeticSeeds {
 		assets[seed.Slug] = true
+	}
+	return assets
+}
+
+func buildSupportedBodyFormAssets() map[string]bool {
+	assets := make(map[string]bool, len(bodyFormCosmeticSeeds))
+	for _, seed := range bodyFormCosmeticSeeds {
+		assets["body_"+seed.Key] = true
 	}
 	return assets
 }
@@ -167,6 +208,9 @@ func IsSupportedCosmeticAsset(slot, assetKey string) bool {
 	slot = strings.TrimSpace(strings.ToLower(slot))
 	if slot == CosmeticSlotTrail {
 		return supportedTrailAssets[assetKey]
+	}
+	if slot == CosmeticSlotBotSkin && supportedBodyFormAssets[assetKey] {
+		return true
 	}
 	if assets, ok := legacyCosmeticAssets[slot]; ok && assets[assetKey] {
 		return true
@@ -218,6 +262,16 @@ func buildStarterCosmeticCatalog() []CosmeticItem {
 			ID: "trail-" + strings.ReplaceAll(seed.Slug, "_", "-"), Name: seed.Name + " Trail",
 			Description: seed.Description, CategoryID: CosmeticTrailCategoryID, Slot: CosmeticSlotTrail,
 			AssetKey: seed.Slug, Rarity: seed.Rarity, PriceCents: CosmeticTrailPriceCents,
+			Currency: "USD", IsActive: true, SortOrder: (index + 1) * 10,
+		})
+	}
+	for index, seed := range bodyFormCosmeticSeeds {
+		idSlug := strings.ReplaceAll(seed.Key, "_", "-")
+		items = append(items, CosmeticItem{
+			ID: "skin-body-" + idSlug, Name: seed.Name + " Body Form",
+			Description: seed.Description + " This full-body cosmetic is presentation-only and has no gameplay effect.",
+			CategoryID:  CosmeticBodyFormCategoryID, Slot: CosmeticSlotBotSkin,
+			AssetKey: "body_" + seed.Key, Rarity: seed.Rarity, PriceCents: CosmeticPackPriceCents,
 			Currency: "USD", IsActive: true, SortOrder: (index + 1) * 10,
 		})
 	}

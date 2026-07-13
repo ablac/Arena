@@ -63,6 +63,12 @@ assert.equal(updateForgeCharacterLOD(entry, {
   position: {x: FORGE_FAR_LOD_ENTER_DISTANCE * 3, y: 30, z: 0},
 }), false, 'overview LOD must follow camera zoom, not turn edge-of-map bots blue');
 
+assert.equal(updateForgeCharacterLOD(entry, {radius: 800}, true), true,
+  'the body-form crowd budget must be able to force a form-specific proxy at normal zoom');
+assert.equal(lowDetail.enabled, true);
+assert.equal(updateForgeCharacterLOD(entry, {radius: 800}, false), false,
+  'releasing the crowd override must restore near detail below the hysteresis exit boundary');
+
 assert.equal(updateForgeCharacterLOD(entry, {
   radius: FORGE_FAR_LOD_ENTER_DISTANCE + 20,
   position: {x: 0, y: FORGE_FAR_LOD_ENTER_DISTANCE + 20, z: 0},
@@ -114,8 +120,8 @@ assert.match(rigSource, /setLOD\(far\s*=\s*this\._forgeFarLOD\)/,
   'entries must let refreshed cosmetic groups reapply the current LOD without arguments');
 assert.doesNotMatch(rosterSource, /drawCallBudget|\blod:\s*Object\.freeze/,
   'the roster must not advertise decorative budgets that runtime code does not enforce');
-assert.match(botSource, /updateForgeCharacterLOD\(entry, this\.scene\.activeCamera\)/,
-  'live interpolation must choose Forge detail from the active camera');
+assert.match(botSource, /updateForgeCharacterLOD\(entry, this\.scene\.activeCamera, forceFarBodyForm\)/,
+  'live interpolation must combine camera LOD with the bounded body-form crowd override');
 assert.match(botSource, /updateForgeCharacter\(entry, dt, this\._motionQuery\?\.matches === true, !farLOD\)/,
   'far bots must advance state without rewriting every articulated joint');
 

@@ -33,6 +33,8 @@ assert.match(shopHTML, /data-shop-pack-list/, 'Shop needs a pack browser');
 assert.match(shopHTML, /data-shop-kind/, 'Shop needs a product-type filter');
 assert.match(shopHTML, /data-shop-kind[\s\S]{0,400}<option value="trails">Trails<\/option>/,
   'Trails must be a first-class filter even when catalog collection metadata changes');
+assert.match(shopHTML, /data-shop-kind[\s\S]{0,500}<option value="body-forms">Full-body skins<\/option>/,
+  'full-body skins must be a first-class product filter');
 assert.match(shopHTML, /data-shop-sort/, 'Shop needs an explicit sort control');
 assert.match(shopHTML, /data-shop-pack-detail/, 'Shop needs a selected-pack detail region');
 assert.match(shopHTML, /data-shop-item-list/, 'pack detail must expose its complete item list');
@@ -48,7 +50,7 @@ assert.match(shopHTML, /Items from the same pack can be assigned to different bo
   'Shop must explain that pack members are independent licenses');
 assert.match(shopHTML, /data-shop-subscription/, 'Shop needs one prominent horizontal All Access offer');
 assert.match(shopHTML, /All Access/);
-assert.match(shopHTML, /every current and future cosmetic set and trail/i);
+assert.match(shopHTML, /every current and future cosmetic set, full-body skin, and trail/i);
 assert.match(shopHTML, /up to 5 active API keys/i);
 assert.match(shopHTML, /subscription cosmetics are removed/i);
 assert.match(shopHTML, /data-shop-subscription-action/, 'All Access must lead into the verified-email Dashboard');
@@ -90,8 +92,14 @@ const trailPack = {
   id: 'trail-only', name: 'Comet Tail', category_id: 'trails', price_cents: 99,
   items: [{id: 'trail-item', name: 'Comet Tail', slot: 'trail', asset_key: 'comet_tail'}],
 };
+const bodyFormPack = {
+  id: 'giant-chicken-pack', name: 'Giant Chicken', category_id: 'body-forms', price_cents: 199,
+  items: [{id: 'giant-chicken', name: 'Giant Chicken', slot: 'bot_skin', asset_key: 'body_giant_chicken'}],
+};
 assert.equal(shop.isTrailPack(trailPack), true);
 assert.equal(shop.isTrailPack(pack), false, 'a coordinated set containing a trail remains a set');
+assert.equal(shop.isBodyFormPack(bodyFormPack), true);
+assert.equal(shop.isBodyFormPack(pack), false, 'a coordinated chassis set is not a full-body skin');
 assert.deepEqual(
   shop.sortCosmeticPacks([
     {id: 'zulu', name: 'Zulu', price_cents: 99},
@@ -277,10 +285,11 @@ const catalog = {
     includes_future_sets: true,
     max_api_keys: 5,
   },
-  categories: [{id: 'season-one', name: 'Season One'}],
+  categories: [{id: 'season-one', name: 'Season One'}, {id: 'body-forms', name: 'Body Forms'}],
   packs: [
     {...pack, name: 'Ember Pack', category_id: 'season-one', price_cents: 199, currency: 'USD', is_purchasable: true},
     {...trailPack, currency: 'USD', is_purchasable: true},
+    {...bodyFormPack, currency: 'USD', is_purchasable: true},
     ...bulkPacks,
   ],
 };
@@ -315,6 +324,13 @@ assert.equal(controller.snapshot().filteredCount, 1, 'the Trails filter must iso
 assert.equal(controller.snapshot().selectedPackID, 'trail-only');
 assert.equal(packList.children[0].dataset.shopPackId, 'trail-only');
 assert.equal(category.value, 'all', 'switching product families must clear an incompatible collection filter');
+
+kind.value = 'body-forms';
+kind.listeners.get('change')({currentTarget: kind});
+assert.equal(controller.snapshot().filteredCount, 1, 'the full-body filter must isolate body-form products');
+assert.equal(controller.snapshot().selectedPackID, 'giant-chicken-pack');
+assert.equal(packList.children[0].dataset.shopPackId, 'giant-chicken-pack');
+assert.match(packList.children[0].children[1].children[1].textContent, /Full-body skin/);
 
 kind.value = 'all';
 kind.listeners.get('change')({currentTarget: kind});

@@ -40,11 +40,13 @@ type CustomerAccount struct {
 }
 
 type AccountBot struct {
-	BotID       string    `json:"bot_id"`
-	Name        string    `json:"name"`
-	KeyPrefix   string    `json:"key_prefix"`
-	KeyIsActive bool      `json:"key_is_active"`
-	LinkedAt    time.Time `json:"linked_at"`
+	BotID         string    `json:"bot_id"`
+	Name          string    `json:"name"`
+	AvatarColor   string    `json:"avatar_color"`
+	DefaultWeapon string    `json:"default_weapon"`
+	KeyPrefix     string    `json:"key_prefix"`
+	KeyIsActive   bool      `json:"key_is_active"`
+	LinkedAt      time.Time `json:"linked_at"`
 }
 
 // CosmeticLicense represents one independently assignable copy. Buying the
@@ -269,7 +271,8 @@ func ListAccountBots(ctx context.Context, accountID string) ([]AccountBot, error
 		return nil, ErrNoDatabase
 	}
 	rows, err := Pool.Query(ctx, `
-		SELECT b.id, b.name, k.key_prefix, k.is_active, l.linked_at
+		SELECT b.id, b.name, b.avatar_color, b.default_weapon,
+		       k.key_prefix, k.is_active, l.linked_at
 		FROM account_bot_links l
 		JOIN bots b ON b.id = l.bot_id
 		JOIN api_keys k ON k.id = b.api_key_id
@@ -282,7 +285,8 @@ func ListAccountBots(ctx context.Context, accountID string) ([]AccountBot, error
 	bots := make([]AccountBot, 0)
 	for rows.Next() {
 		var bot AccountBot
-		if err := rows.Scan(&bot.BotID, &bot.Name, &bot.KeyPrefix, &bot.KeyIsActive, &bot.LinkedAt); err != nil {
+		if err := rows.Scan(&bot.BotID, &bot.Name, &bot.AvatarColor, &bot.DefaultWeapon,
+			&bot.KeyPrefix, &bot.KeyIsActive, &bot.LinkedAt); err != nil {
 			return nil, fmt.Errorf("ListAccountBots scan: %w", err)
 		}
 		bots = append(bots, bot)
@@ -307,10 +311,14 @@ func LinkBotToCustomerAccount(ctx context.Context, accountID, botID string) (*Ac
 	var bot AccountBot
 	var apiKeyID string
 	if err := tx.QueryRow(ctx, `
-		SELECT b.id, b.name, b.api_key_id, k.key_prefix, k.is_active, NOW()
+		SELECT b.id, b.name, b.avatar_color, b.default_weapon, b.api_key_id,
+		       k.key_prefix, k.is_active, NOW()
 		FROM bots b JOIN api_keys k ON k.id = b.api_key_id
 		WHERE b.id = $1
-		FOR UPDATE OF b FOR SHARE OF k`, botID).Scan(&bot.BotID, &bot.Name, &apiKeyID, &bot.KeyPrefix, &bot.KeyIsActive, &bot.LinkedAt); err != nil {
+		FOR UPDATE OF b FOR SHARE OF k`, botID).Scan(
+		&bot.BotID, &bot.Name, &bot.AvatarColor, &bot.DefaultWeapon, &apiKeyID,
+		&bot.KeyPrefix, &bot.KeyIsActive, &bot.LinkedAt,
+	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrCosmeticBotNotFound
 		}

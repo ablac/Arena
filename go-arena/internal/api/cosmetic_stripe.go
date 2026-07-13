@@ -364,7 +364,7 @@ func (p *StripeCosmeticPaymentProvider) CreateSubscriptionCheckoutSession(ctx co
 		},
 		Metadata: metadata,
 		SubscriptionData: &stripe.CheckoutSessionCreateSubscriptionDataParams{
-			Description: stripe.String("Arena Cosmetics Pass: every current and future cosmetic set and trail."),
+			Description: stripe.String("Arena Cosmetics Pass: every current and future cosmetic set, full-body skin, and trail."),
 			Metadata:    metadata,
 		},
 		LineItems: []*stripe.CheckoutSessionCreateLineItemParams{{
@@ -378,7 +378,7 @@ func (p *StripeCosmeticPaymentProvider) CreateSubscriptionCheckoutSession(ctx co
 				},
 				ProductData: &stripe.CheckoutSessionCreateLineItemPriceDataProductDataParams{
 					Name:        stripe.String("Arena Cosmetics Pass"),
-					Description: stripe.String("Every current and future Arena cosmetic set and trail, for up to five API keys."),
+					Description: stripe.String("Every current and future Arena cosmetic set, full-body skin, and trail, for up to five API keys."),
 				},
 			},
 		}},
