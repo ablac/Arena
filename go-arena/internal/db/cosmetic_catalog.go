@@ -26,7 +26,17 @@ var cosmeticAssetKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,79}$`)
 var cosmeticCurrencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
 var cosmeticRarityPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
-const CosmeticPackPriceCents = 199
+const (
+	CosmeticPackPriceCents  = 199
+	CosmeticTrailPriceCents = 99
+)
+
+func CosmeticPackPriceForCategory(categoryID string) int {
+	if strings.TrimSpace(strings.ToLower(categoryID)) == CosmeticTrailCategoryID {
+		return CosmeticTrailPriceCents
+	}
+	return CosmeticPackPriceCents
+}
 
 type CosmeticCategory struct {
 	ID          string `json:"id"`
@@ -74,6 +84,7 @@ var launchCosmeticCategories = []CosmeticCategory{
 	{ID: "chassis", Name: "Chassis", Description: "Presentation-only bot body finishes.", IsActive: true, SortOrder: 10},
 	{ID: "weapon-finishes", Name: "Weapon Finishes", Description: "Presentation-only weapon materials.", IsActive: true, SortOrder: 20},
 	{ID: "attachments", Name: "Attachments", Description: "Presentation-only bot accessories.", IsActive: true, SortOrder: 30},
+	{ID: CosmeticTrailCategoryID, Name: "Trails", Description: "Presentation-only movement ribbons and particle wakes.", IsActive: true, SortOrder: 35},
 	{ID: "starter-packs", Name: "Starter Packs", Description: "Curated cosmetic bundles using Arena's built-in procedural visuals.", IsActive: true, SortOrder: 40},
 	{ID: "elemental-sets", Name: "Elemental Sets", Description: "Fire, ice, storm, earth, and ocean-inspired Arena sets.", IsActive: true, SortOrder: 50},
 	{ID: "cosmic-sets", Name: "Cosmic Sets", Description: "Orbital, stellar, and deep-space Arena sets.", IsActive: true, SortOrder: 60},
@@ -253,6 +264,15 @@ func buildStarterCosmeticPacks() []CosmeticPack {
 			},
 		})
 	}
+	for index, seed := range trailCosmeticSeeds {
+		idSlug := strings.ReplaceAll(seed.Slug, "_", "-")
+		packs = append(packs, CosmeticPack{
+			ID: "trail-" + idSlug + "-pack", CategoryID: CosmeticTrailCategoryID,
+			Name: seed.Name + " Trail", Description: seed.Description + " Includes one independently assignable cosmetic trail license.",
+			PriceCents: CosmeticTrailPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true,
+			SortOrder: (index + 1) * 10, ItemIDs: []string{"trail-" + idSlug},
+		})
+	}
 	for index := range packs {
 		packs[index].IsBuiltin = true
 	}
@@ -298,6 +318,15 @@ func ValidateCosmeticItem(item CosmeticItem) error {
 		item.SortOrder < 0 || item.SortOrder > 1_000_000 {
 		return ErrCosmeticCatalogInvalid
 	}
+	// Trails are a distinct one-item product class with their own fixed price.
+	// Keep the slot and category bidirectional so an operator cannot disguise a
+	// trail as a $1.99 set (or place a non-trail under the $0.99 category).
+	if (item.Slot == CosmeticSlotTrail) != (item.CategoryID == CosmeticTrailCategoryID) {
+		return fmt.Errorf("%w: trail slot and category must match", ErrCosmeticCatalogInvalid)
+	}
+	if item.Slot == CosmeticSlotTrail && !item.IsFree && item.PriceCents != CosmeticTrailPriceCents {
+		return fmt.Errorf("%w: paid trail item metadata must be $0.99 USD", ErrCosmeticCatalogInvalid)
+	}
 	return nil
 }
 
@@ -308,7 +337,13 @@ func ValidateCosmeticPack(pack CosmeticPack) error {
 		pack.SortOrder < 0 || pack.SortOrder > 1_000_000 || len(pack.ItemIDs) > 500 {
 		return ErrCosmeticCatalogInvalid
 	}
-	if pack.IsPurchasable && !pack.IsFree && (pack.PriceCents != CosmeticPackPriceCents || pack.Currency != "USD") {
+	wantPrice := CosmeticPackPriceForCategory(pack.CategoryID)
+	if pack.CategoryID == CosmeticTrailCategoryID {
+		if len(pack.ItemIDs) != 1 {
+			return fmt.Errorf("%w: a trail product must contain exactly one item", ErrCosmeticCatalogInvalid)
+		}
+	}
+	if pack.IsPurchasable && !pack.IsFree && (pack.PriceCents != wantPrice || pack.Currency != "USD") {
 		return ErrCosmeticCatalogInvalid
 	}
 	seen := make(map[string]struct{}, len(pack.ItemIDs))
@@ -647,14 +682,23 @@ func UpsertCosmeticPack(ctx context.Context, pack CosmeticPack, actor string) (*
 	if !categoryExists {
 		return nil, fmt.Errorf("%w: category does not exist", ErrCosmeticCatalogInvalid)
 	}
-	var itemCount int
+	var itemCount, trailItemCount int
 	if len(pack.ItemIDs) > 0 {
-		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM cosmetic_items WHERE id = ANY($1)`, pack.ItemIDs).Scan(&itemCount); err != nil {
+		if err := tx.QueryRow(ctx, `
+			SELECT COUNT(*), COUNT(*) FILTER (WHERE slot = $2)
+			FROM cosmetic_items WHERE id = ANY($1)`, pack.ItemIDs, CosmeticSlotTrail).Scan(&itemCount, &trailItemCount); err != nil {
 			return nil, fmt.Errorf("check cosmetic pack items: %w", err)
 		}
 	}
 	if itemCount != len(pack.ItemIDs) {
 		return nil, fmt.Errorf("%w: pack contains an unknown item", ErrCosmeticCatalogInvalid)
+	}
+	if pack.CategoryID == CosmeticTrailCategoryID {
+		if itemCount != 1 || trailItemCount != 1 {
+			return nil, fmt.Errorf("%w: a trail product must contain exactly one trail item", ErrCosmeticCatalogInvalid)
+		}
+	} else if trailItemCount != 0 {
+		return nil, fmt.Errorf("%w: non-trail products cannot contain trail items", ErrCosmeticCatalogInvalid)
 	}
 	before, existed, err := cosmeticEntitySnapshot(ctx, tx, "pack", pack.ID)
 	if err != nil {
@@ -839,7 +883,7 @@ func lockCosmeticFallbackSlot(ctx context.Context, tx pgx.Tx, slot string) error
 }
 
 func lockAllCosmeticFallbackSlots(ctx context.Context, tx pgx.Tx) error {
-	for _, slot := range []string{CosmeticSlotBotSkin, CosmeticSlotWeaponSkin, CosmeticSlotAttachment} {
+	for _, slot := range []string{CosmeticSlotBotSkin, CosmeticSlotWeaponSkin, CosmeticSlotAttachment, CosmeticSlotTrail} {
 		if err := lockCosmeticFallbackSlot(ctx, tx, slot); err != nil {
 			return err
 		}
@@ -924,7 +968,7 @@ func requireCosmeticSlotFallback(ctx context.Context, tx pgx.Tx, slot string) er
 }
 
 func requireAllCosmeticSlotFallbacks(ctx context.Context, tx pgx.Tx) error {
-	for _, slot := range []string{CosmeticSlotBotSkin, CosmeticSlotWeaponSkin, CosmeticSlotAttachment} {
+	for _, slot := range []string{CosmeticSlotBotSkin, CosmeticSlotWeaponSkin, CosmeticSlotAttachment, CosmeticSlotTrail} {
 		if err := requireCosmeticSlotFallback(ctx, tx, slot); err != nil {
 			return err
 		}

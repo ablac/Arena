@@ -1,21 +1,23 @@
 'use strict';
 
 import { apiPath, appPath } from './paths.js?v=20260710a';
-import { CosmeticShopPreview } from './shop-preview.js?v=20260712d';
+import { CosmeticShopPreview } from './shop-preview.js?v=20260713b';
 
 const PAGE_SIZE = 24;
-const SUPPORTED_SLOTS = new Set(['bot_skin', 'weapon_skin', 'attachment']);
+const SUPPORTED_SLOTS = new Set(['bot_skin', 'weapon_skin', 'attachment', 'trail']);
 const SUPPORTED_WEAPONS = new Set(['sword', 'bow', 'spear', 'daggers', 'staff', 'shield', 'grapple']);
 const DEFAULT_LOADOUT = Object.freeze({
   bot_skin: 'standard',
   weapon_skin: 'standard',
   attachment: 'none',
+  trail: 'standard',
 });
 
 const SLOT_LABELS = Object.freeze({
   bot_skin: 'Chassis',
   weapon_skin: 'Weapon finish',
   attachment: 'Attachment',
+  trail: 'Trail',
 });
 
 export function packItems(pack) {
@@ -205,7 +207,7 @@ export function initCosmeticsShop(root, options = {}) {
     }
     if (elements.subscriptionState) {
       elements.subscriptionState.textContent = offer.enabled
-        ? `Every current and future set, up to ${offer.max_api_keys} active API keys.`
+        ? `Every current and future set and trail, up to ${offer.max_api_keys} active API keys.`
         : 'All Access checkout is not open yet.';
     }
     if (elements.subscription) elements.subscription.dataset.state = offer.enabled ? 'available' : 'unavailable';
@@ -421,7 +423,10 @@ export function initCosmeticsShop(root, options = {}) {
       elements.purchase.href = saleReady ? dashboardPurchasePath(pack.id, pathname) : appPath('/dashboard/?tab=cosmetics', pathname);
       elements.purchase.hidden = !saleReady;
       elements.purchase.setAttribute('aria-disabled', String(!saleReady));
-      elements.purchase.textContent = pack.is_free ? 'Claim in Dashboard' : `Buy pack · ${formatPrice(pack)}`;
+      const isTrail = pack.category_id === 'trails' && items.length === 1 && items[0]?.slot === 'trail';
+      elements.purchase.textContent = pack.is_free
+        ? 'Claim in Dashboard'
+        : `${isTrail ? 'Buy trail' : 'Buy pack'} · ${formatPrice(pack)}`;
       elements.purchase.dataset.shopPurchasePack = pack.id || '';
     }
   };

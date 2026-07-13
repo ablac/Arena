@@ -13,7 +13,7 @@ Start here if you are learning the repo or preparing a contribution.
 ## Feature Notes
 
 - [Graphics and animation settings](settings-system.md): how to add viewer-facing visual toggles
-- [Cosmetics and fair monetization](cosmetics-and-monetization.md): 300-piece catalog, no-pay-to-win ownership, Stripe checkout, reversals, and launch runbook
+- [Cosmetics and fair monetization](cosmetics-and-monetization.md): 328-item catalog, no-pay-to-win ownership, Stripe checkout, reversals, and launch runbook
 - [Combat animation plan](combat-animation-plan.md): historical notes for combat animation work
 - [Agent-readable frontend reference](../frontend/llms.txt): compact protocol reference for AI agents
 

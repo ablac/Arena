@@ -129,7 +129,7 @@ All HTTP endpoints are also available under the `/arena` prefix (e.g., `/arena/a
 | `GET` | `/api/v1/arena/map` | Current or pre-generated next-round terrain. During intermission, `features_pending` is `true`, `game_mode` is omitted, and round-feature arrays/overlays are empty; fetch again after `round_start` for pads, hazards, and capture objectives. |
 | `GET` | `/api/v1/bounties` | Current bounty board |
 | `GET` | `/api/v1/weapon-stats` | Live weapon stats (including auto-balance adjustments) |
-| `GET` | `/api/v1/cosmetics/catalog` | Presentation-only bot skins, weapon finishes, and attachments |
+| `GET` | `/api/v1/cosmetics/catalog` | Presentation-only bot skins, weapon finishes, attachments, and movement trails |
 | `GET` | `/api/v1/bot-setup` | Machine-readable JSON reference (this guide as an endpoint) |
 
 ### Authenticated Endpoints (Require `X-Arena-Key` Header)

@@ -6,7 +6,7 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260712c';
+import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260713b';
 import {
   forgeContactDelay,
   updateForgeCharacter,
@@ -15,7 +15,7 @@ import {
   triggerForgeHit,
   triggerForgeShove,
 } from './character-anims.js?v=20260712c';
-import {updateForgeCharacterLOD} from './character-rig.js?v=20260712c';
+import {updateForgeCharacterLOD} from './character-rig.js?v=20260713b';
 import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260712c';
 import { isEnabled } from '../settings.js';
 
@@ -430,20 +430,17 @@ export class BotRenderer {
     // death fade in the anim tick owns alpha; writing 1 here every server
     // tick keeps corpses opaque and fights that fade, so steer alpha only
     // for live bots.
-    // Forge uses shared graphite materials, so per-bot material alpha cannot
-    // cover the full chassis. Mesh visibility is the per-instance channel and
-    // also keeps the low-detail proxy visually consistent.
+    // Babylon instances do not support per-instance `visibility`; assigning it
+    // only emits a warning and has no visual effect. Keep the shared structural
+    // silhouette opaque and apply dodge feedback to the bot-owned accent/core
+    // materials. This also prevents a distant dodge from erasing the far proxy.
     if (bot.is_alive) {
-      const visibility = bot.is_dodging ? 0.5 : 1;
-      if (entry._forgeStatusVisibility !== visibility) {
-        for (const mesh of entry._forgeMeshes || []) mesh.visibility = visibility;
-        if (entry.lowDetail) entry.lowDetail.visibility = visibility;
-        entry._forgeStatusVisibility = visibility;
+      const alpha = bot.is_dodging ? 0.5 : 1;
+      if (entry._forgeStatusAlpha !== alpha) {
+        entry.bodyMat.alpha = alpha;
+        entry.headMat.alpha = alpha;
+        entry._forgeStatusAlpha = alpha;
       }
-      // Avoid multiplying mesh visibility by material alpha on the accent
-      // pieces that own one of the rig's mutable per-bot materials.
-      entry.bodyMat.alpha = 1;
-      entry.headMat.alpha = 1;
     }
 
     // Stun — red emissive tint (transient, wins over the wounded look)

@@ -53,10 +53,14 @@ BotRenderer.prototype._updateStatusEffects.call({}, statusEntry, {
   hp: 100,
   max_hp: 100,
 }, 0);
-assert.ok(visibilityMeshes.every(mesh => mesh.visibility === 0.5),
-  'dodge transparency must cover shared Forge meshes, not only per-bot accent materials');
-assert.equal(lowDetail.visibility, 0.5,
-  'the far proxy must preserve dodge visibility feedback');
+assert.ok(visibilityMeshes.every(mesh => mesh.visibility === 1),
+  'dodge feedback must not write unsupported visibility values to Babylon instances');
+assert.equal(lowDetail.visibility, 1,
+  'the readable far proxy must remain opaque during dodge');
+assert.equal(statusEntry.bodyMat.alpha, 0.5,
+  'dodge feedback must dim the bot-owned accent material');
+assert.equal(statusEntry.headMat.alpha, 0.5,
+  'dodge feedback must dim the bot-owned core material');
 BotRenderer.prototype._updateStatusEffects.call({}, statusEntry, {
   is_alive: true,
   is_dodging: false,
@@ -66,5 +70,7 @@ BotRenderer.prototype._updateStatusEffects.call({}, statusEntry, {
 }, 0);
 assert.ok(visibilityMeshes.every(mesh => mesh.visibility === 1));
 assert.equal(lowDetail.visibility, 1);
+assert.equal(statusEntry.bodyMat.alpha, 1);
+assert.equal(statusEntry.headMat.alpha, 1);
 
-console.log('Forge actions emit one edge and dodge visibility covers shared meshes');
+console.log('Forge actions emit one edge and dodge feedback avoids unsupported instance visibility');

@@ -42,6 +42,17 @@ for (const malformed of [
 const swatch = themes.swatchStyle('arena_set_100_void_orbit');
 assert.match(swatch, /^linear-gradient\(/);
 assert.doesNotMatch(swatch, /url\(|javascript:|https?:/i, 'swatches must stay local and data-only');
+for (const trail of [
+  'ember_sparks', 'frost_shards', 'ion_stream', 'plasma_ribbon',
+  'void_motes', 'solar_wake', 'lunar_dust', 'comet_tail',
+  'nebula_pulse', 'storm_arcs', 'static_glitch', 'pixel_scatter',
+  'data_stream', 'holo_prism', 'toxic_spores', 'verdant_leaves',
+  'sand_wake', 'magma_cinders', 'ocean_spray', 'gilded_dust',
+  'rune_sparks', 'phantom_smoke', 'gear_sparks', 'bounty_flare',
+]) {
+  assert.match(themes.swatchStyle(trail), /^linear-gradient\(/,
+    `paid trail ${trail} needs a local Shop and Dashboard swatch`);
+}
 assert.equal(themes.swatchStyle('malformed'), '', 'invalid keys must not produce CSS');
 
 console.log('procedural cosmetic themes are deterministic, bounded, and reject malformed keys');

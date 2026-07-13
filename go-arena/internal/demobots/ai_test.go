@@ -12,7 +12,7 @@ import (
 
 // setTerrain installs a synthetic open terrain grid (with optional wall rows)
 // for pathfinding tests, and returns a cleanup that clears it.
-func setTerrain(t *testing.T, width, height int, walls [][2]int) {
+func setTerrain(t testing.TB, width, height int, walls [][2]int) {
 	t.Helper()
 	rows := make([]interface{}, height)
 	for r := 0; r < height; r++ {
@@ -583,6 +583,60 @@ func TestCapturePadOwnerHoldsForControlPulse(t *testing.T) {
 	}
 }
 
+func TestOwnedCoolingCapturePadYieldsToOpponentHint(t *testing.T) {
+	setTerrain(t, 20, 20, nil)
+	msg := map[string]interface{}{
+		"type": "tick",
+		"tick": float64(200),
+		"your_state": map[string]interface{}{
+			"position": []interface{}{float64(5), float64(5)},
+			"hp":       float64(100), "max_hp": float64(100),
+			"speed": float64(5.5), "weapon_ready": false,
+			"dodge_cooldown": float64(20), "shove_cooldown": float64(20),
+			"in_safe_zone": true, "distance_to_zone_edge": float64(10),
+		},
+		"safe_zone": map[string]interface{}{
+			"center": []interface{}{float64(5), float64(5)}, "radius": float64(10),
+			"target_center": []interface{}{float64(5), float64(5)}, "target_radius": float64(6),
+		},
+		"nearby_entities": []interface{}{
+			map[string]interface{}{
+				"type": "capture_pad", "id": "owned-pad",
+				"position": []interface{}{float64(5), float64(5)},
+				"radius":   float64(2), "is_ready": false,
+				"owner_id": "me", "is_contested": false,
+			},
+		},
+		"hints": []interface{}{
+			map[string]interface{}{
+				"hint_type": "bot", "direction": []interface{}{float64(1), float64(0)},
+				"distance": float64(10),
+			},
+		},
+	}
+
+	got := PickAction("territorial", msg, "shield", 1, "me")
+	if got.Action != "move" || got.Direction == nil || got.Direction[0] <= 0 {
+		t.Fatalf("owned cooling pad ignored known opponent: %+v", got)
+	}
+}
+
+func TestMoveDirSafeChecksTerrainWithoutDynamicDanger(t *testing.T) {
+	setTerrain(t, 20, 20, [][2]int{{6, 5}})
+	danger := &dangerSet{}
+	danger.reset()
+	ts := tickState{Position: [2]float64{5, 5}, Danger: danger}
+
+	got := moveDirSafe(ts, [2]float64{1, 0})
+	if got.Action != "move" || got.Direction == nil {
+		t.Fatalf("safe move beside wall = %+v, want a passable move", got)
+	}
+	terrain := getTerrain()
+	if terrain.isMoveBlocked(5, 5, int(got.Direction[0]), int(got.Direction[1])) {
+		t.Fatalf("safe move still selected blocked direction %v", *got.Direction)
+	}
+}
+
 func TestCapturePadChoosesReadyPadOverNearEnemyCooldown(t *testing.T) {
 	setTerrain(t, 20, 20, nil)
 	danger := &dangerSet{}
@@ -646,6 +700,172 @@ func TestPickActionUsesEmergencyHealthBeforeUtility(t *testing.T) {
 	got := PickAction("aggressive", msg, "sword", 1, "me")
 	if got.Action != "use_item" || got.ItemID != "heal" {
 		t.Fatalf("critical bot action = %+v, want immediate health pickup", got)
+	}
+}
+
+func TestCriticalBotPrioritizesReachableHealthOverUtilityPickup(t *testing.T) {
+	setTerrain(t, 20, 20, nil)
+	msg := map[string]interface{}{
+		"type": "tick",
+		"tick": float64(13),
+		"your_state": map[string]interface{}{
+			"position": []interface{}{float64(5), float64(5)},
+			"hp":       float64(25), "max_hp": float64(100),
+			"weapon_ready": false, "dodge_cooldown": float64(20),
+		},
+		"nearby_entities": []interface{}{
+			map[string]interface{}{
+				"type": "pickup", "id": "utility", "pickup_type": "gravity_well",
+				"position": []interface{}{float64(5), float64(7)},
+			},
+			map[string]interface{}{
+				"type": "pickup", "id": "heal", "pickup_type": "health_pack",
+				"position": []interface{}{float64(9), float64(5)},
+			},
+		},
+	}
+
+	got := PickAction("aggressive", msg, "sword", 1, "me")
+	if got.Action != "move" || got.Direction == nil || got.Direction[0] <= 0 {
+		t.Fatalf("critical bot health route = %+v, want movement toward health", got)
+	}
+	// Assert the decision at the pickup-ranking seam as well.
+	ts := parseTick(msg)
+	danger := &dangerSet{}
+	danger.reset()
+	ts.Danger = danger
+	pickup := trySmartPickup(ts, "aggressive", "sword")
+	if pickup == nil || pickup.Action != "move" {
+		t.Fatalf("critical health decision = %+v, want movement", pickup)
+	}
+	healthDirection := moveTo(ts.Position, [2]float64{9, 5}, danger)
+	if pickup.Direction == nil || healthDirection.Direction == nil || *pickup.Direction != *healthDirection.Direction {
+		t.Fatalf("critical health decision = %+v, want route toward health pack", pickup)
+	}
+}
+
+func TestSmartPickupSkipsUtilityBehindBlockedDangerRoute(t *testing.T) {
+	walls := make([][2]int, 0, 40)
+	for col := 0; col < 20; col++ {
+		walls = append(walls, [2]int{col, 0}, [2]int{col, 2})
+	}
+	setTerrain(t, 20, 3, walls)
+
+	danger := &dangerSet{}
+	danger.reset()
+	danger.add(7, 1)
+	ts := tickState{
+		Position: [2]float64{5, 1}, HP: 100, MaxHP: 100, InZone: true,
+		Pickups: []entity{{
+			ID: "blocked-utility", Type: "pickup", SubType: "gravity_well", Position: [2]float64{9, 1},
+		}},
+		Danger: danger,
+	}
+
+	if got := trySmartPickup(ts, "aggressive", "sword"); got != nil {
+		t.Fatalf("smart pickup chased an unreachable utility through lethal danger: %+v", *got)
+	}
+}
+
+func TestCriticalBotDoesNotFleeTowardHealthBehindBlockedDangerRoute(t *testing.T) {
+	walls := make([][2]int, 0, 40)
+	for col := 0; col < 20; col++ {
+		walls = append(walls, [2]int{col, 0}, [2]int{col, 2})
+	}
+	setTerrain(t, 20, 3, walls)
+
+	msg := map[string]interface{}{
+		"type": "tick",
+		"tick": float64(14),
+		"your_state": map[string]interface{}{
+			"position": []interface{}{float64(5), float64(1)},
+			"hp":       float64(20), "max_hp": float64(100),
+			"weapon_ready": false, "dodge_cooldown": float64(20),
+			"in_safe_zone": true,
+		},
+		"nearby_entities": []interface{}{
+			map[string]interface{}{
+				"type": "bot", "id": "enemy", "position": []interface{}{float64(13), float64(1)},
+				"hp": float64(100), "max_hp": float64(100), "weapon": "bow",
+				"is_alive": true, "has_los": true, "can_attack": true,
+			},
+			map[string]interface{}{
+				"type": "hazard_zone", "position": []interface{}{float64(7), float64(1)},
+				"width": float64(1), "height": float64(1), "active": true,
+			},
+			map[string]interface{}{
+				"type": "pickup", "id": "blocked-heal", "pickup_type": "health_pack",
+				"position": []interface{}{float64(9), float64(1)},
+			},
+		},
+	}
+
+	got := PickAction("defensive", msg, "sword", 1, "me")
+	if got.Action != "move" || got.Direction == nil || got.Direction[0] >= 0 {
+		t.Fatalf("critical flee action = %+v, want movement away from threat instead of toward blocked health", got)
+	}
+}
+
+func TestSmartPickupRoutesBuildsSharedFieldWithoutDanger(t *testing.T) {
+	walls := make([][2]int, 0, 5)
+	for row := 2; row <= 6; row++ {
+		walls = append(walls, [2]int{5, row})
+	}
+	setTerrain(t, 20, 20, walls)
+
+	routes := newSmartPickupRoutes([2]float64{3, 4}, nil)
+	defer routes.release()
+	if routes.scratch == nil {
+		t.Fatal("empty-danger pickup routing did not build a shared distance field")
+	}
+	if got := routes.distance([2]float64{7, 4}); got != 8 {
+		t.Fatalf("wall-separated pickup distance = %.0f, want 8", got)
+	}
+}
+
+func BenchmarkTrySmartPickupRouteField(b *testing.B) {
+	walls := make([][2]int, 0, 30)
+	for row := 0; row < 30; row++ {
+		walls = append(walls, [2]int{10, row})
+	}
+	setTerrain(b, 30, 30, walls)
+	danger := &dangerSet{}
+	danger.reset()
+	danger.add(7, 15)
+
+	subTypes := []string{
+		"health_pack", "gravity_well", "cooldown_shard", "hazard_key",
+		"relay_battery", "overdrive_core", "grapple_charge", "damage_boost",
+		"bounty_token", "speed_boost", "shield_bubble",
+	}
+	pickups := make([]entity, 0, 88)
+	for i := 0; i < 88; i++ {
+		pickups = append(pickups, entity{
+			ID:       fmt.Sprintf("pickup-%d", i),
+			Type:     "pickup",
+			SubType:  subTypes[i%len(subTypes)],
+			Position: [2]float64{float64(12 + i%5), float64(10 + (i/5)%11)},
+		})
+	}
+
+	for _, benchmark := range []struct {
+		name   string
+		danger *dangerSet
+	}{
+		{name: "empty_danger_wall_separated"},
+		{name: "live_danger_wall_separated", danger: danger},
+	} {
+		b.Run(benchmark.name, func(b *testing.B) {
+			ts := tickState{
+				Position: [2]float64{5, 15}, HP: 100, MaxHP: 100,
+				Pickups: pickups, Danger: benchmark.danger,
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_ = trySmartPickup(ts, "defensive", "sword")
+			}
+		})
 	}
 }
 
@@ -765,6 +985,130 @@ func TestGuardStrategiesKeepPatrollingInsideTheirZone(t *testing.T) {
 				t.Fatalf("guard stopped for %d consecutive ticks; position=%v", maxStationaryTicks, position)
 			}
 		})
+	}
+}
+
+func TestNoVisibleEnemyAtZoneCenterKeepsHunting(t *testing.T) {
+	setTerrain(t, 40, 40, nil)
+	for _, strategy := range []string{"aggressive", "berserker", "kite", "assassin", "defensive", "territorial"} {
+		t.Run(strategy, func(t *testing.T) {
+			msg := map[string]interface{}{
+				"type":       "tick",
+				"tick":       float64(500),
+				"round_tick": float64(500),
+				"your_state": map[string]interface{}{
+					"position":              []interface{}{float64(20), float64(20)},
+					"hp":                    float64(100),
+					"max_hp":                float64(100),
+					"speed":                 float64(5.5),
+					"weapon_ready":          false,
+					"dodge_cooldown":        float64(20),
+					"shove_cooldown":        float64(20),
+					"in_safe_zone":          true,
+					"distance_to_zone_edge": float64(10),
+				},
+				"safe_zone": map[string]interface{}{
+					"center":        []interface{}{float64(20), float64(20)},
+					"radius":        float64(10),
+					"target_center": []interface{}{float64(20), float64(20)},
+					"target_radius": float64(6),
+				},
+			}
+
+			got := PickAction(strategy, msg, "daggers", 1, "hunter-"+strategy)
+			if got.Action != "move" || got.Direction == nil || *got.Direction == [2]float64{} {
+				t.Fatalf("no-target center action = %+v, want a hunting patrol move", got)
+			}
+		})
+	}
+}
+
+func TestNoVisibleEnemyPatrolDoesNotReverseBackToCenter(t *testing.T) {
+	setTerrain(t, 40, 40, nil)
+	position := [2]float64{20, 20}
+	var previousDirection [2]float64
+	seen := map[[2]float64]struct{}{position: {}}
+
+	for tick := 1; tick <= 30; tick++ {
+		msg := map[string]interface{}{
+			"type": "tick", "tick": float64(tick), "round_tick": float64(tick),
+			"your_state": map[string]interface{}{
+				"position": []interface{}{position[0], position[1]},
+				"hp":       float64(100), "max_hp": float64(100), "speed": float64(5.5),
+				"weapon_ready": false, "dodge_cooldown": float64(20), "shove_cooldown": float64(20),
+				"in_safe_zone": true, "distance_to_zone_edge": float64(10),
+			},
+			"safe_zone": map[string]interface{}{
+				"center": []interface{}{float64(20), float64(20)}, "radius": float64(10),
+				"target_center": []interface{}{float64(20), float64(20)}, "target_radius": float64(6),
+			},
+		}
+		got := PickAction("territorial", msg, "shield", 1, "patrol-hunter")
+		if got.Action != "move" || got.Direction == nil || *got.Direction == [2]float64{} {
+			t.Fatalf("tick %d patrol action = %+v, want movement", tick, got)
+		}
+		if tick > 1 && *got.Direction == [2]float64{-previousDirection[0], -previousDirection[1]} {
+			t.Fatalf("tick %d reversed the previous patrol step: previous=%v current=%v", tick, previousDirection, *got.Direction)
+		}
+		previousDirection = *got.Direction
+		position[0] += got.Direction[0]
+		position[1] += got.Direction[1]
+		seen[position] = struct{}{}
+	}
+	if len(seen) <= 2 {
+		t.Fatalf("patrol visited only %d positions: %v", len(seen), seen)
+	}
+}
+
+func TestGuardPatrolShrinksBlockedWaypointRing(t *testing.T) {
+	center := [2]float64{15, 15}
+	walls := make([][2]int, 0, len(guardPatrolDirections))
+	for _, direction := range guardPatrolDirections {
+		walls = append(walls, [2]int{
+			int(center[0] + direction[0]*3),
+			int(center[1] + direction[1]*3),
+		})
+	}
+	setTerrain(t, 30, 30, walls)
+	danger := &dangerSet{}
+	danger.reset()
+	ts := tickState{
+		Position: center, HP: 100, MaxHP: 100, InZone: true, Danger: danger,
+		ZoneCenter: center, ZoneRadius: 8, ZoneTargetCenter: center, ZoneTargetRadius: 5,
+	}
+
+	got := guardPatrol(ts, 3, "blocked-ring-guard")
+	if got.Action != "move" || got.Direction == nil || *got.Direction == [2]float64{} {
+		t.Fatalf("blocked outer patrol ring stopped despite local room: %+v", got)
+	}
+}
+
+func TestGuardPatrolDoesNotReverseAtWaypointMidpoints(t *testing.T) {
+	setTerrain(t, 50, 50, nil)
+	danger := &dangerSet{}
+	danger.reset()
+	center := [2]float64{25, 25}
+	position := center
+	var previousDirection [2]float64
+
+	for step := 1; step <= 80; step++ {
+		ts := tickState{
+			Position: position, HP: 100, MaxHP: 100, InZone: true, Danger: danger,
+			ZoneCenter: center, ZoneRadius: 10, ZoneTargetCenter: center, ZoneTargetRadius: 6,
+		}
+		got := guardPatrol(ts, 4, "midpoint-guard")
+		if got.Action != "move" || got.Direction == nil || *got.Direction == [2]float64{} {
+			t.Fatalf("step %d patrol stopped: %+v", step, got)
+		}
+		if step > 1 && *got.Direction == [2]float64{-previousDirection[0], -previousDirection[1]} {
+			t.Fatalf("step %d patrol reversed at a waypoint midpoint: previous=%v current=%v position=%v", step, previousDirection, *got.Direction, position)
+		}
+		previousDirection = *got.Direction
+		position[0] += got.Direction[0]
+		position[1] += got.Direction[1]
+		if distance := chebyshev(position, center); distance > ts.ZoneTargetRadius {
+			t.Fatalf("step %d patrol escaped target zone: position=%v distance=%v", step, position, distance)
+		}
 	}
 }
 
@@ -1151,6 +1495,45 @@ func TestZoneAnchorGrappleAvoidsCachedReadyPad(t *testing.T) {
 	}
 	if got := tryAnchorGrapple(ts, "defensive", nil, math.Inf(1), 1); got != nil {
 		t.Fatalf("zone anchor targeted cached ready pad: %+v", *got)
+	}
+}
+
+func TestBlockedZoneAnchorGrappleFallsThroughToSafeMovement(t *testing.T) {
+	walls := make([][2]int, 0, 5)
+	for row := 8; row <= 12; row++ {
+		walls = append(walls, [2]int{13, row})
+	}
+	setTerrain(t, 30, 30, walls)
+
+	ts := tickState{
+		Position: [2]float64{10, 10}, HP: 44, MaxHP: 140, InZone: false,
+		ZoneCenter: [2]float64{16, 10}, ZoneTargetCenter: [2]float64{16, 10},
+		ZoneRadius: 8, ZoneTargetRadius: 6, GrappleCharges: 1,
+	}
+	if got := tryAnchorGrapple(ts, "kite", nil, math.Inf(1), 5); got != nil {
+		t.Fatalf("blocked zone anchor produced a grapple retry: %+v", *got)
+	}
+
+	msg := map[string]interface{}{
+		"type": "tick", "tick": float64(400),
+		"your_state": map[string]interface{}{
+			"position": []interface{}{float64(10), float64(10)},
+			"hp":       float64(44), "max_hp": float64(140), "speed": float64(5.5),
+			"weapon_ready": false, "dodge_cooldown": float64(20),
+			"in_safe_zone": false, "distance_to_zone_edge": float64(-2),
+			"grapple_charges": float64(1), "grapple_cooldown": float64(0),
+		},
+		"safe_zone": map[string]interface{}{
+			"center": []interface{}{float64(16), float64(10)}, "radius": float64(8),
+			"target_center": []interface{}{float64(16), float64(10)}, "target_radius": float64(6),
+		},
+	}
+	got := PickAction("kite", msg, "staff", 5, "blocked-anchor-bot")
+	if got.Action != "move" || got.Direction == nil || *got.Direction == [2]float64{} {
+		t.Fatalf("blocked anchor fallback = %+v, want safe zone path movement", got)
+	}
+	if terrain := getTerrain(); terrain.isMoveBlocked(10, 10, int(got.Direction[0]), int(got.Direction[1])) {
+		t.Fatalf("blocked anchor fallback selected an impassable step: %v", *got.Direction)
 	}
 }
 

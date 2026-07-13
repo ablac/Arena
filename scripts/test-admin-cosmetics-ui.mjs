@@ -45,7 +45,7 @@ assert.match(cosmeticsPanel, /id="cosmeticCategoryList"/, 'dedicated panel must 
 assert.match(cosmeticsPanel, /id="cosmeticPackList"/, 'dedicated panel must expose pack and price administration');
 assert.match(cosmeticsPanel, /id="cosmeticItemList"/, 'dedicated panel must expose individual catalog items');
 assert.match(cosmeticsPanel, /id="cosmeticCatalogAudit"/, 'catalog changes need an operator-visible audit trail');
-assert.match(cosmeticsPanel, /Cosmetic Sets \/ Packs/, 'the admin should use the operator-facing sets terminology without changing pack APIs');
+assert.match(cosmeticsPanel, /Cosmetic Products \/ Packs/, 'the admin should group coordinated sets and one-item trail products without changing pack APIs');
 assert.match(cosmeticsPanel, /id="cosmeticCatalogStatus"[^>]*role="status"[^>]*aria-live="polite"/, 'catalog refreshes need one concise live status');
 for (const listID of ['cosmeticCategoryList', 'cosmeticPackList', 'cosmeticItemList']) {
   const listTag = cosmeticsPanel.match(new RegExp(`<[^>]+id="${listID}"[^>]*>`))?.[0] || '';
@@ -63,11 +63,30 @@ assert.match(cosmeticsPanel, /id="cosmeticCatalogMaster"/, 'catalog editing need
 assert.match(cosmeticsPanel, /id="cosmeticCatalogDetail"/, 'catalog editing needs one selected-record detail surface');
 assert.match(cosmeticsPanel, /Built-in cosmetics are code-seeded[\s\S]*deactivate/i,
   'built-in catalog entries need deactivate-versus-delete guidance');
-assert.match(cosmeticsPanel, /id="cosmeticPackPrice"[^>]*value="199"[^>]*readonly/, 'sale-ready set price must be fixed at $1.99');
+assert.match(cosmeticsPanel, /id="cosmeticPackPrice"[^>]*value="199"[^>]*readonly/, 'sale-ready product price must remain read-only');
+assert.match(cosmeticsPanel, /id="cosmeticItemSlot"[\s\S]*?<option value="trail">Trail<\/option>/,
+  'catalog item editing must expose the trail slot');
+assert.match(cosmeticsPanel, /id="cosmeticPackItemSlotFilter"[\s\S]*?<option value="trail">Trails<\/option>/,
+  'product contents must be filterable to trail items');
 assert.match(cosmeticsPanel, /id="cosmeticItemPrice"[^>]*min="0"[^>]*max="1000000"/, 'item price must match the backend upper bound');
 assert.doesNotMatch(cosmeticsPanel, /max="100000000"/, 'catalog forms must not accept prices the API always rejects');
 const savePack = html.slice(html.indexOf('async function saveCosmeticPack'), html.indexOf('async function deleteCosmeticPack'));
-assert.match(savePack, /price_cents:\s*isFree\s*\?\s*0\s*:\s*199/, 'Admin must submit the fixed $1.99 sale price instead of browser input');
+assert.match(savePack, /price_cents:\s*isFree\s*\?\s*0\s*:\s*cosmeticPackFixedPrice\(categoryID\)/,
+  'Admin must derive the fixed $1.99 set or $0.99 trail price from the server category contract');
+assert.match(html, /function cosmeticPackFixedPrice[\s\S]*categoryID === 'trails' \? 99 : 199/,
+  'trail products must display and submit their fixed $0.99 price');
+assert.match(cosmeticsPanel, /cosmeticPackCategory" onchange="syncCosmeticPackCategoryRules\(\)"/,
+  'changing product category must immediately apply its item-count and slot rules');
+assert.match(cosmeticsPanel, /id="cosmeticPackRuleHint"[^>]*role="status"/,
+  'the product editor must explain the one-trail rule before save');
+assert.match(cosmeticsPanel, /cosmeticItemCategory" onchange="syncCosmeticItemCategoryAndSlot\('category'\)"/,
+  'item category changes must keep the trail category and slot paired');
+assert.match(cosmeticsPanel, /cosmeticItemSlot" onchange="syncCosmeticItemCategoryAndSlot\('slot'\)"/,
+  'item slot changes must keep the trail category and slot paired');
+assert.match(cosmeticsPanel, /id="cosmeticItemFree"[^>]*onchange="syncCosmeticItemPrice\(\)"/,
+  'changing Free must immediately resync fixed trail price presentation');
+assert.match(html, /function syncCosmeticItemPrice[\s\S]*const free = [^;]+cosmeticItemFree[^;]+;[\s\S]*price\.readOnly = trail;[\s\S]*price\.value = free \? 0 : 99/,
+  'trail item reference metadata must be fixed at $0.99 in the editor');
 assert.doesNotMatch(cosmeticsPanel, /<main class="cosmetics-admin-workbench"/, 'the cosmetics workbench must not nest a second main landmark');
 for (const orderID of ['cosmeticOrderSearch', 'cosmeticOrderStatusFilter', 'cosmeticOrderRefresh',
   'cosmeticOrderStatus', 'cosmeticOrderList']) {
@@ -100,7 +119,8 @@ assert.match(accessWorkspace, /id="cosmeticAccessEmail"[^>]*type="email"[^>]*req
 assert.match(accessWorkspace, /id="cosmeticAccessLookupStatus"[^>]*role="status"[^>]*aria-live="polite"/,
   'customer lookup needs a concise live status');
 assert.match(accessWorkspace, /Cosmetics-only access/i, 'manual membership must be described as cosmetics-only access');
-assert.match(accessWorkspace, /future purchasable sets/i, 'manual membership must explicitly include future purchasable sets');
+assert.match(accessWorkspace, /future purchasable sets and trails/i,
+  'manual membership must explicitly include future purchasable sets and trails');
 assert.doesNotMatch(accessWorkspace, /(?:API[- ]?key|key)\s+(?:cap|limit)|\b5\s+API[- ]?keys?/i,
   'manual cosmetics membership must not claim an API-key limit');
 assert.match(accessWorkspace, /id="cosmeticMembershipDurationDays"[^>]*type="number"[^>]*min="1"/,
@@ -257,6 +277,12 @@ assert.match(itemEdit, /scrollIntoView/,
 assert.match(itemEdit, /openCosmeticItemEditor\('cosmeticItemName'\)/,
   'editing must focus the first editable field rather than the immutable ID');
 
+const packEdit = html.slice(html.indexOf('function editCosmeticPack'), html.indexOf('async function saveCosmeticPack'));
+assert.match(packEdit, /const selectedIDs = [^;]+;/,
+  'opening a product editor must retain its selected cosmetic IDs');
+assert.match(packEdit, /syncCosmeticPackCategoryRules\(selectedIDs\)/,
+  'opening a product editor must synchronize trail/set picker filters before rendering retained contents');
+
 assert.match(html, /\.cosmetics-item-list\{[^}]*max-block-size:[^;}]+;[^}]*overflow:auto/,
   'the 300-item list must have a bounded scroll region');
 assert.match(html, /\.cosmetics-item-picker\{[^}]*max-block-size:[^;}]+;[^}]*overflow:auto/,
@@ -291,7 +317,8 @@ function element(id, initial = {}) {
 }
 for (const id of ['cosmeticCategoryCount', 'cosmeticPackCount', 'cosmeticItemCount',
   'cosmeticCheckoutState', 'cosmeticCatalogStatus', 'cosmeticCategoryList', 'cosmeticPackList',
-  'cosmeticItemList', 'cosmeticItemFilterCount', 'cosmeticPackItems', 'cosmeticPackSelectionCount']) element(id);
+  'cosmeticItemList', 'cosmeticItemFilterCount', 'cosmeticPackItems', 'cosmeticPackSelectionCount',
+  'cosmeticPackRuleHint']) element(id);
 element('cosmeticPackEditor', {open:true});
 element('cosmeticItemEditor', {open:true});
 const packCategory = element('cosmeticPackCategory', {value:'category-4', resetSelectionOnRender:true});
@@ -448,6 +475,77 @@ renderContext.renderCosmeticAdminCatalog();
 assert.match(elements.get('cosmeticItemList').innerHTML, /Readiness unknown/);
 assert.doesNotMatch(elements.get('cosmeticItemList').innerHTML, />Live</,
   'failed public projection must not falsely claim any item is Live');
+
+renderContext.cosmeticAdminCatalog.items.push(
+  {id:'trail-one',name:'Trail One',category_id:'trails',slot:'trail',asset_key:'trail_one'},
+  {id:'trail-two',name:'Trail Two',category_id:'trails',slot:'trail',asset_key:'trail_two'},
+);
+packCategory.value = 'trails';
+elements.get('cosmeticPackItemSlotFilter').value = 'all';
+renderContext.renderCosmeticPackItemPicker(['item-001', 'trail-one']);
+assert.deepEqual(Array.from(renderContext.cosmeticPackSelection), ['trail-one'],
+  'switching a product to Trails must discard incompatible set members');
+assert.match(elements.get('cosmeticPackItems').innerHTML, /trail-one/);
+assert.doesNotMatch(elements.get('cosmeticPackItems').innerHTML, /item-001/);
+assert.match(elements.get('cosmeticPackRuleHint').textContent, /exactly one trail item/i);
+renderContext.toggleCosmeticPackItemSelection({value:'trail-two',checked:true});
+assert.deepEqual(Array.from(renderContext.cosmeticPackSelection), ['trail-two'],
+  'selecting another trail must replace the prior one-item product selection');
+
+const itemSyncElements = new Map([
+  ['cosmeticItemCategory', {value:'trails',dataset:{lockedCategory:''}}],
+  ['cosmeticItemSlot', {value:'bot_skin',disabled:false}],
+  ['cosmeticItemPrice', {value:0,readOnly:false}],
+]);
+const itemSyncContext = {document:{getElementById:id => itemSyncElements.get(id)}};
+const itemSyncSource = html.slice(
+  html.indexOf('function syncCosmeticItemCategoryAndSlot'),
+  html.indexOf('function cosmeticVisibilityState'),
+);
+runInNewContext(itemSyncSource, itemSyncContext);
+itemSyncContext.syncCosmeticItemCategoryAndSlot('category');
+assert.equal(itemSyncElements.get('cosmeticItemSlot').value, 'trail');
+assert.equal(itemSyncElements.get('cosmeticItemPrice').value, 99);
+assert.equal(itemSyncElements.get('cosmeticItemPrice').readOnly, true);
+itemSyncElements.get('cosmeticItemSlot').value = 'attachment';
+itemSyncContext.syncCosmeticItemCategoryAndSlot('slot');
+assert.equal(itemSyncElements.get('cosmeticItemCategory').value, 'attachments');
+assert.equal(itemSyncElements.get('cosmeticItemPrice').readOnly, false);
+itemSyncElements.get('cosmeticItemCategory').value = 'trails';
+itemSyncContext.syncCosmeticItemCategoryAndSlot('category');
+assert.equal(itemSyncElements.get('cosmeticItemSlot').value, 'trail');
+itemSyncElements.get('cosmeticItemSlot').disabled = true;
+itemSyncElements.get('cosmeticItemSlot').value = 'attachment';
+itemSyncElements.get('cosmeticItemCategory').dataset.lockedCategory = 'attachments';
+itemSyncElements.get('cosmeticItemCategory').value = 'trails';
+itemSyncContext.syncCosmeticItemCategoryAndSlot('category');
+assert.equal(itemSyncElements.get('cosmeticItemCategory').value, 'attachments',
+  'an existing item cannot cross the immutable trail-slot boundary by editing its category');
+assert.equal(itemSyncElements.get('cosmeticItemSlot').value, 'attachment');
+
+const packSyncElements = new Map([
+  ['cosmeticPackItemSlotFilter', {value:'all'}],
+  ['cosmeticPackItemCategoryFilter', {value:'all'}],
+]);
+let packSyncTrail = true;
+const packSyncContext = {
+  cosmeticFilterValue:() => packSyncTrail ? 'trails' : 'starter-packs',
+  document:{getElementById:id => packSyncElements.get(id)},
+  updateCosmeticPackFixedPrice() {},
+  renderCosmeticPackItemPicker() {},
+};
+const packSyncSource = html.slice(
+  html.indexOf('function syncCosmeticPackCategoryRules'),
+  html.indexOf('function resetCosmeticPackItemFilters'),
+);
+runInNewContext(packSyncSource, packSyncContext);
+packSyncContext.syncCosmeticPackCategoryRules();
+assert.equal(packSyncElements.get('cosmeticPackItemSlotFilter').value, 'trail');
+assert.equal(packSyncElements.get('cosmeticPackItemCategoryFilter').value, 'trails');
+packSyncTrail = false;
+packSyncContext.syncCosmeticPackCategoryRules();
+assert.equal(packSyncElements.get('cosmeticPackItemSlotFilter').value, 'all');
+assert.equal(packSyncElements.get('cosmeticPackItemCategoryFilter').value, 'all');
 
 const editor = element('focusEditor', {open:false, scrollIntoView(){ this.scrolled = true; }});
 const editable = element('focusName', {focus(){ this.focused = true; }});

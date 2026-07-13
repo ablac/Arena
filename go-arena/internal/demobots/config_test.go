@@ -12,6 +12,16 @@ func configuredCosmeticSelections(cfg BotConfig) []cosmeticSelection {
 	return selections
 }
 
+func configuredAllCosmeticSelections(cfg BotConfig) []cosmeticSelection {
+	catalog := db.DefaultCosmeticCatalogData()
+	selections, _ := cosmeticSelectionsForPack(catalog, cfg.CosmeticPackID)
+	trail, _ := cosmeticSelectionForTrail(catalog, cfg.CosmeticTrailID)
+	if trail.CosmeticID != "" {
+		selections = append(selections, trail)
+	}
+	return selections
+}
+
 func TestDemoConfigsHaveValidDiverseWeaponCohorts(t *testing.T) {
 	const statBudget = 20
 	requiredStats := []string{"hp", "speed", "attack", "defense"}
@@ -74,7 +84,7 @@ func TestNewDemoBotPreservesDeclaredStrategy(t *testing.T) {
 	}
 }
 
-func TestDemoConfigsCoverDistinctCompleteCosmeticPacks(t *testing.T) {
+func TestDemoConfigsCoverDistinctCompleteCosmeticPacksAndTrails(t *testing.T) {
 	catalog := db.DefaultCosmeticCatalogData()
 	packs := make(map[string]db.CosmeticPack, len(catalog.Packs))
 	for _, pack := range catalog.Packs {
@@ -82,6 +92,7 @@ func TestDemoConfigsCoverDistinctCompleteCosmeticPacks(t *testing.T) {
 	}
 
 	seenPacks := make(map[string]string)
+	seenTrails := make(map[string]string)
 	for _, cfg := range DemoConfigs {
 		if cfg.CosmeticPackID == "" {
 			t.Errorf("%s has no cosmetic pack", cfg.Name)
@@ -126,6 +137,26 @@ func TestDemoConfigsCoverDistinctCompleteCosmeticPacks(t *testing.T) {
 				t.Errorf("%s cosmetic %q uses slot %q, want %q", cfg.Name, item.ID, item.Slot, selection.Slot)
 			}
 		}
+
+		if cfg.CosmeticTrailID == "" {
+			t.Errorf("%s has no cosmetic trail", cfg.Name)
+			continue
+		}
+		if other, exists := seenTrails[cfg.CosmeticTrailID]; exists {
+			t.Errorf("%s and %s share cosmetic trail %q", other, cfg.Name, cfg.CosmeticTrailID)
+		}
+		seenTrails[cfg.CosmeticTrailID] = cfg.Name
+		trail, err := cosmeticSelectionForTrail(catalog, cfg.CosmeticTrailID)
+		if err != nil {
+			t.Errorf("%s trail: %v", cfg.Name, err)
+			continue
+		}
+		if trail.Slot != db.CosmeticSlotTrail || trail.CosmeticID != cfg.CosmeticTrailID {
+			t.Errorf("%s trail selection = %+v", cfg.Name, trail)
+		}
+	}
+	if len(seenTrails) != len(DemoConfigs) {
+		t.Errorf("demo trail coverage = %d distinct trails, want %d", len(seenTrails), len(DemoConfigs))
 	}
 
 	for _, legacyPackID := range []string{"neon-signal-pack", "void-orbit-pack"} {

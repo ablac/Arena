@@ -64,6 +64,31 @@ func countOrderLicenses(t *testing.T, ctx context.Context, orderID string) int {
 	return count
 }
 
+func TestPostgresCosmeticOrderSchemaUpgradeAcceptsTrailSnapshots(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		ALTER TABLE cosmetic_order_items DROP CONSTRAINT cosmetic_order_items_slot_check;
+		ALTER TABLE cosmetic_order_items ADD CONSTRAINT cosmetic_order_items_slot_check
+			CHECK (slot IN ('bot_skin','weapon_skin','attachment'))`); err != nil {
+		t.Fatalf("restore legacy order-item slot constraint: %v", err)
+	}
+	if err := EnsureCosmeticOrdersSchema(ctx); err != nil {
+		t.Fatalf("upgrade legacy order-item slot constraint: %v", err)
+	}
+
+	account := createCommerceTestAccount(t, ctx, "trail-schema-upgrade")
+	order, err := CreateCosmeticOrder(ctx, account.ID, "trail-ember-sparks-pack", 1)
+	if err != nil {
+		t.Fatalf("CreateCosmeticOrder after trail schema upgrade: %v", err)
+	}
+	if len(order.Items) != 1 || order.Items[0].Slot != CosmeticSlotTrail || order.UnitPriceCents != CosmeticTrailPriceCents {
+		t.Fatalf("trail order after schema upgrade = %+v", order)
+	}
+}
+
 func TestPostgresCosmeticOrderSnapshotsServerPriceAndFulfillsQuantityExactlyOnce(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {
@@ -160,6 +185,73 @@ func TestPostgresCosmeticOrderSnapshotsServerPriceAndFulfillsQuantityExactlyOnce
 	conflictingPayload.PayloadHash = commerceEventHash("d")
 	if _, err := ProcessCosmeticPaymentEvent(ctx, conflictingPayload); !errors.Is(err, ErrCosmeticPaymentEventConflict) {
 		t.Fatalf("same event id with another payload error = %v", err)
+	}
+}
+
+func TestPostgresTrailOrderChargesNinetyNineCentsAndFulfillsOneMovableCopy(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	account := createCommerceTestAccount(t, ctx, "trail-order")
+	order, err := CreateCosmeticOrder(ctx, account.ID, "trail-ember-sparks-pack", 1)
+	if err != nil {
+		t.Fatalf("CreateCosmeticOrder trail: %v", err)
+	}
+	if order.UnitPriceCents != CosmeticTrailPriceCents || order.ExpectedSubtotalCents != CosmeticTrailPriceCents ||
+		order.Quantity != 1 || len(order.Items) != 1 || order.Items[0].ID != "trail-ember-sparks" ||
+		order.Items[0].Slot != CosmeticSlotTrail || order.Items[0].AssetKey != "ember_sparks" {
+		t.Fatalf("trail order snapshot = %+v", order)
+	}
+	order, err = AttachCosmeticOrderCheckout(ctx, account.ID, order.ID, "cs_trail_order")
+	if err != nil {
+		t.Fatalf("AttachCosmeticOrderCheckout trail: %v", err)
+	}
+	paid := fulfillCommerceOrder(t, ctx, order, CosmeticTrailPriceCents, "trail-order")
+	if paid.Status != CosmeticOrderStatusPaid || paid.AmountReceivedCents != CosmeticTrailPriceCents ||
+		paid.ExpectedSubtotalCents != CosmeticTrailPriceCents || paid.FulfilledLicenseCount != 1 {
+		t.Fatalf("paid trail order = %+v", paid)
+	}
+
+	var licenseID string
+	if err := Pool.QueryRow(ctx, `
+		SELECT l.id
+		FROM cosmetic_order_licenses ol
+		JOIN cosmetic_licenses l ON l.id = ol.license_id
+		WHERE ol.order_id = $1 AND l.cosmetic_id = 'trail-ember-sparks' AND l.status = 'active'`, order.ID).
+		Scan(&licenseID); err != nil {
+		t.Fatalf("load fulfilled trail license: %v", err)
+	}
+	firstBot := createCustomerCosmeticsTestBot(t, ctx, "trail-order-first")
+	secondBot := createCustomerCosmeticsTestBot(t, ctx, "trail-order-second")
+	for _, botID := range []string{firstBot.ID, secondBot.ID} {
+		if _, err := LinkBotToCustomerAccount(ctx, account.ID, botID); err != nil {
+			t.Fatalf("link trail bot %s: %v", botID, err)
+		}
+	}
+	if _, err := AssignCosmeticLicense(ctx, account.ID, licenseID, &firstBot.ID); err != nil {
+		t.Fatalf("assign trail copy to first bot: %v", err)
+	}
+	if _, err := EquipCustomerCosmeticLicense(ctx, account.ID, firstBot.ID, licenseID); err != nil {
+		t.Fatalf("equip trail copy on first bot: %v", err)
+	}
+	if _, err := AssignCosmeticLicense(ctx, account.ID, licenseID, &secondBot.ID); err != nil {
+		t.Fatalf("move exact trail copy to second bot: %v", err)
+	}
+	firstLoadout, err := GetEquippedCosmetics(ctx, firstBot.ID)
+	if err != nil || firstLoadout[CosmeticSlotTrail] != "standard" {
+		t.Fatalf("first bot trail after move = (%q, %v), want standard", firstLoadout[CosmeticSlotTrail], err)
+	}
+	if _, err := EquipCustomerCosmeticLicense(ctx, account.ID, secondBot.ID, licenseID); err != nil {
+		t.Fatalf("equip moved trail copy on second bot: %v", err)
+	}
+	secondLoadout, err := GetEquippedCosmetics(ctx, secondBot.ID)
+	if err != nil || secondLoadout[CosmeticSlotTrail] != "ember_sparks" {
+		t.Fatalf("second bot trail after move = (%q, %v), want ember_sparks", secondLoadout[CosmeticSlotTrail], err)
+	}
+	var assignments int
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM cosmetic_license_assignments WHERE license_id = $1`, licenseID).Scan(&assignments); err != nil || assignments != 1 {
+		t.Fatalf("trail exact-copy assignments = (%d, %v), want one", assignments, err)
 	}
 }
 
@@ -644,6 +736,25 @@ func TestPostgresCosmeticOrderRejectsInvalidQuantityAndUnavailablePack(t *testin
 	}
 	if _, err := Pool.Exec(ctx, `UPDATE cosmetic_packs SET price_cents = $1 WHERE id = 'neon-signal-pack'`, CosmeticPackPriceCents); err != nil {
 		t.Fatalf("restore launch price: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		INSERT INTO cosmetic_pack_items (pack_id, item_id, sort_order)
+		VALUES ('neon-signal-pack', 'trail-ember-sparks', 9990)`); err != nil {
+		t.Fatalf("simulate trail hidden in set: %v", err)
+	}
+	if _, err := CreateCosmeticOrder(ctx, account.ID, "neon-signal-pack", 1); !errors.Is(err, ErrCosmeticOrderPackUnavailable) {
+		t.Fatalf("trail hidden in non-trail order error = %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `DELETE FROM cosmetic_pack_items WHERE pack_id = 'neon-signal-pack' AND item_id = 'trail-ember-sparks'`); err != nil {
+		t.Fatalf("restore set membership: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		INSERT INTO cosmetic_pack_items (pack_id, item_id, sort_order)
+		VALUES ('trail-ember-sparks-pack', 'skin-neon-grid', 9990)`); err != nil {
+		t.Fatalf("simulate non-trail hidden in trail product: %v", err)
+	}
+	if _, err := CreateCosmeticOrder(ctx, account.ID, "trail-ember-sparks-pack", 1); !errors.Is(err, ErrCosmeticOrderPackUnavailable) {
+		t.Fatalf("non-trail hidden in trail order error = %v", err)
 	}
 	pack := cosmeticPackByID(DefaultCosmeticCatalogData().Packs, "neon-signal-pack")
 	pack.IsActive = false

@@ -313,7 +313,7 @@ func TestLinkAccountBotQuotaIsPerAccountAcrossSourceIPsAndRunsBeforeBcrypt(t *te
 func TestCosmeticsCatalogDisclosesCheckoutState(t *testing.T) {
 	store := &fakeCosmeticsStore{publicCatalog: &db.CosmeticCatalog{
 		Categories: []db.CosmeticCategory{{ID: "starter-packs", Name: "Starter Packs", IsActive: true}},
-		Items:      []db.CosmeticItem{{ID: "free", CategoryID: "starter-packs", IsFree: true, IsActive: true}},
+		Items:      []db.CosmeticItem{{ID: "free", CategoryID: "starter-packs", Slot: db.CosmeticSlotAttachment, IsFree: true, IsActive: true}},
 		Packs: []db.CosmeticPack{{
 			ID: "neon-pack", CategoryID: "starter-packs", PriceCents: db.CosmeticPackPriceCents, Currency: "USD",
 			IsPurchasable: true, IsActive: true, ItemIDs: []string{"free"},
@@ -376,6 +376,57 @@ func TestCosmeticsCatalogDisclosesCheckoutState(t *testing.T) {
 	}
 	if response.CheckoutEnabled {
 		t.Fatal("item-only sale flag enabled pack checkout without a purchasable pack")
+	}
+}
+
+func TestCosmeticsCatalogDisclosesNinetyNineCentTrailCheckout(t *testing.T) {
+	store := &fakeCosmeticsStore{publicCatalog: &db.CosmeticCatalog{
+		Categories: []db.CosmeticCategory{{ID: db.CosmeticTrailCategoryID, Name: "Trails", IsActive: true}},
+		Items: []db.CosmeticItem{{
+			ID: "trail-ember-sparks", CategoryID: db.CosmeticTrailCategoryID, Slot: db.CosmeticSlotTrail,
+			AssetKey: "ember_sparks", IsActive: true,
+		}},
+		Packs: []db.CosmeticPack{{
+			ID: "trail-ember-sparks-pack", CategoryID: db.CosmeticTrailCategoryID,
+			PriceCents: db.CosmeticTrailPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true,
+			ItemIDs: []string{"trail-ember-sparks"},
+		}},
+	}}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+	handler.checkoutEnabled = true
+	recorder := httptest.NewRecorder()
+	handler.Catalog(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/cosmetics/catalog", nil))
+	var response struct {
+		CheckoutEnabled bool `json:"checkout_enabled"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.CheckoutEnabled {
+		t.Fatal("catalog hid checkout for a valid one-item $0.99 trail product")
+	}
+
+	store.publicCatalog.Items[0].Slot = db.CosmeticSlotAttachment
+	malformed := httptest.NewRecorder()
+	handler.Catalog(malformed, httptest.NewRequest(http.MethodGet, "/api/v1/cosmetics/catalog", nil))
+	if err := json.Unmarshal(malformed.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.CheckoutEnabled {
+		t.Fatal("malformed Trails product advertised checkout for a non-trail item")
+	}
+	store.publicCatalog.Items[0].Slot = db.CosmeticSlotTrail
+	store.publicCatalog.Packs[0].CategoryID = "starter-packs"
+	store.publicCatalog.Categories = append(store.publicCatalog.Categories,
+		db.CosmeticCategory{ID: "starter-packs", Name: "Starter Packs", IsActive: true})
+	store.publicCatalog.Packs[0].PriceCents = db.CosmeticPackPriceCents
+	malformedSet := httptest.NewRecorder()
+	handler.Catalog(malformedSet, httptest.NewRequest(http.MethodGet, "/api/v1/cosmetics/catalog", nil))
+	if err := json.Unmarshal(malformedSet.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.CheckoutEnabled {
+		t.Fatal("non-trail product advertised checkout while containing a trail item")
 	}
 }
 

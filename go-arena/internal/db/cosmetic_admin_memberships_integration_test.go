@@ -31,8 +31,8 @@ func TestPostgresAdminMembershipCreatesOneLicensePerCurrentPurchasablePackItem(t
 	if err != nil {
 		t.Fatalf("CreateCosmeticAdminMembership: %v", err)
 	}
-	if membership == nil || membership.ID == "" || licensesCreated != 300 {
-		t.Fatalf("membership = %+v, licenses created = %d, want 300", membership, licensesCreated)
+	if membership == nil || membership.ID == "" || licensesCreated != launchSubscriptionCosmeticCount {
+		t.Fatalf("membership = %+v, licenses created = %d, want %d", membership, licensesCreated, launchSubscriptionCosmeticCount)
 	}
 
 	var mappings, distinctItems, activeLicenses int
@@ -45,9 +45,9 @@ func TestPostgresAdminMembershipCreatesOneLicensePerCurrentPurchasablePackItem(t
 		Scan(&mappings, &distinctItems, &activeLicenses); err != nil {
 		t.Fatalf("inspect membership licenses: %v", err)
 	}
-	if mappings != 300 || distinctItems != 300 || activeLicenses != 300 {
-		t.Fatalf("membership license counts = mappings:%d distinct:%d active:%d, want 300 each",
-			mappings, distinctItems, activeLicenses)
+	if mappings != launchSubscriptionCosmeticCount || distinctItems != launchSubscriptionCosmeticCount || activeLicenses != launchSubscriptionCosmeticCount {
+		t.Fatalf("membership license counts = mappings:%d distinct:%d active:%d, want %d each",
+			mappings, distinctItems, activeLicenses, launchSubscriptionCosmeticCount)
 	}
 	var email, note, actor, status string
 	var storedExpiry time.Time
@@ -105,8 +105,8 @@ func TestPostgresAdminMembershipSyncAddsFuturePackItemsExactlyOnce(t *testing.T)
 	var mappings int
 	if err := Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM cosmetic_admin_membership_licenses WHERE membership_id = $1`, membership.ID).
-		Scan(&mappings); err != nil || mappings != 301 {
-		t.Fatalf("membership mapping count = (%d, %v), want 301", mappings, err)
+		Scan(&mappings); err != nil || mappings != launchSubscriptionCosmeticCount+1 {
+		t.Fatalf("membership mapping count = (%d, %v), want %d", mappings, err, launchSubscriptionCosmeticCount+1)
 	}
 }
 
@@ -129,8 +129,8 @@ func TestPostgresAdminCosmeticAccessLookupByEmail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetCosmeticAdminAccessByEmail: %v", err)
 	}
-	if access == nil || access.Account.Email != account.Email || len(access.Memberships) != 1 || len(access.Licenses) != 301 {
-		t.Fatalf("admin access lookup = %+v, want normalized account, one membership, 301 licenses", access)
+	if access == nil || access.Account.Email != account.Email || len(access.Memberships) != 1 || len(access.Licenses) != launchSubscriptionCosmeticCount+1 {
+		t.Fatalf("admin access lookup = %+v, want normalized account, one membership, %d licenses", access, launchSubscriptionCosmeticCount+1)
 	}
 }
 
