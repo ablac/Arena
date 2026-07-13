@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,6 +19,7 @@ import (
 )
 
 type demoBotCredentialProvisioner func(context.Context, BotConfig) (string, error)
+type demoBotCosmeticProvisioner func(context.Context, string, BotConfig) ([]cosmeticSelection, error)
 
 // demoBot represents a single demo bot client that connects to the arena
 // server via REST + WebSocket, exactly like a real SDK bot.
@@ -29,9 +31,10 @@ type demoBot struct {
 	client                *http.Client
 	attackRange           int     // Chebyshev grid range from loadout_confirmed
 	maxHP                 float64 // max HP from loadout_confirmed
-	botID                 string  // bot ID from connected message
+	botID                 string  // bot ID from authenticated config, refreshed by connected messages
 	strategy              string  // stable configured archetype for comparable balance samples
 	credentialProvisioner demoBotCredentialProvisioner
+	cosmeticProvisioner   demoBotCosmeticProvisioner
 }
 
 // newDemoBot creates a demoBot from a config and server URL.
@@ -43,10 +46,39 @@ func newDemoBot(cfg BotConfig, serverURL string) *demoBot {
 		logger:                slog.With("demo_bot", cfg.Name),
 		strategy:              initialStrategy,
 		credentialProvisioner: provisionDemoBotCredential,
+		cosmeticProvisioner:   provisionDemoBotCosmetics,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
 	}
+}
+
+func provisionDemoBotCosmetics(ctx context.Context, botID string, cfg BotConfig) ([]cosmeticSelection, error) {
+	if cfg.CosmeticPackID == "" {
+		return nil, nil
+	}
+	if botID == "" {
+		return nil, errors.New("demo bot ID is unavailable")
+	}
+	catalog, err := db.GetPublicCosmeticCatalog(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load public cosmetic catalog: %w", err)
+	}
+	selections, err := cosmeticSelectionsForPack(*catalog, cfg.CosmeticPackID)
+	if err != nil {
+		return nil, err
+	}
+	for _, selection := range selections {
+		if _, err := db.GrantCosmeticEntitlement(ctx, botID, selection.CosmeticID, "demo", ""); err != nil {
+			return nil, fmt.Errorf("grant %s: %w", selection.CosmeticID, err)
+		}
+	}
+	for _, selection := range selections {
+		if _, err := db.EquipCosmetic(ctx, botID, selection.Slot, selection.CosmeticID); err != nil {
+			return nil, fmt.Errorf("equip %s: %w", selection.CosmeticID, err)
+		}
+	}
+	return selections, nil
 }
 
 func provisionDemoBotCredential(ctx context.Context, cfg BotConfig) (string, error) {
@@ -76,6 +108,7 @@ func provisionDemoBotCredential(ctx context.Context, cfg BotConfig) (string, err
 // register either reuses a persisted API key or generates a new one,
 // then configures the bot name and avatar.
 func (b *demoBot) register(ctx context.Context) error {
+	reused := false
 	// Try to load an existing key from the database.
 	if db.Pool != nil {
 		existing, err := db.GetDemoBotKey(ctx, b.config.Name)
@@ -84,38 +117,44 @@ func (b *demoBot) register(ctx context.Context) error {
 			b.apiKey = existing
 			if err := b.configure(ctx); err == nil {
 				b.logger.Info("reusing persisted key", "key_prefix", existing[:min(12, len(existing))]+"...")
-				return nil
+				reused = true
+			} else {
+				// Key is dead (revoked/invalid) — fall through to generate new one.
+				b.logger.Info("persisted key invalid, generating new one")
+				b.apiKey = ""
 			}
-			// Key is dead (revoked/invalid) — fall through to generate new one.
-			b.logger.Info("persisted key invalid, generating new one")
-			b.apiKey = ""
 		}
 	}
 
-	// Demo credentials are provisioned inside the trusted server process. They
-	// never need the retired public account-key registration endpoint.
-	apiKey, err := b.credentialProvisioner(ctx, b.config)
-	if err != nil {
-		return fmt.Errorf("provision demo credential: %w", err)
-	}
-	b.apiKey = apiKey
+	if !reused {
+		// Demo credentials are provisioned inside the trusted server process. They
+		// do not use the public self-service key-generation route.
+		apiKey, err := b.credentialProvisioner(ctx, b.config)
+		if err != nil {
+			return fmt.Errorf("provision demo credential: %w", err)
+		}
+		b.apiKey = apiKey
 
-	if len(b.apiKey) > 12 {
-		b.logger.Info("registered demo bot", "key_prefix", b.apiKey[:12]+"...")
-	} else {
-		b.logger.Info("registered demo bot")
-	}
+		if len(b.apiKey) > 12 {
+			b.logger.Info("registered demo bot", "key_prefix", b.apiKey[:12]+"...")
+		} else {
+			b.logger.Info("registered demo bot")
+		}
 
-	// Persist the key for next restart.
-	if db.Pool != nil {
-		if err := db.SaveDemoBotKey(ctx, b.config.Name, b.apiKey); err != nil {
-			b.logger.Warn("failed to persist demo bot key", "error", err)
+		// Persist the key for next restart.
+		if db.Pool != nil {
+			if err := db.SaveDemoBotKey(ctx, b.config.Name, b.apiKey); err != nil {
+				b.logger.Warn("failed to persist demo bot key", "error", err)
+			}
+		}
+
+		// Configure the bot name and avatar.
+		if err := b.configure(ctx); err != nil {
+			b.logger.Warn("failed to configure bot, continuing with defaults", "error", err)
 		}
 	}
-
-	// Configure the bot name and avatar.
-	if err := b.configure(ctx); err != nil {
-		b.logger.Warn("failed to configure bot, continuing with defaults", "error", err)
+	if err := b.configureCosmetics(ctx); err != nil {
+		b.logger.Warn("failed to configure cosmetics, continuing with standard visuals", "pack", b.config.CosmeticPackID, "error", err)
 	}
 
 	return nil
@@ -151,8 +190,33 @@ func (b *demoBot) configure(ctx context.Context) error {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("config failed: HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
+	var response struct {
+		BotID string `json:"bot_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return fmt.Errorf("decode config response: %w", err)
+	}
+	if response.BotID == "" {
+		return errors.New("config response did not include bot_id")
+	}
+	b.botID = response.BotID
 
 	b.logger.Info("configured bot", "name", b.config.Name, "color", b.config.Color)
+	return nil
+}
+
+func (b *demoBot) configureCosmetics(ctx context.Context) error {
+	if b.config.CosmeticPackID == "" {
+		return nil
+	}
+	selections, err := b.cosmeticProvisioner(ctx, b.botID, b.config)
+	if err != nil {
+		return err
+	}
+	if len(selections) != 3 {
+		return fmt.Errorf("cosmetic pack %q resolved to %d items", b.config.CosmeticPackID, len(selections))
+	}
+	b.logger.Info("equipped demo cosmetic pack", "pack", b.config.CosmeticPackID)
 	return nil
 }
 

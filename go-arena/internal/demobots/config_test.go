@@ -3,7 +3,14 @@ package demobots
 import (
 	"fmt"
 	"testing"
+
+	"arena-server/internal/db"
 )
+
+func configuredCosmeticSelections(cfg BotConfig) []cosmeticSelection {
+	selections, _ := cosmeticSelectionsForPack(db.DefaultCosmeticCatalogData(), cfg.CosmeticPackID)
+	return selections
+}
 
 func TestDemoConfigsHaveValidDiverseWeaponCohorts(t *testing.T) {
 	const statBudget = 20
@@ -63,6 +70,67 @@ func TestNewDemoBotPreservesDeclaredStrategy(t *testing.T) {
 		bot.applyConfiguredStrategy("round_start")
 		if bot.strategy != cfg.Strategy {
 			t.Errorf("%s strategy after round start = %q, want stable %q", cfg.Name, bot.strategy, cfg.Strategy)
+		}
+	}
+}
+
+func TestDemoConfigsCoverDistinctCompleteCosmeticPacks(t *testing.T) {
+	catalog := db.DefaultCosmeticCatalogData()
+	packs := make(map[string]db.CosmeticPack, len(catalog.Packs))
+	for _, pack := range catalog.Packs {
+		packs[pack.ID] = pack
+	}
+
+	seenPacks := make(map[string]string)
+	for _, cfg := range DemoConfigs {
+		if cfg.CosmeticPackID == "" {
+			t.Errorf("%s has no cosmetic pack", cfg.Name)
+			continue
+		}
+		if other, exists := seenPacks[cfg.CosmeticPackID]; exists {
+			t.Errorf("%s and %s share cosmetic pack %q", other, cfg.Name, cfg.CosmeticPackID)
+		}
+		seenPacks[cfg.CosmeticPackID] = cfg.Name
+
+		pack, exists := packs[cfg.CosmeticPackID]
+		if !exists {
+			t.Errorf("%s references missing cosmetic pack %q", cfg.Name, cfg.CosmeticPackID)
+			continue
+		}
+
+		selections := configuredCosmeticSelections(cfg)
+		if len(selections) != 3 {
+			t.Errorf("%s has %d cosmetic selections, want one per slot", cfg.Name, len(selections))
+			continue
+		}
+
+		seenSlots := make(map[string]bool)
+		for _, selection := range selections {
+			if seenSlots[selection.Slot] {
+				t.Errorf("%s repeats cosmetic slot %q", cfg.Name, selection.Slot)
+			}
+			seenSlots[selection.Slot] = true
+
+			var item *db.CosmeticItem
+			for index := range pack.Items {
+				if pack.Items[index].ID == selection.CosmeticID {
+					item = &pack.Items[index]
+					break
+				}
+			}
+			if item == nil {
+				t.Errorf("%s references missing cosmetic %q", cfg.Name, selection.CosmeticID)
+				continue
+			}
+			if item.Slot != selection.Slot {
+				t.Errorf("%s cosmetic %q uses slot %q, want %q", cfg.Name, item.ID, item.Slot, selection.Slot)
+			}
+		}
+	}
+
+	for _, legacyPackID := range []string{"neon-signal-pack", "void-orbit-pack"} {
+		if _, covered := seenPacks[legacyPackID]; !covered {
+			t.Errorf("demo bots do not cover legacy renderer pack %q", legacyPackID)
 		}
 	}
 }
