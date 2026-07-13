@@ -30,16 +30,42 @@ type CosmeticCheckoutRequest struct {
 	UnitAmount      int64
 	Currency        string
 	Quantity        int64
+	Presentation    CosmeticCheckoutPresentation
 }
 
-// CosmeticCheckoutSession contains only the hosted-checkout fields a handler
-// may safely return to the browser.
+// CosmeticCheckoutPresentation is provider-neutral. Stripe's current API
+// serializes the embedded value as "embedded_page", but the Arena HTTP
+// contract deliberately exposes the stable, provider-agnostic "embedded".
+type CosmeticCheckoutPresentation string
+
+const (
+	CosmeticCheckoutPresentationEmbedded CosmeticCheckoutPresentation = "embedded"
+	CosmeticCheckoutPresentationHosted   CosmeticCheckoutPresentation = "hosted"
+)
+
+func normalizeCosmeticCheckoutPresentation(value CosmeticCheckoutPresentation) (CosmeticCheckoutPresentation, bool) {
+	switch CosmeticCheckoutPresentation(strings.ToLower(strings.TrimSpace(string(value)))) {
+	case "", CosmeticCheckoutPresentationEmbedded:
+		return CosmeticCheckoutPresentationEmbedded, true
+	case CosmeticCheckoutPresentationHosted:
+		return CosmeticCheckoutPresentationHosted, true
+	default:
+		return "", false
+	}
+}
+
+// CosmeticCheckoutSession contains only the checkout fields a handler may
+// safely return to the browser. URL and ClientSecret are mutually exclusive.
 type CosmeticCheckoutSession struct {
 	ID             string
 	URL            string
+	ClientSecret   string
+	Presentation   CosmeticCheckoutPresentation
 	ExpiresAt      time.Time
 	Status         CosmeticCheckoutSessionStatus
 	Mode           string
+	OrderID        string
+	PackID         string
 	SubscriptionID string
 	AccountID      string
 }
@@ -60,6 +86,8 @@ type CosmeticSubscriptionCheckoutRequest struct {
 	SubscriptionID string
 	AccountID      string
 	CustomerEmail  string
+	CustomerID     string
+	Presentation   CosmeticCheckoutPresentation
 }
 
 type CosmeticSubscriptionProviderState struct {
@@ -130,6 +158,7 @@ type CosmeticPaymentEvent struct {
 // webhook HTTP handlers.
 type CosmeticPaymentProvider interface {
 	CreateCheckoutSession(context.Context, CosmeticCheckoutRequest) (*CosmeticCheckoutSession, error)
+	RetrieveCheckoutSession(context.Context, string) (*CosmeticCheckoutSession, error)
 	ParseWebhook(payload []byte, signatureHeader string) (*CosmeticPaymentEvent, error)
 }
 
@@ -161,18 +190,20 @@ type StripeCosmeticPaymentProvider struct {
 	webhookSecrets        []string
 	successURL            string
 	cancelURL             string
+	returnURL             string
 	portalReturnURL       string
 	automaticTax          bool
 }
 
 var _ CosmeticPaymentProvider = (*StripeCosmeticPaymentProvider)(nil)
 
-func NewStripeCosmeticPaymentProvider(secretKey string, webhookSecrets []string, successURL, cancelURL, portalReturnURL string, automaticTax bool) *StripeCosmeticPaymentProvider {
+func NewStripeCosmeticPaymentProvider(secretKey string, webhookSecrets []string, successURL, cancelURL, returnURL, portalReturnURL string, automaticTax bool) *StripeCosmeticPaymentProvider {
 	client := stripe.NewClient(strings.TrimSpace(secretKey))
 	provider := newStripeCosmeticPaymentProviderWithCreator(client.V1CheckoutSessions, webhookSecrets, successURL, cancelURL, automaticTax)
 	provider.checkoutRetriever = client.V1CheckoutSessions
 	provider.portalCreator = client.V1BillingPortalSessions
 	provider.subscriptionRetriever = client.V1Subscriptions
+	provider.returnURL = strings.TrimSpace(returnURL)
 	provider.portalReturnURL = strings.TrimSpace(portalReturnURL)
 	return provider
 }
@@ -189,6 +220,7 @@ func newStripeCosmeticPaymentProviderWithCreator(creator stripeCheckoutSessionCr
 		webhookSecrets:  secrets,
 		successURL:      strings.TrimSpace(successURL),
 		cancelURL:       strings.TrimSpace(cancelURL),
+		returnURL:       strings.TrimSpace(successURL),
 		portalReturnURL: strings.TrimSpace(successURL),
 		automaticTax:    automaticTax,
 	}
@@ -205,10 +237,11 @@ func (p *StripeCosmeticPaymentProvider) CreateCheckoutSession(ctx context.Contex
 	request.PackID = strings.TrimSpace(request.PackID)
 	request.PackName = strings.TrimSpace(request.PackName)
 	request.Currency = strings.ToLower(strings.TrimSpace(request.Currency))
+	presentation, validPresentation := normalizeCosmeticCheckoutPresentation(request.Presentation)
 	if p == nil || p.checkoutCreator == nil {
 		return nil, errors.New("cosmetic checkout provider is not configured")
 	}
-	if request.OrderID == "" || request.AccountID == "" || request.CustomerEmail == "" ||
+	if !validPresentation || request.OrderID == "" || request.AccountID == "" || request.CustomerEmail == "" ||
 		request.PackID == "" || request.PackName == "" || request.UnitAmount <= 0 ||
 		len(request.Currency) != 3 || request.Quantity <= 0 {
 		return nil, errors.New("invalid cosmetic checkout request")
@@ -226,8 +259,6 @@ func (p *StripeCosmeticPaymentProvider) CreateCheckoutSession(ctx context.Contex
 	}
 	params := &stripe.CheckoutSessionCreateParams{
 		Mode:              stripe.String(string(stripe.CheckoutSessionModePayment)),
-		SuccessURL:        stripe.String(p.successURL),
-		CancelURL:         stripe.String(p.cancelURL),
 		CustomerEmail:     stripe.String(request.CustomerEmail),
 		ClientReferenceID: stripe.String(request.OrderID),
 		AutomaticTax: &stripe.CheckoutSessionCreateAutomaticTaxParams{
@@ -251,6 +282,7 @@ func (p *StripeCosmeticPaymentProvider) CreateCheckoutSession(ctx context.Contex
 			},
 		}},
 	}
+	applyStripeCheckoutPresentation(params, presentation, p.successURL, p.cancelURL, p.returnURL)
 	params.SetIdempotencyKey("cosmetics_checkout_" + request.OrderID)
 
 	session, err := p.checkoutCreator.Create(ctx, params)
@@ -260,10 +292,50 @@ func (p *StripeCosmeticPaymentProvider) CreateCheckoutSession(ctx context.Contex
 	if session == nil {
 		return nil, errors.New("Stripe checkout returned no session")
 	}
-	result := &CosmeticCheckoutSession{ID: session.ID, URL: session.URL}
-	if session.ExpiresAt > 0 {
-		result.ExpiresAt = time.Unix(session.ExpiresAt, 0).UTC()
+	result := cosmeticCheckoutSessionFromStripe(session, presentation)
+	return result, nil
+}
+
+// RetrieveCheckoutSession resolves the existing one-time Checkout Session.
+// The UI mode is read from Stripe rather than accepted from the browser, so a
+// resumed Checkout cannot be silently replaced with a second session.
+func (p *StripeCosmeticPaymentProvider) RetrieveCheckoutSession(ctx context.Context, checkoutSessionID string) (*CosmeticCheckoutSession, error) {
+	checkoutSessionID = strings.TrimSpace(checkoutSessionID)
+	if p == nil || p.checkoutRetriever == nil || checkoutSessionID == "" {
+		return nil, errors.New("cosmetic Checkout retrieval is not configured")
 	}
+	session, err := p.checkoutRetriever.Retrieve(ctx, checkoutSessionID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("retrieve Stripe cosmetic checkout session: %w", err)
+	}
+	if session == nil || strings.TrimSpace(session.ID) == "" {
+		return nil, errors.New("Stripe cosmetic checkout retrieval returned no session")
+	}
+	status := CosmeticCheckoutSessionStatus(strings.ToLower(strings.TrimSpace(string(session.Status))))
+
+	var presentation CosmeticCheckoutPresentation
+	switch session.UIMode {
+	case stripe.CheckoutSessionUIModeEmbeddedPage:
+		presentation = CosmeticCheckoutPresentationEmbedded
+		if status == CosmeticCheckoutSessionStatusOpen &&
+			(strings.TrimSpace(session.ClientSecret) == "" || strings.TrimSpace(session.URL) != "") {
+			return nil, errors.New("Stripe embedded cosmetic checkout session has invalid browser fields")
+		}
+	case "", stripe.CheckoutSessionUIModeHostedPage:
+		presentation = CosmeticCheckoutPresentationHosted
+		if status == CosmeticCheckoutSessionStatusOpen &&
+			(strings.TrimSpace(session.URL) == "" || strings.TrimSpace(session.ClientSecret) != "") {
+			return nil, errors.New("Stripe hosted cosmetic checkout session has invalid browser fields")
+		}
+	default:
+		return nil, fmt.Errorf("unsupported Stripe cosmetic checkout UI mode %q", session.UIMode)
+	}
+
+	result := cosmeticCheckoutSessionFromStripe(session, presentation)
+	result.Status = status
+	result.Mode = strings.ToLower(strings.TrimSpace(string(session.Mode)))
+	result.OrderID, result.AccountID = cosmeticPaymentMetadata(session.Metadata)
+	result.PackID = strings.TrimSpace(session.Metadata["pack_id"])
 	return result, nil
 }
 
@@ -271,10 +343,12 @@ func (p *StripeCosmeticPaymentProvider) CreateSubscriptionCheckoutSession(ctx co
 	request.SubscriptionID = strings.TrimSpace(request.SubscriptionID)
 	request.AccountID = strings.TrimSpace(request.AccountID)
 	request.CustomerEmail = strings.TrimSpace(strings.ToLower(request.CustomerEmail))
+	request.CustomerID = strings.TrimSpace(request.CustomerID)
+	presentation, validPresentation := normalizeCosmeticCheckoutPresentation(request.Presentation)
 	if p == nil || p.checkoutCreator == nil {
 		return nil, errors.New("cosmetic subscription checkout provider is not configured")
 	}
-	if request.SubscriptionID == "" || request.AccountID == "" || request.CustomerEmail == "" {
+	if !validPresentation || request.SubscriptionID == "" || request.AccountID == "" || request.CustomerEmail == "" {
 		return nil, errors.New("invalid cosmetic subscription checkout request")
 	}
 	metadata := map[string]string{
@@ -284,9 +358,6 @@ func (p *StripeCosmeticPaymentProvider) CreateSubscriptionCheckoutSession(ctx co
 	}
 	params := &stripe.CheckoutSessionCreateParams{
 		Mode:              stripe.String(string(stripe.CheckoutSessionModeSubscription)),
-		SuccessURL:        stripe.String(p.successURL),
-		CancelURL:         stripe.String(p.cancelURL),
-		CustomerEmail:     stripe.String(request.CustomerEmail),
 		ClientReferenceID: stripe.String(request.SubscriptionID),
 		AutomaticTax: &stripe.CheckoutSessionCreateAutomaticTaxParams{
 			Enabled: stripe.Bool(p.automaticTax),
@@ -312,6 +383,12 @@ func (p *StripeCosmeticPaymentProvider) CreateSubscriptionCheckoutSession(ctx co
 			},
 		}},
 	}
+	if request.CustomerID != "" {
+		params.Customer = stripe.String(request.CustomerID)
+	} else {
+		params.CustomerEmail = stripe.String(request.CustomerEmail)
+	}
+	applyStripeCheckoutPresentation(params, presentation, p.successURL, p.cancelURL, p.returnURL)
 	params.SetIdempotencyKey("cosmetics_subscription_" + request.SubscriptionID)
 	session, err := p.checkoutCreator.Create(ctx, params)
 	if err != nil {
@@ -320,10 +397,7 @@ func (p *StripeCosmeticPaymentProvider) CreateSubscriptionCheckoutSession(ctx co
 	if session == nil {
 		return nil, errors.New("Stripe subscription checkout returned no session")
 	}
-	result := &CosmeticCheckoutSession{ID: session.ID, URL: session.URL}
-	if session.ExpiresAt > 0 {
-		result.ExpiresAt = time.Unix(session.ExpiresAt, 0).UTC()
-	}
+	result := cosmeticCheckoutSessionFromStripe(session, presentation)
 	return result, nil
 }
 
@@ -339,16 +413,47 @@ func (p *StripeCosmeticPaymentProvider) RetrieveSubscriptionCheckoutSession(ctx 
 	if session == nil || strings.TrimSpace(session.ID) == "" {
 		return nil, errors.New("Stripe subscription checkout retrieval returned no session")
 	}
-	result := &CosmeticCheckoutSession{
-		ID: strings.TrimSpace(session.ID), URL: strings.TrimSpace(session.URL),
-		Status: CosmeticCheckoutSessionStatus(strings.ToLower(strings.TrimSpace(string(session.Status)))),
-		Mode:   strings.ToLower(strings.TrimSpace(string(session.Mode))),
+	presentation := CosmeticCheckoutPresentationHosted
+	if string(session.UIMode) == string(stripe.CheckoutSessionUIModeEmbeddedPage) || strings.TrimSpace(session.ClientSecret) != "" {
+		presentation = CosmeticCheckoutPresentationEmbedded
 	}
+	result := cosmeticCheckoutSessionFromStripe(session, presentation)
+	result.Status = CosmeticCheckoutSessionStatus(strings.ToLower(strings.TrimSpace(string(session.Status))))
+	result.Mode = strings.ToLower(strings.TrimSpace(string(session.Mode)))
 	result.SubscriptionID, result.AccountID = cosmeticSubscriptionMetadata(session.Metadata)
+	return result, nil
+}
+
+func applyStripeCheckoutPresentation(params *stripe.CheckoutSessionCreateParams, presentation CosmeticCheckoutPresentation, successURL, cancelURL, returnURL string) {
+	if params == nil {
+		return
+	}
+	if presentation == CosmeticCheckoutPresentationHosted {
+		params.SuccessURL = stripe.String(successURL)
+		params.CancelURL = stripe.String(cancelURL)
+		return
+	}
+	params.UIMode = stripe.String(string(stripe.CheckoutSessionUIModeEmbeddedPage))
+	params.ReturnURL = stripe.String(returnURL)
+	params.RedirectOnCompletion = stripe.String(string(stripe.CheckoutSessionRedirectOnCompletionIfRequired))
+}
+
+func cosmeticCheckoutSessionFromStripe(session *stripe.CheckoutSession, presentation CosmeticCheckoutPresentation) *CosmeticCheckoutSession {
+	if session == nil {
+		return nil
+	}
+	result := &CosmeticCheckoutSession{
+		ID: strings.TrimSpace(session.ID), Presentation: presentation,
+	}
+	if presentation == CosmeticCheckoutPresentationEmbedded {
+		result.ClientSecret = strings.TrimSpace(session.ClientSecret)
+	} else {
+		result.URL = strings.TrimSpace(session.URL)
+	}
 	if session.ExpiresAt > 0 {
 		result.ExpiresAt = time.Unix(session.ExpiresAt, 0).UTC()
 	}
-	return result, nil
+	return result
 }
 
 func normalizeStripeSubscriptionStatus(status string) (string, bool) {

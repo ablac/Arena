@@ -131,13 +131,16 @@
   function normalizeSubscription(payload) {
     const source = payload && typeof payload === 'object' ? payload : {};
     const offer = normalizeSubscriptionOffer({...source, enabled: true});
+	const checkoutPresentation = cleanText(source.checkout_presentation).toLowerCase();
     return {
       id: cleanText(source.id),
       status: cleanText(source.status).toLowerCase() || 'unknown',
       has_access: source.has_access === true,
+	  terminal: source.terminal === true,
       cancel_at_period_end: source.cancel_at_period_end === true,
       current_period_end: cleanText(source.current_period_end),
       can_manage: source.can_manage === true,
+		checkout_presentation: ['embedded', 'hosted'].includes(checkoutPresentation) ? checkoutPresentation : '',
       price_cents: offer.price_cents,
       currency: offer.currency,
       interval: offer.interval,
@@ -222,6 +225,7 @@
       cosmetics: '/account/cosmetics',
       checkout: '/account/cosmetics/checkout',
       orders: '/account/cosmetics/orders',
+      orderCheckout: `/account/cosmetics/orders/${encoded}/checkout`,
       subscriptionCheckout: '/account/cosmetics/subscription/checkout',
       subscriptionPortal: '/account/cosmetics/subscription/portal',
       keys: '/account/keys',
@@ -514,6 +518,10 @@
     let feedback = '';
     if (checkoutState.status === 'success') {
       feedback = `<div class="tip" role="status"><b>Checkout returned.</b> Payment is still processing. New licenses appear only after Arena verifies Stripe's signed payment event.</div>`;
+    } else if (checkoutState.status === 'reconciling') {
+      feedback = `<div class="tip" role="status"><b>Checkout is reconciling.</b> ${escapeHTML(checkoutState.message || "Arena is confirming Stripe's signed payment event before changing your collection.")}</div>`;
+    } else if (checkoutState.status === 'paused') {
+      feedback = `<div class="tip" role="status"><b>Checkout saved.</b> ${escapeHTML(checkoutState.message || 'Resume the same Stripe session from Recent purchases when you are ready.')}</div>`;
     } else if (checkoutState.status === 'cancelled') {
       feedback = `<div class="tip" role="status"><b>Checkout cancelled.</b> Your collection was not changed.</div>`;
     } else if (checkoutState.status === 'error') {
@@ -608,7 +616,7 @@
     };
   }
 
-  function renderPurchaseOrder(rawOrder) {
+  function renderPurchaseOrder(rawOrder, busyOrderID) {
     const order = rawOrder && typeof rawOrder === 'object' ? rawOrder : {};
     const status = orderStatusMeta(order.status);
     const rawQuantity = Number(order.quantity);
@@ -616,6 +624,18 @@
     const rawFulfilled = Number(order.fulfilled_license_count);
     const fulfilled = Number.isFinite(rawFulfilled) && rawFulfilled >= 0 ? Math.floor(rawFulfilled) : 0;
     const orderID = cleanText(order.id) || 'Unknown order';
+	const checkoutSessionID = cleanText(order.checkout_session_id);
+	const checkoutPresentation = cleanText(order.checkout_presentation).toLowerCase();
+	const attachedSession = status.status === 'checkout_pending' && Boolean(checkoutSessionID);
+	const retryableReservation = ['created', 'payment_failed'].includes(status.status) && !checkoutSessionID &&
+		['embedded', 'hosted'].includes(checkoutPresentation);
+	const resumable = attachedSession || retryableReservation;
+    const resumeBusy = resumable && cleanText(busyOrderID) === orderID;
+	const actionLabel = retryableReservation ? 'Retry checkout' : 'Resume checkout';
+	const busyLabel = retryableReservation ? 'Retrying...' : 'Reopening...';
+	const actionCopy = retryableReservation
+		? 'Retries this same reserved Stripe checkout.'
+		: 'Reopens this same Stripe session.';
     const packName = cleanText(order.pack_name || order.pack_id) || 'Unknown pack';
     const created = orderCreatedTime(order.created_at);
     const createdHTML = created.iso
@@ -632,6 +652,7 @@
         <span>Received <strong>${escapeHTML(formatOrderUSD(order.amount_received_cents))}</strong></span>
         <span>Refunded <strong>${escapeHTML(formatOrderUSD(order.amount_refunded_cents))}</strong></span>
       </div>
+      ${resumable ? `<div class="cosmetic-purchase-actions"><button type="button" class="sm" data-order-resume="${escapeHTML(orderID)}"${resumeBusy ? ' disabled' : ''}>${resumeBusy ? busyLabel : actionLabel}</button><span>${actionCopy}</span></div>` : ''}
     </article>`;
   }
 
@@ -644,7 +665,7 @@
     } else if (!view.orders.length) {
       body = '<div class="cosmetic-empty cosmetic-empty-inventory">No purchases yet.</div>';
     } else {
-      body = `<div class="cosmetic-purchase-list">${view.orders.slice(0, 20).map(renderPurchaseOrder).join('')}</div>`;
+      body = `<div class="cosmetic-purchase-list">${view.orders.slice(0, 20).map(order => renderPurchaseOrder(order, view.busyOrderID)).join('')}</div>`;
     }
     return `<section class="cosmetic-purchases" aria-labelledby="cosmetic-purchases-title">
       <div class="cosmetic-inventory-head">

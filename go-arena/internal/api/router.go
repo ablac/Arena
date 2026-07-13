@@ -167,6 +167,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		api.Get("/content", PublicContentBlocks)
 		api.Get("/service-status", serviceStatus.publicStatus)
 		api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
+		api.Get("/cosmetics/checkout/config", commerceHandler.CheckoutConfig)
 		api.Post("/cosmetics/webhooks/stripe", commerceHandler.StripeWebhook)
 		if customerOIDCHandler != nil {
 			if customerOIDCHandler.oauth2Config != nil {
@@ -274,6 +275,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			api.Get("/content", PublicContentBlocks)
 			api.Get("/service-status", serviceStatus.publicStatus)
 			api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
+			api.Get("/cosmetics/checkout/config", commerceHandler.CheckoutConfig)
 			api.Post("/cosmetics/webhooks/stripe", commerceHandler.StripeWebhook)
 			if customerOIDCHandler != nil {
 				if customerOIDCHandler.oauth2Config != nil {
@@ -373,6 +375,7 @@ func registerCustomerCosmeticCommerceRoutes(account chi.Router, handler *Cosmeti
 	account.Get("/cosmetics/orders", handler.CustomerOrders)
 	checkoutQuota := security.FailClosedRateLimitMiddleware(config.C.CosmeticsCheckoutRPM)
 	account.With(checkoutQuota).Post("/cosmetics/checkout", handler.Checkout)
+	account.With(checkoutQuota).Post("/cosmetics/orders/{order_id}/checkout", handler.ResumeCheckout)
 	account.With(checkoutQuota).Post("/cosmetics/subscription/checkout", handler.SubscriptionCheckout)
 	account.With(checkoutQuota).Post("/cosmetics/subscription/portal", handler.SubscriptionPortal)
 }

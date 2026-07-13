@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bot Dashboard - AI Battle Arena</title>
+<link rel="stylesheet" href="../css/embedded-checkout.css?v=20260713a">
+<script src="../js/embedded-checkout.js?v=20260713a"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--border:#30363d;--text:#c9d1d9;--text2:#8b949e;--accent:#58a6ff;--green:#3fb950;--red:#f85149;--orange:#d29922;--purple:#bc8cff;--cyan:#39d353;--gold:#f0c040}
@@ -612,6 +614,7 @@ button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.5;tra
 .cosmetic-purchase-facts,.cosmetic-purchase-money{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px;color:#91a6bd;font:500 9px/1.4 'IBM Plex Mono',monospace}
 .cosmetic-purchase-facts span,.cosmetic-purchase-facts time,.cosmetic-purchase-money span{padding:5px 7px;border:1px solid rgba(126,166,207,.1);border-radius:9px;background:rgba(255,255,255,.02)}
 .cosmetic-purchase-money strong{color:#ecf4ff}
+.cosmetic-purchase-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;color:#91a6bd;font:500 9px/1.4 'IBM Plex Mono',monospace}
 :is(.tbtn,.cosmetic-shop-buy,.cosmetic-shop-search input,.all-access-plan button,.account-key-manager button,.account-key-manager input):focus-visible{outline:2px solid #7ee4ff;outline-offset:3px}
 @media (max-width:760px){.login-shell{grid-template-columns:1fr}.all-access-plan{grid-template-columns:minmax(0,1fr)}.all-access-offer{justify-items:start;min-width:0;text-align:left}.account-key-form,.account-generated-key-field,.account-key-row{grid-template-columns:minmax(0,1fr)}.account-key-meta{justify-content:flex-start}.account-key-row button{justify-self:start}.cosmetic-layout{grid-template-columns:minmax(0,1fr)}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.linked-bot-list li{align-items:flex-start;flex-wrap:wrap}.linked-bot-actions{flex-wrap:wrap}.cosmetic-license-grid{grid-template-columns:minmax(0,1fr)}.cosmetic-license-actions select{flex-basis:100%;min-width:0;width:100%}.cosmetic-shop-pack{grid-template-columns:68px minmax(0,1fr)}.cosmetic-shop-swatch{width:68px}.cosmetic-shop-offer{grid-column:1/-1;grid-template-columns:1fr auto;align-items:center;justify-items:start;width:100%}.cosmetic-shop-offer .cosmetic-shop-buy{justify-self:end}}
 @media (pointer:coarse){.cosmetic-shop button,.all-access-plan button,.account-key-manager button,.tbtn{min-height:44px}.cosmetic-shop-search input,.account-key-manager input{font-size:16px}}
@@ -788,7 +791,7 @@ if (window.self !== window.top) {
 </div>
 
 <script src="../js/cosmetic-themes.js?v=20260713b"></script>
-<script src="./account-cosmetics.js?v=20260713b"></script>
+<script src="./account-cosmetics.js?v=20260713d"></script>
 <script>
 const WEAPON_META = {
   sword:{name:'Sword',badge:'SWD',role:'Balanced frontline weapon.',desc:'Reliable melee with cleave pressure when fights stack up.',build:'hp:5 speed:5 attack:5 defense:5',strongVs:'Daggers, shield',counter:'Bow, staff'},
@@ -934,6 +937,7 @@ let accountBusyKeyID = '';
 let accountGeneratedKey = null;
 let accountSubscriptionState = {status:'idle',message:''};
 let accountBusyLicenseID = '';
+let accountBusyOrderID = '';
 let accountViewError = '';
 let accountViewNotice = '';
 let accountRefreshSequence = 0;
@@ -943,9 +947,11 @@ let accountShopQuery = DASHBOARD_PARAMS.get('pack') || '';
 const checkoutReturn = String(DASHBOARD_PARAMS.get('checkout') || DASHBOARD_PARAMS.get('checkout_status') || '').toLowerCase();
 let accountCheckoutState = checkoutReturn === 'success'
   ? {status:'success',packID:'',message:''}
-  : ['cancel','cancelled','canceled'].includes(checkoutReturn)
-    ? {status:'cancelled',packID:'',message:''}
-    : {status:'idle',packID:'',message:''};
+  : checkoutReturn === 'return'
+    ? {status:'reconciling',packID:'',message:"Arena is confirming Stripe's signed payment event before changing your collection."}
+    : ['cancel','cancelled','canceled'].includes(checkoutReturn)
+      ? {status:'cancelled',packID:'',message:''}
+      : {status:'idle',packID:'',message:''};
 const DASHBOARD_VIEW = DASHBOARD_PARAMS.get('view') === 'public' ? 'public' : 'private';
 function dashboardAPIBase(pathname, paths) {
   if (paths && typeof paths.apiBase === 'function') {
@@ -1214,6 +1220,7 @@ function renderAccountCosmetics() {
     catalogError: accountCatalogError,
     shopQuery: accountShopQuery,
     checkoutState: accountCheckoutState,
+    busyOrderID: accountBusyOrderID,
     orders: accountOrders,
     ordersError: accountOrdersError,
     keys: accountKeys,
@@ -1369,24 +1376,260 @@ function clearGeneratedAccountKey() {
   renderAccountCosmetics();
 }
 
+let accountCheckoutOperationGeneration = 0;
+let accountCheckoutRequestController = null;
+let accountCheckoutActiveOperation = null;
+let accountCheckoutReconciliationGeneration = 0;
+let accountCheckoutReconcileTarget = {kind:'',id:'',sessionID:''};
+
+function cancelAccountCheckoutReconciliation() {
+  accountCheckoutReconciliationGeneration += 1;
+}
+
+function beginAccountCheckoutOperation() {
+	cancelAccountCheckoutReconciliation();
+	accountCheckoutReconcileTarget = {kind:'',id:'',sessionID:''};
+	const previousOperation = accountCheckoutActiveOperation;
+	if (previousOperation?.embeddedReservation && window.ArenaEmbeddedCheckout?.abort) {
+	  window.ArenaEmbeddedCheckout.abort('Checkout replaced by a newer request.', previousOperation.embeddedReservation);
+	}
+  accountCheckoutOperationGeneration += 1;
+  const previous = accountCheckoutRequestController;
+  accountCheckoutRequestController = new AbortController();
+	if (previous && !previous.signal.aborted) previous.abort();
+  if (accountCheckoutState.status === 'pending') accountCheckoutState = {status:'idle',packID:'',message:''};
+  if (accountSubscriptionState.status === 'pending') accountSubscriptionState = {status:'idle',message:''};
+  accountBusyOrderID = '';
+	const operation = {generation:accountCheckoutOperationGeneration,controller:accountCheckoutRequestController,embeddedReservation:null};
+	accountCheckoutActiveOperation = operation;
+	return operation;
+}
+
+function invalidateAccountCheckoutOperation() {
+  accountCheckoutOperationGeneration += 1;
+  const controller = accountCheckoutRequestController;
+  accountCheckoutRequestController = null;
+	accountCheckoutActiveOperation = null;
+  if (controller && !controller.signal.aborted) controller.abort();
+}
+
+function accountCheckoutOperationCurrent(operation) {
+  return Boolean(operation && operation.generation === accountCheckoutOperationGeneration &&
+    operation.controller === accountCheckoutRequestController && !operation.controller.signal.aborted);
+}
+
+function requireCurrentAccountCheckoutOperation(operation) {
+  if (accountCheckoutOperationCurrent(operation)) return;
+  const error = new Error('A newer checkout action replaced this request.');
+  error.name = 'AbortError';
+  throw error;
+}
+
+function finishAccountCheckoutOperation(operation) {
+  if (accountCheckoutOperationCurrent(operation)) accountCheckoutRequestController = null;
+}
+
+function persistedAccountCheckoutPresentation(value) {
+  const presentation = String(value || '').trim().toLowerCase();
+  return ['embedded','hosted'].includes(presentation) ? presentation : '';
+}
+
+function embeddedCheckoutAbortMatchesActiveOperation(event) {
+	const requestID = String(event?.detail?.request_id || '').trim();
+	const activeRequestID = String(accountCheckoutActiveOperation?.embeddedReservation?.request_id || '').trim();
+	return !requestID || requestID === activeRequestID;
+}
+
+function embeddedCheckoutCompletionMatchesActiveOperation(event) {
+	const requestID = String(event?.detail?.request_id || '').trim();
+	const sessionID = String(event?.detail?.session_id || '').trim();
+	const activeRequestID = String(accountCheckoutActiveOperation?.embeddedReservation?.request_id || '').trim();
+	if (requestID && requestID !== activeRequestID) return false;
+	if (sessionID && accountCheckoutReconcileTarget.sessionID && sessionID !== accountCheckoutReconcileTarget.sessionID) return false;
+	return true;
+}
+
+function completedAccountCheckoutSettled(target) {
+	if (!target || !target.kind || !target.id) return false;
+	if (target.kind === 'order') {
+	  const order = Array.isArray(accountOrders)
+		? accountOrders.find(entry => String(entry?.id || '').trim() === target.id)
+		: null;
+	  if (!order) return false;
+	  const status = String(order.status || '').trim().toLowerCase();
+	  const fulfilled = Number(order.fulfilled_license_count || 0);
+	  return (Number.isFinite(fulfilled) && fulfilled > 0) ||
+		['expired','payment_failed','refunded','disputed'].includes(status);
+	}
+	if (target.kind === 'subscription') {
+	  const subscription = accountSnapshot?.subscription;
+	  if (!subscription || String(subscription.id || '').trim() !== target.id) return false;
+	  const status = String(subscription.status || '').trim().toLowerCase();
+	  return subscription.has_access === true || subscription.terminal === true ||
+		['active','trialing','canceled','expired','billing_mismatch'].includes(status);
+	}
+	return false;
+}
+
+async function reconcileCompletedAccountCheckout(target, delays=[0,400,900,1800,3200]) {
+	const generation = ++accountCheckoutReconciliationGeneration;
+	for (const rawDelay of delays) {
+	  if (generation !== accountCheckoutReconciliationGeneration || document.visibilityState === 'hidden') return false;
+	  const delay = Math.max(0, Number(rawDelay) || 0);
+	  if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+	  if (generation !== accountCheckoutReconciliationGeneration || document.visibilityState === 'hidden') return false;
+	  await refreshAccountCosmetics('Stripe accepted the checkout. Arena is confirming the signed payment event before granting access.');
+	  if (generation !== accountCheckoutReconciliationGeneration || document.visibilityState === 'hidden') return false;
+	  if (completedAccountCheckoutSettled(target)) return true;
+	}
+	return false;
+}
+
+async function prepareAccountCheckoutPresentation(operation) {
+  const controller = window.ArenaEmbeddedCheckout;
+  if (controller && typeof controller.prepare === 'function') {
+    try {
+	  const reservation = await controller.prepare();
+	  if (operation) {
+		requireCurrentAccountCheckoutOperation(operation);
+		operation.embeddedReservation = reservation;
+	  }
+      return 'embedded';
+    } catch (error) {
+	  if (operation && !accountCheckoutOperationCurrent(operation)) throw error;
+      const useHosted = window.confirm(
+        'The on-site payment window could not load. Open Stripe\'s secure hosted checkout instead?'
+      );
+      if (useHosted) return 'hosted';
+      throw error;
+    }
+  }
+  const useHosted = window.confirm(
+    'This browser cannot open the on-site payment window. Open Stripe\'s secure hosted checkout instead?'
+  );
+  if (useHosted) return 'hosted';
+  throw new Error('Secure checkout is unavailable in this browser.');
+}
+
+async function presentAccountCheckout(data, preparedPresentation='', operation=null) {
+  if (operation) requireCurrentAccountCheckoutOperation(operation);
+  const presentation = String(data?.presentation || '').trim();
+  if (presentation === 'embedded') {
+    const sessionID = String(data?.session_id || '').trim();
+    const clientSecret = String(data?.client_secret || '').trim();
+    if (!sessionID || !clientSecret || String(data?.checkout_url || '').trim()) {
+      throw new Error('The checkout service did not return a valid embedded session.');
+    }
+    if (!window.ArenaEmbeddedCheckout || typeof window.ArenaEmbeddedCheckout.mount !== 'function') {
+      throw new Error('The on-site payment window is unavailable.');
+    }
+    if (preparedPresentation !== 'embedded') {
+      if (typeof window.ArenaEmbeddedCheckout.prepare !== 'function') {
+        throw new Error('This on-site checkout session cannot be reopened in this browser.');
+      }
+	  const reservation = await window.ArenaEmbeddedCheckout.prepare();
+	  if (operation) operation.embeddedReservation = reservation;
+      if (operation) requireCurrentAccountCheckoutOperation(operation);
+    }
+    if (operation) requireCurrentAccountCheckoutOperation(operation);
+	const orderID = String(data?.order_id || '').trim();
+	const subscriptionID = String(data?.subscription_id || '').trim();
+	accountCheckoutReconcileTarget = orderID
+	  ? {kind:'order',id:orderID,sessionID}
+	  : (subscriptionID ? {kind:'subscription',id:subscriptionID,sessionID} : {kind:'',id:'',sessionID});
+	await window.ArenaEmbeddedCheckout.mount(data, operation?.embeddedReservation);
+    if (operation) requireCurrentAccountCheckoutOperation(operation);
+    return;
+  }
+  if (presentation !== 'hosted' || String(data?.client_secret || '').trim()) {
+    throw new Error('The checkout service returned an invalid hosted session.');
+  }
+  const rawCheckoutURL = String(data?.checkout_url || '').trim();
+  if (!rawCheckoutURL) throw new Error('The checkout service did not return a hosted redirect.');
+  const checkoutURL = new URL(rawCheckoutURL, window.location.href);
+  if (!['http:','https:'].includes(checkoutURL.protocol)) throw new Error('The checkout service returned an unsafe redirect.');
+  if (operation) requireCurrentAccountCheckoutOperation(operation);
+  if (preparedPresentation === 'embedded') {
+	abortPreparedAccountCheckout('Continuing in Stripe secure checkout.', operation);
+  }
+  navigateAccount(checkoutURL.href);
+}
+
+function abortPreparedAccountCheckout(message, operation=null) {
+  const controller = window.ArenaEmbeddedCheckout;
+	if (controller && typeof controller.abort === 'function') {
+	  controller.abort(message || 'Secure checkout could not continue.', operation?.embeddedReservation);
+	}
+}
+
+async function reconcileClosedAccountCheckout(data, packID, operation) {
+  if (data?.resumable !== false) return false;
+  requireCurrentAccountCheckoutOperation(operation);
+  const status = String(data?.checkout_status || '').trim().toLowerCase();
+  const message = status === 'expired'
+    ? 'That Stripe session expired. Arena is reconciling the signed expiry event before you try again.'
+    : 'Stripe reports that checkout finished. Arena is confirming the signed payment event before changing your collection.';
+  accountCheckoutState = {status:'reconciling',packID,message};
+  renderAccountCosmetics();
+  await refreshAccountCosmetics(message);
+  requireCurrentAccountCheckoutOperation(operation);
+  return true;
+}
+
 async function openAccountSubscription() {
   const offer = accountSnapshot?.subscription_offer?.enabled
     ? accountSnapshot.subscription_offer
     : accountCatalog?.subscription_offer;
   const intent = window.ArenaAccountCosmetics.subscriptionIntent(offer, accountSnapshot?.subscription);
   if (!intent.ok || accountSubscriptionState.status === 'pending') return;
+  const operation = beginAccountCheckoutOperation();
   accountSubscriptionState = {status:'pending',message:''};
   renderAccountCosmetics();
+  let presentation = '';
   try {
-    const data = await accountRequest(intent.path, {method:'POST'});
-    const rawURL = String((intent.kind === 'portal' ? data?.portal_url : data?.checkout_url) || '').trim();
-    if (!rawURL) throw new Error(`The subscription ${intent.kind} service did not return a redirect.`);
-    const destination = new URL(rawURL, window.location.href);
-    if (!['http:','https:'].includes(destination.protocol)) throw new Error('The subscription service returned an unsafe redirect.');
-    window.location.assign(destination.href);
+    if (intent.kind === 'portal') {
+      const data = await accountRequest(intent.path, {method:'POST',signal:operation.controller.signal});
+      requireCurrentAccountCheckoutOperation(operation);
+      const rawURL = String(data?.portal_url || '').trim();
+      if (!rawURL) throw new Error('The subscription portal did not return a redirect.');
+      const destination = new URL(rawURL, window.location.href);
+      if (!['http:','https:'].includes(destination.protocol)) throw new Error('The subscription service returned an unsafe redirect.');
+      requireCurrentAccountCheckoutOperation(operation);
+      navigateAccount(destination.href);
+      return;
+    }
+    const subscription = accountSnapshot?.subscription;
+    const subscriptionStatus = String(subscription?.status || '').trim().toLowerCase();
+    const persistedPresentation = ['created','checkout_pending'].includes(subscriptionStatus)
+      ? persistedAccountCheckoutPresentation(subscription?.checkout_presentation)
+      : '';
+    if (persistedPresentation === 'embedded') {
+      if (!window.ArenaEmbeddedCheckout || typeof window.ArenaEmbeddedCheckout.prepare !== 'function') {
+        throw new Error('This on-site subscription checkout cannot be reopened in this browser.');
+      }
+	  operation.embeddedReservation = await window.ArenaEmbeddedCheckout.prepare();
+      requireCurrentAccountCheckoutOperation(operation);
+      presentation = 'embedded';
+    } else if (persistedPresentation === 'hosted') {
+      presentation = 'hosted';
+    } else {
+	  presentation = await prepareAccountCheckoutPresentation(operation);
+      requireCurrentAccountCheckoutOperation(operation);
+    }
+    const data = await accountRequest(intent.path, {
+      method:'POST',body:JSON.stringify({presentation}),signal:operation.controller.signal,
+    });
+    requireCurrentAccountCheckoutOperation(operation);
+    await presentAccountCheckout(data, presentation, operation);
+    requireCurrentAccountCheckoutOperation(operation);
   } catch (error) {
+    if (!accountCheckoutOperationCurrent(operation)) return;
+	if (presentation === 'embedded') abortPreparedAccountCheckout(error?.message, operation);
     accountSubscriptionState = {status:'error',message:error?.message || 'Try again in a moment.'};
     renderAccountCosmetics();
+    void refreshAccountCosmetics();
+  } finally {
+    finishAccountCheckoutOperation(operation);
   }
 }
 
@@ -1436,21 +1679,81 @@ async function startCosmeticCheckout(packID) {
     return;
   }
   if (accountCheckoutState.status === 'pending') return;
+  const operation = beginAccountCheckoutOperation();
   accountCheckoutState = {status:'pending',packID,message:''};
   renderAccountCosmetics();
+  let presentation = '';
   try {
+	presentation = await prepareAccountCheckoutPresentation(operation);
+    requireCurrentAccountCheckoutOperation(operation);
     const data = await accountRequest(intent.path, {
       method:'POST',
-      body:JSON.stringify(intent.body),
+      body:JSON.stringify({...intent.body,presentation}),
+	  signal:operation.controller.signal,
     });
-    const rawCheckoutURL = String(data?.checkout_url || '').trim();
-    if (!rawCheckoutURL) throw new Error('The checkout service did not return a redirect.');
-    const checkoutURL = new URL(rawCheckoutURL, window.location.href);
-    if (!['http:','https:'].includes(checkoutURL.protocol)) throw new Error('The checkout service returned an unsafe redirect.');
-    window.location.assign(checkoutURL.href);
+    requireCurrentAccountCheckoutOperation(operation);
+    if (await reconcileClosedAccountCheckout(data, packID, operation)) return;
+    requireCurrentAccountCheckoutOperation(operation);
+    await presentAccountCheckout(data, presentation, operation);
+    requireCurrentAccountCheckoutOperation(operation);
   } catch (error) {
+    if (!accountCheckoutOperationCurrent(operation)) return;
+	if (presentation === 'embedded') abortPreparedAccountCheckout(error?.message, operation);
     accountCheckoutState = {status:'error',packID,message:error.message || 'Try again in a moment.'};
     renderAccountCosmetics();
+	void refreshAccountCosmetics();
+  } finally {
+	finishAccountCheckoutOperation(operation);
+  }
+}
+
+async function resumeCosmeticCheckout(orderID) {
+  orderID = String(orderID || '').trim();
+  if (!orderID || accountBusyOrderID) return;
+  const order = Array.isArray(accountOrders) ? accountOrders.find(entry => String(entry?.id || '').trim() === orderID) : null;
+	if (!order) return;
+	const status = String(order.status || '').trim().toLowerCase();
+	const checkoutSessionID = String(order.checkout_session_id || '').trim();
+	const storedPresentation = persistedAccountCheckoutPresentation(order.checkout_presentation);
+	const attachedSession = status === 'checkout_pending' && Boolean(checkoutSessionID);
+	const retryableReservation = ['created','payment_failed'].includes(status) && !checkoutSessionID && Boolean(storedPresentation);
+	if (!attachedSession && !retryableReservation) return;
+  const packID = String(order.pack_id || '').trim();
+	const operation = beginAccountCheckoutOperation();
+  accountBusyOrderID = orderID;
+  accountCheckoutState = {status:'pending',packID,message:''};
+  renderAccountCosmetics();
+  let embeddedPrepared = false;
+  try {
+	const data = await accountRequest(window.ArenaAccountCosmetics.accountRoute('orderCheckout', orderID), {
+	  method:'POST',signal:operation.controller.signal,
+	});
+	requireCurrentAccountCheckoutOperation(operation);
+	if (await reconcileClosedAccountCheckout(data, packID, operation)) return;
+	requireCurrentAccountCheckoutOperation(operation);
+    const presentation = String(data?.presentation || '').trim();
+    if (presentation === 'embedded') {
+      const controller = window.ArenaEmbeddedCheckout;
+      if (!controller || typeof controller.prepare !== 'function') {
+        throw new Error('This on-site checkout session cannot be reopened in this browser.');
+      }
+	  operation.embeddedReservation = await controller.prepare();
+	  requireCurrentAccountCheckoutOperation(operation);
+      embeddedPrepared = true;
+    }
+	await presentAccountCheckout(data, embeddedPrepared ? 'embedded' : '', operation);
+	requireCurrentAccountCheckoutOperation(operation);
+  } catch (error) {
+	if (!accountCheckoutOperationCurrent(operation)) return;
+	if (embeddedPrepared) abortPreparedAccountCheckout(error?.message, operation);
+    accountCheckoutState = {status:'error',packID,message:error?.message || 'Could not resume that checkout.'};
+  } finally {
+	const current = accountCheckoutOperationCurrent(operation);
+	finishAccountCheckoutOperation(operation);
+	if (current && accountBusyOrderID === orderID) {
+	  accountBusyOrderID = '';
+	  renderAccountCosmetics();
+	}
   }
 }
 
@@ -1585,6 +1888,11 @@ function handleAccountPanelClick(event) {
     startCosmeticCheckout(checkoutButton.dataset.packCheckout);
     return;
   }
+  const resumeOrderButton = event.target.closest('[data-order-resume]');
+  if (resumeOrderButton) {
+    resumeCosmeticCheckout(resumeOrderButton.dataset.orderResume);
+    return;
+  }
   const retryButton = event.target.closest('[data-account-retry]');
   if (retryButton) {
     accountViewError = '';
@@ -1634,6 +1942,43 @@ function handleAccountPanelChange(event) {
   if (button) button.disabled = !select.value || accountBusyLicenseID === card.dataset.licenseId;
 }
 
+async function handleEmbeddedCheckoutComplete(event) {
+	if (!embeddedCheckoutCompletionMatchesActiveOperation(event)) return;
+	invalidateAccountCheckoutOperation();
+	const sessionID = String(event?.detail?.session_id || '').trim();
+	const target = sessionID && accountCheckoutReconcileTarget.sessionID === sessionID
+	  ? {...accountCheckoutReconcileTarget}
+	  : {kind:'',id:'',sessionID};
+  accountCheckoutState = {status:'success',packID:'',message:''};
+  accountSubscriptionState = {status:'idle',message:''};
+  renderAccountCosmetics();
+	if (target.kind) await reconcileCompletedAccountCheckout(target);
+	else await refreshAccountCosmetics('Stripe accepted the checkout. Arena is confirming the signed payment event before granting access.');
+}
+
+async function handleEmbeddedCheckoutAbort(event) {
+	if (!embeddedCheckoutAbortMatchesActiveOperation(event)) return;
+	invalidateAccountCheckoutOperation();
+	cancelAccountCheckoutReconciliation();
+  const sessionID = String(event?.detail?.session_id || '').trim();
+  if (accountSubscriptionState.status === 'pending') {
+    accountSubscriptionState = {status:'idle',message:''};
+    accountViewNotice = sessionID
+      ? 'Subscription checkout closed. Reopen All Access when you are ready; Stripe will reuse the pending session.'
+      : '';
+  } else {
+    accountCheckoutState = sessionID
+      ? {
+          status:'paused',
+          packID:accountCheckoutState.packID || '',
+          message:'Resume the same Stripe session from Recent purchases when you are ready.',
+        }
+      : {status:'idle',packID:'',message:''};
+  }
+  renderAccountCosmetics();
+  if (sessionID) await refreshAccountCosmetics(accountViewNotice || 'Checkout saved. Resume the same Stripe session from Recent purchases when you are ready.');
+}
+
 function bindAccountCosmeticsUI() {
   document.getElementById('accountEmailForm').addEventListener('submit', startCustomerEmailAuth);
   document.getElementById('accountEmailConfirmButton').addEventListener('click', confirmCustomerEmailToken);
@@ -1644,6 +1989,11 @@ function bindAccountCosmeticsUI() {
   panel.addEventListener('click', handleAccountPanelClick);
   panel.addEventListener('change', handleAccountPanelChange);
   panel.addEventListener('input', handleAccountPanelInput);
+  window.addEventListener('arena:stripe-checkout:complete', handleEmbeddedCheckoutComplete);
+  window.addEventListener('arena:stripe-checkout:abort', handleEmbeddedCheckoutAbort);
+	document.addEventListener('visibilitychange', () => {
+	  if (document.visibilityState === 'hidden') cancelAccountCheckoutReconciliation();
+	});
 }
 
 async function initializeAccountMode() {

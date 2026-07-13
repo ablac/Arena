@@ -5,7 +5,7 @@
  * @module renderer/bot-body
  */
 
-import {createForgeCharacter, disposeForgeCharacter} from './character-rig.js?v=20260713b';
+import {createForgeCharacter, disposeForgeCharacter} from './character-rig.js?v=20260713c';
 
 const SHADOW_RADIUS = 6.5;
 

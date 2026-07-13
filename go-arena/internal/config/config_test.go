@@ -1,10 +1,75 @@
 package config
 
 import (
+	"math"
 	"os"
 	"strings"
 	"testing"
 )
+
+func TestValidateMovementConfigRejectsUnsafeTerrainCadence(t *testing.T) {
+	for _, value := range []float64{0, -0.1, math.NaN(), math.Inf(1), math.Inf(-1), 2.01} {
+		if err := ValidateMovementConfig(Config{TerrainMoveCellsPerTick: value}); err == nil ||
+			!strings.Contains(err.Error(), "ARENA_TERRAIN_MOVE_CELLS_PER_TICK") {
+			t.Fatalf("ValidateMovementConfig(%v) error=%v, want terrain cadence error", value, err)
+		}
+	}
+	for _, value := range []float64{0.01, 0.35, 2} {
+		if err := ValidateMovementConfig(Config{TerrainMoveCellsPerTick: value}); err != nil {
+			t.Fatalf("ValidateMovementConfig(%v) error=%v", value, err)
+		}
+	}
+}
+
+func TestLoadDefaultsAFKTimeoutToThirtySeconds(t *testing.T) {
+	previous := C
+	t.Cleanup(func() { C = previous })
+
+	for _, key := range []string{"ARENA_TICK_RATE", "ARENA_AFK_TIMEOUT_TICKS"} {
+		value, existed := os.LookupEnv(key)
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if existed {
+				_ = os.Setenv(key, value)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		})
+	}
+	if err := os.Setenv("ARENA_TICK_RATE", "20"); err != nil {
+		t.Fatal(err)
+	}
+
+	C = Config{}
+	Load()
+	if C.AFKTimeoutTicks != C.TickRate*30 {
+		t.Fatalf("AFK timeout = %d ticks at %d Hz, want 30 seconds", C.AFKTimeoutTicks, C.TickRate)
+	}
+}
+
+func TestValidateAFKConfigRejectsUnsafeTimeouts(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+	}{
+		{name: "zero tick rate", cfg: Config{TickRate: 0, AFKTimeoutTicks: 300}},
+		{name: "negative timeout", cfg: Config{TickRate: 10, AFKTimeoutTicks: -1}},
+		{name: "legacy three second timeout", cfg: Config{TickRate: 10, AFKTimeoutTicks: 30}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateAFKConfig(tt.cfg); err == nil || !strings.Contains(err.Error(), "ARENA_AFK_TIMEOUT_TICKS") {
+				t.Fatalf("ValidateAFKConfig(%+v) error=%v, want AFK timeout error", tt.cfg, err)
+			}
+		})
+	}
+
+	if err := ValidateAFKConfig(Config{TickRate: 10, AFKTimeoutTicks: 300}); err != nil {
+		t.Fatalf("ValidateAFKConfig(valid) error=%v", err)
+	}
+}
 
 func validCosmeticsCheckoutConfig() Config {
 	return Config{
@@ -17,9 +82,11 @@ func validCosmeticsCheckoutConfig() Config {
 		CustomerOIDCSessionTTL:   24,
 		CosmeticsCheckoutEnabled: true,
 		StripeSecretKey:          "sk_test_checkout",
+		StripePublishableKey:     "pk_test_checkout",
 		StripeWebhookSecrets:     "whsec_current,whsec_previous",
 		StripeSuccessURL:         "https://arena.example/dashboard?checkout=success",
 		StripeCancelURL:          "https://arena.example/shop?checkout=cancelled",
+		StripeReturnURL:          "https://arena.example/dashboard?checkout=return&session_id={CHECKOUT_SESSION_ID}",
 		StripePortalReturnURL:    "https://arena.example/dashboard?tab=cosmetics",
 		CosmeticsCheckoutRPM:     10,
 		CosmeticsAccountReadRPM:  60,
@@ -40,11 +107,17 @@ func TestValidateCosmeticsCheckoutConfigFailsClosed(t *testing.T) {
 		{name: "customer OIDC session disabled", mutate: func(cfg *Config) { cfg.CustomerOIDCSessionTTL = 0 }, want: "customer OIDC"},
 		{name: "database optional", mutate: func(cfg *Config) { cfg.DBOptional = true }, want: "database"},
 		{name: "Stripe key missing", mutate: func(cfg *Config) { cfg.StripeSecretKey = " " }, want: "ARENA_STRIPE_SECRET_KEY"},
+		{name: "Stripe publishable key missing", mutate: func(cfg *Config) { cfg.StripePublishableKey = " " }, want: "ARENA_STRIPE_PUBLISHABLE_KEY"},
+		{name: "Stripe secret key unknown", mutate: func(cfg *Config) { cfg.StripeSecretKey = "private_checkout" }, want: "ARENA_STRIPE_SECRET_KEY"},
+		{name: "Stripe publishable key unknown", mutate: func(cfg *Config) { cfg.StripePublishableKey = "browser_checkout" }, want: "ARENA_STRIPE_PUBLISHABLE_KEY"},
+		{name: "Stripe key modes mismatch", mutate: func(cfg *Config) { cfg.StripeSecretKey = "rk_live_checkout" }, want: "same Stripe mode"},
 		{name: "webhook secrets missing", mutate: func(cfg *Config) { cfg.StripeWebhookSecrets = ", " }, want: "ARENA_STRIPE_WEBHOOK_SECRETS"},
 		{name: "relative success URL", mutate: func(cfg *Config) { cfg.StripeSuccessURL = "/dashboard" }, want: "ARENA_STRIPE_SUCCESS_URL"},
 		{name: "insecure public success URL", mutate: func(cfg *Config) { cfg.StripeSuccessURL = "http://arena.example/dashboard" }, want: "ARENA_STRIPE_SUCCESS_URL"},
 		{name: "relative cancel URL", mutate: func(cfg *Config) { cfg.StripeCancelURL = "/shop" }, want: "ARENA_STRIPE_CANCEL_URL"},
 		{name: "unsupported cancel URL scheme", mutate: func(cfg *Config) { cfg.StripeCancelURL = "ftp://arena.example/shop" }, want: "ARENA_STRIPE_CANCEL_URL"},
+		{name: "relative embedded return URL", mutate: func(cfg *Config) { cfg.StripeReturnURL = "/dashboard" }, want: "ARENA_STRIPE_RETURN_URL"},
+		{name: "embedded return URL missing session token", mutate: func(cfg *Config) { cfg.StripeReturnURL = "https://arena.example/dashboard" }, want: "{CHECKOUT_SESSION_ID}"},
 		{name: "relative portal return URL", mutate: func(cfg *Config) { cfg.StripePortalReturnURL = "/dashboard" }, want: "ARENA_STRIPE_PORTAL_RETURN_URL"},
 		{name: "checkout rate disabled", mutate: func(cfg *Config) { cfg.CosmeticsCheckoutRPM = 0 }, want: "ARENA_COSMETICS_CHECKOUT_RPM"},
 		{name: "account cosmetics read rate disabled", mutate: func(cfg *Config) { cfg.CosmeticsAccountReadRPM = 0 }, want: "ARENA_COSMETICS_ACCOUNT_READ_RPM"},
@@ -71,6 +144,10 @@ func TestValidateCosmeticsCheckoutConfigRequiresStripeAPIKeyDuringWebhookSalesPa
 	}
 	if err := ValidateCosmeticsCheckoutConfig(cfg); err == nil || !strings.Contains(err.Error(), "ARENA_STRIPE_SECRET_KEY") {
 		t.Fatalf("sales-pause validation error = %v, want retained Stripe API key requirement", err)
+	}
+	cfg.StripeSecretKey = "mistyped-retained-key"
+	if err := ValidateCosmeticsCheckoutConfig(cfg); err == nil || !strings.Contains(err.Error(), "sk_test") {
+		t.Fatalf("sales-pause malformed key error = %v, want Stripe API key shape validation", err)
 	}
 	cfg.StripeSecretKey = "sk_live_retained_for_subscription_reconciliation"
 	portalReturnURL := cfg.StripePortalReturnURL
@@ -99,6 +176,7 @@ func TestValidateCosmeticsCheckoutConfigAllowsDisabledAndLoopbackDevelopment(t *
 	cfg := validCosmeticsCheckoutConfig()
 	cfg.StripeSuccessURL = "http://localhost:8000/dashboard"
 	cfg.StripeCancelURL = "http://127.0.0.1:8000/shop"
+	cfg.StripeReturnURL = "http://localhost:8000/dashboard?session_id={CHECKOUT_SESSION_ID}"
 	cfg.StripePortalReturnURL = "http://localhost:8000/dashboard"
 	if err := ValidateCosmeticsCheckoutConfig(cfg); err != nil {
 		t.Fatalf("loopback HTTP checkout URLs should be allowed for development: %v", err)
@@ -224,9 +302,11 @@ func TestLoadReadsCosmeticsCheckoutDefaultsAndSecretRotation(t *testing.T) {
 	for _, key := range []string{
 		"ARENA_COSMETICS_CHECKOUT_ENABLED",
 		"ARENA_STRIPE_SECRET_KEY",
+		"ARENA_STRIPE_PUBLISHABLE_KEY",
 		"ARENA_STRIPE_WEBHOOK_SECRETS",
 		"ARENA_STRIPE_SUCCESS_URL",
 		"ARENA_STRIPE_CANCEL_URL",
+		"ARENA_STRIPE_RETURN_URL",
 		"ARENA_STRIPE_PORTAL_RETURN_URL",
 		"ARENA_STRIPE_AUTOMATIC_TAX",
 		"ARENA_COSMETICS_CHECKOUT_RPM",
@@ -264,9 +344,11 @@ func TestLoadReadsCosmeticsCheckoutDefaultsAndSecretRotation(t *testing.T) {
 	t.Setenv("ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS", "24")
 	t.Setenv("ARENA_DB_OPTIONAL", "false")
 	t.Setenv("ARENA_STRIPE_SECRET_KEY", "sk_test_checkout")
+	t.Setenv("ARENA_STRIPE_PUBLISHABLE_KEY", "pk_test_checkout")
 	t.Setenv("ARENA_STRIPE_WEBHOOK_SECRETS", "whsec_current, whsec_previous")
 	t.Setenv("ARENA_STRIPE_SUCCESS_URL", "https://arena.example/dashboard")
 	t.Setenv("ARENA_STRIPE_CANCEL_URL", "https://arena.example/shop")
+	t.Setenv("ARENA_STRIPE_RETURN_URL", "https://arena.example/dashboard?session_id={CHECKOUT_SESSION_ID}")
 	t.Setenv("ARENA_STRIPE_PORTAL_RETURN_URL", "https://arena.example/dashboard")
 	C = Config{}
 	Load()

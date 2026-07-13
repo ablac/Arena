@@ -72,6 +72,7 @@ type CosmeticSubscription struct {
 	IncludesFutureSets          bool       `json:"includes_future_sets"`
 	MaxAPIKeys                  int        `json:"max_api_keys"`
 	CheckoutSessionID           string     `json:"-"`
+	CheckoutPresentation        string     `json:"checkout_presentation"`
 	CustomerID                  string     `json:"-"`
 	ProviderSubscriptionID      string     `json:"-"`
 	LastProviderEventCreatedAt  *time.Time `json:"-"`
@@ -163,6 +164,7 @@ func EnsureCosmeticSubscriptionsSchema(ctx context.Context) error {
 				'created','checkout_pending','incomplete','trialing','active','past_due','paused','unpaid','billing_mismatch','canceled','expired'
 			)),
 			stripe_checkout_session_id TEXT,
+			checkout_presentation TEXT NOT NULL DEFAULT 'hosted' CHECK (checkout_presentation IN ('embedded','hosted')),
 			stripe_customer_id TEXT,
 			stripe_subscription_id TEXT,
 			cancel_at_period_end BOOLEAN NOT NULL DEFAULT false,
@@ -175,6 +177,8 @@ func EnsureCosmeticSubscriptionsSchema(ctx context.Context) error {
 		)`,
 		`ALTER TABLE cosmetic_subscriptions
 			ADD COLUMN IF NOT EXISTS last_provider_state_observed_at TIMESTAMPTZ`,
+		`ALTER TABLE cosmetic_subscriptions ADD COLUMN IF NOT EXISTS checkout_presentation TEXT NOT NULL DEFAULT 'hosted'
+			CHECK (checkout_presentation IN ('embedded','hosted'))`,
 		`DO $$
 		DECLARE status_definition TEXT;
 		BEGIN
@@ -243,7 +247,7 @@ type cosmeticSubscriptionQuerier interface {
 
 func cosmeticSubscriptionSelect() string {
 	return `SELECT id, account_id, account_email, price_cents, currency, billing_interval, status,
-		COALESCE(stripe_checkout_session_id, ''), COALESCE(stripe_customer_id, ''),
+		COALESCE(stripe_checkout_session_id, ''), checkout_presentation, COALESCE(stripe_customer_id, ''),
 		COALESCE(stripe_subscription_id, ''), cancel_at_period_end, current_period_end,
 		last_provider_event_created_at, last_provider_state_observed_at, created_at, updated_at, terminal_at
 		FROM cosmetic_subscriptions`
@@ -253,7 +257,7 @@ func scanCosmeticSubscription(row cosmeticSubscriptionScanner) (*CosmeticSubscri
 	var subscription CosmeticSubscription
 	if err := row.Scan(&subscription.ID, &subscription.AccountID, &subscription.AccountEmail,
 		&subscription.PriceCents, &subscription.Currency, &subscription.Interval, &subscription.Status,
-		&subscription.CheckoutSessionID, &subscription.CustomerID, &subscription.ProviderSubscriptionID,
+		&subscription.CheckoutSessionID, &subscription.CheckoutPresentation, &subscription.CustomerID, &subscription.ProviderSubscriptionID,
 		&subscription.CancelAtPeriodEnd, &subscription.CurrentPeriodEnd,
 		&subscription.LastProviderEventCreatedAt, &subscription.LastProviderStateObservedAt,
 		&subscription.CreatedAt, &subscription.UpdatedAt,
@@ -262,7 +266,7 @@ func scanCosmeticSubscription(row cosmeticSubscriptionScanner) (*CosmeticSubscri
 	}
 	subscription.HasAccess = cosmeticSubscriptionGrantsAccess(subscription.Status)
 	subscription.Terminal = cosmeticSubscriptionIsTerminal(subscription.Status)
-	subscription.CanManage = subscription.CustomerID != "" && !subscription.Terminal
+	subscription.CanManage = subscription.CustomerID != "" && subscription.ProviderSubscriptionID != "" && !subscription.Terminal
 	subscription.IncludesFutureSets = true
 	subscription.MaxAPIKeys = CosmeticSubscriptionMaxAPIKeys
 	return &subscription, nil
@@ -284,27 +288,39 @@ func loadCosmeticSubscription(ctx context.Context, q cosmeticSubscriptionQuerier
 }
 
 func CreateCosmeticSubscription(ctx context.Context, accountID string) (*CosmeticSubscription, error) {
+	subscription, _, err := ReserveCosmeticSubscriptionCheckout(ctx, accountID, CosmeticCheckoutPresentationHosted)
+	return subscription, err
+}
+
+// ReserveCosmeticSubscriptionCheckout commits the requested Checkout UI mode
+// before provider IO. An unfinished record is returned unchanged, and a new
+// record inherits the account's latest Stripe Customer ID after termination.
+func ReserveCosmeticSubscriptionCheckout(ctx context.Context, accountID, presentation string) (*CosmeticSubscription, bool, error) {
 	if Pool == nil {
-		return nil, ErrNoDatabase
+		return nil, false, ErrNoDatabase
+	}
+	presentation = strings.ToLower(strings.TrimSpace(presentation))
+	if presentation != CosmeticCheckoutPresentationEmbedded && presentation != CosmeticCheckoutPresentationHosted {
+		return nil, false, ErrCosmeticCheckoutPresentation
 	}
 	tx, err := Pool.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("CreateCosmeticSubscription begin: %w", err)
+		return nil, false, fmt.Errorf("ReserveCosmeticSubscriptionCheckout begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	account, err := lockCustomerAccount(ctx, tx, strings.TrimSpace(accountID), true)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	activeAPIKeys, err := countActiveAccountAPIKeys(ctx, tx, account.ID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// Exactly five active keys is a valid subscription account. This guard is
 	// for legacy ownership that predates the current issuance cap and may have
 	// left the account with more active keys than the subscription permits.
 	if activeAPIKeys > CosmeticSubscriptionMaxAPIKeys {
-		return nil, ErrCustomerAPIKeyLimit
+		return nil, false, ErrCustomerAPIKeyLimit
 	}
 	var existing, existingStatus string
 	err = tx.QueryRow(ctx, `
@@ -313,35 +329,51 @@ func CreateCosmeticSubscription(ctx context.Context, accountID string) (*Cosmeti
 		FOR UPDATE`, account.ID).Scan(&existing, &existingStatus)
 	if err == nil {
 		if existingStatus == CosmeticSubscriptionStatusCreated || existingStatus == CosmeticSubscriptionStatusCheckoutPending {
-			return loadCosmeticSubscription(ctx, tx, existing, false)
+			subscription, loadErr := loadCosmeticSubscription(ctx, tx, existing, false)
+			if loadErr != nil {
+				return nil, false, loadErr
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return nil, false, fmt.Errorf("ReserveCosmeticSubscriptionCheckout existing commit: %w", err)
+			}
+			return subscription, false, nil
 		}
-		return nil, ErrCosmeticSubscriptionExists
+		return nil, false, ErrCosmeticSubscriptionExists
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("CreateCosmeticSubscription existing: %w", err)
+		return nil, false, fmt.Errorf("ReserveCosmeticSubscriptionCheckout existing: %w", err)
+	}
+	var inheritedCustomerID string
+	err = tx.QueryRow(ctx, `
+		SELECT stripe_customer_id FROM cosmetic_subscriptions
+		WHERE account_id = $1 AND stripe_customer_id IS NOT NULL AND stripe_customer_id <> ''
+		ORDER BY created_at DESC, id DESC LIMIT 1`, account.ID).Scan(&inheritedCustomerID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, fmt.Errorf("ReserveCosmeticSubscriptionCheckout customer: %w", err)
 	}
 	subscriptionID := uuid.NewString()
 	_, err = tx.Exec(ctx, `
 		INSERT INTO cosmetic_subscriptions
-			(id, account_id, account_email, price_cents, currency, billing_interval, status, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,'created',NOW(),NOW())`,
+			(id, account_id, account_email, price_cents, currency, billing_interval, status,
+			 checkout_presentation, stripe_customer_id, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,'created',$7,NULLIF($8,''),NOW(),NOW())`,
 		subscriptionID, account.ID, account.Email, CosmeticSubscriptionPriceCents,
-		CosmeticSubscriptionCurrency, CosmeticSubscriptionInterval)
+		CosmeticSubscriptionCurrency, CosmeticSubscriptionInterval, presentation, inheritedCustomerID)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return nil, ErrCosmeticSubscriptionExists
+			return nil, false, ErrCosmeticSubscriptionExists
 		}
-		return nil, fmt.Errorf("CreateCosmeticSubscription insert: %w", err)
+		return nil, false, fmt.Errorf("ReserveCosmeticSubscriptionCheckout insert: %w", err)
 	}
 	subscription, err := loadCosmeticSubscription(ctx, tx, subscriptionID, false)
 	if err != nil {
-		return nil, fmt.Errorf("CreateCosmeticSubscription load: %w", err)
+		return nil, false, fmt.Errorf("ReserveCosmeticSubscriptionCheckout load: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("CreateCosmeticSubscription commit: %w", err)
+		return nil, false, fmt.Errorf("ReserveCosmeticSubscriptionCheckout commit: %w", err)
 	}
-	return subscription, nil
+	return subscription, true, nil
 }
 
 func AttachCosmeticSubscriptionCheckout(ctx context.Context, accountID, subscriptionID, checkoutSessionID string) (*CosmeticSubscription, error) {

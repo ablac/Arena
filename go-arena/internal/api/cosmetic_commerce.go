@@ -16,6 +16,8 @@ import (
 	"arena-server/internal/config"
 	"arena-server/internal/db"
 	"arena-server/internal/game"
+
+	"github.com/go-chi/chi/v5"
 )
 
 const (
@@ -44,10 +46,11 @@ func nextCosmeticSubscriptionObservationTime() time.Time {
 var cosmeticCheckoutPackIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,79}$`)
 
 type cosmeticCommerceStore interface {
-	CreateOrder(context.Context, string, string, int) (*db.CosmeticOrder, error)
+	ReserveOrder(context.Context, string, string, int, CosmeticCheckoutPresentation) (*db.CosmeticOrder, bool, error)
 	AttachCheckout(context.Context, string, string, string) (*db.CosmeticOrder, error)
 	MarkCheckoutFailed(context.Context, string, string, string) (*db.CosmeticOrder, error)
 	ProcessEvent(context.Context, db.CosmeticPaymentEventInput) (*db.CosmeticPaymentEventResult, error)
+	GetCustomerOrder(context.Context, string, string) (*db.CosmeticOrder, error)
 	ListCustomerOrders(context.Context, string, int) ([]db.CosmeticOrder, error)
 	ListAdminOrders(context.Context, string, string, int) ([]db.CosmeticOrder, error)
 	EquippedForBots(context.Context, []string) (map[string]map[string]string, error)
@@ -55,8 +58,8 @@ type cosmeticCommerceStore interface {
 
 type databaseCosmeticCommerceStore struct{}
 
-func (databaseCosmeticCommerceStore) CreateOrder(ctx context.Context, accountID, packID string, quantity int) (*db.CosmeticOrder, error) {
-	return db.CreateCosmeticOrder(ctx, accountID, packID, quantity)
+func (databaseCosmeticCommerceStore) ReserveOrder(ctx context.Context, accountID, packID string, quantity int, presentation CosmeticCheckoutPresentation) (*db.CosmeticOrder, bool, error) {
+	return db.ReserveCosmeticOrderCheckout(ctx, accountID, packID, quantity, string(presentation))
 }
 
 func (databaseCosmeticCommerceStore) AttachCheckout(ctx context.Context, accountID, orderID, checkoutSessionID string) (*db.CosmeticOrder, error) {
@@ -69,6 +72,10 @@ func (databaseCosmeticCommerceStore) MarkCheckoutFailed(ctx context.Context, acc
 
 func (databaseCosmeticCommerceStore) ProcessEvent(ctx context.Context, event db.CosmeticPaymentEventInput) (*db.CosmeticPaymentEventResult, error) {
 	return db.ProcessCosmeticPaymentEvent(ctx, event)
+}
+
+func (databaseCosmeticCommerceStore) GetCustomerOrder(ctx context.Context, accountID, orderID string) (*db.CosmeticOrder, error) {
+	return db.GetCustomerCosmeticOrder(ctx, accountID, orderID)
 }
 
 func (databaseCosmeticCommerceStore) ListCustomerOrders(ctx context.Context, accountID string, limit int) ([]db.CosmeticOrder, error) {
@@ -93,6 +100,7 @@ type CosmeticCommerceHandler struct {
 	subscriptionStore cosmeticSubscriptionStore
 	provider          CosmeticPaymentProvider
 	checkoutEnabled   bool
+	publishableKey    string
 	engine            *game.GameEngine
 }
 
@@ -105,6 +113,7 @@ func NewCosmeticCommerceHandler(engine *game.GameEngine) *CosmeticCommerceHandle
 			secrets,
 			config.C.StripeSuccessURL,
 			config.C.StripeCancelURL,
+			config.C.StripeReturnURL,
 			config.C.StripePortalReturnURL,
 			config.C.StripeAutomaticTax,
 		)
@@ -114,6 +123,7 @@ func NewCosmeticCommerceHandler(engine *game.GameEngine) *CosmeticCommerceHandle
 		subscriptionStore: databaseCosmeticSubscriptionStore{},
 		provider:          provider,
 		checkoutEnabled:   config.C.CosmeticsCheckoutEnabled && provider != nil,
+		publishableKey:    strings.TrimSpace(config.C.StripePublishableKey),
 		engine:            engine,
 	}
 }
@@ -127,8 +137,25 @@ func (h *CosmeticCommerceHandler) Enabled() bool {
 }
 
 type cosmeticCheckoutBody struct {
-	PackID   string `json:"pack_id"`
-	Quantity int    `json:"quantity"`
+	PackID       string                       `json:"pack_id"`
+	Quantity     int                          `json:"quantity"`
+	Presentation CosmeticCheckoutPresentation `json:"presentation"`
+}
+
+// CheckoutConfig exposes only Stripe's intentionally public browser key and
+// presentation mode. Session creation remains authenticated and CSRF-protected.
+func (h *CosmeticCommerceHandler) CheckoutConfig(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	enabled := h != nil && h.Enabled() && strings.TrimSpace(h.publishableKey) != ""
+	response := map[string]interface{}{
+		"enabled":                 enabled,
+		"default_presentation":    CosmeticCheckoutPresentationEmbedded,
+		"hosted_fallback_enabled": enabled,
+	}
+	if enabled {
+		response["publishable_key"] = strings.TrimSpace(h.publishableKey)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *CosmeticCommerceHandler) Checkout(w http.ResponseWriter, r *http.Request) {
@@ -149,12 +176,17 @@ func (h *CosmeticCommerceHandler) Checkout(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	request.PackID = strings.ToLower(strings.TrimSpace(request.PackID))
+	presentation, validPresentation := normalizeCosmeticCheckoutPresentation(request.Presentation)
+	if !validPresentation {
+		writeError(w, http.StatusBadRequest, "presentation must be embedded or hosted")
+		return
+	}
 	if !cosmeticCheckoutPackIDPattern.MatchString(request.PackID) || request.Quantity < 1 || request.Quantity > 10 {
 		writeError(w, http.StatusBadRequest, "pack_id and quantity between 1 and 10 are required")
 		return
 	}
 
-	order, err := h.store.CreateOrder(r.Context(), session.AccountID, request.PackID, request.Quantity)
+	order, reservedNew, err := h.store.ReserveOrder(r.Context(), session.AccountID, request.PackID, request.Quantity, presentation)
 	if err != nil {
 		switch {
 		case errors.Is(err, db.ErrCosmeticOrderQuantity):
@@ -173,50 +205,33 @@ func (h *CosmeticCommerceHandler) Checkout(w http.ResponseWriter, r *http.Reques
 		}
 		return
 	}
-	if order == nil || order.ID == "" || order.AccountID != session.AccountID {
+	if order == nil || order.ID == "" || order.AccountID != session.AccountID || order.PackID != request.PackID || order.Quantity != request.Quantity {
 		writeError(w, http.StatusInternalServerError, "failed to create cosmetic order")
 		return
 	}
-
-	providerCtx, cancel := context.WithTimeout(r.Context(), cosmeticCheckoutTimeout)
-	checkout, err := h.provider.CreateCheckoutSession(providerCtx, CosmeticCheckoutRequest{
-		OrderID:         order.ID,
-		AccountID:       order.AccountID,
-		CustomerEmail:   order.AccountEmail,
-		PackID:          order.PackID,
-		PackName:        order.PackName,
-		PackDescription: order.PackDescription,
-		UnitAmount:      order.UnitPriceCents,
-		Currency:        order.Currency,
-		Quantity:        int64(order.Quantity),
-	})
-	cancel()
-	if err != nil {
-		slog.Error("failed to create hosted cosmetic checkout", "order_id", order.ID, "error", err)
-		h.markCheckoutFailed(r.Context(), order, "checkout provider unavailable")
-		writeError(w, http.StatusBadGateway, "failed to open cosmetic checkout")
+	if _, ok := storedCosmeticCheckoutPresentation(order.CheckoutPresentation); !ok {
+		slog.Error("cosmetic order has an invalid persisted checkout presentation", "order_id", order.ID)
+		writeError(w, http.StatusInternalServerError, "failed to create cosmetic order")
 		return
 	}
-	if !validHostedCheckoutSession(checkout) {
-		slog.Error("cosmetic checkout provider returned an invalid hosted session", "order_id", order.ID)
-		h.markCheckoutFailed(r.Context(), order, "checkout provider returned an invalid session")
-		writeError(w, http.StatusBadGateway, "failed to open cosmetic checkout")
+	if order.Status == db.CosmeticOrderStatusCheckout && strings.TrimSpace(order.CheckoutSessionID) != "" {
+		h.resumeAttachedCosmeticOrderCheckout(w, r, order)
 		return
 	}
-	if _, err := h.store.AttachCheckout(r.Context(), order.AccountID, order.ID, checkout.ID); err != nil {
-		slog.Error("failed to attach cosmetic checkout session", "order_id", order.ID, "error", err)
-		h.markCheckoutFailed(r.Context(), order, "checkout session could not be attached")
-		writeError(w, http.StatusInternalServerError, "failed to save cosmetic checkout")
+	if (order.Status != db.CosmeticOrderStatusCreated && order.Status != db.CosmeticOrderStatusPaymentFailed) ||
+		strings.TrimSpace(order.CheckoutSessionID) != "" {
+		writeError(w, http.StatusConflict, "cosmetic checkout is not retryable")
 		return
 	}
-
-	response := map[string]interface{}{
-		"order_id": order.ID, "checkout_url": checkout.URL,
+	checkout, attachedOrder, ok := h.createAndAttachCosmeticOrderCheckout(w, r, order)
+	if !ok {
+		return
 	}
-	if !checkout.ExpiresAt.IsZero() {
-		response["expires_at"] = checkout.ExpiresAt
+	status := http.StatusCreated
+	if !reservedNew {
+		status = http.StatusOK
 	}
-	writeJSON(w, http.StatusCreated, response)
+	writeCosmeticOrderCheckoutResponse(w, status, attachedOrder, checkout, !reservedNew)
 }
 
 func (h *CosmeticCommerceHandler) markCheckoutFailed(ctx context.Context, order *db.CosmeticOrder, message string) {
@@ -228,12 +243,215 @@ func (h *CosmeticCommerceHandler) markCheckoutFailed(ctx context.Context, order 
 	}
 }
 
-func validHostedCheckoutSession(session *CosmeticCheckoutSession) bool {
-	if session == nil || strings.TrimSpace(session.ID) == "" || len(session.ID) > 255 ||
-		strings.TrimSpace(session.URL) == "" || len(session.URL) > 2048 {
+// ResumeCheckout returns the same still-open provider session previously
+// attached to an account-owned order. For a retryable unattached order it
+// replays provider creation with the same order-derived idempotency key and the
+// presentation committed before the original provider call.
+func (h *CosmeticCommerceHandler) ResumeCheckout(w http.ResponseWriter, r *http.Request) {
+	setCustomerNoStore(w)
+	if h == nil || !h.Enabled() || h.store == nil {
+		writeError(w, http.StatusServiceUnavailable, "cosmetic checkout is not available")
+		return
+	}
+	session, ok := customerSession(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "customer authentication required")
+		return
+	}
+	orderID := strings.TrimSpace(chi.URLParam(r, "order_id"))
+	if orderID == "" || len(orderID) > 255 {
+		writeError(w, http.StatusNotFound, "cosmetic order was not found")
+		return
+	}
+	order, err := h.store.GetCustomerOrder(r.Context(), session.AccountID, orderID)
+	if err != nil {
+		switch {
+		case errors.Is(err, db.ErrCosmeticOrderNotFound), errors.Is(err, db.ErrCosmeticOrderMismatch):
+			writeError(w, http.StatusNotFound, "cosmetic order was not found")
+		case errors.Is(err, db.ErrNoDatabase):
+			writeError(w, http.StatusServiceUnavailable, "cosmetic orders are unavailable")
+		default:
+			slog.Error("failed to load cosmetic order for checkout resume", "order_id", orderID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to load cosmetic order")
+		}
+		return
+	}
+	if order == nil || order.ID != orderID || order.AccountID != session.AccountID {
+		writeError(w, http.StatusNotFound, "cosmetic order was not found")
+		return
+	}
+	if _, ok := storedCosmeticCheckoutPresentation(order.CheckoutPresentation); !ok {
+		slog.Error("cosmetic order has an invalid persisted checkout presentation", "order_id", order.ID)
+		writeError(w, http.StatusInternalServerError, "failed to resume cosmetic checkout")
+		return
+	}
+	if (order.Status == db.CosmeticOrderStatusCreated || order.Status == db.CosmeticOrderStatusPaymentFailed) &&
+		strings.TrimSpace(order.CheckoutSessionID) == "" {
+		checkout, attachedOrder, ok := h.createAndAttachCosmeticOrderCheckout(w, r, order)
+		if !ok {
+			return
+		}
+		writeCosmeticOrderCheckoutResponse(w, http.StatusOK, attachedOrder, checkout, true)
+		return
+	}
+	if order.Status != db.CosmeticOrderStatusCheckout || strings.TrimSpace(order.CheckoutSessionID) == "" {
+		writeError(w, http.StatusConflict, "cosmetic checkout is not resumable")
+		return
+	}
+	h.resumeAttachedCosmeticOrderCheckout(w, r, order)
+}
+
+func (h *CosmeticCommerceHandler) createAndAttachCosmeticOrderCheckout(w http.ResponseWriter, r *http.Request, order *db.CosmeticOrder) (*CosmeticCheckoutSession, *db.CosmeticOrder, bool) {
+	presentation, validPresentation := storedCosmeticCheckoutPresentation(order.CheckoutPresentation)
+	if !validPresentation {
+		writeError(w, http.StatusInternalServerError, "failed to open cosmetic checkout")
+		return nil, nil, false
+	}
+	providerCtx, cancel := context.WithTimeout(r.Context(), cosmeticCheckoutTimeout)
+	checkout, err := h.provider.CreateCheckoutSession(providerCtx, CosmeticCheckoutRequest{
+		OrderID:         order.ID,
+		AccountID:       order.AccountID,
+		CustomerEmail:   order.AccountEmail,
+		PackID:          order.PackID,
+		PackName:        order.PackName,
+		PackDescription: order.PackDescription,
+		UnitAmount:      order.UnitPriceCents,
+		Currency:        order.Currency,
+		Quantity:        int64(order.Quantity),
+		Presentation:    presentation,
+	})
+	cancel()
+	if err != nil {
+		slog.Error("failed to create cosmetic checkout", "order_id", order.ID, "error", err)
+		h.markCheckoutFailed(r.Context(), order, "checkout provider unavailable")
+		writeError(w, http.StatusBadGateway, "failed to open cosmetic checkout")
+		return nil, nil, false
+	}
+	if !validCosmeticCheckoutSession(checkout) || checkout.Presentation != presentation {
+		slog.Error("cosmetic checkout provider returned an invalid session", "order_id", order.ID)
+		h.markCheckoutFailed(r.Context(), order, "checkout provider returned an invalid session")
+		writeError(w, http.StatusBadGateway, "failed to open cosmetic checkout")
+		return nil, nil, false
+	}
+	attachedOrder, err := h.store.AttachCheckout(r.Context(), order.AccountID, order.ID, checkout.ID)
+	if err != nil {
+		// Provider creation and local attachment can both succeed even when this
+		// request observes a timeout. Leave the reserved record unchanged so the
+		// next request replays the same order-derived idempotency key.
+		slog.Error("failed to attach cosmetic checkout session", "order_id", order.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save cosmetic checkout")
+		return nil, nil, false
+	}
+	if attachedOrder == nil {
+		attachedOrder = order
+	}
+	return checkout, attachedOrder, true
+}
+
+func (h *CosmeticCommerceHandler) resumeAttachedCosmeticOrderCheckout(w http.ResponseWriter, r *http.Request, order *db.CosmeticOrder) {
+
+	providerCtx, cancel := context.WithTimeout(r.Context(), cosmeticCheckoutTimeout)
+	checkout, err := h.provider.RetrieveCheckoutSession(providerCtx, order.CheckoutSessionID)
+	cancel()
+	if err != nil {
+		slog.Error("failed to retrieve cosmetic checkout", "order_id", order.ID, "error", err)
+		writeError(w, http.StatusBadGateway, "failed to resume cosmetic checkout")
+		return
+	}
+	if !validRetrievedCosmeticOrderCheckout(checkout, order) {
+		slog.Error("cosmetic checkout retrieval did not match the owned order", "order_id", order.ID)
+		writeError(w, http.StatusBadGateway, "failed to resume cosmetic checkout")
+		return
+	}
+
+	response := map[string]interface{}{
+		"order_id": order.ID, "order_status": order.Status,
+		"checkout_status": checkout.Status, "resumable": checkout.Status == CosmeticCheckoutSessionStatusOpen,
+	}
+	switch checkout.Status {
+	case CosmeticCheckoutSessionStatusOpen:
+		if !validCosmeticCheckoutSession(checkout) || (!checkout.ExpiresAt.IsZero() && !time.Now().Before(checkout.ExpiresAt)) {
+			writeError(w, http.StatusBadGateway, "failed to resume cosmetic checkout")
+			return
+		}
+		response["resumed"] = true
+		addCosmeticCheckoutResponseFields(response, checkout)
+		if !checkout.ExpiresAt.IsZero() {
+			response["expires_at"] = checkout.ExpiresAt
+		}
+	case CosmeticCheckoutSessionStatusComplete, CosmeticCheckoutSessionStatusExpired:
+		response["resumed"] = false
+	default:
+		writeError(w, http.StatusBadGateway, "failed to resume cosmetic checkout")
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func validRetrievedCosmeticOrderCheckout(checkout *CosmeticCheckoutSession, order *db.CosmeticOrder) bool {
+	if checkout == nil || order == nil || checkout.ID != order.CheckoutSessionID || checkout.Mode != "payment" ||
+		checkout.OrderID != order.ID || checkout.AccountID != order.AccountID || checkout.PackID != order.PackID {
 		return false
 	}
-	return validHostedHTTPSURL(session.URL)
+	presentation, ok := storedCosmeticCheckoutPresentation(order.CheckoutPresentation)
+	return ok && checkout.Presentation == presentation
+}
+
+func storedCosmeticCheckoutPresentation(value string) (CosmeticCheckoutPresentation, bool) {
+	switch CosmeticCheckoutPresentation(strings.ToLower(strings.TrimSpace(value))) {
+	case CosmeticCheckoutPresentationEmbedded:
+		return CosmeticCheckoutPresentationEmbedded, true
+	case CosmeticCheckoutPresentationHosted:
+		return CosmeticCheckoutPresentationHosted, true
+	default:
+		return "", false
+	}
+}
+
+func validCosmeticCheckoutSession(session *CosmeticCheckoutSession) bool {
+	if session == nil || strings.TrimSpace(session.ID) == "" || len(session.ID) > 255 {
+		return false
+	}
+	switch session.Presentation {
+	case CosmeticCheckoutPresentationEmbedded:
+		secret := strings.TrimSpace(session.ClientSecret)
+		return secret != "" && len(secret) <= 2048 && strings.TrimSpace(session.URL) == ""
+	case CosmeticCheckoutPresentationHosted:
+		urlValue := strings.TrimSpace(session.URL)
+		return urlValue != "" && len(urlValue) <= 2048 && strings.TrimSpace(session.ClientSecret) == "" && validHostedHTTPSURL(urlValue)
+	default:
+		return false
+	}
+}
+
+func addCosmeticCheckoutResponseFields(response map[string]interface{}, checkout *CosmeticCheckoutSession) {
+	if response == nil || checkout == nil {
+		return
+	}
+	response["presentation"] = checkout.Presentation
+	response["session_id"] = checkout.ID
+	if checkout.Presentation == CosmeticCheckoutPresentationEmbedded {
+		response["client_secret"] = checkout.ClientSecret
+	} else {
+		response["checkout_url"] = checkout.URL
+	}
+}
+
+func writeCosmeticOrderCheckoutResponse(w http.ResponseWriter, status int, order *db.CosmeticOrder, checkout *CosmeticCheckoutSession, resumed bool) {
+	response := map[string]interface{}{"order_id": order.ID}
+	if order != nil && order.Status != "" {
+		response["order_status"] = order.Status
+	}
+	if resumed {
+		response["resumed"] = true
+		response["resumable"] = true
+		response["checkout_status"] = CosmeticCheckoutSessionStatusOpen
+	}
+	addCosmeticCheckoutResponseFields(response, checkout)
+	if !checkout.ExpiresAt.IsZero() {
+		response["expires_at"] = checkout.ExpiresAt
+	}
+	writeJSON(w, status, response)
 }
 
 func validHostedHTTPSURL(raw string) bool {

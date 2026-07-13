@@ -10,10 +10,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/arena.css?v=20260707c">
-  <link rel="stylesheet" href="../css/shop.css?v=20260712d">
+  <link rel="stylesheet" href="../css/shop.css?v=20260713c">
   <script defer src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
   <script defer src="../js/cosmetic-themes.js?v=20260713b"></script>
-  <script type="module" src="../js/cosmetics-shop.js?v=20260713b"></script>
+  <script type="module" src="../js/cosmetics-shop.js?v=20260713c"></script>
 </head>
 <body class="shop-page">
   <a class="shop-skip-link" href="#cosmetic-shop">Skip to the cosmetic shop</a>
@@ -82,10 +82,40 @@
           <option value="all">All collections</option>
         </select>
       </label>
+      <label for="shop-kind">
+        <span>Product type</span>
+        <select id="shop-kind" data-shop-kind aria-controls="shop-pack-list">
+          <option value="all">Sets and trails</option>
+          <option value="sets">Cosmetic sets</option>
+          <option value="trails">Trails</option>
+        </select>
+      </label>
+      <label for="shop-sort">
+        <span>Sort</span>
+        <select id="shop-sort" data-shop-sort aria-controls="shop-pack-list">
+          <option value="featured">Featured</option>
+          <option value="name">Name</option>
+          <option value="price-low">Price, low to high</option>
+          <option value="price-high">Price, high to low</option>
+        </select>
+      </label>
       <p class="shop-results-summary" data-shop-results-summary role="status" aria-live="polite">Preparing the showroom...</p>
     </section>
 
     <div class="shop-showroom">
+      <aside class="shop-pack-index" aria-labelledby="shop-pack-index-title">
+        <header class="shop-panel-heading">
+          <div>
+            <p class="shop-kicker">Pack index</p>
+            <h2 id="shop-pack-index-title">Browse packs</h2>
+          </div>
+        </header>
+        <div class="shop-pack-list" id="shop-pack-list" data-shop-pack-list aria-busy="true">
+          <div class="shop-list-loading" role="status">Loading coordinated packs...</div>
+        </div>
+        <button class="btn btn-secondary shop-show-more" type="button" data-shop-show-more hidden>Show more packs</button>
+      </aside>
+
       <section class="shop-preview-panel" aria-labelledby="shop-preview-title">
         <header class="shop-panel-heading shop-preview-heading">
           <div>
@@ -120,21 +150,8 @@
           <button type="button" data-shop-reset-view>Reset view</button>
           <button type="button" data-shop-rotate-right aria-label="Rotate bot right">Rotate right <span aria-hidden="true">&#8635;</span></button>
         </div>
-        <p class="shop-preview-help">Switch chassis, click any pack item, and rotate the full model. Preview selection never changes a live bot.</p>
+        <p class="shop-preview-help">Switch chassis or click any pack item while the bot runs a short loop. Trail previews stay in motion so their full ribbon and particles are visible. Preview selection never changes a live bot.</p>
       </section>
-
-      <aside class="shop-pack-index" aria-labelledby="shop-pack-index-title">
-        <header class="shop-panel-heading">
-          <div>
-            <p class="shop-kicker">Pack index</p>
-            <h2 id="shop-pack-index-title">Browse packs</h2>
-          </div>
-        </header>
-        <div class="shop-pack-list" id="shop-pack-list" data-shop-pack-list aria-busy="true">
-          <div class="shop-list-loading" role="status">Loading coordinated packs...</div>
-        </div>
-        <button class="btn btn-secondary shop-show-more" type="button" data-shop-show-more hidden>Show more packs</button>
-      </aside>
 
       <aside class="shop-pack-detail" data-shop-pack-detail aria-labelledby="shop-pack-name">
         <header class="shop-panel-heading shop-detail-heading">

@@ -22,6 +22,18 @@ const _sceneResources = new WeakMap();
 export const FORGE_FAR_LOD_ENTER_DISTANCE = 520;
 export const FORGE_FAR_LOD_EXIT_DISTANCE = 440;
 
+// A distant bot still needs to read as a character at a glance. These six
+// normalized pieces are merged once per scene, then instanced per live bot;
+// the extra silhouette information therefore costs no additional draw calls.
+export const FORGE_FAR_LOD_PROXY_PARTS = Object.freeze([
+  Object.freeze({role: 'torso', shape: 'box', position: [0, 0.57, 0], scaling: [0.56, 0.48, 0.32]}),
+  Object.freeze({role: 'head', shape: 'sphere', position: [0, 0.88, 0], scaling: [0.30, 0.26, 0.29]}),
+  Object.freeze({role: 'arm-left', shape: 'box', position: [-0.39, 0.56, 0], scaling: [0.15, 0.43, 0.19]}),
+  Object.freeze({role: 'arm-right', shape: 'box', position: [0.39, 0.56, 0], scaling: [0.15, 0.43, 0.19]}),
+  Object.freeze({role: 'leg-left', shape: 'box', position: [-0.18, 0.185, 0], scaling: [0.19, 0.37, 0.22]}),
+  Object.freeze({role: 'leg-right', shape: 'box', position: [0.18, 0.185, 0], scaling: [0.19, 0.37, 0.22]}),
+]);
+
 function sharedMaterial(scene, name, diffuse, emissive, specular) {
   const B = window.BABYLON;
   const material = new B.StandardMaterial(name, scene);
@@ -36,6 +48,36 @@ function sharedMaterial(scene, name, diffuse, emissive, specular) {
   material.disableLighting = true;
   material.freeze();
   return material;
+}
+
+function createFarSilhouetteTemplate(B, scene, material) {
+  const parts = FORGE_FAR_LOD_PROXY_PARTS.map(part => {
+    const mesh = part.shape === 'sphere'
+      ? B.MeshBuilder.CreateSphere(`forge-low-${part.role}`, {diameter: 1, segments: 8}, scene)
+      : B.MeshBuilder.CreateBox(`forge-low-${part.role}`, {size: 1}, scene);
+    mesh.position.set(part.position[0], part.position[1], part.position[2]);
+    mesh.scaling.set(part.scaling[0], part.scaling[1], part.scaling[2]);
+    mesh.material = material;
+    mesh.isPickable = false;
+    return mesh;
+  });
+  let merged;
+  if (typeof B.Mesh?.MergeMeshes === 'function') {
+    merged = B.Mesh.MergeMeshes(parts, true, true, undefined, false, true);
+  } else {
+    // Lightweight test/render shims may not expose Babylon's static merger.
+    // Retain a solid box proxy instead of making character creation fail.
+    merged = parts.shift();
+    for (const part of parts) part.dispose();
+    merged.position.set(0, 0, 0);
+    merged.scaling.set(1, 1, 1);
+  }
+  if (!merged) throw new Error('Unable to build the Forge far-detail silhouette');
+  merged.name = 'forge-low-template';
+  merged.material = material;
+  merged.isPickable = false;
+  merged.setEnabled(false);
+  return merged;
 }
 
 function getResources(scene) {
@@ -94,14 +136,9 @@ function getResources(scene) {
   plate.isPickable = false;
   plate.setEnabled(false);
 
-  // One coarse silhouette replaces every articulated mesh on distant live
-  // bots. Instances share both geometry and material with the scene template.
-  const low = B.MeshBuilder.CreateCylinder('forge-low-template', {
-    height: 1, diameterTop: 0.62, diameterBottom: 1, tessellation: 6,
-  }, scene);
-  low.material = farSilhouette;
-  low.isPickable = false;
-  low.setEnabled(false);
+  // One merged humanoid silhouette replaces every articulated mesh on distant
+  // live bots. Instances share both geometry and material with this template.
+  const low = createFarSilhouetteTemplate(B, scene, farSilhouette);
 
   resources = {graphite, gunmetal, farSilhouette, selector, box, head, plate, low};
   _sceneResources.set(scene, resources);
@@ -451,11 +488,11 @@ export function createForgeCharacter(bot, scene, options = {}) {
     const lowHeight = bodyY + headY + headHeight * 0.64;
     lowDetail = resources.low.createInstance(`forge-low-${id}`);
     lowDetail.parent = root;
-    lowDetail.position.y = lowHeight / 2;
+    lowDetail.position.y = 0;
     lowDetail.scaling.set(
-      Math.max(torsoWidth, pelvisWidth, headWidth) * 1.22,
-      lowHeight * 1.10,
-      Math.max(torsoDepth, headDepth) * 1.20,
+      Math.max(torsoWidth, pelvisWidth, headWidth) * 1.34 / 0.9,
+      lowHeight * 1.05,
+      Math.max(torsoDepth, headDepth) * 1.30 / 0.32,
     );
     lowDetail.isPickable = true;
     lowDetail.metadata = {botId: id};

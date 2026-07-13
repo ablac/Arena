@@ -1,7 +1,7 @@
 'use strict';
 
 import { apiPath, appPath } from './paths.js?v=20260710a';
-import { CosmeticShopPreview } from './shop-preview.js?v=20260713b';
+import { CosmeticShopPreview } from './shop-preview.js?v=20260713c';
 
 const PAGE_SIZE = 24;
 const SUPPORTED_SLOTS = new Set(['bot_skin', 'weapon_skin', 'attachment', 'trail']);
@@ -24,6 +24,34 @@ export function packItems(pack) {
   return Array.isArray(pack?.items)
     ? pack.items.filter(item => item && typeof item === 'object')
     : [];
+}
+
+/** Standalone trail products are separate from coordinated cosmetic sets. */
+export function isTrailPack(pack) {
+  const items = packItems(pack);
+  return pack?.category_id === 'trails'
+    || (items.length === 1 && items[0]?.slot === 'trail');
+}
+
+/** Return a sorted copy so catalog order remains the stable featured order. */
+export function sortCosmeticPacks(packs, sort = 'featured') {
+  const candidates = Array.isArray(packs) ? [...packs] : [];
+  const nameOf = pack => String(pack?.name || pack?.id || '');
+  const priceOf = pack => Number.isFinite(Number(pack?.price_cents))
+    ? Number(pack.price_cents)
+    : 0;
+  const byName = (left, right) => nameOf(left).localeCompare(nameOf(right), undefined, {
+    sensitivity: 'base',
+    numeric: true,
+  }) || String(left?.id || '').localeCompare(String(right?.id || ''));
+  if (sort === 'name') return candidates.sort(byName);
+  if (sort === 'price-low') {
+    return candidates.sort((left, right) => priceOf(left) - priceOf(right) || byName(left, right));
+  }
+  if (sort === 'price-high') {
+    return candidates.sort((left, right) => priceOf(right) - priceOf(left) || byName(left, right));
+  }
+  return candidates;
 }
 
 export function packPreviewLoadout(pack) {
@@ -120,6 +148,8 @@ export function initCosmeticsShop(root, options = {}) {
     status: root.querySelector('[data-shop-status]'),
     search: root.querySelector('[data-shop-search]'),
     category: root.querySelector('[data-shop-category]'),
+    kind: root.querySelector('[data-shop-kind]'),
+    sort: root.querySelector('[data-shop-sort]'),
     summary: root.querySelector('[data-shop-results-summary]'),
     showMore: root.querySelector('[data-shop-show-more]'),
     packList: root.querySelector('[data-shop-pack-list]'),
@@ -151,6 +181,8 @@ export function initCosmeticsShop(root, options = {}) {
     subscriptionOffer: null,
     query: '',
     category: 'all',
+    kind: 'all',
+    sort: 'featured',
     visible: PAGE_SIZE,
     selectedPackID: '',
     selectedItemID: '',
@@ -173,10 +205,13 @@ export function initCosmeticsShop(root, options = {}) {
   const selectedItem = () => packItems(selectedPack()).find(item => item.id === state.selectedItemID) || null;
   const filteredPacks = () => {
     const query = normalizeSearchText(state.query);
-    return allPacks().filter(pack => {
+    const matches = allPacks().filter(pack => {
       if (state.category !== 'all' && pack.category_id !== state.category) return false;
+      if (state.kind === 'trails' && !isTrailPack(pack)) return false;
+      if (state.kind === 'sets' && isTrailPack(pack)) return false;
       return !query || searchText(pack).includes(query);
     });
+    return sortCosmeticPacks(matches, state.sort);
   };
 
   const setStatus = (message, status = 'ready') => {
@@ -255,7 +290,7 @@ export function initCosmeticsShop(root, options = {}) {
       if (typeof preview.setCharacter === 'function') preview.setCharacter({weapon: state.weapon});
       preview.setLoadout(loadout);
       if (elements.previewStatus) {
-        elements.previewStatus.textContent = `${label} shown on the Arena bot.`;
+        elements.previewStatus.textContent = `${label} shown on a running Arena bot.`;
         elements.previewStatus.dataset.state = 'ready';
       }
       elements.canvas.dataset.previewState = 'ready';
@@ -300,7 +335,7 @@ export function initCosmeticsShop(root, options = {}) {
     }
     applyPreview(
       packPreviewLoadout(pack),
-      `${pack.name || pack.id || 'Cosmetic pack'} · full pack`,
+      `${pack.name || pack.id || 'Cosmetic pack'} — full pack`,
       `${pack.id || 'pack'}:full-pack`,
     );
   };
@@ -317,9 +352,10 @@ export function initCosmeticsShop(root, options = {}) {
     if (style) swatch.style.background = style;
 
     const copy = createElement('span', 'shop-pack-card-copy');
+    const productType = isTrailPack(pack) ? 'Trail' : 'Set';
     copy.append(
       createElement('strong', '', pack.name || pack.id || 'Cosmetic pack'),
-      createElement('small', 'shop-pack-card-meta', `${packItems(pack).length} item${packItems(pack).length === 1 ? '' : 's'} · ${formatPrice(pack)}`),
+      createElement('small', 'shop-pack-card-meta', `${productType}, ${packItems(pack).length} item${packItems(pack).length === 1 ? '' : 's'}, ${formatPrice(pack)}`),
     );
     const arrow = createElement('span', 'shop-pack-card-arrow', '↗');
     arrow.setAttribute('aria-hidden', 'true');
@@ -328,12 +364,12 @@ export function initCosmeticsShop(root, options = {}) {
     return button;
   };
 
-  const renderPackList = () => {
+  const renderPackList = ({revealSelected = false} = {}) => {
     const packs = filteredPacks();
     const selectedIndex = packs.findIndex(pack => pack.id === state.selectedPackID);
-    const orderedPacks = selectedIndex > 0
-      ? [packs[selectedIndex], ...packs.slice(0, selectedIndex), ...packs.slice(selectedIndex + 1)]
-      : packs;
+    if (revealSelected && selectedIndex >= state.visible) {
+      state.visible = selectedIndex + 1;
+    }
     elements.packList.setAttribute('aria-busy', 'false');
     elements.packList.replaceChildren();
     if (packs.length === 0) {
@@ -344,7 +380,7 @@ export function initCosmeticsShop(root, options = {}) {
       );
       elements.packList.appendChild(empty);
     } else {
-      for (const pack of orderedPacks.slice(0, state.visible)) {
+      for (const pack of packs.slice(0, state.visible)) {
         elements.packList.appendChild(createPackButton(pack));
       }
     }
@@ -357,6 +393,11 @@ export function initCosmeticsShop(root, options = {}) {
     if (elements.showMore) {
       elements.showMore.hidden = state.visible >= packs.length;
       elements.showMore.textContent = `Show ${Math.min(PAGE_SIZE, Math.max(0, packs.length - state.visible))} more packs`;
+    }
+    if (revealSelected && selectedIndex >= 0) {
+      const selectedButton = Array.from(elements.packList.children)
+        .find(button => button.dataset?.shopPackId === state.selectedPackID);
+      selectedButton?.scrollIntoView?.({block: 'nearest'});
     }
   };
 
@@ -423,10 +464,9 @@ export function initCosmeticsShop(root, options = {}) {
       elements.purchase.href = saleReady ? dashboardPurchasePath(pack.id, pathname) : appPath('/dashboard/?tab=cosmetics', pathname);
       elements.purchase.hidden = !saleReady;
       elements.purchase.setAttribute('aria-disabled', String(!saleReady));
-      const isTrail = pack.category_id === 'trails' && items.length === 1 && items[0]?.slot === 'trail';
       elements.purchase.textContent = pack.is_free
         ? 'Claim in Dashboard'
-        : `${isTrail ? 'Buy trail' : 'Buy pack'} · ${formatPrice(pack)}`;
+        : `${isTrailPack(pack) ? 'Buy trail' : 'Buy pack'} — ${formatPrice(pack)}`;
       elements.purchase.dataset.shopPurchasePack = pack.id || '';
     }
   };
@@ -510,17 +550,17 @@ export function initCosmeticsShop(root, options = {}) {
     state.category = elements.category.value;
   };
 
-  const applyFilter = () => {
+  const applyFilter = ({selectFirst = false} = {}) => {
     state.visible = PAGE_SIZE;
     const packs = filteredPacks();
-    if (!packs.some(pack => pack.id === state.selectedPackID)) {
+    if (selectFirst || !packs.some(pack => pack.id === state.selectedPackID)) {
       state.selectedPackID = packs[0]?.id || '';
       state.selectedItemID = '';
       renderDetail();
       previewCurrentSelection();
       updateURL(state.selectedPackID);
     }
-    renderPackList();
+    renderPackList({revealSelected: true});
   };
 
   const loadCatalog = async () => {
@@ -580,6 +620,20 @@ export function initCosmeticsShop(root, options = {}) {
     state.category = String(event.currentTarget.value || 'all');
     applyFilter();
   });
+  listen(elements.kind, 'change', event => {
+    state.kind = String(event.currentTarget.value || 'all');
+    // Switching product families is an explicit browse action. Clear a stale
+    // text query and collection so choosing Trails always reveals its shelf.
+    state.query = '';
+    state.category = 'all';
+    if (elements.search) elements.search.value = '';
+    if (elements.category) elements.category.value = 'all';
+    applyFilter({selectFirst: true});
+  });
+  listen(elements.sort, 'change', event => {
+    state.sort = String(event.currentTarget.value || 'featured');
+    applyFilter({selectFirst: true});
+  });
   listen(elements.showMore, 'click', () => {
     state.visible += PAGE_SIZE;
     renderPackList();
@@ -625,6 +679,8 @@ export function initCosmeticsShop(root, options = {}) {
       filteredCount: filteredPacks().length,
       selectedPackID: state.selectedPackID,
       selectedItemID: state.selectedItemID,
+      kind: state.kind,
+      sort: state.sort,
       weapon: state.weapon,
       previewSignature: elements.canvas.dataset.previewSignature || '',
       subscriptionEnabled: state.subscriptionOffer?.enabled === true,

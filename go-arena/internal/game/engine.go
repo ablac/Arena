@@ -721,6 +721,7 @@ func (e *GameEngine) startRound() {
 		SpawnBotAt(bot, spawnPoints[i], e.Grid, e.TickCount)
 		bot.KillStreak = 0
 		bot.LastActionTick = 0 // Reset AFK timer so bots aren't kicked at round start
+		bot.ReconnectActionGraceUntilTick = 0
 		bot.StillTicks = 0
 		bot.BowChargeTicks = 0
 		setFacingToward(bot, e.Arena.ZoneCenter)
@@ -904,6 +905,11 @@ func (e *GameEngine) AddBot(bot *BotState) bool {
 			bot.ConnectedAt = newConnectedAt
 			bot.ReconnectPending = false
 			bot.DisconnectedAtTick = 0
+			graceTicks := config.C.AFKTimeoutTicks
+			if graceTicks < 1 {
+				graceTicks = 1
+			}
+			bot.ReconnectActionGraceUntilTick = e.TickCount + graceTicks
 			e.Grid.Update(bot.BotID, bot.Position)
 		} else {
 			// Between rounds the newly validated loadout is authoritative. Carry
@@ -1176,6 +1182,7 @@ func (e *GameEngine) SetBotAction(botID string, action *Action) {
 func (e *GameEngine) setBotActionLocked(bot *BotState, action *Action) {
 	bot.PendingAction = action
 	bot.LastActionTick = e.TickCount
+	bot.ReconnectActionGraceUntilTick = 0
 	if bot.ActionHistoryMax == 0 {
 		bot.ActionHistoryMax = 100
 	}
@@ -1500,6 +1507,10 @@ func (e *GameEngine) persistBountyBoardSnapshot(
 // applyFallbacks assigns AI fallback actions to bots that have no pending
 // action and are alive and not stunned.
 func (e *GameEngine) applyFallbacks() {
+	fallbackIdleTicks := config.C.TickRate * 3
+	if fallbackIdleTicks < 1 {
+		fallbackIdleTicks = 1
+	}
 	var nearbyIDs []string
 	var nearbyBots []*BotState
 	for _, bot := range e.Bots {
@@ -1508,6 +1519,16 @@ func (e *GameEngine) applyFallbacks() {
 			continue
 		}
 		if bot.PendingAction != nil || !bot.IsAlive || bot.StunTicks > 0 {
+			continue
+		}
+		if bot.ReconnectActionGraceUntilTick > 0 {
+			continue
+		}
+		lastActionTick := bot.LastActionTick
+		if lastActionTick == 0 {
+			lastActionTick = e.Round.StartTick
+		}
+		if e.TickCount-lastActionTick > fallbackIdleTicks {
 			continue
 		}
 
@@ -2041,22 +2062,39 @@ func (e *GameEngine) checkAFK() {
 		} else if !bot.IsAlive {
 			// Dead bots can't act — don't kick them for AFK.
 			continue
+		} else if bot.ReconnectActionGraceUntilTick > 0 {
+			if e.TickCount <= bot.ReconnectActionGraceUntilTick {
+				continue
+			}
+			isAFK = true
+			reason = "no action after reconnect"
+			eventName = "reconnect_action_timeout"
 		} else if bot.LastActionTick > 0 && e.TickCount-bot.LastActionTick > c.AFKTimeoutTicks {
 			// Standard AFK: had actions before but stopped.
 			isAFK = true
 		} else if bot.LastActionTick == 0 && e.Round.Phase == PhaseActive &&
-			e.TickCount-e.Round.StartTick > c.AFKTimeoutTicks*3 {
-			// Never acted since round started — give 3x timeout grace period.
+			e.TickCount-e.Round.StartTick > c.AFKTimeoutTicks {
+			// Never acted since round started.
 			isAFK = true
 		}
 
 		if isAFK {
 			SendKick(bot, reason)
 			if bot.Conn != nil {
-				bot.Conn.Close()
+				conn := bot.Conn
+				closeReason := reason
+				safeGo(func() {
+					_ = conn.WriteControl(
+						websocket.CloseMessage,
+						websocket.FormatCloseMessage(websocket.ClosePolicyViolation, closeReason),
+						time.Now().Add(time.Second),
+					)
+					_ = conn.Close()
+				})
 			}
 			toRemove = append(toRemove, bot.BotID)
 			snapshots = append(snapshots, takeBotStatsSnapshot(bot))
+			slog.Info("bot removed by activity policy", "bot", bot.Name, "bot_id", bot.BotID, "reason", reason)
 			if GameEventHook != nil {
 				GameEventHook(eventName, map[string]interface{}{
 					"bot_id":   bot.BotID,

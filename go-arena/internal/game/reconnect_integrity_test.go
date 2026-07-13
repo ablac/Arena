@@ -76,6 +76,115 @@ func TestAddBotReconnectPreservesActiveRoundState(t *testing.T) {
 	}
 }
 
+func TestAddBotReconnectRearmsAFKWindow(t *testing.T) {
+	previousTimeout := config.C.AFKTimeoutTicks
+	config.C.AFKTimeoutTicks = 30
+	t.Cleanup(func() { config.C.AFKTimeoutTicks = previousTimeout })
+
+	engine := NewGameEngine()
+	engine.Round.Phase = PhaseActive
+	engine.TickCount = 250
+	existing := &BotState{
+		BotID:              "reconnect-bot",
+		APIKeyID:           "key-1",
+		Name:               "Reconnect Bot",
+		IsAlive:            true,
+		LastActionTick:     180,
+		ReconnectPending:   true,
+		DisconnectedAtTick: 200,
+		SendChan:           make(chan []byte, 1),
+	}
+	engine.Bots[existing.BotID] = existing
+
+	reconnected := &BotState{
+		BotID:    existing.BotID,
+		APIKeyID: existing.APIKeyID,
+		Name:     existing.Name,
+		SendChan: make(chan []byte, 1),
+	}
+	if admitted := engine.AddBot(reconnected); !admitted {
+		t.Fatal("active reconnect was rejected")
+	}
+	if reconnected.ReconnectActionGraceUntilTick != engine.TickCount+config.C.AFKTimeoutTicks {
+		t.Fatalf("reconnect AFK grace ends at tick %d, want %d", reconnected.ReconnectActionGraceUntilTick, engine.TickCount+config.C.AFKTimeoutTicks)
+	}
+	if reconnected.LastActionTick != existing.LastActionTick {
+		t.Fatalf("reconnect rewrote the last action tick to %d, want %d", reconnected.LastActionTick, existing.LastActionTick)
+	}
+	if err := engine.SubmitBotActionForSession(reconnected.BotID, reconnected, engine.TickCount, &Action{Type: ActionIdle}); err != nil {
+		t.Fatalf("first action after reconnect was rejected: %v", err)
+	}
+	if reconnected.ReconnectActionGraceUntilTick != 0 {
+		t.Fatalf("accepted reconnect action left AFK grace armed through tick %d", reconnected.ReconnectActionGraceUntilTick)
+	}
+}
+
+func TestAddBotActiveSessionReplacementRearmsAFKWindow(t *testing.T) {
+	previousTimeout := config.C.AFKTimeoutTicks
+	config.C.AFKTimeoutTicks = 30
+	t.Cleanup(func() { config.C.AFKTimeoutTicks = previousTimeout })
+
+	engine := NewGameEngine()
+	engine.Round.Phase = PhaseActive
+	engine.TickCount = 250
+	existing := &BotState{
+		BotID:          "replacement-bot",
+		APIKeyID:       "key-1",
+		Name:           "Replacement Bot",
+		IsAlive:        true,
+		LastActionTick: 180,
+		SendChan:       make(chan []byte, 1),
+	}
+	engine.Bots[existing.BotID] = existing
+
+	replacement := &BotState{
+		BotID:    existing.BotID,
+		APIKeyID: existing.APIKeyID,
+		Name:     existing.Name,
+		SendChan: make(chan []byte, 1),
+	}
+	if admitted := engine.AddBot(replacement); !admitted {
+		t.Fatal("active session replacement was rejected")
+	}
+	if replacement.ReconnectActionGraceUntilTick != engine.TickCount+config.C.AFKTimeoutTicks {
+		t.Fatalf("replacement AFK grace ends at tick %d, want %d", replacement.ReconnectActionGraceUntilTick, engine.TickCount+config.C.AFKTimeoutTicks)
+	}
+}
+
+func TestFallbackStopsAfterThreeSecondsWithoutAcceptedActions(t *testing.T) {
+	previousTickRate := config.C.TickRate
+	config.C.TickRate = 10
+	t.Cleanup(func() { config.C.TickRate = previousTickRate })
+
+	engine := NewGameEngine()
+	engine.Round = RoundState{Phase: PhaseActive, StartTick: 100}
+	bot := &BotState{
+		BotID:            "slow-bot",
+		IsAlive:          true,
+		HP:               100,
+		MaxHP:            100,
+		FallbackBehavior: "aggressive",
+		LastActionTick:   100,
+		Position:         engine.Arena.ZoneCenter,
+		SendChan:         make(chan []byte, 1),
+	}
+	engine.Bots[bot.BotID] = bot
+	engine.Grid.Insert(bot.BotID, bot.Position)
+
+	engine.TickCount = 130
+	engine.applyFallbacks()
+	if bot.PendingAction == nil {
+		t.Fatal("fallback stopped before the three-second safety window elapsed")
+	}
+
+	bot.PendingAction = nil
+	engine.TickCount = 131
+	engine.applyFallbacks()
+	if bot.PendingAction != nil {
+		t.Fatalf("silent bot kept receiving fallback actions after three seconds: %+v", bot.PendingAction)
+	}
+}
+
 func TestDetachBotSessionPreservesActiveStateForReconnect(t *testing.T) {
 	previousGrace := config.C.WSReconnectGraceSecs
 	previousTickRate := config.C.TickRate

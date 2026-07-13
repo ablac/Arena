@@ -1090,6 +1090,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 .cosmetics-workspace-panel[hidden],
 [data-cosmetic-entity-panel][hidden],
 [data-cosmetic-editor][hidden]{display:none!important}
+.cosmetics-grant-form [hidden]{display:none!important}
 .cosmetics-entity-tabs{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
 .cosmetics-entity-tabs button{min-width:112px}
 .cosmetics-entity-tabs button[aria-selected="true"]{border-color:var(--green);color:var(--green);background:rgba(63,185,80,.10)}
@@ -3726,6 +3727,21 @@ function fmtTime(ts) {
   return d.toLocaleTimeString('en-US', {hour12:false}) + '.' + String(d.getMilliseconds()).padStart(3,'0');
 }
 
+function fmtDateTime(ts) {
+  if (!ts) return '--';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '--';
+  return d.toLocaleString('en-US', {
+    year:'numeric',
+    month:'short',
+    day:'2-digit',
+    hour:'2-digit',
+    minute:'2-digit',
+    hour12:false,
+    timeZoneName:'short',
+  });
+}
+
 function statusClass(s) {
   if (s >= 500) return 's5xx';
   if (s >= 400) return 's4xx';
@@ -5748,7 +5764,7 @@ function renderCosmeticCustomerAccess(data, email) {
     <article class="cosmetics-access-row">
       <div class="cosmetics-access-row-main">
         <div class="cosmetics-access-row-title">Timed cosmetics membership <span class="cosmetics-admin-badge ${membership.status === 'active' ? 'is-live' : 'is-inactive'}">${esc(membership.status || 'active')}</span></div>
-        <div class="cosmetics-access-row-meta">Current and future purchasable sets and trails · expires ${esc(fmtTime(membership.expires_at || ''))}${membership.note ? ' · ' + esc(membership.note) : ''}</div>
+        <div class="cosmetics-access-row-meta">Current and future purchasable sets and trails · expires ${esc(fmtDateTime(membership.expires_at || ''))}${membership.note ? ' · ' + esc(membership.note) : ''}</div>
       </div>
       ${membership.status === 'active' ? `<button type="button" class="btn-danger" data-membership-id="${escAttr(membership.id)}" onclick="revokeCosmeticMembership(this.dataset.membershipId)">Revoke membership</button>` : '<span class="muted">Membership ended</span>'}
     </article>`).join('') : '<div class="muted">No timed cosmetics memberships found.</div>';
@@ -5873,7 +5889,7 @@ async function grantCosmeticMembership(event) {
   try {
     const data = await api('/cosmetics/memberships', {method:'POST', body:JSON.stringify(payload)});
     const membership = data?.membership || data;
-    el.textContent = 'Membership granted until ' + fmtTime(membership?.expires_at || expiresAt);
+    el.textContent = 'Membership granted until ' + fmtDateTime(membership?.expires_at || expiresAt);
     el.style.color = 'var(--green)';
     toast('Timed cosmetics membership granted', 'success');
     logAudit('COSMETIC_MEMBERSHIP_GRANT', 'account email until ' + (membership?.expires_at || expiresAt));

@@ -35,6 +35,7 @@ assert.equal(cosmetics.accountRoute('keys'), '/account/keys');
 assert.equal(cosmetics.accountRoute('key', 'key/a'), '/account/keys/key%2Fa');
 recentPurchaseCheck('orders route', () => {
   assert.equal(cosmetics.accountRoute('orders'), '/account/cosmetics/orders');
+  assert.equal(cosmetics.accountRoute('orderCheckout', 'order/a'), '/account/cosmetics/orders/order%2Fa/checkout');
 });
 assert.equal(cosmetics.accountRoute('assignment', 'license/a'), '/account/cosmetic-licenses/license%2Fa/assignment');
 assert.equal(cosmetics.accountRoute('equip', 'bot/a'), '/account/bots/bot%2Fa/cosmetics');
@@ -94,6 +95,7 @@ const managedSubscription = cosmetics.normalizeSubscription({
   cancel_at_period_end:true,
   current_period_end:'2026-08-12T12:00:00Z',
   can_manage:true,
+  checkout_presentation:'hosted',
   price_cents:1999,
   currency:'USD',
   interval:'month',
@@ -102,6 +104,7 @@ const managedSubscription = cosmetics.normalizeSubscription({
 });
 assert.equal(managedSubscription.has_access, false, 'UI must use the server-authoritative has_access flag instead of inferring access from status');
 assert.equal(managedSubscription.cancel_at_period_end, true);
+assert.equal(managedSubscription.checkout_presentation, 'hosted');
 
 const keyCollection = cosmetics.normalizeKeyCollection({
   keys:[
@@ -318,6 +321,45 @@ for (const [status, label] of statusCases) {
   });
 }
 
+const resumableOrderHTML = cosmetics.renderPanel(snapshot, {
+  catalog,
+  orders:[{...baseOrder, id:'order-resume', status:'checkout_pending', checkout_session_id:'cs_resume', checkout_presentation:'embedded'}],
+});
+recentPurchaseCheck('attached pending order resume action', () => {
+  assert.match(resumableOrderHTML, /data-order-resume="order-resume"[^>]*>Resume checkout<\/button>/);
+});
+const unattachedPendingOrderHTML = cosmetics.renderPanel(snapshot, {
+  catalog,
+  orders:[{...baseOrder, id:'order-not-attached', status:'checkout_pending', checkout_session_id:'', checkout_presentation:'embedded'}],
+});
+recentPurchaseCheck('unattached order cannot resume', () => {
+  assert.doesNotMatch(unattachedPendingOrderHTML, /data-order-resume=/);
+});
+for (const status of ['created', 'payment_failed']) {
+  const retryableOrderHTML = cosmetics.renderPanel(snapshot, {
+    catalog,
+    orders:[{...baseOrder, id:`order-retry-${status}`, status, checkout_session_id:'', checkout_presentation:'hosted'}],
+  });
+  recentPurchaseCheck(`${status} order exposes reserved checkout retry`, () => {
+    assert.match(retryableOrderHTML, new RegExp(`data-order-resume="order-retry-${status}"[^>]*>Retry checkout<\\/button>`));
+    assert.match(retryableOrderHTML, /same reserved Stripe checkout/);
+  });
+}
+const unpinnedFailedOrderHTML = cosmetics.renderPanel(snapshot, {
+  catalog,
+  orders:[{...baseOrder, id:'order-unpinned', status:'payment_failed', checkout_session_id:'', checkout_presentation:''}],
+});
+recentPurchaseCheck('unattached failure without a persisted mode cannot retry', () => {
+  assert.doesNotMatch(unpinnedFailedOrderHTML, /data-order-resume=/);
+});
+const paidOrderHTML = cosmetics.renderPanel(snapshot, {
+  catalog,
+  orders:[{...baseOrder, id:'order-paid', status:'paid', checkout_session_id:'cs_paid'}],
+});
+recentPurchaseCheck('terminal order cannot resume', () => {
+  assert.doesNotMatch(paidOrderHTML, /data-order-resume=/);
+});
+
 const boundedOrdersHTML = cosmetics.renderPanel(snapshot, {
   catalog,
   orders:Array.from({length:25}, (_, index) => ({...baseOrder, id:`bounded-${index}`})),
@@ -413,7 +455,39 @@ const linkHandler = dashboardHTML.slice(
 assert.doesNotMatch(linkHandler, /saveKey|localStorage/, 'linking a bot must not persist the proof key in dashboard storage');
 
 recentPurchaseCheck('dashboard script cache version', () => {
-  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260713b/);
+  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260713d/);
+  assert.match(dashboardHTML, /href="\.\.\/css\/embedded-checkout\.css\?v=20260713a"/);
+  assert.match(dashboardHTML, /src="\.\.\/js\/embedded-checkout\.js\?v=20260713a"/);
+});
+recentPurchaseCheck('checkout return remains reconciling', () => {
+  assert.match(dashboardHTML, /checkoutReturn === 'return'[\s\S]*?status:'reconciling'/);
+});
+recentPurchaseCheck('closing embedded checkout releases pending state', () => {
+  assert.match(dashboardHTML, /function handleEmbeddedCheckoutAbort\(event\)/);
+  assert.match(dashboardHTML, /arena:stripe-checkout:abort/);
+});
+recentPurchaseCheck('hosted checkout and billing portal escape the dashboard iframe', () => {
+  const checkoutStart = dashboardHTML.indexOf('async function presentAccountCheckout');
+  const checkoutEnd = dashboardHTML.indexOf('function abortPreparedAccountCheckout', checkoutStart);
+  const subscriptionStart = dashboardHTML.indexOf('async function openAccountSubscription');
+  const subscriptionEnd = dashboardHTML.indexOf('async function handleAccountPanelSubmit', subscriptionStart);
+  const checkoutSource = dashboardHTML.slice(checkoutStart, checkoutEnd);
+  const subscriptionSource = dashboardHTML.slice(subscriptionStart, subscriptionEnd);
+  assert.match(checkoutSource, /navigateAccount\(checkoutURL\.href\)/);
+  assert.doesNotMatch(checkoutSource, /window\.location\.assign/);
+  assert.match(subscriptionSource, /navigateAccount\(destination\.href\)/);
+  assert.doesNotMatch(subscriptionSource, /window\.location\.assign/);
+  assert.match(dashboardHTML, /if \(window\.top !== window\.self\) window\.top\.location\.assign\(url\)/);
+});
+recentPurchaseCheck('pending order resume handler', () => {
+  assert.match(dashboardHTML, /async function resumeCosmeticCheckout\(orderID\)/);
+  assert.match(dashboardHTML, /accountRoute\('orderCheckout',\s*orderID\)/);
+  assert.match(dashboardHTML, /closest\('\[data-order-resume\]'\)/);
+});
+recentPurchaseCheck('subscription checkout honors the server-persisted presentation', () => {
+  const start = dashboardHTML.indexOf('async function openAccountSubscription');
+  const end = dashboardHTML.indexOf('async function handleAccountPanelSubmit', start);
+  assert.match(dashboardHTML.slice(start, end), /checkout_presentation/);
 });
 recentPurchaseCheck('long purchase data remains contained', () => {
   assert.match(dashboardHTML, /\.cosmetic-purchase-head>div\{[^}]*min-width:0/);

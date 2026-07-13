@@ -12,14 +12,50 @@ func setMovementTestConfig(t *testing.T) {
 	oldBudget := config.C.StatBudget
 	oldBase := config.C.StatSpeedBase
 	oldPerPoint := config.C.StatSpeedPerPoint
+	oldCellsPerTick := config.C.TerrainMoveCellsPerTick
 	config.C.StatBudget = 20
 	config.C.StatSpeedBase = 3
 	config.C.StatSpeedPerPoint = 0.5
+	config.C.TerrainMoveCellsPerTick = 0.35
 	t.Cleanup(func() {
 		config.C.StatBudget = oldBudget
 		config.C.StatSpeedBase = oldBase
 		config.C.StatSpeedPerPoint = oldPerPoint
+		config.C.TerrainMoveCellsPerTick = oldCellsPerTick
 	})
+}
+
+func TestBalancedTerrainMovementUsesCalmerAuthoritativePace(t *testing.T) {
+	setMovementTestConfig(t)
+	balanced := &BotState{Speed: 5.5}
+
+	var moved int
+	for tick := 0; tick < 10; tick++ {
+		moved += gridMoveCellsForTick(balanced)
+	}
+
+	if moved != 3 {
+		t.Fatalf("balanced bot moved %d cells in 10 ticks, want 3 at the calmer 0.35-cell pace", moved)
+	}
+	if math.Abs(balanced.MoveProgress-0.5) > 1e-9 {
+		t.Fatalf("balanced bot carry = %v, want 0.5", balanced.MoveProgress)
+	}
+}
+
+func TestTerrainMovementPaceDefendsAgainstUnsafeRuntimeValues(t *testing.T) {
+	setMovementTestConfig(t)
+	balanced := &BotState{Speed: 5.5}
+	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), -1, 0, 2.01} {
+		config.C.TerrainMoveCellsPerTick = value
+		if got := terrainMoveCellsPerTick(balanced); math.Abs(got-0.35) > 1e-9 {
+			t.Fatalf("terrainMoveCellsPerTick with base %v = %v, want safe default 0.35", value, got)
+		}
+	}
+	balanced.Speed = math.Inf(1)
+	config.C.TerrainMoveCellsPerTick = 0.35
+	if got := terrainMoveCellsPerTick(balanced); math.Abs(got-0.35) > 1e-9 {
+		t.Fatalf("terrainMoveCellsPerTick with infinite bot speed = %v, want safe reference pace", got)
+	}
 }
 
 func openMovementTerrain(width, height int) *TerrainGrid {
@@ -62,8 +98,8 @@ func TestTerrainMovementUsesSpeedStat(t *testing.T) {
 	if highCell[0] <= lowCell[0] {
 		t.Fatalf("high-speed bot reached column %d, low-speed bot reached %d; speed stat had no movement effect", highCell[0], lowCell[0])
 	}
-	if got := highCell[0] - 1; got < 7 {
-		t.Errorf("high-speed bot moved only %d cells in 12 ticks, want at least 7", got)
+	if got := highCell[0] - 1; got < 6 {
+		t.Errorf("high-speed bot moved only %d cells in 12 ticks, want at least 6", got)
 	}
 	if got := lowCell[0] - 1; got > 4 {
 		t.Errorf("low-speed bot moved %d cells in 12 ticks, want at most 4", got)
@@ -149,10 +185,10 @@ func TestEstimateBotVelocityUsesTerrainSpeedRatioAndBoost(t *testing.T) {
 		effects  []Effect
 		expected float64
 	}{
-		{name: "low", speed: 3.5, expected: 20 * 10 * 0.5 * 3.5 / 5.5},
-		{name: "reference", speed: 5.5, expected: 100},
-		{name: "high", speed: 8, expected: 20 * 10 * 0.5 * 8 / 5.5},
-		{name: "boosted reference", speed: 5.5, effects: []Effect{{Name: "speed_boost", Value: 2}}, expected: 200},
+		{name: "low", speed: 3.5, expected: 20 * 10 * 0.35 * 3.5 / 5.5},
+		{name: "reference", speed: 5.5, expected: 70},
+		{name: "high", speed: 8, expected: 20 * 10 * 0.35 * 8 / 5.5},
+		{name: "boosted reference", speed: 5.5, effects: []Effect{{Name: "speed_boost", Value: 2}}, expected: 140},
 	}
 
 	for _, tt := range tests {
@@ -184,7 +220,7 @@ func TestMultiCellMovementCannotSkipArmedMine(t *testing.T) {
 	direction := Vec2{1, 0}
 	runner := &BotState{
 		BotID: "runner", HP: 100, MaxHP: 100, IsAlive: true,
-		Speed:         13,
+		Speed:         20,
 		MoveProgress:  0.7,
 		ActiveEffects: []Effect{{Name: "speed_boost", Value: 2}},
 		Position:      ActiveTerrain.GridToWorld([2]int{1, 1}),

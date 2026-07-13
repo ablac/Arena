@@ -6,7 +6,7 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260713b';
+import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260713c';
 import {
   forgeContactDelay,
   updateForgeCharacter,
@@ -15,7 +15,7 @@ import {
   triggerForgeHit,
   triggerForgeShove,
 } from './character-anims.js?v=20260712c';
-import {updateForgeCharacterLOD} from './character-rig.js?v=20260713b';
+import {updateForgeCharacterLOD} from './character-rig.js?v=20260713c';
 import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260712c';
 import { isEnabled } from '../settings.js';
 

@@ -7,14 +7,19 @@ import (
 	"net"
 	"net/mail"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/kelseyhightower/envconfig"
 )
 
 const (
-	DefaultShoveRangeTiles     = 1.0
-	DefaultShoveKnockbackTiles = 2.0
+	DefaultShoveRangeTiles         = 1.0
+	DefaultShoveKnockbackTiles     = 2.0
+	DefaultTerrainMoveCellsPerTick = 0.35
+	MaxTerrainMoveCellsPerTick     = 2.0
+	DefaultAFKTimeoutSeconds       = 30
+	MinimumAFKTimeoutSeconds       = 10
 )
 
 type Config struct {
@@ -90,13 +95,14 @@ type Config struct {
 	MinBotsToStart   int     `envconfig:"ARENA_MIN_BOTS_TO_START" default:"2"`
 
 	// Stat multipliers (for live balance tuning)
-	StatHPBase          float64 `envconfig:"ARENA_STAT_HP_BASE" default:"100"`
-	StatHPPerPoint      float64 `envconfig:"ARENA_STAT_HP_PER_POINT" default:"10"`
-	StatSpeedBase       float64 `envconfig:"ARENA_STAT_SPEED_BASE" default:"3.0"`
-	StatSpeedPerPoint   float64 `envconfig:"ARENA_STAT_SPEED_PER_POINT" default:"0.5"`
-	StatAttackBase      float64 `envconfig:"ARENA_STAT_ATTACK_BASE" default:"1.0"`
-	StatAttackPerPoint  float64 `envconfig:"ARENA_STAT_ATTACK_PER_POINT" default:"0.1"`
-	StatDefensePerPoint float64 `envconfig:"ARENA_STAT_DEFENSE_PER_POINT" default:"0.03"`
+	StatHPBase              float64 `envconfig:"ARENA_STAT_HP_BASE" default:"100"`
+	StatHPPerPoint          float64 `envconfig:"ARENA_STAT_HP_PER_POINT" default:"10"`
+	StatSpeedBase           float64 `envconfig:"ARENA_STAT_SPEED_BASE" default:"3.0"`
+	StatSpeedPerPoint       float64 `envconfig:"ARENA_STAT_SPEED_PER_POINT" default:"0.5"`
+	TerrainMoveCellsPerTick float64 `envconfig:"ARENA_TERRAIN_MOVE_CELLS_PER_TICK" default:"0.35"`
+	StatAttackBase          float64 `envconfig:"ARENA_STAT_ATTACK_BASE" default:"1.0"`
+	StatAttackPerPoint      float64 `envconfig:"ARENA_STAT_ATTACK_PER_POINT" default:"0.1"`
+	StatDefensePerPoint     float64 `envconfig:"ARENA_STAT_DEFENSE_PER_POINT" default:"0.03"`
 
 	// Dodge
 	DodgeSpeedMult     float64 `envconfig:"ARENA_DODGE_SPEED_MULT" default:"2.0"`
@@ -197,7 +203,7 @@ type Config struct {
 	LoadoutTimeoutSecs         float64 `envconfig:"ARENA_LOADOUT_TIMEOUT_SECS" default:"10"`
 	WSReconnectGraceSecs       float64 `envconfig:"ARENA_WS_RECONNECT_GRACE_SECS" default:"10"`
 	SpectatorBroadcastInterval int     `envconfig:"ARENA_SPECTATOR_BROADCAST_INTERVAL" default:"1"`
-	AFKTimeoutTicks            int     `envconfig:"ARENA_AFK_TIMEOUT_TICKS" default:"30"`
+	AFKTimeoutTicks            int     `envconfig:"ARENA_AFK_TIMEOUT_TICKS" default:"300"`
 
 	// Admin
 	AdminKey             string `envconfig:"ARENA_ADMIN_KEY" default:"changeme_admin_key"`
@@ -409,9 +415,11 @@ type Config struct {
 	// launch boundary before the server starts.
 	CosmeticsCheckoutEnabled bool   `envconfig:"ARENA_COSMETICS_CHECKOUT_ENABLED" default:"false"`
 	StripeSecretKey          string `envconfig:"ARENA_STRIPE_SECRET_KEY" default:""`
+	StripePublishableKey     string `envconfig:"ARENA_STRIPE_PUBLISHABLE_KEY" default:""`
 	StripeWebhookSecrets     string `envconfig:"ARENA_STRIPE_WEBHOOK_SECRETS" default:""`
 	StripeSuccessURL         string `envconfig:"ARENA_STRIPE_SUCCESS_URL" default:""`
 	StripeCancelURL          string `envconfig:"ARENA_STRIPE_CANCEL_URL" default:""`
+	StripeReturnURL          string `envconfig:"ARENA_STRIPE_RETURN_URL" default:""`
 	StripePortalReturnURL    string `envconfig:"ARENA_STRIPE_PORTAL_RETURN_URL" default:""`
 	StripeAutomaticTax       bool   `envconfig:"ARENA_STRIPE_AUTOMATIC_TAX" default:"false"`
 	CosmeticsCheckoutRPM     int    `envconfig:"ARENA_COSMETICS_CHECKOUT_RPM" default:"10"`
@@ -613,8 +621,8 @@ func ValidateCosmeticsCheckoutConfig(cfg Config) error {
 	}
 	if !cfg.CosmeticsCheckoutEnabled {
 		if len(ParseStripeWebhookSecrets(cfg.StripeWebhookSecrets)) > 0 {
-			if strings.TrimSpace(cfg.StripeSecretKey) == "" {
-				return fmt.Errorf("ARENA_STRIPE_SECRET_KEY must be retained while Stripe webhooks service existing cosmetic subscriptions")
+			if stripeAPIKeyMode(cfg.StripeSecretKey, false) == "" {
+				return fmt.Errorf("ARENA_STRIPE_SECRET_KEY must be retained as an sk_test, rk_test, sk_live, or rk_live key while Stripe webhooks service existing cosmetic subscriptions")
 			}
 			if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_PORTAL_RETURN_URL", cfg.StripePortalReturnURL); err != nil {
 				return err
@@ -638,6 +646,17 @@ func ValidateCosmeticsCheckoutConfig(cfg Config) error {
 	if strings.TrimSpace(cfg.StripeSecretKey) == "" {
 		return fmt.Errorf("ARENA_STRIPE_SECRET_KEY is required when cosmetics checkout is enabled")
 	}
+	secretMode := stripeAPIKeyMode(cfg.StripeSecretKey, false)
+	if secretMode == "" {
+		return fmt.Errorf("ARENA_STRIPE_SECRET_KEY must be an sk_test, rk_test, sk_live, or rk_live key")
+	}
+	publishableMode := stripeAPIKeyMode(cfg.StripePublishableKey, true)
+	if publishableMode == "" {
+		return fmt.Errorf("ARENA_STRIPE_PUBLISHABLE_KEY must be a pk_test or pk_live key")
+	}
+	if secretMode != publishableMode {
+		return fmt.Errorf("ARENA_STRIPE_SECRET_KEY and ARENA_STRIPE_PUBLISHABLE_KEY must use the same Stripe mode")
+	}
 	if len(ParseStripeWebhookSecrets(cfg.StripeWebhookSecrets)) == 0 {
 		return fmt.Errorf("ARENA_STRIPE_WEBHOOK_SECRETS must contain at least one secret")
 	}
@@ -647,6 +666,12 @@ func ValidateCosmeticsCheckoutConfig(cfg Config) error {
 	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_CANCEL_URL", cfg.StripeCancelURL); err != nil {
 		return err
 	}
+	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_RETURN_URL", cfg.StripeReturnURL); err != nil {
+		return err
+	}
+	if !strings.Contains(cfg.StripeReturnURL, "{CHECKOUT_SESSION_ID}") {
+		return fmt.Errorf("ARENA_STRIPE_RETURN_URL must include {CHECKOUT_SESSION_ID}")
+	}
 	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_PORTAL_RETURN_URL", cfg.StripePortalReturnURL); err != nil {
 		return err
 	}
@@ -654,6 +679,28 @@ func ValidateCosmeticsCheckoutConfig(cfg Config) error {
 		return fmt.Errorf("ARENA_COSMETICS_CHECKOUT_RPM must be positive")
 	}
 	return nil
+}
+
+func stripeAPIKeyMode(value string, publishable bool) string {
+	value = strings.TrimSpace(value)
+	if publishable {
+		switch {
+		case strings.HasPrefix(value, "pk_test_"):
+			return "test"
+		case strings.HasPrefix(value, "pk_live_"):
+			return "live"
+		default:
+			return ""
+		}
+	}
+	switch {
+	case strings.HasPrefix(value, "sk_test_"), strings.HasPrefix(value, "rk_test_"):
+		return "test"
+	case strings.HasPrefix(value, "sk_live_"), strings.HasPrefix(value, "rk_live_"):
+		return "live"
+	default:
+		return ""
+	}
 }
 
 // ValidateCustomerEmailAuthConfig keeps passwordless registration fail-closed.
@@ -765,10 +812,42 @@ func isLoopbackCheckoutHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// ValidateMovementConfig prevents a malformed floating-point environment
+// value from poisoning per-bot movement progress or creating unbounded
+// per-tick terrain loops.
+func ValidateMovementConfig(cfg Config) error {
+	pace := cfg.TerrainMoveCellsPerTick
+	if math.IsNaN(pace) || math.IsInf(pace, 0) || pace <= 0 || pace > MaxTerrainMoveCellsPerTick {
+		return fmt.Errorf("ARENA_TERRAIN_MOVE_CELLS_PER_TICK must be finite, greater than 0, and at most %.2f", MaxTerrainMoveCellsPerTick)
+	}
+	return nil
+}
+
+// ValidateAFKConfig keeps a legacy tick-based override from turning into an
+// unexpectedly short timeout when the server tick rate changes. In particular,
+// it fails closed on the historical 30-tick value, which is only three seconds
+// at the default 10 Hz cadence.
+func ValidateAFKConfig(cfg Config) error {
+	if cfg.TickRate <= 0 {
+		return fmt.Errorf("ARENA_AFK_TIMEOUT_TICKS requires ARENA_TICK_RATE to be greater than 0")
+	}
+	minimumTicks := cfg.TickRate * MinimumAFKTimeoutSeconds
+	if cfg.AFKTimeoutTicks < minimumTicks {
+		return fmt.Errorf("ARENA_AFK_TIMEOUT_TICKS must be at least %d ticks (%d seconds at %d Hz)", minimumTicks, MinimumAFKTimeoutSeconds, cfg.TickRate)
+	}
+	return nil
+}
+
 func Load() {
 	if err := envconfig.Process("", &C); err != nil {
 		slog.Error("failed to load config", "error", err)
 		panic(err)
+	}
+	// The default is a duration, not a magic tick count. Preserve the legacy
+	// ARENA_AFK_TIMEOUT_TICKS override for existing operators, but derive an
+	// unset default from the configured cadence so it remains 30 seconds.
+	if _, explicitlyConfigured := os.LookupEnv("ARENA_AFK_TIMEOUT_TICKS"); !explicitlyConfigured {
+		C.AFKTimeoutTicks = C.TickRate * DefaultAFKTimeoutSeconds
 	}
 	rawMin, rawMax, rawStarting := C.EloMin, C.EloMax, C.EloStarting
 	C.EloMin, C.EloMax, C.EloStarting = resolveEloSettings(rawMin, rawMax, rawStarting)
@@ -810,6 +889,14 @@ func Load() {
 			"cooldown_rails", []float64{C.WeaponAutoBalanceMinCooldownScale, C.WeaponAutoBalanceMaxCooldownScale},
 			"max_evidence_rounds", C.WeaponAutoBalanceMaxEvidenceRounds,
 		)
+	}
+	if err := ValidateMovementConfig(C); err != nil {
+		slog.Error("invalid movement configuration", "error", err)
+		panic(err)
+	}
+	if err := ValidateAFKConfig(C); err != nil {
+		slog.Error("invalid AFK configuration", "error", err)
+		panic(err)
 	}
 	if err := ValidateCustomerEmailAuthConfig(C); err != nil {
 		slog.Error("invalid customer email auth configuration", "error", err)
