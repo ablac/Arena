@@ -33,6 +33,7 @@ type demoBot struct {
 	maxHP                 float64 // max HP from loadout_confirmed
 	botID                 string  // bot ID from authenticated config, refreshed by connected messages
 	strategy              string  // stable configured archetype for comparable balance samples
+	navigation            navigationState
 	credentialProvisioner demoBotCredentialProvisioner
 	cosmeticProvisioner   demoBotCosmeticProvisioner
 }
@@ -54,7 +55,7 @@ func newDemoBot(cfg BotConfig, serverURL string) *demoBot {
 }
 
 func provisionDemoBotCosmetics(ctx context.Context, botID string, cfg BotConfig) ([]cosmeticSelection, error) {
-	if cfg.CosmeticPackID == "" {
+	if cfg.CosmeticPackID == "" && cfg.CosmeticTrailID == "" {
 		return nil, nil
 	}
 	if botID == "" {
@@ -64,9 +65,20 @@ func provisionDemoBotCosmetics(ctx context.Context, botID string, cfg BotConfig)
 	if err != nil {
 		return nil, fmt.Errorf("load public cosmetic catalog: %w", err)
 	}
-	selections, err := cosmeticSelectionsForPack(*catalog, cfg.CosmeticPackID)
-	if err != nil {
-		return nil, err
+	selections := make([]cosmeticSelection, 0, 4)
+	if cfg.CosmeticPackID != "" {
+		packSelections, err := cosmeticSelectionsForPack(*catalog, cfg.CosmeticPackID)
+		if err != nil {
+			return nil, err
+		}
+		selections = append(selections, packSelections...)
+	}
+	if cfg.CosmeticTrailID != "" {
+		trailSelection, err := cosmeticSelectionForTrail(*catalog, cfg.CosmeticTrailID)
+		if err != nil {
+			return nil, err
+		}
+		selections = append(selections, trailSelection)
 	}
 	for _, selection := range selections {
 		if _, err := db.GrantCosmeticEntitlement(ctx, botID, selection.CosmeticID, "demo", ""); err != nil {
@@ -206,17 +218,24 @@ func (b *demoBot) configure(ctx context.Context) error {
 }
 
 func (b *demoBot) configureCosmetics(ctx context.Context) error {
-	if b.config.CosmeticPackID == "" {
+	if b.config.CosmeticPackID == "" && b.config.CosmeticTrailID == "" {
 		return nil
 	}
 	selections, err := b.cosmeticProvisioner(ctx, b.botID, b.config)
 	if err != nil {
 		return err
 	}
-	if len(selections) != 3 {
-		return fmt.Errorf("cosmetic pack %q resolved to %d items", b.config.CosmeticPackID, len(selections))
+	wantSelections := 0
+	if b.config.CosmeticPackID != "" {
+		wantSelections += 3
 	}
-	b.logger.Info("equipped demo cosmetic pack", "pack", b.config.CosmeticPackID)
+	if b.config.CosmeticTrailID != "" {
+		wantSelections++
+	}
+	if len(selections) != wantSelections {
+		return fmt.Errorf("demo cosmetics resolved to %d items, want %d", len(selections), wantSelections)
+	}
+	b.logger.Info("equipped demo cosmetics", "pack", b.config.CosmeticPackID, "trail", b.config.CosmeticTrailID)
 	return nil
 }
 
@@ -368,6 +387,7 @@ func (b *demoBot) session(ctx context.Context) demoBotSessionOutcome {
 
 	b.logger.Info("entered arena", "weapon", b.config.Weapon, "strategy", b.strategy,
 		"attack_range", b.attackRange, "max_hp", b.maxHP)
+	b.navigation.reset()
 	if err := b.fetchMap(ctx); err != nil {
 		b.logger.Debug("map prefetch failed", "error", err)
 	}
@@ -398,6 +418,7 @@ func (b *demoBot) session(ctx context.Context) demoBotSessionOutcome {
 				continue
 			}
 			action := PickAction(b.strategy, msg, b.config.Weapon, b.attackRange, b.botID)
+			action = b.navigation.stabilize(msg, action, b.botID)
 			payload := buildActionPayload(msg["tick"], action)
 			if err := conn.WriteJSON(payload); err != nil {
 				return established(fmt.Errorf("send action: %w", err))
@@ -406,9 +427,10 @@ func (b *demoBot) session(ctx context.Context) demoBotSessionOutcome {
 		case "death":
 			resetMineCount(b.botID)
 			resetGravWell(b.botID)
+			b.navigation.reset()
 
 		case "respawn":
-			// Bot is alive again.
+			b.navigation.reset()
 
 		case "round_end":
 			if err := b.refreshStats(ctx); err != nil {
@@ -420,10 +442,12 @@ func (b *demoBot) session(ctx context.Context) demoBotSessionOutcome {
 
 		case "map_init":
 			parseTerrain(msg)
+			b.navigation.reset()
 
 		case "round_start":
 			resetMineCount(b.botID)
 			resetGravWell(b.botID)
+			b.navigation.reset()
 			b.applyConfiguredStrategy("round_start")
 			if err := b.fetchMap(ctx); err != nil {
 				b.logger.Debug("map refresh failed", "error", err)

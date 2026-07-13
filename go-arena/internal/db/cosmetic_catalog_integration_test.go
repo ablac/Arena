@@ -233,6 +233,22 @@ func TestPostgresCosmeticCatalogRejectsBrokenReferencesAndImmutableRenderIdentit
 	if _, err := UpsertCosmeticPack(ctx, invalidPack, "integration-admin"); !errors.Is(err, ErrCosmeticCatalogInvalid) {
 		t.Fatalf("missing pack item error = %v, want ErrCosmeticCatalogInvalid", err)
 	}
+	trailInSet := CosmeticPack{
+		ID: "trail-in-set", CategoryID: "starter-packs", Name: "Trail Disguised As Set",
+		PriceCents: CosmeticPackPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true,
+		ItemIDs: []string{"trail-ember-sparks"},
+	}
+	if _, err := UpsertCosmeticPack(ctx, trailInSet, "integration-admin"); !errors.Is(err, ErrCosmeticCatalogInvalid) {
+		t.Fatalf("trail in non-trail product error = %v, want ErrCosmeticCatalogInvalid", err)
+	}
+	nonTrailInTrail := CosmeticPack{
+		ID: "nontrail-in-trail", CategoryID: CosmeticTrailCategoryID, Name: "Non-Trail Disguised As Trail",
+		PriceCents: CosmeticTrailPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true,
+		ItemIDs: []string{"skin-neon-grid"},
+	}
+	if _, err := UpsertCosmeticPack(ctx, nonTrailInTrail, "integration-admin"); !errors.Is(err, ErrCosmeticCatalogInvalid) {
+		t.Fatalf("non-trail in trail product error = %v, want ErrCosmeticCatalogInvalid", err)
+	}
 
 	item := DefaultCosmeticCatalog()[0]
 	item.AssetKey = "arena_set_904_changed_identity"

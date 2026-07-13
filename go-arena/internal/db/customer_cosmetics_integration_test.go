@@ -247,6 +247,20 @@ func TestPostgresExactPR69CosmeticsSchemaUpgradeAndLegacyRevoke(t *testing.T) {
 	if err := EnsureCosmeticsSchema(ctx); err != nil {
 		t.Fatalf("repeat upgraded schema: %v", err)
 	}
+	if _, err := Pool.Exec(ctx, `
+		INSERT INTO bot_cosmetic_loadout (bot_id, slot, cosmetic_id)
+		VALUES ('old-bot', 'trail', 'trail-standard')`); err != nil {
+		t.Fatalf("upgraded loadout constraint rejected trail slot: %v", err)
+	}
+	var migratedTrailItem string
+	if err := Pool.QueryRow(ctx, `
+		SELECT cosmetic_id FROM bot_cosmetic_loadout
+		WHERE bot_id = 'old-bot' AND slot = 'trail'`).Scan(&migratedTrailItem); err != nil {
+		t.Fatalf("load upgraded trail slot: %v", err)
+	}
+	if migratedTrailItem != "trail-standard" {
+		t.Fatalf("upgraded trail slot item = %q, want trail-standard", migratedTrailItem)
+	}
 
 	var licenseID string
 	if err := Pool.QueryRow(ctx, `

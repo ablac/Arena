@@ -182,12 +182,12 @@ func cosmeticCatalogHasPurchasablePack(catalog *db.CosmeticCatalog) bool {
 	for _, category := range catalog.Categories {
 		activeCategories[category.ID] = category.IsActive
 	}
-	activeItems := make(map[string]bool, len(catalog.Items))
+	activeItems := make(map[string]db.CosmeticItem, len(catalog.Items))
 	for _, item := range catalog.Items {
-		activeItems[item.ID] = item.IsActive && activeCategories[item.CategoryID]
+		activeItems[item.ID] = item
 	}
 	for _, pack := range catalog.Packs {
-		if !pack.IsActive || !pack.IsPurchasable || pack.IsFree || pack.PriceCents != db.CosmeticPackPriceCents ||
+		if !pack.IsActive || !pack.IsPurchasable || pack.IsFree || pack.PriceCents != db.CosmeticPackPriceForCategory(pack.CategoryID) ||
 			!strings.EqualFold(pack.Currency, "USD") || !activeCategories[pack.CategoryID] {
 			continue
 		}
@@ -197,7 +197,7 @@ func cosmeticCatalogHasPurchasablePack(catalog *db.CosmeticCatalog) bool {
 			for _, item := range pack.Items {
 				itemIDs = append(itemIDs, item.ID)
 				if _, exists := activeItems[item.ID]; !exists {
-					activeItems[item.ID] = item.IsActive && activeCategories[item.CategoryID]
+					activeItems[item.ID] = item
 				}
 			}
 		}
@@ -205,13 +205,23 @@ func cosmeticCatalogHasPurchasablePack(catalog *db.CosmeticCatalog) bool {
 			continue
 		}
 		allActive := true
+		trailItemCount := 0
 		for _, itemID := range itemIDs {
-			if !activeItems[itemID] {
+			item, exists := activeItems[itemID]
+			if !exists || !item.IsActive || !activeCategories[item.CategoryID] || !db.IsValidCosmeticSlot(item.Slot) ||
+				((item.Slot == db.CosmeticSlotTrail) != (item.CategoryID == db.CosmeticTrailCategoryID)) {
 				allActive = false
 				break
 			}
+			if item.Slot == db.CosmeticSlotTrail {
+				trailItemCount++
+			}
 		}
-		if allActive {
+		validProductShape := pack.CategoryID != db.CosmeticTrailCategoryID && trailItemCount == 0
+		if pack.CategoryID == db.CosmeticTrailCategoryID {
+			validProductShape = len(itemIDs) == 1 && trailItemCount == 1
+		}
+		if allActive && validProductShape {
 			return true
 		}
 	}

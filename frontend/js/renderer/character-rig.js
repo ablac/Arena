@@ -13,7 +13,7 @@
 import {parseColor, makeMat} from './utils.js';
 import {getCharacterProfile} from './character-roster.js?v=20260712c';
 import {ForgeAnimState} from './character-anims.js?v=20260712c';
-import {createForgeWeapon, disposeForgeWeapon} from './forge-weapons.js?v=20260712c';
+import {createForgeWeapon, disposeForgeWeapon} from './forge-weapons.js?v=20260713b';
 
 const _sceneResources = new WeakMap();
 
@@ -29,6 +29,11 @@ function sharedMaterial(scene, name, diffuse, emissive, specular) {
   material.emissiveColor = emissive;
   material.specularColor = specular;
   material.backFaceCulling = true;
+  // Shared chassis pieces must keep a readable floor in the arena's near-black
+  // sectors. Accent/core materials still react to status and cosmetics, while
+  // these scene-owned structural materials deliberately do not depend on a
+  // light reaching every articulated limb.
+  material.disableLighting = true;
   material.freeze();
   return material;
 }
@@ -41,16 +46,23 @@ function getResources(scene) {
   const graphite = sharedMaterial(
     scene,
     'forge-graphite-shared',
-    new B.Color3(0.055, 0.068, 0.088),
-    new B.Color3(0.008, 0.012, 0.020),
+    new B.Color3(0.28, 0.36, 0.50),
+    new B.Color3(0.18, 0.24, 0.36),
     new B.Color3(0.40, 0.46, 0.54),
   );
   const gunmetal = sharedMaterial(
     scene,
     'forge-gunmetal-shared',
-    new B.Color3(0.13, 0.16, 0.21),
-    new B.Color3(0.012, 0.018, 0.028),
+    new B.Color3(0.34, 0.44, 0.60),
+    new B.Color3(0.22, 0.30, 0.43),
     new B.Color3(0.52, 0.59, 0.68),
+  );
+  const farSilhouette = sharedMaterial(
+    scene,
+    'forge-far-silhouette-shared',
+    new B.Color3(0.38, 0.66, 1.00),
+    new B.Color3(0.38, 0.66, 1.00),
+    new B.Color3(0.58, 0.68, 0.82),
   );
   const selector = sharedMaterial(
     scene,
@@ -87,11 +99,11 @@ function getResources(scene) {
   const low = B.MeshBuilder.CreateCylinder('forge-low-template', {
     height: 1, diameterTop: 0.62, diameterBottom: 1, tessellation: 6,
   }, scene);
-  low.material = graphite;
+  low.material = farSilhouette;
   low.isPickable = false;
   low.setEnabled(false);
 
-  resources = {graphite, gunmetal, selector, box, head, plate, low};
+  resources = {graphite, gunmetal, farSilhouette, selector, box, head, plate, low};
   _sceneResources.set(scene, resources);
   return resources;
 }
@@ -441,9 +453,9 @@ export function createForgeCharacter(bot, scene, options = {}) {
     lowDetail.parent = root;
     lowDetail.position.y = lowHeight / 2;
     lowDetail.scaling.set(
-      Math.max(torsoWidth, pelvisWidth, headWidth) * 0.94,
-      lowHeight,
-      Math.max(torsoDepth, headDepth) * 0.92,
+      Math.max(torsoWidth, pelvisWidth, headWidth) * 1.22,
+      lowHeight * 1.10,
+      Math.max(torsoDepth, headDepth) * 1.20,
     );
     lowDetail.isPickable = true;
     lowDetail.metadata = {botId: id};

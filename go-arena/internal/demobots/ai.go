@@ -571,6 +571,7 @@ type bfsNode struct {
 // flat array avoids both the per-call allocation and the hashing.
 type bfsScratch struct {
 	visited    []uint32
+	distances  []uint8
 	stamp      uint32
 	queue      []bfsNode
 	cols, rows int
@@ -579,8 +580,9 @@ type bfsScratch struct {
 var bfsPool = sync.Pool{New: func() interface{} { return &bfsScratch{} }}
 
 func (s *bfsScratch) reset(cols, rows int) {
-	if s.cols != cols || s.rows != rows || len(s.visited) != cols*rows {
+	if s.cols != cols || s.rows != rows || len(s.visited) != cols*rows || len(s.distances) != cols*rows {
 		s.visited = make([]uint32, cols*rows)
+		s.distances = make([]uint8, cols*rows)
 		s.cols, s.rows = cols, rows
 		s.stamp = 0
 	}
@@ -606,6 +608,21 @@ func (s *bfsScratch) visit(c, r int) bool {
 	}
 	s.visited[idx] = s.stamp
 	return true
+}
+
+func (s *bfsScratch) setDistance(c, r, distance int) {
+	s.distances[c*s.rows+r] = uint8(distance)
+}
+
+func (s *bfsScratch) distance(c, r int) (int, bool) {
+	if c < 0 || r < 0 || c >= s.cols || r >= s.rows {
+		return 0, false
+	}
+	idx := c*s.rows + r
+	if s.visited[idx] != s.stamp {
+		return 0, false
+	}
+	return int(s.distances[idx]), true
 }
 
 // bfsStep finds the first grid step direction from (sc,sr) toward (gc,gr),
@@ -858,6 +875,16 @@ func perpDir(d [2]float64) [2]float64 {
 	return [2]float64{d[1], -d[0]}
 }
 
+// stablePerpDir keeps move-only strafes on one bot-specific side. Re-rolling
+// the side every tick can make a bot command exact opposite moves at a wall;
+// emergency dodges intentionally retain the less predictable random helper.
+func stablePerpDir(d [2]float64, botID string) [2]float64 {
+	if guardPatrolStart(botID)%2 == 0 {
+		return [2]float64{-d[1], d[0]}
+	}
+	return [2]float64{d[1], -d[0]}
+}
+
 // === Action Builders ===
 
 type actionResult struct {
@@ -882,7 +909,7 @@ func moveDir(d [2]float64) actionResult {
 // the original direction when nothing safe (or passable) is available.
 func safeStepDir(pos [2]float64, d [2]float64, danger *dangerSet) [2]float64 {
 	dx, dy := int(fsign(d[0])), int(fsign(d[1]))
-	if (dx == 0 && dy == 0) || danger.empty() {
+	if dx == 0 && dy == 0 {
 		return [2]float64{float64(dx), float64(dy)}
 	}
 	cx, cy := int(math.Round(pos[0])), int(math.Round(pos[1]))
@@ -2009,8 +2036,112 @@ func isMelee(weapon string) bool {
 
 // === Pickup Logic ===
 
+const maxSmartPickupTravel = 10
+
+// smartPickupRoutes is a single bounded distance field shared by every pickup
+// ranking pass in one decision. A tick commonly evaluates a dozen pickup
+// types; rebuilding the same BFS for every candidate would turn live danger
+// awareness into an N-pickups x BFS hot path.
+type smartPickupRoutes struct {
+	src     [2]float64
+	start   [2]int
+	danger  *dangerSet
+	terrain *botTerrain
+	scratch *bfsScratch
+}
+
+func newSmartPickupRoutes(src [2]float64, danger *dangerSet) smartPickupRoutes {
+	routes := smartPickupRoutes{
+		src:     src,
+		start:   [2]int{int(math.Round(src[0])), int(math.Round(src[1]))},
+		danger:  danger,
+		terrain: getTerrain(),
+	}
+	if routes.terrain == nil || routes.terrain.isBlocked(routes.start[0], routes.start[1]) {
+		return routes
+	}
+
+	scratch := bfsPool.Get().(*bfsScratch)
+	scratch.reset(routes.terrain.Width, routes.terrain.Height)
+	scratch.visit(routes.start[0], routes.start[1])
+	scratch.setDistance(routes.start[0], routes.start[1], 0)
+	scratch.queue = append(scratch.queue, bfsNode{col: routes.start[0], row: routes.start[1]})
+	for i := 0; i < len(scratch.queue); i++ {
+		node := scratch.queue[i]
+		if node.distance >= maxSmartPickupTravel {
+			continue
+		}
+		for dc := -1; dc <= 1; dc++ {
+			for dr := -1; dr <= 1; dr++ {
+				if dc == 0 && dr == 0 || routes.terrain.isMoveBlocked(node.col, node.row, dc, dr) {
+					continue
+				}
+				nextCol, nextRow := node.col+dc, node.row+dr
+				if danger.has(nextCol, nextRow) || !scratch.visit(nextCol, nextRow) {
+					continue
+				}
+				distance := node.distance + 1
+				scratch.setDistance(nextCol, nextRow, distance)
+				scratch.queue = append(scratch.queue, bfsNode{col: nextCol, row: nextRow, distance: distance})
+			}
+		}
+	}
+	routes.scratch = scratch
+	return routes
+}
+
+func (r *smartPickupRoutes) release() {
+	if r.scratch != nil {
+		bfsPool.Put(r.scratch)
+		r.scratch = nil
+	}
+}
+
+func (r *smartPickupRoutes) distance(dst [2]float64) float64 {
+	goal := [2]int{int(math.Round(dst[0])), int(math.Round(dst[1]))}
+	if r.terrain == nil {
+		if r.danger.has(goal[0], goal[1]) {
+			return math.Inf(1)
+		}
+		return chebyshev(r.src, dst)
+	}
+	if r.terrain.isBlocked(goal[0], goal[1]) || r.danger.has(goal[0], goal[1]) {
+		return math.Inf(1)
+	}
+	if r.start == goal {
+		return 0
+	}
+	if r.scratch == nil {
+		return math.Inf(1)
+	}
+	if distance, ok := r.scratch.distance(goal[0], goal[1]); ok {
+		return float64(distance)
+	}
+	return math.Inf(1)
+}
+
+// smartPickupTravelDistance measures the route under the current tick's
+// terrain and danger constraints. The depth bound is semantic rather than an
+// arbitrary node budget: smart-pickup policy never chases beyond ten steps,
+// so a longer route is intentionally not a candidate.
+func smartPickupTravelDistance(src, dst [2]float64, danger *dangerSet) float64 {
+	routes := newSmartPickupRoutes(src, danger)
+	defer routes.release()
+	return routes.distance(dst)
+}
+
 // nearestHealthPickup returns the closest health_pack pickup.
 func nearestHealthPickup(pos [2]float64, pickups, hazards []entity, hazardImmune bool) (*entity, float64) {
+	return nearestHealthPickupWithDanger(pos, pickups, hazards, hazardImmune, nil)
+}
+
+func nearestHealthPickupWithDanger(pos [2]float64, pickups, hazards []entity, hazardImmune bool, danger *dangerSet) (*entity, float64) {
+	routes := newSmartPickupRoutes(pos, danger)
+	defer routes.release()
+	return nearestHealthPickupWithRoutes(pickups, hazards, hazardImmune, &routes)
+}
+
+func nearestHealthPickupWithRoutes(pickups, hazards []entity, hazardImmune bool, routes *smartPickupRoutes) (*entity, float64) {
 	var best *entity
 	bestD := math.Inf(1)
 	for i := range pickups {
@@ -2020,7 +2151,7 @@ func nearestHealthPickup(pos [2]float64, pickups, hazards []entity, hazardImmune
 		if pickupBlockedByActiveHazard(pickups[i].Position, hazards, hazardImmune) {
 			continue
 		}
-		d := tacticalTravelDistance(pos, pickups[i].Position)
+		d := routes.distance(pickups[i].Position)
 		if d < bestD {
 			bestD = d
 			best = &pickups[i]
@@ -2031,13 +2162,23 @@ func nearestHealthPickup(pos [2]float64, pickups, hazards []entity, hazardImmune
 
 // nearestPickup returns the closest pickup of any type.
 func nearestPickup(pos [2]float64, pickups, hazards []entity, hazardImmune bool) (*entity, float64) {
+	return nearestPickupWithDanger(pos, pickups, hazards, hazardImmune, nil)
+}
+
+func nearestPickupWithDanger(pos [2]float64, pickups, hazards []entity, hazardImmune bool, danger *dangerSet) (*entity, float64) {
+	routes := newSmartPickupRoutes(pos, danger)
+	defer routes.release()
+	return nearestPickupWithRoutes(pickups, hazards, hazardImmune, &routes)
+}
+
+func nearestPickupWithRoutes(pickups, hazards []entity, hazardImmune bool, routes *smartPickupRoutes) (*entity, float64) {
 	var best *entity
 	bestD := math.Inf(1)
 	for i := range pickups {
 		if pickupBlockedByActiveHazard(pickups[i].Position, hazards, hazardImmune) {
 			continue
 		}
-		d := tacticalTravelDistance(pos, pickups[i].Position)
+		d := routes.distance(pickups[i].Position)
 		if d < bestD {
 			bestD = d
 			best = &pickups[i]
@@ -2048,6 +2189,16 @@ func nearestPickup(pos [2]float64, pickups, hazards []entity, hazardImmune bool)
 
 // nearestPickupOfType returns the closest pickup of a specific subtype.
 func nearestPickupOfType(pos [2]float64, pickups, hazards []entity, hazardImmune bool, subType string) (*entity, float64) {
+	return nearestPickupOfTypeWithDanger(pos, pickups, hazards, hazardImmune, subType, nil)
+}
+
+func nearestPickupOfTypeWithDanger(pos [2]float64, pickups, hazards []entity, hazardImmune bool, subType string, danger *dangerSet) (*entity, float64) {
+	routes := newSmartPickupRoutes(pos, danger)
+	defer routes.release()
+	return nearestPickupOfTypeWithRoutes(pickups, hazards, hazardImmune, subType, &routes)
+}
+
+func nearestPickupOfTypeWithRoutes(pickups, hazards []entity, hazardImmune bool, subType string, routes *smartPickupRoutes) (*entity, float64) {
 	var best *entity
 	bestD := math.Inf(1)
 	for i := range pickups {
@@ -2057,7 +2208,7 @@ func nearestPickupOfType(pos [2]float64, pickups, hazards []entity, hazardImmune
 		if pickupBlockedByActiveHazard(pickups[i].Position, hazards, hazardImmune) {
 			continue
 		}
-		d := tacticalTravelDistance(pos, pickups[i].Position)
+		d := routes.distance(pickups[i].Position)
 		if d < bestD {
 			bestD = d
 			best = &pickups[i]
@@ -2087,6 +2238,15 @@ func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD f
 	hpRatio := ts.HP / math.Max(ts.MaxHP, 1)
 	pressure := enemiesWithinRange(ts.Position, ts.Enemies, 4)
 	objectiveBias := strategy == "territorial" || strategy == "defensive" || strategy == "aggressive"
+	opponentKnown := len(ts.Enemies) > 0
+	if !opponentKnown {
+		for _, h := range ts.Hints {
+			if h.HintType == "bot" {
+				opponentKnown = true
+				break
+			}
+		}
+	}
 
 	// Ready pads can be captured now. A cooling-down pad cannot be captured,
 	// but its owner must remain the sole contender to receive control pulses.
@@ -2103,7 +2263,7 @@ func tryCapturePadObjective(ts tickState, strategy string, near *entity, nearD f
 			heldPad, heldPadD = candidate, d
 		}
 	}
-	if heldPad != nil && !heldPad.Contested && pressure <= 1 && hpRatio >= 0.45 {
+	if heldPad != nil && !heldPad.Contested && pressure <= 1 && hpRatio >= 0.45 && !opponentKnown {
 		if heldPadD <= 1 && pressure == 0 {
 			a := idle()
 			return &a
@@ -2439,7 +2599,12 @@ func tryImmediateAttack(ts tickState, weapon string, wrange float64) *actionResu
 // trySmartPickup checks for high-value pickups and grabs them if worthwhile.
 // Returns an action if a pickup should be grabbed, nil otherwise.
 func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult {
+	if len(ts.Pickups) == 0 {
+		return nil
+	}
 	pos := ts.Position
+	routes := newSmartPickupRoutes(pos, ts.Danger)
+	defer routes.release()
 	hpRatio := ts.HP / ts.MaxHP
 	visibleEnemies := countVisibleEnemies(ts.Enemies)
 	rangedThreat := hasVisibleRangedThreat(ts.Enemies)
@@ -2448,20 +2613,33 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 		pickupReachBonus = 2
 	}
 
-	if any, anyD := nearestPickup(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey); any != nil && anyD <= 1 && any.ID != "" {
+	// Critical health is the only pickup that outranks nearby utility. Without
+	// this early branch, wounded bots detoured for gravity wells and cooldown
+	// shards while a reachable heal was only a few cells away.
+	health, healthD := nearestHealthPickupWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, &routes)
+	if health != nil && hpRatio < 0.45 && healthD <= 8+pickupReachBonus {
+		if healthD <= 1 && health.ID != "" {
+			a := useItem(health.ID)
+			return &a
+		}
+		a := moveTo(pos, health.Position, ts.Danger)
+		return &a
+	}
+
+	if any, anyD := nearestPickupWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, &routes); any != nil && anyD <= 1 && any.ID != "" {
 		a := useItem(any.ID)
 		return &a
 	}
 
 	// Gravity well: grab only if we do not already have a charge.
-	gw, gwD := nearestPickupOfType(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey, "gravity_well")
+	gw, gwD := nearestPickupOfTypeWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, "gravity_well", &routes)
 	if gw != nil && gwD <= 8+pickupReachBonus && ts.GravityWellCharge <= 0 {
 		a := moveTo(pos, gw.Position, ts.Danger)
 		return &a
 	}
 
 	// Cooldown shard: prioritize when a major combat tool is currently unavailable.
-	cd, cdD := nearestPickupOfType(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey, "cooldown_shard")
+	cd, cdD := nearestPickupOfTypeWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, "cooldown_shard", &routes)
 	if cd != nil && cdD <= 7+pickupReachBonus {
 		if ts.Cooldown > 0 || ts.DodgeCool > 0 || ts.GrappleCooldown > 0 || ts.StunTicks > 0 || ts.FastZone || ts.DoubleBounty || ts.TeleportSurge {
 			a := moveTo(pos, cd.Position, ts.Danger)
@@ -2470,7 +2648,7 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	}
 
 	// Hazard key: strongest when hazards are relevant to the current route or objective.
-	hk, hkD := nearestPickupOfType(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey, "hazard_key")
+	hk, hkD := nearestPickupOfTypeWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, "hazard_key", &routes)
 	if hk != nil && hkD <= 8+pickupReachBonus && !ts.HasHazardKey {
 		if pad, padD := nearestCapturePad(pos, ts.CapturePads); pad != nil && padD <= 9 && (pad.Contested || pad.ContenderCount > 0 || !pad.Ready || ts.HazardStorm) {
 			a := moveTo(pos, hk.Position, ts.Danger)
@@ -2487,7 +2665,7 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	}
 
 	// Relay battery: strongest when a capture pad is nearby, contested, or enemy-owned.
-	rb, rbD := nearestPickupOfType(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey, "relay_battery")
+	rb, rbD := nearestPickupOfTypeWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, "relay_battery", &routes)
 	if rb != nil && rbD <= 8+pickupReachBonus && !ts.HasRelayBattery {
 		if pad, padD := nearestCapturePad(pos, ts.CapturePads); pad != nil && padD <= 10 &&
 			(pad.Contested || pad.CapturingBotID != "" || pad.OwnerID != "" || !pad.Ready) {
@@ -2497,14 +2675,14 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	}
 
 	// Overdrive core: strongest swing pickup when a fight is imminent.
-	od, odD := nearestPickupOfType(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey, "overdrive_core")
+	od, odD := nearestPickupOfTypeWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, "overdrive_core", &routes)
 	if od != nil && odD <= 8+pickupReachBonus && (visibleEnemies > 0 || ts.IsBountyTarget || ts.DoubleBounty || strategy == "aggressive" || strategy == "berserker" || strategy == "assassin") {
 		a := moveTo(pos, od.Position, ts.Danger)
 		return &a
 	}
 
 	// Grapple charge: lightweight utility, especially valuable to grapple users and ranged kiting bots.
-	gc, gcD := nearestPickupOfType(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey, "grapple_charge")
+	gc, gcD := nearestPickupOfTypeWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, "grapple_charge", &routes)
 	if gc != nil && gcD <= 7+pickupReachBonus {
 		if ts.GrappleCharges <= 0 || ts.GrappleCooldown > 0 || weapon == "grapple" || strategy == "kite" || strategy == "assassin" {
 			a := moveTo(pos, gc.Position, ts.Danger)
@@ -2513,41 +2691,41 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	}
 
 	// Damage boost: grab if there is a realistic fight to use it in.
-	dmg, dmgD := nearestPickupOfType(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey, "damage_boost")
+	dmg, dmgD := nearestPickupOfTypeWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, "damage_boost", &routes)
 	if dmg != nil && dmgD <= 6+pickupReachBonus && (visibleEnemies > 0 || strategy == "aggressive" || strategy == "assassin" || ts.DoubleBounty) {
 		a := moveTo(pos, dmg.Position, ts.Danger)
 		return &a
 	}
 
 	// Bounty token: worth contesting when we can realistically convert a fight soon.
-	bt, btD := nearestPickupOfType(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey, "bounty_token")
+	bt, btD := nearestPickupOfTypeWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, "bounty_token", &routes)
 	if bt != nil && btD <= 7+pickupReachBonus && (visibleEnemies > 0 || ts.IsBountyTarget || strategy == "aggressive" || strategy == "assassin" || ts.DoubleBounty) {
 		a := moveTo(pos, bt.Position, ts.Danger)
 		return &a
 	}
 
 	// Speed boost: useful for mobility styles and zone recovery.
-	spd, spdD := nearestPickupOfType(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey, "speed_boost")
+	spd, spdD := nearestPickupOfTypeWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, "speed_boost", &routes)
 	if spd != nil && spdD <= 6+pickupReachBonus && (strategy == "assassin" || strategy == "kite" || !ts.InZone || ts.FastZone) {
 		a := moveTo(pos, spd.Position, ts.Danger)
 		return &a
 	}
 
 	// Shield bubble: grab aggressively when ranged LOS is on us.
-	sb, sbD := nearestPickupOfType(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey, "shield_bubble")
+	sb, sbD := nearestPickupOfTypeWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, "shield_bubble", &routes)
 	if sb != nil && sbD <= 5+pickupReachBonus && (hpRatio < 0.9 || rangedThreat || ts.IsBountyTarget) {
 		a := moveTo(pos, sb.Position, ts.Danger)
 		return &a
 	}
 
 	// Health pack: be more willing to stabilize before losing initiative.
-	hp, hpD := nearestHealthPickup(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey)
+	hp, hpD := nearestHealthPickupWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, &routes)
 	if hp != nil && hpD <= 6+pickupReachBonus && hpRatio < 0.8 {
 		a := moveTo(pos, hp.Position, ts.Danger)
 		return &a
 	}
 
-	if any, anyD := nearestPickup(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey); any != nil && visibleEnemies == 0 && anyD <= 6+pickupReachBonus {
+	if any, anyD := nearestPickupWithRoutes(ts.Pickups, ts.HazardZones, ts.HasHazardKey, &routes); any != nil && visibleEnemies == 0 && anyD <= 6+pickupReachBonus {
 		a := moveTo(pos, any.Position, ts.Danger)
 		return &a
 	}
@@ -2709,7 +2887,20 @@ func tryUniversalGrapple(ts tickState, weapon string, wrange float64) *actionRes
 	return &a
 }
 
-func anchorGrappleDestinationSafe(target [2]float64, pads map[string]entity) bool {
+func anchorGrappleDestinationSafe(from, target [2]float64, pads map[string]entity, danger *dangerSet) bool {
+	start := [2]int{int(math.Round(from[0])), int(math.Round(from[1]))}
+	goal := [2]int{int(math.Round(target[0])), int(math.Round(target[1]))}
+	if start == goal || danger.has(goal[0], goal[1]) {
+		return false
+	}
+	if terrain := getTerrain(); terrain != nil {
+		// The server rejects an anchor before consuming its charge when the
+		// endpoint or combat ray crosses terrain. Mirror that validation here so
+		// a rejected anchor cannot be selected again on every bot tick.
+		if terrain.isBlocked(goal[0], goal[1]) || terrain.gridLineBlocked(start, goal) {
+			return false
+		}
+	}
 	collectRadius := config.C.TeleportCollectRadius
 	if collectRadius < 0 {
 		collectRadius = 0
@@ -2747,7 +2938,7 @@ func tryAnchorGrapple(ts tickState, strategy string, near *entity, nearD, wrange
 	if !ts.InZone {
 		dist := chebyshev(ts.Position, ts.ZoneTargetCenter)
 		if dist >= 5 && dist <= grappleRange && (near == nil || nearD > 3) &&
-			anchorGrappleDestinationSafe(ts.ZoneTargetCenter, pads) {
+			anchorGrappleDestinationSafe(ts.Position, ts.ZoneTargetCenter, pads, ts.Danger) {
 			a := grapplePos(ts.ZoneTargetCenter)
 			return &a
 		}
@@ -2758,7 +2949,7 @@ func tryAnchorGrapple(ts tickState, strategy string, near *entity, nearD, wrange
 			ts.Position[0] + (ts.Position[0]-near.Position[0])*4,
 			ts.Position[1] + (ts.Position[1]-near.Position[1])*4,
 		})
-		if chebyshev(ts.Position, away) <= grappleRange && anchorGrappleDestinationSafe(away, pads) {
+		if chebyshev(ts.Position, away) <= grappleRange && anchorGrappleDestinationSafe(ts.Position, away, pads, ts.Danger) {
 			a := grapplePos(away)
 			return &a
 		}
@@ -2770,7 +2961,7 @@ func tryAnchorGrapple(ts tickState, strategy string, near *entity, nearD, wrange
 			near.Position[0] + offset[0]*2,
 			near.Position[1] + offset[1]*2,
 		})
-		if chebyshev(ts.Position, anchor) <= grappleRange && anchorGrappleDestinationSafe(anchor, pads) {
+		if chebyshev(ts.Position, anchor) <= grappleRange && anchorGrappleDestinationSafe(ts.Position, anchor, pads, ts.Danger) {
 			a := grapplePos(anchor)
 			return &a
 		}
@@ -3306,7 +3497,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 				if near != nil && nearD <= 2 && canDodge {
 					return dodgeSafe(ts, gridDirAway(ts.Position, near.Position))
 				}
-				return moveDirSafe(ts, perpDir(gridDir(ts.Position, target.Position)))
+				return moveDirSafe(ts, stablePerpDir(gridDir(ts.Position, target.Position), botID))
 			}
 		}
 	}
@@ -3409,7 +3600,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 		}
 		if threat != nil {
 			// A health pickup closer than the threat beats hiding.
-			if hp, hpD := nearestHealthPickup(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey); hp != nil && hpD < chebyshev(pos, threat.Position) {
+			if hp, hpD := nearestHealthPickupWithDanger(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey, ts.Danger); hp != nil && hpD < chebyshev(pos, threat.Position) {
 				if hpD <= 1 {
 					return useItem(hp.ID)
 				}
@@ -3495,20 +3686,35 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 					pos[0] + h.Direction[0]*math.Min(h.Distance, 6),
 					pos[1] + h.Direction[1]*math.Min(h.Distance, 6),
 				}
-				return moveTo(pos, target, ts.Danger)
+				if action := moveTo(pos, target, ts.Danger); action.Action != "idle" {
+					return action
+				}
 			}
 		}
 		for _, h := range ts.Hints {
 			if h.HintType == "bot" {
 				target := [2]float64{pos[0] + h.Direction[0]*h.Distance, pos[1] + h.Direction[1]*h.Distance}
-				return moveTo(pos, target, ts.Danger)
+				if action := moveTo(pos, target, ts.Danger); action.Action != "idle" {
+					return action
+				}
 			}
 		}
 		p, pd := nearestPickup(pos, ts.Pickups, ts.HazardZones, ts.HasHazardKey)
 		if p != nil && pd <= 3 {
-			return moveTo(pos, p.Position, ts.Danger)
+			if action := moveTo(pos, p.Position, ts.Danger); action.Action != "idle" {
+				return action
+			}
 		}
-		return moveTo(pos, ts.ZoneTargetCenter, ts.Danger)
+		const patrolRadius = 5.0
+		if chebyshev(pos, ts.ZoneTargetCenter) > patrolRadius {
+			if towardCenter := moveTo(pos, ts.ZoneTargetCenter, ts.Danger); towardCenter.Action != "idle" {
+				return towardCenter
+			}
+		}
+		// Reaching the next-zone center is not a reason to stop hunting. A
+		// deterministic local patrol keeps isolated survivors moving until a
+		// bot hint, pickup, or opponent enters sensor range.
+		return guardPatrol(ts, patrolRadius, botID)
 	}
 
 	// === COMBAT: Strategy-specific ===
@@ -3600,7 +3806,7 @@ func aiAggressive(ts tickState, near *entity, nearD, wrange float64, weapon stri
 		if p := baitPunish(ts, near, canDodge); p != nil {
 			return *p
 		}
-		return moveDirSafe(ts, perpDir(gridDir(ts.Position, near.Position)))
+		return moveDirSafe(ts, stablePerpDir(gridDir(ts.Position, near.Position), botID))
 	}
 
 	// Chase — zigzag against ranged kiters so shots are harder to line up
@@ -3710,7 +3916,7 @@ func aiKite(ts tickState, near *entity, nearD, wrange float64, weapon string, ca
 
 	// On cooldown at range — strafe to be harder to hit
 	if nearD <= wrange && !canAtk {
-		return moveDirSafe(ts, perpDir(gridDir(ts.Position, near.Position)))
+		return moveDirSafe(ts, stablePerpDir(gridDir(ts.Position, near.Position), botID))
 	}
 
 	// Too far — approach to get in range
@@ -3840,11 +4046,14 @@ func guardPatrolMove(ts tickState, target [2]float64, terrain *botTerrain) actio
 	if chebyshev(ts.Position, target) < 0.5 {
 		return idle()
 	}
-	if action := moveTo(ts.Position, target, ts.Danger); action.Direction != nil && guardPatrolStepSafe(ts, *action.Direction, terrain) {
-		return action
-	}
+	// Prefer the direct safe step. On an open grid, BFS has many equally short
+	// paths and its fixed neighbor order can pick the opposite lateral step,
+	// making an otherwise smooth ring patrol visibly reverse at midpoints.
 	if direct := gridDir(ts.Position, target); guardPatrolStepSafe(ts, direct, terrain) {
 		return moveDir(direct)
+	}
+	if action := moveTo(ts.Position, target, ts.Danger); action.Direction != nil && guardPatrolStepSafe(ts, *action.Direction, terrain) {
+		return action
 	}
 
 	bestDistance := math.Inf(1)
@@ -3865,15 +4074,9 @@ func guardPatrolMove(ts tickState, target [2]float64, terrain *botTerrain) actio
 // guardPatrol keeps defensive bots moving around their assigned center without
 // leaving either the current safe zone or the next territory. Waypoints and
 // tie-breaking are stable per bot so guards spread out without random jitter.
-func guardPatrol(ts tickState, requestedRadius float64, botID string) actionResult {
-	terrain := getTerrain()
-	radiusLimit := math.Floor(ts.ZoneTargetRadius) - 1
-	if radiusLimit < 1 {
-		radiusLimit = 1
-	}
-	radius := math.Min(requestedRadius, radiusLimit)
+func guardPatrolRing(ts tickState, radius float64, botID string, terrain *botTerrain) (actionResult, bool) {
 	if radius < 1 {
-		return guardPatrolMove(ts, ts.ZoneTargetCenter, terrain)
+		return actionResult{}, false
 	}
 
 	var waypoints [len(guardPatrolDirections)][2]float64
@@ -3915,25 +4118,48 @@ func guardPatrol(ts tickState, requestedRadius float64, botID string) actionResu
 		}
 	}
 	if closest < 0 {
-		return guardPatrolMove(ts, ts.ZoneTargetCenter, terrain)
+		return actionResult{}, false
 	}
 
-	// Advance before reaching a waypoint exactly, avoiding a one-tick stop at
-	// every corner. If a waypoint is blocked, continue clockwise to the next.
-	first := closest
-	if closestDistance <= 1 {
-		first = (closest + 1) % len(guardPatrolDirections)
-	}
+	// Always advance clockwise from the nearest sector. Retargeting the nearest
+	// waypoint itself at a segment midpoint selects the point just left and
+	// creates an endless two-cell reversal.
+	first := (closest + 1) % len(guardPatrolDirections)
 	for offset := range guardPatrolDirections {
 		i := (first + offset) % len(guardPatrolDirections)
 		if !usable[i] {
 			continue
 		}
 		if action := guardPatrolMove(ts, waypoints[i], terrain); action.Action != "idle" {
+			return action, true
+		}
+	}
+	return actionResult{}, false
+}
+
+func guardPatrol(ts tickState, requestedRadius float64, botID string) actionResult {
+	terrain := getTerrain()
+	radiusLimit := math.Floor(ts.ZoneTargetRadius) - 1
+	if radiusLimit < 1 {
+		radiusLimit = 1
+	}
+	maxRadius := int(math.Floor(math.Min(requestedRadius, radiusLimit)))
+	for radius := maxRadius; radius >= 1; radius-- {
+		if action, ok := guardPatrolRing(ts, float64(radius), botID, terrain); ok {
 			return action
 		}
 	}
-	return guardPatrolMove(ts, ts.ZoneTargetCenter, terrain)
+
+	// No complete ring survived nearby walls or dynamic danger. Keep moving on
+	// any safe local step instead of idling at the center forever.
+	start := guardPatrolStart(botID)
+	for offset := range guardPatrolDirections {
+		direction := guardPatrolDirections[(start+offset)%len(guardPatrolDirections)]
+		if guardPatrolStepSafe(ts, direction, terrain) {
+			return moveDir(direction)
+		}
+	}
+	return idle()
 }
 
 // DEFENSIVE: Counter-attack focused, shove intruders, patrol ground but fight.
@@ -3964,7 +4190,7 @@ func aiDefensive(ts tickState, near *entity, nearD, wrange float64, weapon strin
 		if p := baitPunish(ts, near, canDodge); p != nil {
 			return *p
 		}
-		return moveDirSafe(ts, perpDir(gridDir(ts.Position, near.Position)))
+		return moveDirSafe(ts, stablePerpDir(gridDir(ts.Position, near.Position), botID))
 	}
 
 	if nearD <= wrange+5 {

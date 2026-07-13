@@ -12,9 +12,11 @@ import (
 )
 
 const (
-	CosmeticSlotBotSkin    = "bot_skin"
-	CosmeticSlotWeaponSkin = "weapon_skin"
-	CosmeticSlotAttachment = "attachment"
+	CosmeticSlotBotSkin     = "bot_skin"
+	CosmeticSlotWeaponSkin  = "weapon_skin"
+	CosmeticSlotAttachment  = "attachment"
+	CosmeticSlotTrail       = "trail"
+	CosmeticTrailCategoryID = "trails"
 )
 
 var (
@@ -91,6 +93,44 @@ var legacyStarterCosmeticCatalog = []CosmeticItem{
 		ID: "attachment-orbital-halo", Name: "Orbital Halo", Description: "A luminous halo attachment with no gameplay effect.",
 		CategoryID: "attachments", Slot: CosmeticSlotAttachment, AssetKey: "orbital_halo", Rarity: "epic", PriceCents: 299, Currency: "USD", IsActive: true, SortOrder: 30,
 	},
+	{
+		ID: "trail-standard", Name: "Standard Wake", Description: "The free Arena movement wake with no gameplay effect.",
+		CategoryID: CosmeticTrailCategoryID, Slot: CosmeticSlotTrail, AssetKey: "standard", Rarity: "common", Currency: "USD", IsFree: true, IsActive: true, SortOrder: 10,
+	},
+}
+
+type trailCosmeticSeed struct {
+	Name        string
+	Slug        string
+	Description string
+	Rarity      string
+}
+
+var trailCosmeticSeeds = []trailCosmeticSeed{
+	{Name: "Ember Sparks", Slug: "ember_sparks", Description: "Hot cinders tumble through a narrow fire-red wake.", Rarity: "uncommon"},
+	{Name: "Frost Shards", Slug: "frost_shards", Description: "Ice-blue fragments drift and fall behind the chassis.", Rarity: "uncommon"},
+	{Name: "Ion Stream", Slug: "ion_stream", Description: "A focused electric-blue stream with quick rising ions.", Rarity: "rare"},
+	{Name: "Plasma Ribbon", Slug: "plasma_ribbon", Description: "A broad magenta plasma band with bright charged motes.", Rarity: "rare"},
+	{Name: "Void Motes", Slug: "void_motes", Description: "Dark violet particles orbit a restrained abyssal wake.", Rarity: "epic"},
+	{Name: "Solar Wake", Slug: "solar_wake", Description: "Gold-white sparks flare from a warm solar ribbon.", Rarity: "rare"},
+	{Name: "Lunar Dust", Slug: "lunar_dust", Description: "Soft silver dust hangs briefly above a moonlit trail.", Rarity: "uncommon"},
+	{Name: "Comet Tail", Slug: "comet_tail", Description: "A long pale-blue tail sheds fast star-like particles.", Rarity: "epic"},
+	{Name: "Nebula Pulse", Slug: "nebula_pulse", Description: "Alternating rose and blue motes pulse through deep space color.", Rarity: "epic"},
+	{Name: "Storm Arcs", Slug: "storm_arcs", Description: "Sharp lightning-blue sparks jump across a compact wake.", Rarity: "rare"},
+	{Name: "Static Glitch", Slug: "static_glitch", Description: "Short digital bursts scatter cyan and red interference.", Rarity: "rare"},
+	{Name: "Pixel Scatter", Slug: "pixel_scatter", Description: "Block-like light fragments peel away in arcade colors.", Rarity: "uncommon"},
+	{Name: "Data Stream", Slug: "data_stream", Description: "Green signal particles rise from a precise synthetic ribbon.", Rarity: "rare"},
+	{Name: "Holo Prism", Slug: "holo_prism", Description: "Prismatic particles shift between cool holographic tones.", Rarity: "epic"},
+	{Name: "Toxic Spores", Slug: "toxic_spores", Description: "Acid-green spores float upward from a muted toxic wake.", Rarity: "rare"},
+	{Name: "Verdant Leaves", Slug: "verdant_leaves", Description: "Leaf-green flecks lift and settle through a natural trail.", Rarity: "uncommon"},
+	{Name: "Sand Wake", Slug: "sand_wake", Description: "Warm dust falls low and wide like disturbed desert sand.", Rarity: "uncommon"},
+	{Name: "Magma Cinders", Slug: "magma_cinders", Description: "Dense orange cinders rise from a molten red ribbon.", Rarity: "epic"},
+	{Name: "Ocean Spray", Slug: "ocean_spray", Description: "Bright aqua droplets arc and fall through a deep-blue wake.", Rarity: "rare"},
+	{Name: "Gilded Dust", Slug: "gilded_dust", Description: "Fine gold particles descend from a restrained royal trail.", Rarity: "legendary"},
+	{Name: "Rune Sparks", Slug: "rune_sparks", Description: "Teal arcane sparks hover before fading into indigo.", Rarity: "epic"},
+	{Name: "Phantom Smoke", Slug: "phantom_smoke", Description: "Large dim motes rise slowly from a spectral smoke wake.", Rarity: "legendary"},
+	{Name: "Gear Sparks", Slug: "gear_sparks", Description: "Compact brass sparks fall quickly from an industrial trail.", Rarity: "rare"},
+	{Name: "Bounty Flare", Slug: "bounty_flare", Description: "Red and gold particles burst through a high-contrast hunter wake.", Rarity: "legendary"},
 }
 
 var generatedCosmeticAssetPattern = regexp.MustCompile(`^arena_set_([0-9]{3})_([a-z0-9]+(?:_[a-z0-9]+)*)$`)
@@ -105,6 +145,19 @@ var legacyCosmeticAssets = map[string]map[string]bool{
 	CosmeticSlotAttachment: {
 		"none": true, "signal_antenna": true, "orbital_halo": true,
 	},
+	CosmeticSlotTrail: {
+		"standard": true,
+	},
+}
+
+var supportedTrailAssets = buildSupportedTrailAssets()
+
+func buildSupportedTrailAssets() map[string]bool {
+	assets := map[string]bool{"standard": true}
+	for _, seed := range trailCosmeticSeeds {
+		assets[seed.Slug] = true
+	}
+	return assets
 }
 
 // IsSupportedCosmeticAsset is the shared server-side render contract. Legacy
@@ -112,6 +165,9 @@ var legacyCosmeticAssets = map[string]map[string]bool{
 // strict, bounded key shared by the set's three presentation slots.
 func IsSupportedCosmeticAsset(slot, assetKey string) bool {
 	slot = strings.TrimSpace(strings.ToLower(slot))
+	if slot == CosmeticSlotTrail {
+		return supportedTrailAssets[assetKey]
+	}
 	if assets, ok := legacyCosmeticAssets[slot]; ok && assets[assetKey] {
 		return true
 	}
@@ -157,6 +213,14 @@ func buildStarterCosmeticCatalog() []CosmeticItem {
 			},
 		)
 	}
+	for index, seed := range trailCosmeticSeeds {
+		items = append(items, CosmeticItem{
+			ID: "trail-" + strings.ReplaceAll(seed.Slug, "_", "-"), Name: seed.Name + " Trail",
+			Description: seed.Description, CategoryID: CosmeticTrailCategoryID, Slot: CosmeticSlotTrail,
+			AssetKey: seed.Slug, Rarity: seed.Rarity, PriceCents: CosmeticTrailPriceCents,
+			Currency: "USD", IsActive: true, SortOrder: (index + 1) * 10,
+		})
+	}
 	for index := range items {
 		items[index].IsBuiltin = true
 	}
@@ -173,7 +237,7 @@ func DefaultCosmeticCatalog() []CosmeticItem {
 
 func IsValidCosmeticSlot(slot string) bool {
 	switch strings.TrimSpace(strings.ToLower(slot)) {
-	case CosmeticSlotBotSkin, CosmeticSlotWeaponSkin, CosmeticSlotAttachment:
+	case CosmeticSlotBotSkin, CosmeticSlotWeaponSkin, CosmeticSlotAttachment, CosmeticSlotTrail:
 		return true
 	default:
 		return false
@@ -218,7 +282,7 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			category_id TEXT NOT NULL CONSTRAINT cosmetic_items_category_fk REFERENCES cosmetic_categories(id) ON DELETE RESTRICT,
-			slot TEXT NOT NULL CHECK (slot IN ('bot_skin', 'weapon_skin', 'attachment')),
+			 slot TEXT NOT NULL CHECK (slot IN ('bot_skin', 'weapon_skin', 'attachment', 'trail')),
 			asset_key TEXT NOT NULL,
 			rarity TEXT NOT NULL DEFAULT 'common',
 			price_cents INT NOT NULL DEFAULT 0 CHECK (price_cents >= 0),
@@ -235,6 +299,8 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 		`ALTER TABLE cosmetic_items ADD COLUMN IF NOT EXISTS category_id TEXT`,
 		`ALTER TABLE cosmetic_items ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0`,
 		`ALTER TABLE cosmetic_items ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT false`,
+		`ALTER TABLE cosmetic_items DROP CONSTRAINT IF EXISTS cosmetic_items_slot_check`,
+		`ALTER TABLE cosmetic_items ADD CONSTRAINT cosmetic_items_slot_check CHECK (slot IN ('bot_skin', 'weapon_skin', 'attachment', 'trail'))`,
 		`CREATE TABLE IF NOT EXISTS cosmetic_packs (
 			id TEXT PRIMARY KEY,
 			category_id TEXT NOT NULL REFERENCES cosmetic_categories(id) ON DELETE RESTRICT,
@@ -385,7 +451,7 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			ON cosmetic_license_assignments (account_id, bot_id, assigned_at)`,
 		`CREATE TABLE IF NOT EXISTS bot_cosmetic_loadout (
 			bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
-			slot TEXT NOT NULL CHECK (slot IN ('bot_skin', 'weapon_skin', 'attachment')),
+			slot TEXT NOT NULL CHECK (slot IN ('bot_skin', 'weapon_skin', 'attachment', 'trail')),
 			cosmetic_id TEXT NOT NULL REFERENCES cosmetic_items(id) ON DELETE CASCADE,
 			license_id TEXT REFERENCES cosmetic_licenses(id) ON DELETE CASCADE,
 			account_id TEXT REFERENCES customer_accounts(id) ON DELETE RESTRICT,
@@ -399,6 +465,8 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			ADD COLUMN IF NOT EXISTS license_id TEXT REFERENCES cosmetic_licenses(id) ON DELETE CASCADE`,
 		`ALTER TABLE bot_cosmetic_loadout
 			ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES customer_accounts(id) ON DELETE RESTRICT`,
+		`ALTER TABLE bot_cosmetic_loadout DROP CONSTRAINT IF EXISTS bot_cosmetic_loadout_slot_check`,
+		`ALTER TABLE bot_cosmetic_loadout ADD CONSTRAINT bot_cosmetic_loadout_slot_check CHECK (slot IN ('bot_skin', 'weapon_skin', 'attachment', 'trail'))`,
 		`DO $$
 		BEGIN
 			IF NOT EXISTS (
@@ -503,14 +571,17 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			}
 		}
 	}
-	// Every sale-ready set follows one fixed catalog price. Orders snapshot the
+	// Every sale-ready set follows one fixed catalog price; one-item trail
+	// products use their own fixed price. Orders snapshot the
 	// price before Checkout, so repairing catalog rows cannot rewrite historical
 	// or already-created order amounts.
 	if _, err := tx.Exec(ctx, `
 		UPDATE cosmetic_packs
-		SET price_cents = $1, currency = 'USD', updated_at = NOW()
+		SET price_cents = CASE WHEN category_id = $2::text THEN $3::integer ELSE $1::integer END,
+		    currency = 'USD', updated_at = NOW()
 		WHERE is_purchasable = true AND is_free = false
-		  AND (price_cents <> $1 OR currency <> 'USD')`, CosmeticPackPriceCents); err != nil {
+		  AND (price_cents <> CASE WHEN category_id = $2::text THEN $3::integer ELSE $1::integer END OR currency <> 'USD')`,
+		CosmeticPackPriceCents, CosmeticTrailCategoryID, CosmeticTrailPriceCents); err != nil {
 		return fmt.Errorf("EnsureCosmeticsSchema normalize pack prices: %w", err)
 	}
 	categoryIDs := make([]string, 0, len(starterCosmeticCategories))
@@ -581,7 +652,7 @@ func ListCosmeticCatalog(ctx context.Context) ([]CosmeticItem, error) {
 		FROM cosmetic_items i
 		JOIN cosmetic_categories c ON c.id = i.category_id
 		WHERE i.is_active = true AND c.is_active = true
-		ORDER BY CASE i.slot WHEN 'bot_skin' THEN 1 WHEN 'weapon_skin' THEN 2 ELSE 3 END,
+		ORDER BY CASE i.slot WHEN 'bot_skin' THEN 1 WHEN 'weapon_skin' THEN 2 WHEN 'attachment' THEN 3 ELSE 4 END,
 		         i.sort_order, i.price_cents, i.name`)
 	if err != nil {
 		return nil, fmt.Errorf("ListCosmeticCatalog: %w", err)
@@ -630,6 +701,7 @@ func ListBotCosmetics(ctx context.Context, botID string) ([]BotCosmeticItem, err
 		         ELSE (i.slot = 'bot_skin' AND i.asset_key = 'standard')
 		           OR (i.slot = 'weapon_skin' AND i.asset_key = 'standard')
 		           OR (i.slot = 'attachment' AND i.asset_key = 'none')
+		           OR (i.slot = 'trail' AND i.asset_key = 'standard')
 		       END AS equipped
 		FROM cosmetic_items i
 		JOIN cosmetic_categories c ON c.id = i.category_id
@@ -641,7 +713,7 @@ func ListBotCosmetics(ctx context.Context, botID string) ([]BotCosmeticItem, err
 		      AND equipped_category.is_active = true
 		  )
 		WHERE i.is_active = true AND c.is_active = true
-		ORDER BY CASE i.slot WHEN 'bot_skin' THEN 1 WHEN 'weapon_skin' THEN 2 ELSE 3 END,
+		ORDER BY CASE i.slot WHEN 'bot_skin' THEN 1 WHEN 'weapon_skin' THEN 2 WHEN 'attachment' THEN 3 ELSE 4 END,
 		         i.price_cents, i.name`, botID)
 	if err != nil {
 		return nil, fmt.Errorf("ListBotCosmetics: %w", err)
@@ -779,6 +851,7 @@ func defaultEquippedCosmetics() map[string]string {
 		CosmeticSlotBotSkin:    "standard",
 		CosmeticSlotWeaponSkin: "standard",
 		CosmeticSlotAttachment: "none",
+		CosmeticSlotTrail:      "standard",
 	}
 }
 

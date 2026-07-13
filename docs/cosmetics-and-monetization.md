@@ -1,6 +1,7 @@
 # Cosmetics And Fair Monetization
 
-Arena ships a launch catalog for bot skins, weapon finishes, and attachments,
+Arena ships a launch catalog for bot skins, weapon finishes, attachments, and
+movement trails,
 plus a provider-neutral ownership ledger and Stripe-hosted Checkout adapter.
 Checkout is intentionally disabled by default: the public catalog only exposes
 working purchase buttons after verified customer auth, PostgreSQL, Stripe credentials,
@@ -132,46 +133,54 @@ The implementation enforces this in several places:
 
 - Catalog, account, license, and assignment tables contain presentation and
   ownership data only.
-- The game engine receives only three allowlisted local asset keys. It never
+- The game engine receives only four allowlisted local asset keys. It never
   receives price, rarity, email, payment, or account data.
 - The spectator renderer maps those keys to fixed local visuals; catalog rows
   cannot load arbitrary URLs, scripts, models, or materials.
 - Paid equip checks the exact active license and its current bot assignment on
   the server.
 - Unknown, inactive, or retired assets fall back to standard visuals.
-- Spectators can disable chassis skins, weapon finishes, or attachments in the
-  existing graphics settings.
+- Spectators can disable chassis skins, weapon finishes, attachments, or bot
+  movement trails in the existing graphics settings.
 
 ## Launch catalog
 
-The built-in catalog contains exactly 303 items: three permanent defaults and
-300 custom cosmetics arranged as 100 coordinated sets. Each set contains one
-chassis, one weapon finish, and one attachment. The original Neon Signal and
-Void Orbit packs remain sets 001 and 002; sets 003-100 add 294 custom pieces
-across Elemental, Cosmic, Cyber, Wild, Arcane, Industrial, Royal, Abyssal, and
-Apex collections.
+The built-in catalog contains exactly 328 items. The existing 303 items remain:
+three permanent defaults and 300 custom cosmetics arranged as 100 coordinated
+sets. Each set contains one chassis, one weapon finish, and one attachment. The
+original Neon Signal and Void Orbit packs remain sets 001 and 002; sets 003-100
+add 294 custom pieces across Elemental, Cosmic, Cyber, Wild, Arcane, Industrial,
+Royal, Abyssal, and Apex collections. A free Standard Wake fallback and 24 paid
+movement trails bring the catalog to 328 items and 124 purchasable products.
 
 Every coordinated set costs **$1.99 USD** regardless of rarity. Rarity remains
 presentation and catalog metadata; it does not change the one-time set price.
+Each trail is its own one-item product and costs **$0.99 USD**. Trail products
+cannot contain set pieces, and coordinated sets cannot contain trails.
 
-All Access costs **$19.99 USD per month** and grants every current cosmetic set,
-every set published later while access remains active, and up to five active
-account-owned API keys. Cancellation keeps access through the paid period. When
-service ends, subscription-provided licenses are removed from the account and
-from bots using them. Separately purchased $1.99 sets remain owned.
+All Access costs **$19.99 USD per month** and grants every current cosmetic set
+and trail, every set or trail published later while access remains active, and
+up to five active account-owned API keys. Cancellation keeps access through the
+paid period. When service ends, subscription-provided licenses are removed from
+the account and from bots using them. Separately purchased $1.99 sets and $0.99
+trails remain owned.
 
-Only whole sets are purchasable at launch. Individual pieces keep reference
-price and rarity metadata for Admin/search displays but cannot create an
-accidental single-item checkout. Quantity is bounded to 1-10; buying two packs
-creates six independent licenses. Every price, currency, pack membership, and
-quantity is snapshotted on the server before Stripe is called.
+Set pieces are purchasable only as whole coordinated sets. Individual set pieces
+keep reference price and rarity metadata for Admin/search displays but cannot
+create an accidental single-item checkout. Trails are intentionally sold as
+one-item products. Quantity is bounded to 1-10; buying two sets creates six
+independent licenses, while buying two trails creates two independent licenses.
+Every price, currency, product membership, and quantity is snapshotted on the
+server before Stripe is called.
 
 Set keys use the fixed `arena_set_NNN_slug` contract. A local deterministic
 theme mapper gives every set a bounded palette, chassis pattern, weapon finish,
-and attachment recipe. No catalog row can load a remote image, model, script,
-or gameplay behavior. Public and account storefronts render 12 packs initially
-and use search/filter/show-more controls instead of inserting all 300 pieces
-into the DOM at once.
+and attachment recipe. Trail keys use a fixed local allowlist. The spectator and
+Shop share one procedural renderer capped at 48 ribbon meshes and 24 particle
+systems, with one shared material and one shared procedural texture. No catalog
+row can load a remote image, model, script, texture, or gameplay behavior.
+Storefronts use bounded initial pages plus search/filter/show-more controls
+instead of inserting all 328 items into the DOM at once.
 
 ## Asset source and intake policy
 
@@ -334,8 +343,8 @@ DELETE /api/v1/admin/cosmetics/memberships/{membership_id}
 Complimentary admin memberships are cosmetics-only access grants. A request
 provides an email and exactly one of `duration_days` or an RFC3339
 `expires_at`, plus an optional internal note. They materialize one independently
-assignable license for every item in current purchasable sets and sync future
-sets while active. They do not create Stripe billing state or change API-key
+assignable license for every item in current purchasable set and trail product,
+and sync future sets and trails while active. They do not create Stripe billing state or change API-key
 limits. Revocation or expiry removes only membership-issued assignments and
 loadouts; purchased and separately granted licenses remain intact.
 
@@ -383,7 +392,8 @@ cosmetic_categories
   ordered admin-managed group metadata; inactive categories stay out of public reads
 
 cosmetic_packs
-  ordered bundle metadata with a fixed 199 USD-minor-unit sale price
+  ordered product metadata with a fixed 199 USD-minor-unit set price or 99
+  USD-minor-unit one-item trail price
 
 cosmetic_pack_items
   exact ordered membership of allowlisted catalog items in each pack
@@ -458,8 +468,9 @@ signature before acting on an event; see [Stripe webhooks](https://docs.stripe.c
 - Failed or canceled refund updates recompute from successful refund records;
   `charge.refunded` cumulative totals do not double-count individual events.
 - Subscription Checkout uses a server-owned recurring `1999 USD/month` amount.
-  `active` and `trialing` events materialize one license for every active set
-  item, including future items on the next inventory sync. A scheduled
+  `active` and `trialing` events materialize one license for every item in each
+  active set and trail product, including future products on the next inventory
+  sync. A scheduled
   `cancel_at_period_end` keeps access while Stripe still reports `active`.
   `past_due`, `unpaid`, `paused`, canceled, and deleted states remove only the
   mapped subscription licenses and their loadouts; purchased/manual copies are
@@ -536,8 +547,8 @@ Before switching from `sk_test_...` to live credentials:
    asynchronous payment, partial refund, full refund, and dispute exercise.
 4. Confirm the account order history and protected Admin order search show the
    same amount, currency, provider IDs, status, and fulfillment count.
-5. Confirm full reversals remove the three exact licenses while another order's
-   licenses remain equipped and usable.
+5. Confirm full reversals remove the exact licenses from a three-piece set or
+   one-item trail while another order's licenses remain equipped and usable.
 6. Configure Stripe receipts, tax registrations/Stripe Tax policy, statement
    descriptor, customer support/refund terms, and production alerting.
 7. Enable checkout, fetch `/api/v1/cosmetics/catalog`, and verify

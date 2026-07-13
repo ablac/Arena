@@ -177,13 +177,15 @@ func EnsureCosmeticOrdersSchema(ctx context.Context) error {
 			position INT NOT NULL CHECK (position >= 0),
 			item_id TEXT NOT NULL REFERENCES cosmetic_items(id) ON DELETE RESTRICT,
 			item_name TEXT NOT NULL,
-			slot TEXT NOT NULL CHECK (slot IN ('bot_skin','weapon_skin','attachment')),
+			slot TEXT NOT NULL CHECK (slot IN ('bot_skin','weapon_skin','attachment','trail')),
 			asset_key TEXT NOT NULL,
 			rarity TEXT NOT NULL,
 			PRIMARY KEY (order_id, position),
 			UNIQUE (order_id, item_id),
 			UNIQUE (order_id, position, item_id)
 		)`,
+		`ALTER TABLE cosmetic_order_items DROP CONSTRAINT IF EXISTS cosmetic_order_items_slot_check`,
+		`ALTER TABLE cosmetic_order_items ADD CONSTRAINT cosmetic_order_items_slot_check CHECK (slot IN ('bot_skin','weapon_skin','attachment','trail'))`,
 		`CREATE TABLE IF NOT EXISTS cosmetic_order_licenses (
 			order_id TEXT NOT NULL REFERENCES cosmetic_orders(id) ON DELETE RESTRICT,
 			copy_index SMALLINT NOT NULL CHECK (copy_index BETWEEN 1 AND 10),
@@ -327,16 +329,16 @@ func CreateCosmeticOrder(ctx context.Context, accountID, packID string, quantity
 		return nil, err
 	}
 
-	var packName, packDescription, currency string
+	var packName, packDescription, categoryID, currency string
 	var price int64
 	var packFree, packPurchasable, packActive, categoryActive bool
 	err = tx.QueryRow(ctx, `
-		SELECT p.name, p.description, p.price_cents, p.currency, p.is_free, p.is_purchasable, p.is_active, c.is_active
+		SELECT p.name, p.description, p.category_id, p.price_cents, p.currency, p.is_free, p.is_purchasable, p.is_active, c.is_active
 		FROM cosmetic_packs p
 		JOIN cosmetic_categories c ON c.id = p.category_id
 		WHERE p.id = $1
 		FOR SHARE OF p, c`, packID).
-		Scan(&packName, &packDescription, &price, &currency, &packFree, &packPurchasable, &packActive, &categoryActive)
+		Scan(&packName, &packDescription, &categoryID, &price, &currency, &packFree, &packPurchasable, &packActive, &categoryActive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrCosmeticOrderPackUnavailable
 	}
@@ -344,12 +346,16 @@ func CreateCosmeticOrder(ctx context.Context, accountID, packID string, quantity
 		return nil, fmt.Errorf("CreateCosmeticOrder pack: %w", err)
 	}
 	currency = strings.ToUpper(strings.TrimSpace(currency))
-	if packFree || !packPurchasable || !packActive || !categoryActive || price != CosmeticPackPriceCents || currency != "USD" {
+	wantPrice := int64(CosmeticPackPriceCents)
+	if categoryID == CosmeticTrailCategoryID {
+		wantPrice = CosmeticTrailPriceCents
+	}
+	if packFree || !packPurchasable || !packActive || !categoryActive || price != wantPrice || currency != "USD" {
 		return nil, ErrCosmeticOrderPackUnavailable
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT i.id, i.name, i.slot, i.asset_key, i.rarity, i.is_active, c.is_active
+		SELECT i.id, i.name, i.slot, i.asset_key, i.rarity, i.category_id, i.is_active, c.is_active
 		FROM cosmetic_pack_items pi
 		JOIN cosmetic_items i ON i.id = pi.item_id
 		JOIN cosmetic_categories c ON c.id = i.category_id
@@ -360,17 +366,23 @@ func CreateCosmeticOrder(ctx context.Context, accountID, packID string, quantity
 		return nil, fmt.Errorf("CreateCosmeticOrder items: %w", err)
 	}
 	items := make([]CosmeticOrderItem, 0)
+	trailItemCount := 0
 	for rows.Next() {
 		var item CosmeticOrderItem
+		var itemCategoryID string
 		var itemActive, itemCategoryActive bool
 		item.Position = len(items)
-		if err := rows.Scan(&item.ID, &item.Name, &item.Slot, &item.AssetKey, &item.Rarity, &itemActive, &itemCategoryActive); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Slot, &item.AssetKey, &item.Rarity, &itemCategoryID, &itemActive, &itemCategoryActive); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("CreateCosmeticOrder item scan: %w", err)
 		}
-		if !itemActive || !itemCategoryActive || !IsValidCosmeticSlot(item.Slot) {
+		if !itemActive || !itemCategoryActive || !IsValidCosmeticSlot(item.Slot) ||
+			((item.Slot == CosmeticSlotTrail) != (itemCategoryID == CosmeticTrailCategoryID)) {
 			rows.Close()
 			return nil, ErrCosmeticOrderPackUnavailable
+		}
+		if item.Slot == CosmeticSlotTrail {
+			trailItemCount++
 		}
 		items = append(items, item)
 	}
@@ -380,6 +392,13 @@ func CreateCosmeticOrder(ctx context.Context, accountID, packID string, quantity
 		return nil, fmt.Errorf("CreateCosmeticOrder item rows: %w", err)
 	}
 	if len(items) == 0 {
+		return nil, ErrCosmeticOrderPackUnavailable
+	}
+	if categoryID == CosmeticTrailCategoryID {
+		if len(items) != 1 || trailItemCount != 1 {
+			return nil, ErrCosmeticOrderPackUnavailable
+		}
+	} else if trailItemCount != 0 {
 		return nil, ErrCosmeticOrderPackUnavailable
 	}
 

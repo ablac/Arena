@@ -153,10 +153,10 @@ func TestDemoBotRegistrationProvisionsConfiguredCosmeticPack(t *testing.T) {
 		if botID != "registered-demo-bot-id" {
 			t.Errorf("cosmetic provision bot ID = %q", botID)
 		}
-		if got.Name != cfg.Name || got.CosmeticPackID != cfg.CosmeticPackID {
+		if got.Name != cfg.Name || got.CosmeticPackID != cfg.CosmeticPackID || got.CosmeticTrailID != cfg.CosmeticTrailID {
 			t.Errorf("cosmetic provision config = %+v, want %+v", got, cfg)
 		}
-		return configuredCosmeticSelections(got), nil
+		return configuredAllCosmeticSelections(got), nil
 	}
 
 	if err := bot.register(context.Background()); err != nil {

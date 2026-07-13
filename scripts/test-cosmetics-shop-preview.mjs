@@ -20,12 +20,14 @@ assert.match(cosmeticsSource, /forceEnabled/,
   'cosmetic application must expose an explicit shop-preview override');
 assert.doesNotMatch(botBodySource, /swordsman-body\.js|weapons\.js|animations\.js/,
   'the Shop entry path must not load retired character systems');
-assert.match(previewSource, /bot-body\.js\?v=20260712c/);
+assert.match(previewSource, /bot-body\.js\?v=20260713b/);
 assert.match(previewSource, /cosmetics\.js\?v=20260712c/);
 assert.doesNotMatch(previewSource, /swordsman-anims\.js|updateSwordsmanAnim|isSwordsman/,
   'preview must execute only the Forge presentation path');
 assert.match(previewSource, /character-anims\.js\?v=20260712c/,
   'preview must use the allocation-stable Forge animation module');
+assert.match(previewSource, /trails\.js\?v=20260713b/,
+  'preview must use the same bounded cosmetic trail renderer as the live arena');
 assert.doesNotMatch(previewSource, /ArenaEngine|BotRenderer/,
   'shop preview must not construct the live spectator renderer');
 
@@ -147,13 +149,23 @@ globalThis.__previewApplyCalls = applyCalls;
 globalThis.__previewCreateCount = createCount;
 globalThis.__previewCreateOptions = null;
 globalThis.__previewAnimationCount = 0;
+globalThis.__previewTrailRenderCount = 0;
 globalThis.__previewCreateError = false;
 
 let isolatedPreviewSource = previewSource
   .replace(/import \{ createBotEntry, disposeBotEntry \} from '[^']+';\r?\n/, '')
   .replace(/import \{ applyBotCosmetics, disposeBotCosmetics \} from '[^']+';\r?\n/, previewDependencies)
   .replace(/import \{ updateForgeCharacter \} from '[^']+';\r?\n/,
-    'const updateForgeCharacter = () => { globalThis.__previewAnimationCount += 1; };\n');
+    'const updateForgeCharacter = () => { globalThis.__previewAnimationCount += 1; };\n')
+  .replace(/import \{ TrailRenderer \} from '[^']+';\r?\n/, `
+    class TrailRenderer {
+      render(entries) {
+        globalThis.__previewTrailRenderCount += 1;
+        globalThis.__previewTrailEntries = entries;
+      }
+      dispose() { globalThis.__previewEvents.push('dispose-trails'); }
+    }
+  `);
 
 class PreviewVector {
   constructor(x = 0, y = 0, z = 0) { this.x = x; this.y = y; this.z = z; }
@@ -274,7 +286,7 @@ assert.equal(preview.engine.hardwareScalingLevel, 1, 'preview must cap HiDPI ren
 assert.equal(resizeObservers[0].target, canvas);
 assert.equal(intersectionObservers[0].target, canvas);
 
-preview.setLoadout({bot_skin: 'skin-a', weapon_skin: 'weapon-a', attachment: 'attachment-a'});
+preview.setLoadout({bot_skin: 'skin-a', weapon_skin: 'weapon-a', attachment: 'attachment-a', trail: 'ember_sparks'});
 preview.setLoadout({bot_skin: 'skin-b'});
 assert.equal(globalThis.__previewCreateCount, 1, 'loadout changes must reuse the model and scene');
 assert.equal(applyCalls.length, 3);
@@ -282,22 +294,27 @@ assert.deepEqual(applyCalls.at(-1).bot.cosmetics, {
   bot_skin: 'skin-b',
   weapon_skin: 'standard',
   attachment: 'none',
+  trail: 'standard',
 });
 
 const initialRotation = preview.turntable.rotation.y;
 preview.engine.renderCallback();
 assert.equal(preview.scene.renderCount, 1);
 assert.equal(globalThis.__previewAnimationCount, 2, 'visible preview must apply the production idle pose');
+assert.equal(globalThis.__previewTrailRenderCount, 1,
+  'visible preview must render the selected trail through the production trail path');
 assert.ok(preview.turntable.rotation.y >= initialRotation, 'visible preview may auto-rotate');
 intersectionObservers[0].callback([{isIntersecting: false}]);
 preview.engine.renderCallback();
 assert.equal(preview.scene.renderCount, 1, 'offscreen preview must skip GPU rendering');
 assert.equal(globalThis.__previewAnimationCount, 2, 'offscreen preview must skip idle animation work');
+assert.equal(globalThis.__previewTrailRenderCount, 1, 'offscreen preview must skip trail work');
 intersectionObservers[0].callback([{isIntersecting: true}]);
 document.hidden = true;
 preview.engine.renderCallback();
 assert.equal(preview.scene.renderCount, 1, 'hidden document must skip GPU rendering');
 assert.equal(globalThis.__previewAnimationCount, 2, 'hidden document must skip idle animation work');
+assert.equal(globalThis.__previewTrailRenderCount, 1, 'hidden document must skip trail work');
 document.hidden = false;
 
 mediaQuery.matches = true;

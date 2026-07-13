@@ -1,8 +1,9 @@
 'use strict';
 
-import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260712c';
+import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260713b';
 import { applyBotCosmetics, disposeBotCosmetics } from './renderer/cosmetics.js?v=20260712c';
 import { updateForgeCharacter } from './renderer/character-anims.js?v=20260712c';
+import { TrailRenderer } from './renderer/trails.js?v=20260713b';
 
 const DEFAULT_ALPHA = -Math.PI / 2;
 const DEFAULT_BETA = 1.12;
@@ -12,6 +13,7 @@ const DEFAULT_LOADOUT = Object.freeze({
   bot_skin: 'standard',
   weapon_skin: 'standard',
   attachment: 'none',
+  trail: 'standard',
 });
 const PREVIEW_WEAPONS = new Set(['sword', 'bow', 'spear', 'daggers', 'staff', 'shield', 'grapple']);
 
@@ -35,6 +37,8 @@ export class CosmeticShopPreview {
     this.camera = null;
     this.turntable = null;
     this.entry = null;
+    this.trailRenderer = null;
+    this._trailEntries = new Map();
     this.bot = null;
     this.ready = false;
     this._disposed = false;
@@ -121,8 +125,17 @@ export class CosmeticShopPreview {
     };
     this.entry = createBotEntry(this.bot, this.scene, {presentationOnly: true});
     this.entry.root.parent = this.turntable;
+    this.entry.isAlive = true;
+    this.entry._interpReady = true;
+    this.entry.botData = this.bot;
     updateForgeCharacter(this.entry, 0, true);
     applyBotCosmetics(this.entry, this.bot, this.scene, {forceEnabled: true});
+    this._trailEntries.set(this.bot.bot_id, this.entry);
+    this.trailRenderer = new TrailRenderer(this.scene, {
+      forceEnabled: true,
+      showStandard: false,
+      staticPreview: true,
+    });
 
     this._motionQuery = typeof window.matchMedia === 'function'
       ? window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -204,6 +217,7 @@ export class CosmeticShopPreview {
       if (this.entry) {
         updateForgeCharacter(this.entry, dt, this._reducedMotion);
       }
+      if (this.trailRenderer) this.trailRenderer.render(this._trailEntries, dt);
       this.scene.render();
       this._lastRenderedAt = now;
       this._renderRequested = false;
@@ -220,9 +234,11 @@ export class CosmeticShopPreview {
       bot_skin: assetKey(loadout.bot_skin, DEFAULT_LOADOUT.bot_skin),
       weapon_skin: assetKey(loadout.weapon_skin, DEFAULT_LOADOUT.weapon_skin),
       attachment: assetKey(loadout.attachment, DEFAULT_LOADOUT.attachment),
+      trail: assetKey(loadout.trail, DEFAULT_LOADOUT.trail),
     };
     if (this.ready && this.entry) {
       this.bot.cosmetics = {...this.loadout};
+      this.entry.botData = this.bot;
       applyBotCosmetics(this.entry, this.bot, this.scene, {forceEnabled: true});
       this._renderRequested = true;
     }
@@ -253,6 +269,10 @@ export class CosmeticShopPreview {
     };
     this.entry = createBotEntry(this.bot, this.scene, {presentationOnly: true});
     this.entry.root.parent = this.turntable;
+    this.entry.isAlive = true;
+    this.entry._interpReady = true;
+    this.entry.botData = this.bot;
+    this._trailEntries.set(this.bot.bot_id, this.entry);
     updateForgeCharacter(this.entry, 0, true);
     applyBotCosmetics(this.entry, this.bot, this.scene, {forceEnabled: true});
     this._lastFrame = performance.now();
@@ -312,6 +332,11 @@ export class CosmeticShopPreview {
       disposeBotEntry(this.entry);
       this.entry = null;
     }
+    if (this.trailRenderer) {
+      this.trailRenderer.dispose();
+      this.trailRenderer = null;
+    }
+    this._trailEntries.clear();
     if (this.camera) this.camera.detachControl(this.canvas);
     if (this.engine && this._renderFrame) this.engine.stopRenderLoop(this._renderFrame);
     if (this.scene) this.scene.dispose();

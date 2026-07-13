@@ -69,6 +69,7 @@ const snapshot = cosmetics.normalizeSnapshot({
 
 assert.equal(snapshot.account.email, 'owner@example.com');
 assert.equal(snapshot.licenses.length, 2, 'multiple purchased copies must remain separate licenses');
+assert.equal(cosmetics.slotLabel('trail'), 'Trails');
 
 const subscriptionOffer = cosmetics.normalizeSubscriptionOffer({
   enabled:true,
@@ -182,8 +183,8 @@ assert.match(inactiveBotHTML, /data-license-equip="license-refunded" disabled>Bo
 const catalog = {
   checkout_enabled: true,
   subscription_offer: subscriptionOffer,
-  categories: [{id:'sets',name:'Sets'}],
-  packs: Array.from({length:100}, (_, index) => {
+  categories: [{id:'sets',name:'Sets'}, {id:'trails',name:'Trails'}],
+  packs: [...Array.from({length:100}, (_, index) => {
     const number = String(index + 1).padStart(3, '0');
     const assetKey = `arena_set_${number}_signal_${number}`;
     return {
@@ -191,7 +192,11 @@ const catalog = {
       category_id:'sets', is_purchasable:true, price_cents:199, currency:'USD',
       items:['bot_skin','weapon_skin','attachment'].map(slot => ({id:`${slot}-${number}`,slot,asset_key:assetKey,name:`${slot} ${number}`})),
     };
-  }),
+  }), {
+    id:'trail-ember-sparks-pack', name:'Ember Sparks', description:'Hot cinders in a fire-red wake.',
+    category_id:'trails', is_purchasable:true, price_cents:99, currency:'USD',
+    items:[{id:'trail-ember-sparks',slot:'trail',asset_key:'ember_sparks',name:'Ember Sparks'}],
+  }],
 };
 const shopHTML = cosmetics.renderPanel(snapshot, {catalog});
 assert.equal((shopHTML.match(/data-shop-pack=/g) || []).length, 12, 'dashboard shop should bound its initial pack render');
@@ -199,19 +204,27 @@ assert.match(shopHTML, /data-pack-checkout="set-001-pack"/, 'enabled sale-ready 
 assert.match(shopHTML, /\$1\.99/, 'every one-time cosmetic set should display the $1.99 catalog price');
 assert.match(shopHTML, /All Access/);
 assert.match(shopHTML, /\$19\.99[\s\S]*month/);
-assert.match(shopHTML, /every current and future cosmetic set/i);
+assert.match(shopHTML, /every current and future cosmetic set and trail/i);
 assert.match(shopHTML, /up to 5 active API keys/i);
 assert.match(shopHTML, /subscription cosmetics are removed/i);
 assert.match(shopHTML, /data-subscription-checkout/, 'accounts without a managed subscription should be able to start All Access checkout');
 const searchedShopHTML = cosmetics.renderPanel(snapshot, {catalog, shopQuery:'Signal Set 099'});
 assert.equal((searchedShopHTML.match(/data-shop-pack=/g) || []).length, 1, 'dashboard search should narrow the pack list');
+const trailShopHTML = cosmetics.renderPanel(snapshot, {catalog, shopQuery:'Ember Sparks'});
+assert.match(trailShopHTML, /Individual trail/);
+assert.match(trailShopHTML, /\$0\.99/);
+assert.match(trailShopHTML, /data-pack-checkout="trail-ember-sparks-pack"/);
 const noResultsHTML = cosmetics.renderPanel(snapshot, {catalog, shopQuery:'missing set'});
-assert.match(noResultsHTML, /No cosmetic sets match/i);
+assert.match(noResultsHTML, /No cosmetic products match/i);
 const disabledShopHTML = cosmetics.renderPanel(snapshot, {catalog:{...catalog,checkout_enabled:false}});
 assert.doesNotMatch(disabledShopHTML, /data-pack-checkout=/, 'checkout-disabled catalogs must not render purchase buttons');
 assert.deepEqual(
   JSON.parse(JSON.stringify(cosmetics.checkoutIntent(catalog, 'set-001-pack'))),
   {ok:true,path:'/account/cosmetics/checkout',body:{pack_id:'set-001-pack',quantity:1}},
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(cosmetics.checkoutIntent(catalog, 'trail-ember-sparks-pack'))),
+  {ok:true,path:'/account/cosmetics/checkout',body:{pack_id:'trail-ember-sparks-pack',quantity:1}},
 );
 
 const baseOrder = {
@@ -400,7 +413,7 @@ const linkHandler = dashboardHTML.slice(
 assert.doesNotMatch(linkHandler, /saveKey|localStorage/, 'linking a bot must not persist the proof key in dashboard storage');
 
 recentPurchaseCheck('dashboard script cache version', () => {
-  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260712c/);
+  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260713b/);
 });
 recentPurchaseCheck('long purchase data remains contained', () => {
   assert.match(dashboardHTML, /\.cosmetic-purchase-head>div\{[^}]*min-width:0/);

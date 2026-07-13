@@ -44,7 +44,7 @@ assert.match(shopHTML, /Items from the same pack can be assigned to different bo
   'Shop must explain that pack members are independent licenses');
 assert.match(shopHTML, /data-shop-subscription/, 'Shop needs one prominent horizontal All Access offer');
 assert.match(shopHTML, /All Access/);
-assert.match(shopHTML, /every current and future cosmetic set/i);
+assert.match(shopHTML, /every current and future cosmetic set and trail/i);
 assert.match(shopHTML, /up to 5 active API keys/i);
 assert.match(shopHTML, /subscription cosmetics are removed/i);
 assert.match(shopHTML, /data-shop-subscription-action/, 'All Access must lead into the verified-email Dashboard');
@@ -78,6 +78,7 @@ const pack = {
     {id: 'body-alt', slot: 'bot_skin', asset_key: 'arena_set_004_alt'},
     {id: 'weapon', slot: 'weapon_skin', asset_key: 'arena_set_003_ember'},
     {id: 'attachment', slot: 'attachment', asset_key: 'arena_set_003_ember'},
+    {id: 'trail', slot: 'trail', asset_key: 'ember_sparks'},
   ],
 };
 
@@ -85,13 +86,21 @@ assert.deepEqual(shop.packPreviewLoadout(pack), {
   bot_skin: 'arena_set_003_ember',
   weapon_skin: 'arena_set_003_ember',
   attachment: 'arena_set_003_ember',
+  trail: 'ember_sparks',
 }, 'full-pack preview must use the first ordered item in every supported slot');
 assert.deepEqual(shop.itemPreviewLoadout(pack.items[2]), {
   bot_skin: 'standard',
   weapon_skin: 'arena_set_003_ember',
   attachment: 'none',
+  trail: 'standard',
 }, 'individual preview must isolate the chosen item against standard defaults');
-assert.deepEqual(shop.packItems(pack).map(item => item.id), ['body-first', 'body-alt', 'weapon', 'attachment'],
+assert.deepEqual(shop.itemPreviewLoadout(pack.items[4]), {
+  bot_skin: 'standard',
+  weapon_skin: 'standard',
+  attachment: 'none',
+  trail: 'ember_sparks',
+}, 'individual trail preview must isolate the selected trail against standard defaults');
+assert.deepEqual(shop.packItems(pack).map(item => item.id), ['body-first', 'body-alt', 'weapon', 'attachment', 'trail'],
   'pack detail must preserve every catalog item, including multiple items in one slot');
 assert.equal(shop.dashboardPurchasePath('ember pack', '/shop/'), '/dashboard/?tab=cosmetics&pack=ember%20pack');
 assert.equal(shop.dashboardPurchasePath('ember pack', '/arena/shop/'), '/arena/dashboard/?tab=cosmetics&pack=ember%20pack');
@@ -293,8 +302,8 @@ assert.equal(packList.children.find(button => button.dataset.shopPackId === 'emb
   'pack selection must update in place so keyboard focus is not discarded');
 assert.equal(document.activeElement, emberButton, 'pack selection must retain keyboard focus');
 assert.equal(controller.snapshot().selectedPackID, 'ember-pack');
-assert.equal(itemList.children.length, 4, 'selecting a pack must render every item, not a three-item slice');
-assert.equal(packCount.textContent, '4 included items');
+assert.equal(itemList.children.length, 5, 'selecting a pack must render every item, including its trail');
+assert.equal(packCount.textContent, '5 included items');
 assert.equal(packPrice.textContent, '$1.99');
 assert.equal(purchase.href, '/dashboard/?tab=cosmetics&pack=ember-pack');
 assert.equal(purchase.hidden, false);
@@ -320,7 +329,12 @@ search.listeners.get('input')({currentTarget: search});
 assert.equal(controller.snapshot().selectedPackID, '');
 assert.equal(canvas.dataset.previewSignature, 'standard:no-pack-selected',
   'an empty filter must clear stale pack cosmetics from the preview');
-assert.deepEqual(previewCalls.at(-1).loadout, {bot_skin: 'standard', weapon_skin: 'standard', attachment: 'none'});
+assert.deepEqual(previewCalls.at(-1).loadout, {
+  bot_skin: 'standard',
+  weapon_skin: 'standard',
+  attachment: 'none',
+  trail: 'standard',
+});
 controller.dispose();
 
 subscriptionAction.hidden = false;

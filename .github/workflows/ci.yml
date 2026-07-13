@@ -85,11 +85,13 @@ jobs:
           node scripts/test-character-shop.mjs
           node scripts/test-forge-action-edge.mjs
           node scripts/test-forge-lod.mjs
+          node scripts/test-forge-visibility.mjs
           node scripts/test-forge-mount-metrics.mjs
           node scripts/test-safe-zone-geometry.mjs
           node scripts/test-renderer-suspension.mjs
           node scripts/test-engine-webgpu-fallback.mjs
           node scripts/test-trail-budget.mjs
+          node scripts/test-cosmetic-trails.mjs
           node scripts/test-projectile-trail-texture.mjs
           node scripts/test-key-generator.mjs
           node scripts/test-admin-cosmetics-ui.mjs
