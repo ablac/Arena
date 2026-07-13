@@ -209,7 +209,7 @@ func TestTauntNeverReachesBotTick(t *testing.T) {
 
 	// Same buffered taunt reaches the spectator broadcast exactly once.
 	spec := &SpectatorConn{
-		SendChan: make(chan []byte, 8),
+		SendChan: make(chan *SpectatorMessage, 8),
 		Done:     make(chan struct{}),
 	}
 	if !e.TryAddSpectator(spec, 10) {
@@ -220,7 +220,8 @@ func TestTauntNeverReachesBotTick(t *testing.T) {
 	e.mu.Unlock()
 
 	select {
-	case payload := <-spec.SendChan:
+	case message := <-spec.SendChan:
+		payload := message.Payload
 		var state map[string]interface{}
 		if err := json.Unmarshal(payload, &state); err != nil {
 			t.Fatalf("decode spectator payload: %v", err)

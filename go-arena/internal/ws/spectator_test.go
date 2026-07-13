@@ -3,10 +3,10 @@ package ws
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +15,15 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+func testSpectatorMessage(t *testing.T, payload string) *game.SpectatorMessage {
+	t.Helper()
+	prepared, err := websocket.NewPreparedMessage(websocket.TextMessage, []byte(payload))
+	if err != nil {
+		t.Fatalf("prepare spectator test message: %v", err)
+	}
+	return &game.SpectatorMessage{Payload: []byte(payload), Prepared: prepared}
+}
 
 func TestSpectatorHandler_RejectsAdminBannedIPBeforeUpgrade(t *testing.T) {
 	previousTrustedProxies := config.C.TrustedProxyCIDRs
@@ -41,10 +50,141 @@ func TestSpectatorHandler_RejectsAdminBannedIPBeforeUpgrade(t *testing.T) {
 	}
 }
 
-func TestSpectatorHandlerRejectsConnectionBeyondAtomicCap(t *testing.T) {
+func TestSpectatorHandlerRateLimitsByIPBeforeUpgrade(t *testing.T) {
+	originalChecker := spectatorRateLimitChecker
+	originalMetrics := defaultWebSocketAdmissionMetrics
+	originalConnectLimit := config.C.WSSpectatorConnectRatePerMin
+	originalMaxSpectators := config.C.MaxSpectators
+	defaultWebSocketAdmissionMetrics = newWebSocketAdmissionMetrics(time.Now)
+	config.C.WSSpectatorConnectRatePerMin = 60
+	config.C.MaxSpectators = 500
+	var called atomic.Int32
+	spectatorRateLimitChecker = func(_ context.Context, key string, limit, window int) (bool, int, time.Time, error) {
+		called.Add(1)
+		if key != "ws:spectator:connect:203.0.113.44" {
+			t.Fatalf("rate-limit key = %q", key)
+		}
+		if limit != 60 || window != 60 {
+			t.Fatalf("rate limit = %d/%ds, want NAT-safe 60/60s", limit, window)
+		}
+		return false, 0, time.Now().Add(time.Minute), nil
+	}
+	t.Cleanup(func() {
+		spectatorRateLimitChecker = originalChecker
+		defaultWebSocketAdmissionMetrics = originalMetrics
+		config.C.WSSpectatorConnectRatePerMin = originalConnectLimit
+		config.C.MaxSpectators = originalMaxSpectators
+	})
+
+	engine := game.NewGameEngine()
+	req := httptest.NewRequest(http.MethodGet, "/ws/spectator", nil)
+	req.RemoteAddr = "203.0.113.44:4321"
+	rec := httptest.NewRecorder()
+	SpectatorHandler(engine).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429; body: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Retry-After"); got != "60" {
+		t.Fatalf("Retry-After = %q, want 60", got)
+	}
+	if called.Load() != 1 {
+		t.Fatalf("rate-limit checks = %d, want 1", called.Load())
+	}
+	if engine.SpectatorCount() != 0 {
+		t.Fatal("rate-limited spectator reached engine admission")
+	}
+	metrics := defaultWebSocketAdmissionMetrics.snapshot().Spectator.Totals
+	if metrics.Attempts != 1 || metrics.Upgrades != 0 || metrics.Failures.RateLimit != 1 {
+		t.Fatalf("spectator admission metrics = %#v, want pre-upgrade rate-limit failure", metrics)
+	}
+}
+
+func TestSpectatorHandlerExemptsLoopbackFromConnectionLimit(t *testing.T) {
+	originalChecker := spectatorRateLimitChecker
+	originalConnectLimit := config.C.WSSpectatorConnectRatePerMin
+	originalMaxSpectators := config.C.MaxSpectators
+	config.C.WSSpectatorConnectRatePerMin = 60
+	config.C.MaxSpectators = 500
+	var called atomic.Int32
+	spectatorRateLimitChecker = func(context.Context, string, int, int) (bool, int, time.Time, error) {
+		called.Add(1)
+		return false, 0, time.Now().Add(time.Minute), nil
+	}
+	t.Cleanup(func() {
+		spectatorRateLimitChecker = originalChecker
+		config.C.WSSpectatorConnectRatePerMin = originalConnectLimit
+		config.C.MaxSpectators = originalMaxSpectators
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/ws/spectator", nil)
+	req.RemoteAddr = "127.0.0.1:4321"
+	rec := httptest.NewRecorder()
+	SpectatorHandler(game.NewGameEngine()).ServeHTTP(rec, req)
+
+	if called.Load() != 0 {
+		t.Fatalf("loopback rate-limit checks = %d, want 0", called.Load())
+	}
+}
+
+func TestSpectatorHandlerZeroDisablesConnectionLimit(t *testing.T) {
+	originalChecker := spectatorRateLimitChecker
+	originalConnectLimit := config.C.WSSpectatorConnectRatePerMin
+	originalMaxSpectators := config.C.MaxSpectators
+	config.C.WSSpectatorConnectRatePerMin = 0
+	config.C.MaxSpectators = 500
+	var called atomic.Int32
+	spectatorRateLimitChecker = func(context.Context, string, int, int) (bool, int, time.Time, error) {
+		called.Add(1)
+		return false, 0, time.Now().Add(time.Minute), nil
+	}
+	t.Cleanup(func() {
+		spectatorRateLimitChecker = originalChecker
+		config.C.WSSpectatorConnectRatePerMin = originalConnectLimit
+		config.C.MaxSpectators = originalMaxSpectators
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/ws/spectator", nil)
+	req.RemoteAddr = "203.0.113.45:4321"
+	rec := httptest.NewRecorder()
+	SpectatorHandler(game.NewGameEngine()).ServeHTTP(rec, req)
+
+	if called.Load() != 0 {
+		t.Fatalf("disabled rate-limit checks = %d, want 0", called.Load())
+	}
+}
+
+func TestSpectatorUpgradeRateLimitUsesNATSafeDefaultAndAllowsExplicitConfig(t *testing.T) {
+	originalConnectLimit := config.C.WSSpectatorConnectRatePerMin
+	t.Cleanup(func() { config.C.WSSpectatorConnectRatePerMin = originalConnectLimit })
+
+	config.C.WSSpectatorConnectRatePerMin = 60
+	key, limit := spectatorUpgradeRateLimit("203.0.113.7")
+	if key != "ws:spectator:connect:203.0.113.7" || limit != 60 {
+		t.Fatalf("spectator bucket = %q %d, want dedicated bucket with NAT-safe default", key, limit)
+	}
+	config.C.WSSpectatorConnectRatePerMin = 240
+	_, limit = spectatorUpgradeRateLimit("203.0.113.7")
+	if limit != 240 {
+		t.Fatalf("configured spectator limit = %d, want 240", limit)
+	}
+}
+
+func TestSpectatorUpgraderUsesSharedWriteBufferPool(t *testing.T) {
+	if spectatorUpgrader.WriteBufferPool == nil {
+		t.Fatal("spectator upgrader retains one write buffer per connection")
+	}
+}
+
+func TestSpectatorHandlerRejectsKnownFullCapacityBeforeUpgrade(t *testing.T) {
 	previousMax := config.C.MaxSpectators
+	originalMetrics := defaultWebSocketAdmissionMetrics
 	config.C.MaxSpectators = 1
-	t.Cleanup(func() { config.C.MaxSpectators = previousMax })
+	defaultWebSocketAdmissionMetrics = newWebSocketAdmissionMetrics(time.Now)
+	t.Cleanup(func() {
+		config.C.MaxSpectators = previousMax
+		defaultWebSocketAdmissionMetrics = originalMetrics
+	})
 
 	engine := game.NewGameEngine()
 	server := httptest.NewServer(SpectatorHandler(engine))
@@ -64,21 +204,22 @@ func TestSpectatorHandlerRejectsConnectionBeyondAtomicCap(t *testing.T) {
 		t.Fatalf("spectator count after first dial = %d, want 1", got)
 	}
 
-	second, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("second connection should upgrade before capacity close: %v", err)
+	second, response, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if second != nil {
+		second.Close()
 	}
-	defer second.Close()
-	if err := second.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatalf("set second read deadline: %v", err)
+	if err == nil || response == nil || response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("second connection = (%v, %+v), want pre-upgrade HTTP 503", err, response)
 	}
-	_, _, err = second.ReadMessage()
-	var closeErr *websocket.CloseError
-	if !errors.As(err, &closeErr) || closeErr.Code != websocket.CloseTryAgainLater {
-		t.Fatalf("second connection error = %v, want close code %d", err, websocket.CloseTryAgainLater)
+	if got := response.Header.Get("Retry-After"); got != "5" {
+		t.Fatalf("capacity Retry-After = %q, want 5", got)
 	}
 	if got := engine.SpectatorCount(); got != 1 {
 		t.Fatalf("rejected connection changed count to %d", got)
+	}
+	metrics := defaultWebSocketAdmissionMetrics.snapshot().Spectator.Totals
+	if metrics.Attempts != 2 || metrics.Upgrades != 1 || metrics.Admissions != 1 || metrics.Failures.Capacity != 1 {
+		t.Fatalf("spectator admission metrics = %#v, want one admission and one pre-upgrade capacity failure", metrics)
 	}
 }
 
@@ -89,7 +230,7 @@ func TestSpectatorWriterSendsPausedHeartbeat(t *testing.T) {
 			return
 		}
 		spec := &game.SpectatorConn{
-			Conn: conn, SendChan: make(chan []byte, 1), Done: make(chan struct{}),
+			Conn: conn, SendChan: make(chan *game.SpectatorMessage, 1), Done: make(chan struct{}),
 		}
 		spectatorWriterWithIntervals(
 			context.Background(), spec, func() bool { return true },
@@ -124,18 +265,77 @@ func TestSpectatorWriterSendsPausedHeartbeat(t *testing.T) {
 	}
 }
 
+func TestSpectatorWriterUsesPreparedMessageForQueuedFrames(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := spectatorUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		preparedPayload := []byte(`{"type":"service_status","source":"prepared"}`)
+		prepared, err := websocket.NewPreparedMessage(websocket.TextMessage, preparedPayload)
+		if err != nil {
+			t.Errorf("prepare spectator message: %v", err)
+			return
+		}
+		spec := &game.SpectatorConn{
+			Conn:     conn,
+			SendChan: make(chan *game.SpectatorMessage, 1),
+			Done:     make(chan struct{}),
+		}
+		spec.SendChan <- &game.SpectatorMessage{
+			Payload:  []byte(`{"type":"service_status","source":"raw"}`),
+			Prepared: prepared,
+		}
+		spectatorWriterWithTimings(
+			ctx, spec, func() bool { return false },
+			time.Hour, time.Hour, 0,
+		)
+	}))
+	defer server.Close()
+
+	dialer := websocket.Dialer{EnableCompression: true}
+	conn, _, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial spectator writer: %v", err)
+	}
+	defer func() {
+		cancel()
+		_ = conn.Close()
+	}()
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+
+	_, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read queued spectator frame: %v", err)
+	}
+	var envelope struct {
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		t.Fatalf("decode queued spectator frame %q: %v", payload, err)
+	}
+	if envelope.Source != "prepared" {
+		t.Fatalf("spectator writer sent %q payload, want prepared frame", envelope.Source)
+	}
+}
+
 func TestSpectatorWriterDelaysArenaStateButNotControlMessages(t *testing.T) {
 	const stateDelay = 80 * time.Millisecond
+	serviceMessage := testSpectatorMessage(t, `{"type":"service_status","paused":false}`)
+	arenaMessage := testSpectatorMessage(t, `{"type":"arena_state","tick":42}`)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := spectatorUpgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
 		spec := &game.SpectatorConn{
-			Conn: conn, SendChan: make(chan []byte, 2), Done: make(chan struct{}),
+			Conn: conn, SendChan: make(chan *game.SpectatorMessage, 2), Done: make(chan struct{}),
 		}
-		spec.SendChan <- []byte(`{"type":"service_status","paused":false}`)
-		spec.SendChan <- []byte(`{"type":"arena_state","tick":42}`)
+		spec.SendChan <- serviceMessage
+		spec.SendChan <- arenaMessage
 		spectatorWriterWithTimings(
 			context.Background(), spec, func() bool { return false },
 			time.Hour, time.Hour, stateDelay,
@@ -190,18 +390,20 @@ func TestSpectatorWriterPreservesGameplayStateOrderAcrossRoundEnd(t *testing.T) 
 	const stateDelay = 80 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	arenaMessage := testSpectatorMessage(t, `{"type":"arena_state","tick":99}`)
+	lobbyMessage := testSpectatorMessage(t, `{"bots_connected":3,"type":"lobby_state"}`)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := spectatorUpgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
 		spec := &game.SpectatorConn{
-			Conn: conn, SendChan: make(chan []byte, 2), Done: make(chan struct{}),
+			Conn: conn, SendChan: make(chan *game.SpectatorMessage, 2), Done: make(chan struct{}),
 		}
-		spec.SendChan <- []byte(`{"type":"arena_state","tick":99}`)
+		spec.SendChan <- arenaMessage
 		// Lobby state is marshaled from a map, so type is not guaranteed to be
 		// the first JSON field. The classifier must still treat it as gameplay.
-		spec.SendChan <- []byte(`{"bots_connected":3,"type":"lobby_state"}`)
+		spec.SendChan <- lobbyMessage
 		spectatorWriterWithTimings(
 			ctx, spec, func() bool { return false },
 			time.Hour, time.Hour, stateDelay,

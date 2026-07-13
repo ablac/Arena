@@ -483,6 +483,21 @@ func (h *AdminHandler) debugMetrics(w http.ResponseWriter, r *http.Request) {
 			"spectators":     h.Engine.SpectatorCount(),
 			"tick_rate":      config.C.TickRate,
 		},
+		"websocket": ws.GetWebSocketAdmissionMetrics(),
+	}
+	if db.Pool != nil {
+		poolStats := db.Pool.Stat()
+		metrics["database_pool"] = map[string]interface{}{
+			"total_connections":        poolStats.TotalConns(),
+			"acquired_connections":     poolStats.AcquiredConns(),
+			"idle_connections":         poolStats.IdleConns(),
+			"max_connections":          poolStats.MaxConns(),
+			"constructing_connections": poolStats.ConstructingConns(),
+			"acquire_count":            poolStats.AcquireCount(),
+			"canceled_acquire_count":   poolStats.CanceledAcquireCount(),
+			"empty_acquire_count":      poolStats.EmptyAcquireCount(),
+			"acquire_duration_ms":      float64(poolStats.AcquireDuration()) / float64(time.Millisecond),
+		}
 	}
 	writeJSON(w, http.StatusOK, metrics)
 }
