@@ -1,17 +1,19 @@
 'use strict';
 
-import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260712a';
-import { applyBotCosmetics, disposeBotCosmetics } from './renderer/cosmetics.js?v=20260712a';
-import { updateSwordsmanAnim } from './renderer/swordsman-anims.js?v=20260712a';
+import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260712c';
+import { applyBotCosmetics, disposeBotCosmetics } from './renderer/cosmetics.js?v=20260712c';
+import { updateForgeCharacter } from './renderer/character-anims.js?v=20260712c';
 
 const DEFAULT_ALPHA = -Math.PI / 2;
 const DEFAULT_BETA = 1.12;
 const DEFAULT_RADIUS = 42;
+const SHOP_FRAME_INTERVAL_MS = 1000 / 30;
 const DEFAULT_LOADOUT = Object.freeze({
   bot_skin: 'standard',
   weapon_skin: 'standard',
   attachment: 'none',
 });
+const PREVIEW_WEAPONS = new Set(['sword', 'bow', 'spear', 'daggers', 'staff', 'shield', 'grapple']);
 
 function assetKey(value, fallback) {
   if (typeof value !== 'string') return fallback;
@@ -39,6 +41,8 @@ export class CosmeticShopPreview {
     this._canvasVisible = true;
     this._reducedMotion = false;
     this._pageSuspended = false;
+    this._renderRequested = true;
+    this._lastRenderedAt = 0;
   }
 
   init() {
@@ -85,6 +89,10 @@ export class CosmeticShopPreview {
     this.camera.minZ = 0.1;
     this.camera.maxZ = 200;
     this.camera.attachControl(this.canvas, true);
+    // ArcRotateCamera assigns a positive tabindex for keyboard controls. The
+    // Shop exposes equivalent labeled buttons, so keep the pointer canvas out
+    // of the normal tab order and preserve the skip link as the first stop.
+    this.canvas.tabIndex = -1;
 
     const hemi = new B.HemisphericLight(
       'cosmetic-shop-hemi',
@@ -113,14 +121,17 @@ export class CosmeticShopPreview {
     };
     this.entry = createBotEntry(this.bot, this.scene, {presentationOnly: true});
     this.entry.root.parent = this.turntable;
-    if (this.entry.isSwordsman) updateSwordsmanAnim(this.entry, 0);
+    updateForgeCharacter(this.entry, 0, true);
     applyBotCosmetics(this.entry, this.bot, this.scene, {forceEnabled: true});
 
     this._motionQuery = typeof window.matchMedia === 'function'
       ? window.matchMedia('(prefers-reduced-motion: reduce)')
       : null;
     this._reducedMotion = this._motionQuery?.matches === true;
-    this._motionHandler = (event) => { this._reducedMotion = event.matches === true; };
+    this._motionHandler = (event) => {
+      this._reducedMotion = event.matches === true;
+      this._renderRequested = true;
+    };
     if (this._motionQuery?.addEventListener) {
       this._motionQuery.addEventListener('change', this._motionHandler);
     } else if (this._motionQuery?.addListener) {
@@ -137,10 +148,28 @@ export class CosmeticShopPreview {
 
     if (typeof IntersectionObserver === 'function') {
       this._visibilityObserver = new IntersectionObserver((entries) => {
-        for (const observed of entries) this._canvasVisible = observed.isIntersecting;
+        for (const observed of entries) {
+          this._canvasVisible = observed.isIntersecting;
+          if (observed.isIntersecting) {
+            this._lastFrame = performance.now();
+            this._renderRequested = true;
+          }
+        }
       }, {threshold: 0});
       this._visibilityObserver.observe(this.canvas);
     }
+
+    this._interactionHandler = () => { this._renderRequested = true; };
+    for (const type of ['pointerdown', 'pointermove', 'wheel', 'keydown']) {
+      this.canvas.addEventListener?.(type, this._interactionHandler, {passive: type === 'wheel'});
+    }
+    this._visibilityHandler = () => {
+      if (!document.hidden) {
+        this._lastFrame = performance.now();
+        this._renderRequested = true;
+      }
+    };
+    document.addEventListener?.('visibilitychange', this._visibilityHandler);
 
     this._pageHideHandler = (event) => {
       if (event?.persisted) {
@@ -153,6 +182,7 @@ export class CosmeticShopPreview {
       if (!event?.persisted || this._disposed) return;
       this._pageSuspended = false;
       this._lastFrame = performance.now();
+      this._renderRequested = true;
       this.resize();
     };
     window.addEventListener('pagehide', this._pageHideHandler);
@@ -162,13 +192,21 @@ export class CosmeticShopPreview {
     this._renderFrame = () => {
       if (!this.ready || this._pageSuspended || document.hidden || this._canvasVisible === false) return;
       const now = performance.now();
+      const onDemand = this._reducedMotion || !this.autoRotate;
+      if (onDemand && !this._renderRequested) return;
+      if (!this._renderRequested && this._lastRenderedAt &&
+          now - this._lastRenderedAt < SHOP_FRAME_INTERVAL_MS) return;
       const dt = Math.min((now - this._lastFrame) / 1000, 0.1);
       this._lastFrame = now;
       if (this.autoRotate && !this._reducedMotion && this.turntable) {
         this.turntable.rotation.y += dt * this.rotationSpeed;
       }
-      if (this.entry?.isSwordsman && !this._reducedMotion) updateSwordsmanAnim(this.entry, dt);
+      if (this.entry) {
+        updateForgeCharacter(this.entry, dt, this._reducedMotion);
+      }
       this.scene.render();
+      this._lastRenderedAt = now;
+      this._renderRequested = false;
     };
 
     this.resize();
@@ -186,12 +224,47 @@ export class CosmeticShopPreview {
     if (this.ready && this.entry) {
       this.bot.cosmetics = {...this.loadout};
       applyBotCosmetics(this.entry, this.bot, this.scene, {forceEnabled: true});
+      this._renderRequested = true;
     }
     return this;
   }
 
+  setCharacter(character = {}) {
+    const requested = assetKey(character.weapon, this.bot?.weapon || this.options.weapon || 'sword');
+    const weapon = PREVIEW_WEAPONS.has(requested) ? requested : 'sword';
+    const avatarColor = assetKey(
+      character.avatarColor,
+      this.bot?.avatar_color || this.options.avatarColor || '#5edfff',
+    );
+    this.options.weapon = weapon;
+    this.options.avatarColor = avatarColor;
+    if (!this.ready || !this.entry || !this.bot) return this;
+    if (this.bot.weapon === weapon && this.bot.avatar_color === avatarColor) return this;
+
+    // Weapon finishes own material clones, so always tear cosmetic state down
+    // before disposing the old chassis hierarchy.
+    disposeBotCosmetics(this.entry);
+    disposeBotEntry(this.entry);
+    this.bot = {
+      ...this.bot,
+      weapon,
+      avatar_color: avatarColor,
+      cosmetics: {...this.loadout},
+    };
+    this.entry = createBotEntry(this.bot, this.scene, {presentationOnly: true});
+    this.entry.root.parent = this.turntable;
+    updateForgeCharacter(this.entry, 0, true);
+    applyBotCosmetics(this.entry, this.bot, this.scene, {forceEnabled: true});
+    this._lastFrame = performance.now();
+    this._renderRequested = true;
+    return this;
+  }
+
   rotateBy(radians) {
-    if (this.turntable && Number.isFinite(radians)) this.turntable.rotation.y += radians;
+    if (this.turntable && Number.isFinite(radians)) {
+      this.turntable.rotation.y += radians;
+      this._renderRequested = true;
+    }
     return this;
   }
 
@@ -202,11 +275,13 @@ export class CosmeticShopPreview {
       this.camera.beta = DEFAULT_BETA;
       this.camera.radius = DEFAULT_RADIUS;
     }
+    this._renderRequested = true;
     return this;
   }
 
   resize() {
     if (this.engine) this.engine.resize();
+    this._renderRequested = true;
     return this;
   }
 
@@ -225,6 +300,10 @@ export class CosmeticShopPreview {
     }
     if (this._pageHideHandler) window.removeEventListener('pagehide', this._pageHideHandler);
     if (this._pageShowHandler) window.removeEventListener('pageshow', this._pageShowHandler);
+    document.removeEventListener?.('visibilitychange', this._visibilityHandler);
+    for (const type of ['pointerdown', 'pointermove', 'wheel', 'keydown']) {
+      this.canvas.removeEventListener?.(type, this._interactionHandler, {passive: type === 'wheel'});
+    }
 
     // Weapon finishes clone shared materials, so restore and dispose cosmetic
     // state before the underlying weapon/model hierarchy is destroyed.

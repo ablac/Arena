@@ -6,18 +6,42 @@
  */
 
 import { CameraController } from './camera.js?v=20260710d';
-import { BotRenderer } from './bots.js?v=20260712a';
-import { EnvironmentRenderer } from './environment.js?v=20260710f';
+import { BotRenderer } from './bots.js?v=20260712c';
+import { EnvironmentRenderer } from './environment.js?v=20260712a';
 import { ObstacleRenderer } from './obstacles.js?v=20260710f';
 import { PickupRenderer } from './pickups.js?v=20260521m';
 import { EffectRenderer } from './effects.js?v=20260710f';
-import { TrailRenderer } from './trails.js?v=20260707c';
+import { TrailRenderer } from './trails.js?v=20260712b';
 import { ProjectileRenderer } from './projectiles.js?v=20260711a';
 import { GameplayRenderer } from './gameplay.js?v=20260710g';
 import { getState, isEnabled, onSettingsChange } from '../settings.js';
 
 // Bot positions are smoothed via exponential lerp each frame,
 // so no tick-interval-based alpha is needed.
+
+const WEBGPU_PROBE_TIMEOUT_MS = 1500;
+
+/**
+ * Babylon's capability promise can remain pending on some GPU/driver paths.
+ * Keep startup bounded so spectators transparently fall back to WebGL instead
+ * of staring at an arena canvas that never initializes.
+ */
+export async function webGPUAvailableWithin(B, timeoutMs = WEBGPU_PROBE_TIMEOUT_MS) {
+  const capability = B?.WebGPUEngine?.IsSupportedAsync;
+  if (!capability || typeof capability.then !== 'function') return Boolean(capability);
+
+  let timer = null;
+  try {
+    return Boolean(await Promise.race([
+      Promise.resolve(capability),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
+      }),
+    ]));
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
 
 export class ArenaEngine {
   /** @param {HTMLCanvasElement} canvas @param {Object} opts */
@@ -46,7 +70,7 @@ export class ArenaEngine {
     const B = window.BABYLON;
     let engine;
     try {
-      const webGPUSupported = await B.WebGPUEngine.IsSupportedAsync;
+      const webGPUSupported = await webGPUAvailableWithin(B);
       if (webGPUSupported) {
         engine = new B.WebGPUEngine(this.canvas, { antialias: false });
         await engine.initAsync();
@@ -212,8 +236,30 @@ export class ArenaEngine {
 
     const self = this;
     let _lastFrame = performance.now();
+    let frameSuspended = false;
+    const resetFrameClock = () => {
+      _lastFrame = performance.now();
+      if (document.hidden) frameSuspended = true;
+    };
+    this._visibilityHandler = resetFrameClock;
+    document.addEventListener('visibilitychange', resetFrameClock);
     engine.runRenderLoop(() => {
       const now = performance.now();
+      // Suspend the entire frame pipeline when no pixels can reach the
+      // spectator. Reset the clock on every skipped callback so resuming
+      // never inherits time spent hidden or off-screen.
+      if (document.hidden || self._canvasVisible === false) {
+        frameSuspended = true;
+        _lastFrame = now;
+        return;
+      }
+      if (frameSuspended) {
+        if (self.botRenderer) self.botRenderer.resume();
+        if (self.trailRenderer) {
+          self.trailRenderer.reset(self.botRenderer ? self.botRenderer.entries : null);
+        }
+        frameSuspended = false;
+      }
       const dt = Math.min((now - _lastFrame) / 1000, 0.1);
       _lastFrame = now;
       if (self.botRenderer) {
@@ -237,21 +283,17 @@ export class ArenaEngine {
         self.pipeline.fxaaEnabled = isEnabled('rendering', 'fxaa');
         self.pipeline.sharpenEnabled = isEnabled('rendering', 'sharpen');
       }
-      // Skip the GPU render while the canvas is scrolled out of view or
-      // covered — the browser only parks rAF for hidden TABS, so reading the
-      // docs below the arena otherwise keeps the full scene rendering.
-      // Interpolation/trails above stay live so state snaps on return.
-      if (self._canvasVisible !== false) {
-        scene.render();
-      }
+      scene.render();
     });
-    // IntersectionObserver drives the off-screen render skip. threshold 0:
-    // any visible pixel keeps rendering.
+    // IntersectionObserver drives the off-screen frame suspension. threshold
+    // 0 means any visible pixel keeps rendering.
     if (typeof IntersectionObserver === 'function' && !this._visObserver) {
       this._canvasVisible = true;
       this._visObserver = new IntersectionObserver((entries) => {
         for (const entry of entries) {
           this._canvasVisible = entry.isIntersecting;
+          if (!entry.isIntersecting) frameSuspended = true;
+          resetFrameClock();
         }
       }, { threshold: 0 });
       this._visObserver.observe(this.canvas);
@@ -490,6 +532,10 @@ export class ArenaEngine {
   dispose() {
     if (this._resizeHandler) {
       window.removeEventListener('resize', this._resizeHandler);
+    }
+    if (this._visibilityHandler) {
+      document.removeEventListener('visibilitychange', this._visibilityHandler);
+      this._visibilityHandler = null;
     }
     if (this._unsubSettings) {
       this._unsubSettings();

@@ -5,11 +5,14 @@ Self-improving AI Battle Arena bot. Zero tokens, pure algorithmic carnage.
 ## Setup
 
 ```bash
-# Create an account-owned API key for Anismin in My Dashboard:
-# https://arena.angel-serv.com/dashboard/?tab=cosmetics
+# Generate a server-issued token (no account required; copy the response once):
+curl -X POST https://arena.angel-serv.com/api/v1/keys/generate
 
 # Run
 ARENA_API_KEY=arena_your_key_here python3 anismin_bot.py
+
+# Optional: claim this bot in My Dashboard before purchasing cosmetics:
+# https://arena.angel-serv.com/dashboard/?tab=cosmetics
 ```
 
 ## Strategy

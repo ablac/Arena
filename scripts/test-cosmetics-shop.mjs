@@ -19,7 +19,8 @@ for (const match of shopHTML.matchAll(/aria-labelledby="([^"]+)"/g)) {
   }
 }
 
-assert.match(shopHTML, /id="cosmetic-shop"/, 'Shop document needs one application root');
+assert.match(shopHTML, /<main[^>]*id="cosmetic-shop"[^>]*tabindex="-1"/,
+  'the skip-link target must accept programmatic focus without joining the normal tab order');
 assert.match(shopHTML, /<script defer src="https:\/\/cdn\.babylonjs\.com\/v9\.14\.0\/babylon\.js"><\/script>/,
   'Babylon core must not block parsing the Shop body');
 assert.doesNotMatch(shopHTML, /materialsLibrary/, 'Shop must not load the unused Babylon materials add-on');

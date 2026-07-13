@@ -31,6 +31,15 @@ can link a bot by submitting its key once, assign/move/remove each license, and
 explicitly equip an assigned license. The link form clears the plaintext key
 after submission and does not save it as ownership data.
 
+Bot creation remains independent from account registration. Get Started calls
+the public `POST /api/v1/keys/generate` endpoint with an empty body. Arena
+generates the token, atomically stores only its bcrypt hash/prefix and the new
+bot record, and returns the plaintext once. A caller cannot choose a token or
+make an arbitrary string authenticate. When the bot owner later wants to buy
+cosmetics, they verify an email in the Dashboard and submit that existing token
+once to `POST /api/v1/account/bots`. This claims the bot for the account without
+changing the token or recreating the bot.
+
 Legacy bot-scoped entitlements are preserved as unclaimed licenses during the
 schema upgrade. A verified account can claim them by proving the original bot
 key once. After that claim, the account remains the owner even if the key is
@@ -200,6 +209,13 @@ Public catalog:
 curl https://YOUR_ARENA_HOST/api/v1/cosmetics/catalog
 ```
 
+Public bot registration is also account-free. It accepts only an empty body (or
+an empty JSON object) and returns the server-issued plaintext token once:
+
+```bash
+curl -X POST https://YOUR_ARENA_HOST/api/v1/keys/generate
+```
+
 Customer account routes use the verified customer session cookie. Every
 authenticated POST, PUT, and
 DELETE also requires the `X-CSRF-Token` returned by the session endpoint.
@@ -225,14 +241,17 @@ DELETE /api/v1/account/cosmetic-licenses/{license_id}/assignment
 PUT    /api/v1/account/bots/{bot_id}/cosmetics
 ```
 
-Linking submits `{"api_key":"arena_..."}`. Assignment submits
+Claiming/linking an anonymously created bot submits its server-issued proof as
+`{"api_key":"arena_..."}`. The Dashboard clears that plaintext immediately
+after the request. Assignment submits
 `{"bot_id":"BOT_UUID"}`. Explicit account equip submits
 `{"license_id":"LICENSE_UUID"}`. Checkout submits a catalog identity, never a
 price: `{"pack_id":"arena-set-003-ember-vanguard-pack","quantity":1}`. Arena
 creates a pending order from the current server-side pack snapshot, then returns
 the HTTPS `checkout_url` for Stripe-hosted Checkout.
 
-Account key creation submits `{"bot_name":"MyBot"}` and returns the full
+As an optional alternative to public Get Started issuance, direct Dashboard
+account-key creation submits `{"bot_name":"MyBot"}` and returns the full
 `api_key` once alongside safe key metadata, `active_count`, and the server limit.
 The Dashboard never stores the plaintext key after the user clears it. Arena
 keeps every issued-key record linked to the verified account, including revoked
@@ -258,6 +277,13 @@ the Dashboard removes it from the address bar. OIDC-only deployments may leave
 native email auth disabled. Redis is an availability dependency for `start`:
 Arena returns `503` without sending mail whenever the per-client quota cannot
 be enforced.
+
+Arena ignores forwarded client-IP headers unless the immediate peer is in
+`ARENA_TRUSTED_PROXY_CIDRS`. Keep that list limited to the exact Caddy/tunnel
+network seen by Arena. `CF-Connecting-IP` requires the peer to also be in
+`ARENA_TRUSTED_CLOUDFLARE_PROXY_CIDRS`; ordinary reverse proxies use the
+validated right-to-left `X-Forwarded-For` chain instead, preventing a caller
+from choosing its own quota identity.
 
 The `/arena/api/v1/...` mirror is also registered for prefixed deployments.
 Configure exactly one of these URLs in Stripe, matching the deployment's public
@@ -341,6 +367,10 @@ customer_email_verifications
 
 account_bot_links
   bots proven by API-key possession; each bot links to at most one account
+
+api_keys
+  server-issued bcrypt hash and lookup prefix for every bot token, including
+  tokens generated before an owner creates or signs into an account
 
 account_api_keys
   durable account ownership for bcrypt-hashed API keys; unlinking a bot does not

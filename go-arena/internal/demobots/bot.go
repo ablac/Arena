@@ -160,7 +160,19 @@ func (b *demoBot) configure(ctx context.Context) error {
 // reconnects with exponential backoff on disconnection. It respects the
 // context for graceful shutdown.
 func (b *demoBot) run(ctx context.Context) {
-	backoff := 1.0
+	b.runSessions(ctx, b.session, waitForDemoBotReconnect)
+}
+
+type demoBotSessionOutcome struct {
+	Established bool
+	Err         error
+}
+
+type demoBotSessionFunc func(context.Context) demoBotSessionOutcome
+type demoBotReconnectWaitFunc func(context.Context, time.Duration) bool
+
+func (b *demoBot) runSessions(ctx context.Context, session demoBotSessionFunc, wait demoBotReconnectWaitFunc) {
+	backoff := time.Second
 
 	for {
 		select {
@@ -169,29 +181,38 @@ func (b *demoBot) run(ctx context.Context) {
 		default:
 		}
 
-		err := b.session(ctx)
-		if err != nil {
-			if ctx.Err() != nil {
-				// Context was cancelled; stop reconnecting.
-				return
-			}
-			b.logger.Warn("session ended", "error", err, "reconnect_in", fmt.Sprintf("%.0fs", backoff))
-		} else {
-			// Successful session — reset backoff.
-			backoff = 1.0
+		outcome := session(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if outcome.Established {
+			// A later disconnect should retry inside the reconnect grace window.
+			backoff = time.Second
+		}
+		if outcome.Err != nil {
+			b.logger.Warn("session ended", "error", outcome.Err, "reconnect_in", backoff.String())
 		}
 
-		select {
-		case <-ctx.Done():
+		if !wait(ctx, backoff) {
 			return
-		case <-time.After(time.Duration(backoff * float64(time.Second))):
 		}
-		backoff = min(backoff*2, 30.0)
+		backoff = min(backoff*2, 30*time.Second)
+	}
+}
+
+func waitForDemoBotReconnect(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
 // session runs a single WebSocket session: connect, loadout, tick loop.
-func (b *demoBot) session(ctx context.Context) error {
+func (b *demoBot) session(ctx context.Context) demoBotSessionOutcome {
 	// Build the WebSocket URL.
 	wsURL := httpToWS(b.serverURL) + "/ws/bot?key=" + b.apiKey
 
@@ -202,7 +223,7 @@ func (b *demoBot) session(ctx context.Context) error {
 
 	conn, _, err := dialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+		return demoBotSessionOutcome{Err: fmt.Errorf("dial: %w", err)}
 	}
 	defer conn.Close()
 
@@ -239,10 +260,10 @@ func (b *demoBot) session(ctx context.Context) error {
 	// 1. Read "connected" message.
 	msg, err := readJSON(conn)
 	if err != nil {
-		return fmt.Errorf("read connected: %w", err)
+		return demoBotSessionOutcome{Err: fmt.Errorf("read connected: %w", err)}
 	}
 	if msgType, _ := msg["type"].(string); msgType != "connected" {
-		return fmt.Errorf("expected 'connected', got %q", msgType)
+		return demoBotSessionOutcome{Err: fmt.Errorf("expected 'connected', got %q", msgType)}
 	}
 	if id, ok := msg["bot_id"].(string); ok {
 		b.botID = id
@@ -257,16 +278,19 @@ func (b *demoBot) session(ctx context.Context) error {
 		"fallback_behavior": fallbackBehaviorForStrategy(b.strategy),
 	}
 	if err := conn.WriteJSON(loadout); err != nil {
-		return fmt.Errorf("send loadout: %w", err)
+		return demoBotSessionOutcome{Err: fmt.Errorf("send loadout: %w", err)}
 	}
 
 	// 3. Read "loadout_confirmed".
 	msg, err = readJSON(conn)
 	if err != nil {
-		return fmt.Errorf("read loadout_confirmed: %w", err)
+		return demoBotSessionOutcome{Err: fmt.Errorf("read loadout_confirmed: %w", err)}
 	}
 	if msgType, _ := msg["type"].(string); msgType != "loadout_confirmed" {
-		b.logger.Warn("expected 'loadout_confirmed'", "got", msgType)
+		return demoBotSessionOutcome{Err: fmt.Errorf("expected 'loadout_confirmed', got %q", msgType)}
+	}
+	established := func(err error) demoBotSessionOutcome {
+		return demoBotSessionOutcome{Established: true, Err: err}
 	}
 	// Extract computed attack_range and max_hp from server.
 	if comp, ok := msg["computed"].(map[string]interface{}); ok {
@@ -292,13 +316,13 @@ func (b *demoBot) session(ctx context.Context) error {
 				websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "shutting down"),
 			)
-			return ctx.Err()
+			return established(ctx.Err())
 		default:
 		}
 
 		msg, err := readJSON(conn)
 		if err != nil {
-			return fmt.Errorf("read message: %w", err)
+			return established(fmt.Errorf("read message: %w", err))
 		}
 		// Refresh read deadline on every message.
 		conn.SetReadDeadline(time.Now().Add(45 * time.Second))
@@ -312,7 +336,7 @@ func (b *demoBot) session(ctx context.Context) error {
 			action := PickAction(b.strategy, msg, b.config.Weapon, b.attackRange, b.botID)
 			payload := buildActionPayload(msg["tick"], action)
 			if err := conn.WriteJSON(payload); err != nil {
-				return fmt.Errorf("send action: %w", err)
+				return established(fmt.Errorf("send action: %w", err))
 			}
 
 		case "death":
@@ -347,7 +371,7 @@ func (b *demoBot) session(ctx context.Context) error {
 		case "kick":
 			reason, _ := msg["reason"].(string)
 			b.logger.Warn("kicked", "reason", reason)
-			return fmt.Errorf("kicked: %s", reason)
+			return established(fmt.Errorf("kicked: %s", reason))
 
 		case "error":
 			message, _ := msg["message"].(string)
