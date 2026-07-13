@@ -282,7 +282,7 @@ ticket reference; a transient webhook delivery ID is a separate concern.
 curl -X POST \
   -H "X-Admin-Token: YOUR_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"email":"buyer@example.com","cosmetic_id":"skin-neon-grid","source":"manual","external_reference":"ticket-123-copy-1"}' \
+  -d '{"email":"buyer@example.com","cosmetic_id":"skin-neon-grid","external_reference":"ticket-123-copy-1"}' \
   https://YOUR_ARENA_HOST/api/v1/admin/cosmetics/grants
 ```
 
@@ -300,7 +300,18 @@ PUT    /api/v1/admin/cosmetics/packs/{pack_id}
 DELETE /api/v1/admin/cosmetics/packs/{pack_id}
 GET    /api/v1/admin/cosmetics/audit?limit=50
 GET    /api/v1/admin/cosmetics/orders?status=paid&query=buyer@example.com
+GET    /api/v1/admin/cosmetics/access?email=buyer@example.com
+POST   /api/v1/admin/cosmetics/memberships
+DELETE /api/v1/admin/cosmetics/memberships/{membership_id}
 ```
+
+Complimentary admin memberships are cosmetics-only access grants. A request
+provides an email and exactly one of `duration_days` or an RFC3339
+`expires_at`, plus an optional internal note. They materialize one independently
+assignable license for every item in current purchasable sets and sync future
+sets while active. They do not create Stripe billing state or change API-key
+limits. Revocation or expiry removes only membership-issued assignments and
+loadouts; purchased and separately granted licenses remain intact.
 
 Admin catalog reads include inactive records. Item `slot` and `asset_key` are
 immutable after creation so a price/name edit cannot silently turn an owned
