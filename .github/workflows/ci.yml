@@ -69,6 +69,7 @@ jobs:
           node scripts/check-admin-inline-js.mjs
           node scripts/test-admin-sse-parser.mjs
           node scripts/test-admin-sse-reconnect.mjs
+          node scripts/test-admin-connection-diagnostics.mjs
           node scripts/test-dashboard-startup.mjs
           node scripts/test-dashboard-account-cosmetics.mjs
           node scripts/test-dashboard-email-auth.mjs
@@ -117,3 +118,19 @@ jobs:
           python -m pytest sdk/python/tests
       - name: Check whitespace
         run: git diff --check
+
+  python-sdk-310:
+    name: Python SDK (3.10 compatibility)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install SDK test dependencies
+        run: python -m pip install --disable-pip-version-check -e "sdk/python[dev]"
+      - name: Check SDK compatibility
+        run: |
+          python -m compileall sdk/python/arena_sdk sdk/python/examples
+          python scripts/test_sdk_service_status.py
+          python -m pytest sdk/python/tests

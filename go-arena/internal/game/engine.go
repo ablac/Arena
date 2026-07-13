@@ -898,11 +898,13 @@ func (e *GameEngine) AddBot(bot *BotState) bool {
 			newSendChan := bot.SendChan
 			newTickChan := bot.TickChan
 			newConnectedAt := bot.ConnectedAt
+			newTransportCloseCause := bot.TransportCloseCause
 			*bot = *existing
 			bot.Conn = newConn
 			bot.SendChan = newSendChan
 			bot.TickChan = newTickChan
 			bot.ConnectedAt = newConnectedAt
+			bot.TransportCloseCause = newTransportCloseCause
 			bot.ReconnectPending = false
 			bot.DisconnectedAtTick = 0
 			graceTicks := config.C.AFKTimeoutTicks
@@ -922,15 +924,37 @@ func (e *GameEngine) AddBot(bot *BotState) bool {
 			e.Grid.Remove(bot.BotID)
 		}
 		e.Bots[bot.BotID] = bot
+		existing.SignalTransportClose(BotTransportCloseCause{
+			Source: "session_replaced", CloseCode: websocket.CloseNormalClosure, CloseReason: "session replaced by reconnect",
+		})
 		if existing.Conn != nil {
-			go existing.Conn.Close()
+			conn := existing.Conn
+			safeGo(func() {
+				_ = conn.WriteControl(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "session replaced by reconnect"),
+					time.Now().Add(time.Second),
+				)
+				_ = conn.Close()
+			})
 		}
 		return true
 	}
 	if existing := e.WaitingBots[bot.BotID]; existing != nil {
 		e.WaitingBots[bot.BotID] = bot
+		existing.SignalTransportClose(BotTransportCloseCause{
+			Source: "session_replaced", CloseCode: websocket.CloseNormalClosure, CloseReason: "session replaced by reconnect",
+		})
 		if existing.Conn != nil {
-			go existing.Conn.Close()
+			conn := existing.Conn
+			safeGo(func() {
+				_ = conn.WriteControl(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "session replaced by reconnect"),
+					time.Now().Add(time.Second),
+				)
+				_ = conn.Close()
+			})
 		}
 		return true
 	}
@@ -981,11 +1005,19 @@ func (e *GameEngine) DisconnectBotSessionForKey(botID, apiKeyID string) bool {
 		return false
 	}
 	conn := bot.Conn
+	bot.SignalTransportClose(BotTransportCloseCause{
+		Source: "server_policy", CloseCode: websocket.ClosePolicyViolation, CloseReason: "temporary protocol lock",
+	})
 	e.mu.RUnlock()
 	// Protocol locks are punitive, not ordinary transport failures. Remove the
 	// authoritative session first so handler cleanup cannot place a locked bot
 	// into transient reconnect grace.
 	e.RemoveBot(botID, bot)
+	_ = conn.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "temporary protocol lock"),
+		time.Now().Add(time.Second),
+	)
 	_ = conn.Close()
 	return true
 }
@@ -2079,6 +2111,9 @@ func (e *GameEngine) checkAFK() {
 		}
 
 		if isAFK {
+			bot.SignalTransportClose(BotTransportCloseCause{
+				Source: "server_policy", CloseCode: websocket.ClosePolicyViolation, CloseReason: reason,
+			})
 			SendKick(bot, reason)
 			if bot.Conn != nil {
 				conn := bot.Conn
@@ -2640,11 +2675,20 @@ func (e *GameEngine) KickBot(botID, reason string) bool {
 	delete(e.WaitingBots, botID)
 	e.Grid.Remove(botID)
 	statsSnapshot := takeBotStatsSnapshot(bot)
+	closeReason := boundedWebSocketCloseReason(reason)
+	bot.SignalTransportClose(BotTransportCloseCause{
+		Source: "server_kick", CloseCode: websocket.ClosePolicyViolation, CloseReason: closeReason,
+	})
 	e.mu.Unlock()
 
 	SendKick(bot, reason)
 	if bot.Conn != nil {
-		bot.Conn.Close()
+		_ = bot.Conn.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, closeReason),
+			time.Now().Add(time.Second),
+		)
+		_ = bot.Conn.Close()
 	}
 	safeGo(func() { PersistSingleBot(context.Background(), statsSnapshot) })
 	slog.Info("admin kicked bot", "bot_id", botID, "name", bot.Name, "reason", reason)

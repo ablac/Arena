@@ -363,9 +363,47 @@ type BotState struct {
 	DisconnectedAtTick int
 
 	// WebSocket (nil for AI-only bots)
-	Conn     *websocket.Conn
-	SendChan chan []byte
-	TickChan chan []byte
+	Conn                *websocket.Conn
+	SendChan            chan []byte
+	TickChan            chan []byte
+	TransportCloseCause chan BotTransportCloseCause
+}
+
+// BotTransportCloseCause records a server-owned reason before another
+// goroutine closes a bot's socket. The handler consumes it after the transport
+// stops so engine policy, replacement, and restart closes are not mislabeled as
+// peer disconnects.
+type BotTransportCloseCause struct {
+	Source      string
+	CloseCode   int
+	CloseReason string
+}
+
+// SignalTransportClose publishes the first server-owned close cause for this
+// exact BotState session. The per-session channel is buffered so engine paths
+// never block while holding the game lock.
+func (b *BotState) SignalTransportClose(cause BotTransportCloseCause) {
+	if b == nil || b.TransportCloseCause == nil {
+		return
+	}
+	select {
+	case b.TransportCloseCause <- cause:
+	default:
+	}
+}
+
+// ConsumeTransportCloseCause returns a previously published server close
+// cause without waiting. Each BotState belongs to one transport handler.
+func (b *BotState) ConsumeTransportCloseCause() (BotTransportCloseCause, bool) {
+	if b == nil || b.TransportCloseCause == nil {
+		return BotTransportCloseCause{}, false
+	}
+	select {
+	case cause := <-b.TransportCloseCause:
+		return cause, true
+	default:
+		return BotTransportCloseCause{}, false
+	}
 }
 
 // rejectControlledAction applies the shared stun/freeze/dodge gate used by

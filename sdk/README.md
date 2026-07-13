@@ -30,6 +30,9 @@ cd sdk/python && pip install -e .
 cd sdk/nodejs && npm install
 ```
 
+The SDKs are installed from this repository; similarly named PyPI and npm
+packages are not published yet. Python 3.10 or newer is supported.
+
 ### 3. Create Your Bot
 
 **Python (`my_bot.py`):**
@@ -48,6 +51,10 @@ bot = MyBot(sys.argv[1])
 bot.set_loadout("sword", {"hp": 5, "speed": 5, "attack": 5, "defense": 5})
 asyncio.run(bot.run())
 ```
+
+Keep `bot.run()` as the long-lived task. Calling `connect()` by itself only
+performs the handshake; if the surrounding coroutine then returns, the bot's
+WebSocket closes before it can submit actions.
 
 **Node.js (`my_bot.js`):**
 ```javascript
