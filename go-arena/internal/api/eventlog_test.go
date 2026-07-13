@@ -53,3 +53,36 @@ func TestEventBusConcurrentEmitRemainsMonotonic(t *testing.T) {
 		}
 	}
 }
+
+func TestEmitConnectionKeepsSessionDiagnosticsOnDisconnect(t *testing.T) {
+	bus := NewEventBus()
+	EmitConnection(bus, "disconnected", "Test Bot", "bot-1", "203.0.113.9", "key-1", "", map[string]interface{}{
+		"session_id":        "session-1",
+		"disconnect_source": "peer",
+		"close_code":        1000,
+		"close_reason":      "client shutdown",
+		"duration_ms":       int64(83),
+		"actions_received":  0,
+	})
+
+	events := bus.Connections.GetAll()
+	if len(events) != 1 {
+		t.Fatalf("connection event count = %d, want 1", len(events))
+	}
+	event := events[0]
+	if event.Type != EventConnection {
+		t.Fatalf("event type = %q, want %q", event.Type, EventConnection)
+	}
+	for key, want := range map[string]interface{}{
+		"session_id":        "session-1",
+		"disconnect_source": "peer",
+		"close_code":        1000,
+		"close_reason":      "client shutdown",
+		"duration_ms":       int64(83),
+		"actions_received":  0,
+	} {
+		if got := event.Data[key]; got != want {
+			t.Fatalf("event detail %s = %#v, want %#v", key, got, want)
+		}
+	}
+}

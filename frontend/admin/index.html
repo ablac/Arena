@@ -2727,6 +2727,25 @@ async function refreshOverview() {
 }
 
 // ========== Log Rendering ==========
+function renderConnectionDiagnostics(d) {
+  const details = [];
+  if (d.disconnect_source) details.push(`<b style="color:var(--orange)">${esc(d.disconnect_source)}</b>`);
+  const closeCode = Number(d.close_code);
+  if (Number.isFinite(closeCode) && closeCode > 0) details.push(`code ${closeCode}`);
+  if (d.close_reason) details.push(esc(d.close_reason));
+  const duration = Number(d.duration_ms);
+  if (Number.isFinite(duration) && duration >= 0) details.push(`${duration.toFixed(0)}ms`);
+  if (d.actions_received !== undefined && d.actions_received !== null) {
+    details.push(`${esc(String(d.actions_received))} actions`);
+  }
+  if (typeof d.reconnect_preserved === 'boolean') {
+    details.push(d.reconnect_preserved ? 'state preserved' : 'state removed');
+  }
+  if (d.session_id) details.push(`session ${esc(String(d.session_id).slice(0, 8))}`);
+  if (d.transport_error) details.push(`<span style="color:var(--red)">${esc(d.transport_error)}</span>`);
+  return details.length ? ` <span style="color:var(--text2)">${details.join(' &middot; ')}</span>` : '';
+}
+
 function renderLogEntry(logType, evt) {
   const container = getLogContainer(logType);
   if (!container) return;
@@ -2744,6 +2763,7 @@ function renderLogEntry(logType, evt) {
       if (d.bot_name) msg += ` ${esc(d.bot_name)}`;
       if (d.ip) msg += ` <span style="color:var(--text2)">${esc(d.ip)}</span>`;
       if (err) msg += ` <span style="color:var(--red)">${esc(err)}</span>`;
+      msg += renderConnectionDiagnostics(d);
       break;
     }
     case 'http': {
@@ -6996,7 +7016,7 @@ function trackConnection(evt) {
   const d = evt.data || {};
   const action = d.action || evt.type || '';
   if (!action) return;
-  connLogEntries.unshift({time: evt.timestamp, action, name: d.bot_name||'', ip: d.ip||'', error: d.error||''});
+  connLogEntries.unshift({time: evt.timestamp, action, name: d.bot_name||'', ip: d.ip||'', error: d.error||'', session: d.session_id||'', source: d.disconnect_source||''});
   if (connLogEntries.length > 500) connLogEntries.pop();
 
   const container = document.getElementById('connLogEntries');
@@ -7004,7 +7024,7 @@ function trackConnection(evt) {
   const div = document.createElement('div');
   div.className = 'log-entry';
   const isErr = d.error || action.includes('fail') || action.includes('banned');
-  div.innerHTML = `<span class="log-time">${fmtTime(evt.timestamp)}</span><span class="log-type ${isErr?'auth_failure':'connection'}">${esc(action)}</span><span class="log-msg">${d.bot_name ? '<b>'+esc(d.bot_name)+'</b> ' : ''}${d.ip ? '<span style="color:var(--text2)">'+esc(d.ip)+'</span> ' : ''}${d.error ? '<span style="color:var(--red)">'+esc(d.error)+'</span>' : ''}</span>`;
+  div.innerHTML = `<span class="log-time">${fmtTime(evt.timestamp)}</span><span class="log-type ${isErr?'auth_failure':'connection'}">${esc(action)}</span><span class="log-msg">${d.bot_name ? '<b>'+esc(d.bot_name)+'</b> ' : ''}${d.ip ? '<span style="color:var(--text2)">'+esc(d.ip)+'</span> ' : ''}${d.error ? '<span style="color:var(--red)">'+esc(d.error)+'</span>' : ''}${renderConnectionDiagnostics(d)}</span>`;
   container.prepend(div);
   while (container.children.length > 500) container.removeChild(container.lastChild);
   document.getElementById('connLogCount').textContent = connLogEntries.length + ' events';

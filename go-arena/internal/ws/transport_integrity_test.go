@@ -128,6 +128,130 @@ func TestBotReaderKeepsLegacyStaffDualTargetSessionUnlocked(t *testing.T) {
 	}
 }
 
+func TestBotReaderReportsPeerCloseDetails(t *testing.T) {
+	withWSIntegrityConfig(t)
+	engine := game.NewGameEngine()
+	engine.Round.Phase = game.PhaseActive
+
+	cfg := config.C
+	cfg.HeartbeatInterval = 1
+	cfg.WSMaxMessagesPerSec = 25
+	resultCh := make(chan botSessionEnd, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		bot := &game.BotState{
+			BotID: "peer-close", APIKeyID: "peer-close-key", Name: "Peer Close",
+			Weapon: "bow", IsAlive: true, HP: 100, MaxHP: 100,
+			Conn: conn, SendChan: make(chan []byte, 1),
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		resultCh <- botReader(ctx, cancel, conn, bot, engine, &cfg)
+	}))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial close-details harness: %v", err)
+	}
+	if err := conn.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "client shutdown"),
+		time.Now().Add(time.Second),
+	); err != nil {
+		_ = conn.Close()
+		t.Fatalf("write peer close frame: %v", err)
+	}
+	_ = conn.Close()
+
+	select {
+	case result := <-resultCh:
+		if result.Source != "peer" {
+			t.Fatalf("disconnect source = %q, want peer", result.Source)
+		}
+		if result.CloseCode != websocket.CloseNormalClosure {
+			t.Fatalf("close code = %d, want %d", result.CloseCode, websocket.CloseNormalClosure)
+		}
+		if result.CloseReason != "client shutdown" {
+			t.Fatalf("close reason = %q, want client shutdown", result.CloseReason)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("bot reader did not report peer close")
+	}
+}
+
+func TestBotWriterReportsWriteFailure(t *testing.T) {
+	serverConnCh := make(chan *websocket.Conn, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		serverConnCh <- conn
+	}))
+	defer server.Close()
+
+	clientConn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial writer-failure harness: %v", err)
+	}
+	defer clientConn.Close()
+	serverConn := <-serverConnCh
+	if err := serverConn.Close(); err != nil {
+		t.Fatalf("close server side before writer probe: %v", err)
+	}
+
+	sendChan := make(chan []byte, 1)
+	sendChan <- []byte(`{"type":"tick"}`)
+	result := botWriter(context.Background(), serverConn, sendChan, make(chan []byte))
+
+	if result.Source != "server_writer" {
+		t.Fatalf("writer source = %q, want server_writer", result.Source)
+	}
+	if result.Err == nil {
+		t.Fatal("writer failure did not retain its transport error")
+	}
+}
+
+func TestResolveBotSessionEndPrefersEngineCloseCause(t *testing.T) {
+	bot := &game.BotState{TransportCloseCause: make(chan game.BotTransportCloseCause, 1)}
+	bot.SignalTransportClose(game.BotTransportCloseCause{
+		Source: "server_policy", CloseCode: websocket.ClosePolicyViolation, CloseReason: "AFK timeout",
+	})
+
+	result := resolveBotSessionEnd(
+		bot,
+		botSessionEnd{Source: "peer", Err: errors.New("closed network connection"), ActionsReceived: 7},
+		botSessionEnd{Source: "server_context"},
+	)
+
+	if result.Source != "server_policy" || result.CloseCode != websocket.ClosePolicyViolation || result.CloseReason != "AFK timeout" {
+		t.Fatalf("resolved engine cause = %+v", result)
+	}
+	if result.ActionsReceived != 7 {
+		t.Fatalf("resolved action count = %d, want 7", result.ActionsReceived)
+	}
+}
+
+func TestResolveBotSessionEndKeepsObservedPeerCloseOverWriterError(t *testing.T) {
+	bot := &game.BotState{TransportCloseCause: make(chan game.BotTransportCloseCause, 1)}
+	result := resolveBotSessionEnd(
+		bot,
+		botSessionEnd{
+			Source: "peer", CloseCode: websocket.CloseNormalClosure,
+			CloseReason: "client shutdown", ActionsReceived: 4,
+		},
+		botSessionEnd{Source: "server_writer", Err: errors.New("write failed after peer close")},
+	)
+
+	if result.Source != "peer" || result.CloseCode != websocket.CloseNormalClosure || result.CloseReason != "client shutdown" {
+		t.Fatalf("resolved peer close = %+v", result)
+	}
+}
+
 func TestBotHandlerLimitsOversizedAuthenticationFrameBeforeAuth(t *testing.T) {
 	previousLimit := config.C.WSMessageMaxBytes
 	previousTimeout := config.C.ConnectionTimeout

@@ -1027,8 +1027,8 @@ node bot.js YOUR_API_KEY       # use existing key
 
 | Language | Install | Repository |
 |----------|---------|------------|
-| Python | `pip install arena-sdk` | [sdk/python](https://github.com/ablac/Arena/tree/main/sdk/python) |
-| Node.js | `npm install @arena/sdk` | [sdk/nodejs](https://github.com/ablac/Arena/tree/main/sdk/nodejs) |
+| Python | Clone this repository, then `pip install ./sdk/python` | [sdk/python](https://github.com/ablac/Arena/tree/main/sdk/python) |
+| Node.js | Clone this repository, then `npm install ./sdk/nodejs` | [sdk/nodejs](https://github.com/ablac/Arena/tree/main/sdk/nodejs) |
 
 Both SDKs expose your team number in team modes (Python: `self._team`, Node.js: `this.team`).
 
