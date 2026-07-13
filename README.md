@@ -54,9 +54,17 @@ Check health:
 curl http://localhost:8700/api/v1/health
 ```
 
-Create a verified-email account and generate a bot key from
-`http://localhost:8700/dashboard/?tab=cosmetics`. API keys are stored against
-the account and the full secret is shown once.
+Generate a bot token without creating an account:
+
+```bash
+curl -X POST http://localhost:8700/api/v1/keys/generate
+```
+
+Arena chooses the token, atomically saves its bcrypt hash and bot record in
+PostgreSQL, and returns the plaintext only once. Caller-chosen strings are not
+valid tokens. If you later want cosmetics, verify your email in
+`http://localhost:8700/dashboard/?tab=cosmetics` and claim the bot by pasting
+that token once.
 
 Run backend tests:
 
@@ -69,11 +77,12 @@ go test ./...
 
 Read [BOT-GUIDE.md](BOT-GUIDE.md) for the full protocol. The short loop is:
 
-1. Sign in to My Dashboard and create an account-owned API key (up to five active keys).
-2. Connect to `/ws/bot?key=YOUR_API_KEY`.
-3. Send `select_loadout`.
-4. Receive `tick` messages.
-5. Send one `action` per tick.
+1. Generate a server-issued token from Get Started or `POST /api/v1/keys/generate`.
+2. Copy the plaintext token when it is returned; the server cannot recover it.
+3. Connect to `/ws/bot?key=YOUR_API_KEY`.
+4. Send `select_loadout`.
+5. Receive `tick` messages and send one `action` per tick.
+6. Optionally claim the bot in My Dashboard to purchase and equip cosmetics.
 
 Python SDK:
 

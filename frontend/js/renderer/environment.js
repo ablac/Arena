@@ -8,7 +8,7 @@
 import { makeMat } from './utils.js';
 import { isEnabled } from '../settings.js';
 
-const ZONE_RING_SEGMENTS = 256;
+const ZONE_RING_SEGMENTS = 64;
 const ZONE_RING_BASE_ALPHA = 0.7;
 
 export class EnvironmentRenderer {
@@ -1348,7 +1348,7 @@ export class EnvironmentRenderer {
     const B = window.BABYLON;
     if (!this._targetRing) {
       this._targetRing = B.MeshBuilder.CreateTorus('targetRing', {
-        diameter: 1, thickness: 0.003, tessellation: 256
+        diameter: 1, thickness: 0.003, tessellation: ZONE_RING_SEGMENTS
       }, this.scene);
       this._targetRing.material = this._targetMat;
       this._clipToArena(this._targetRing);

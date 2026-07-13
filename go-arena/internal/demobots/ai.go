@@ -3522,7 +3522,7 @@ func PickAction(strategy string, msg map[string]interface{}, weapon string, atta
 	case "assassin":
 		return finalizeWeaponAction(ts, weapon, wrange, aiAssassin(ts, near, nearD, wrange, weapon, canAtk, canDodge, botID))
 	case "defensive":
-		return finalizeWeaponAction(ts, weapon, wrange, aiDefensive(ts, near, nearD, wrange, weapon, canAtk, canDodge))
+		return finalizeWeaponAction(ts, weapon, wrange, aiDefensive(ts, near, nearD, wrange, weapon, canAtk, canDodge, botID))
 	case "territorial":
 		return finalizeWeaponAction(ts, weapon, wrange, aiTerritorial(ts, near, nearD, wrange, weapon, canAtk, canDodge, botID))
 	default:
@@ -3800,14 +3800,150 @@ func aiAssassin(ts tickState, near *entity, nearD, wrange float64, weapon string
 	return moveTo(ts.Position, prey.Position, ts.Danger)
 }
 
-// DEFENSIVE: Counter-attack focused, shove intruders, hold ground but fight.
-func aiDefensive(ts tickState, near *entity, nearD, wrange float64, weapon string, canAtk, canDodge bool) actionResult {
+var guardPatrolDirections = [...][2]float64{
+	{1, 0}, {1, 1}, {0, 1}, {-1, 1},
+	{-1, 0}, {-1, -1}, {0, -1}, {1, -1},
+}
+
+func guardPatrolStart(botID string) int {
+	var hash uint32 = 2166136261
+	for i := 0; i < len(botID); i++ {
+		hash ^= uint32(botID[i])
+		hash *= 16777619
+	}
+	return int(hash % uint32(len(guardPatrolDirections)))
+}
+
+func guardPatrolStepSafe(ts tickState, direction [2]float64, terrain *botTerrain) bool {
+	dx, dy := int(fsign(direction[0])), int(fsign(direction[1]))
+	if dx == 0 && dy == 0 {
+		return false
+	}
+	cx, cy := int(math.Round(ts.Position[0])), int(math.Round(ts.Position[1]))
+	if terrain != nil && terrain.isMoveBlocked(cx, cy, dx, dy) {
+		return false
+	}
+	next := [2]float64{ts.Position[0] + float64(dx), ts.Position[1] + float64(dy)}
+	if ts.ZoneTargetRadius > 0 && chebyshev(next, ts.ZoneTargetCenter) > ts.ZoneTargetRadius {
+		return false
+	}
+	if ts.ZoneRadius > 0 && chebyshev(next, ts.ZoneCenter) > ts.ZoneRadius {
+		return false
+	}
+	return !ts.Danger.has(cx+dx, cy+dy)
+}
+
+// guardPatrolMove constrains every patrol step, not just its destination.
+// The general BFS may choose an equally short diagonal that briefly crosses a
+// zone boundary while routing between two in-zone waypoints.
+func guardPatrolMove(ts tickState, target [2]float64, terrain *botTerrain) actionResult {
+	if chebyshev(ts.Position, target) < 0.5 {
+		return idle()
+	}
+	if action := moveTo(ts.Position, target, ts.Danger); action.Direction != nil && guardPatrolStepSafe(ts, *action.Direction, terrain) {
+		return action
+	}
+	if direct := gridDir(ts.Position, target); guardPatrolStepSafe(ts, direct, terrain) {
+		return moveDir(direct)
+	}
+
+	bestDistance := math.Inf(1)
+	bestDirection := [2]float64{}
+	for _, direction := range guardPatrolDirections {
+		if !guardPatrolStepSafe(ts, direction, terrain) {
+			continue
+		}
+		next := [2]float64{ts.Position[0] + direction[0], ts.Position[1] + direction[1]}
+		if distance := chebyshev(next, target); distance < bestDistance {
+			bestDistance = distance
+			bestDirection = direction
+		}
+	}
+	return moveDir(bestDirection)
+}
+
+// guardPatrol keeps defensive bots moving around their assigned center without
+// leaving either the current safe zone or the next territory. Waypoints and
+// tie-breaking are stable per bot so guards spread out without random jitter.
+func guardPatrol(ts tickState, requestedRadius float64, botID string) actionResult {
+	terrain := getTerrain()
+	radiusLimit := math.Floor(ts.ZoneTargetRadius) - 1
+	if radiusLimit < 1 {
+		radiusLimit = 1
+	}
+	radius := math.Min(requestedRadius, radiusLimit)
+	if radius < 1 {
+		return guardPatrolMove(ts, ts.ZoneTargetCenter, terrain)
+	}
+
+	var waypoints [len(guardPatrolDirections)][2]float64
+	var usable [len(guardPatrolDirections)]bool
+	for i, direction := range guardPatrolDirections {
+		candidate := [2]float64{
+			ts.ZoneTargetCenter[0] + direction[0]*radius,
+			ts.ZoneTargetCenter[1] + direction[1]*radius,
+		}
+		waypoints[i] = candidate
+		if ts.ZoneTargetRadius > 0 && chebyshev(candidate, ts.ZoneTargetCenter) > ts.ZoneTargetRadius {
+			continue
+		}
+		if ts.ZoneRadius > 0 && chebyshev(candidate, ts.ZoneCenter) > ts.ZoneRadius {
+			continue
+		}
+		cellX, cellY := int(math.Round(candidate[0])), int(math.Round(candidate[1]))
+		if terrain != nil && terrain.isBlocked(cellX, cellY) {
+			continue
+		}
+		if ts.Danger.has(cellX, cellY) {
+			continue
+		}
+		usable[i] = true
+	}
+
+	start := guardPatrolStart(botID)
+	closest := -1
+	closestDistance := math.Inf(1)
+	for offset := range guardPatrolDirections {
+		i := (start + offset) % len(guardPatrolDirections)
+		if !usable[i] {
+			continue
+		}
+		distance := chebyshev(ts.Position, waypoints[i])
+		if distance < closestDistance {
+			closest = i
+			closestDistance = distance
+		}
+	}
+	if closest < 0 {
+		return guardPatrolMove(ts, ts.ZoneTargetCenter, terrain)
+	}
+
+	// Advance before reaching a waypoint exactly, avoiding a one-tick stop at
+	// every corner. If a waypoint is blocked, continue clockwise to the next.
+	first := closest
+	if closestDistance <= 1 {
+		first = (closest + 1) % len(guardPatrolDirections)
+	}
+	for offset := range guardPatrolDirections {
+		i := (first + offset) % len(guardPatrolDirections)
+		if !usable[i] {
+			continue
+		}
+		if action := guardPatrolMove(ts, waypoints[i], terrain); action.Action != "idle" {
+			return action
+		}
+	}
+	return guardPatrolMove(ts, ts.ZoneTargetCenter, terrain)
+}
+
+// DEFENSIVE: Counter-attack focused, shove intruders, patrol ground but fight.
+func aiDefensive(ts tickState, near *entity, nearD, wrange float64, weapon string, canAtk, canDodge bool, botID string) actionResult {
 	if near == nil {
 		d := chebyshev(ts.Position, ts.ZoneTargetCenter)
 		if d > 5 {
 			return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
 		}
-		return idle()
+		return guardPatrol(ts, 4, botID)
 	}
 	canShv := ts.ShoveCool <= 0
 
@@ -3835,7 +3971,10 @@ func aiDefensive(ts tickState, near *entity, nearD, wrange float64, weapon strin
 		return moveTo(ts.Position, near.Position, ts.Danger)
 	}
 
-	return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
+	if chebyshev(ts.Position, ts.ZoneTargetCenter) > 5 {
+		return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
+	}
+	return guardPatrol(ts, 4, botID)
 }
 
 // TERRITORIAL: Hold zone TARGET center, shove EVERY adjacent enemy, place mines at center.
@@ -3848,7 +3987,7 @@ func aiTerritorial(ts tickState, near *entity, nearD, wrange float64, weapon str
 		if distToCenter > 3 {
 			return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
 		}
-		return idle()
+		return guardPatrol(ts, 3, botID)
 	}
 
 	// Priority 1: Shove EVERY adjacent enemy on cooldown (free stun + pushes them out)
@@ -3885,6 +4024,6 @@ func aiTerritorial(ts tickState, near *entity, nearD, wrange float64, weapon str
 		return moveTo(ts.Position, ts.ZoneTargetCenter, ts.Danger)
 	}
 
-	// At center, no targets in range — idle
-	return idle()
+	// At center with no target in range, keep a deterministic guard patrol.
+	return guardPatrol(ts, 3, botID)
 }

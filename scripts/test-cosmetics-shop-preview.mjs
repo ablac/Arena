@@ -7,28 +7,25 @@ function dataModule(source) {
 }
 
 const botBodySource = readFileSync(new URL('../frontend/js/renderer/bot-body.js', import.meta.url), 'utf8');
-const swordsmanSource = readFileSync(new URL('../frontend/js/renderer/swordsman-body.js', import.meta.url), 'utf8');
 const cosmeticsSource = readFileSync(new URL('../frontend/js/renderer/cosmetics.js', import.meta.url), 'utf8');
 const previewSource = readFileSync(new URL('../frontend/js/shop-preview.js', import.meta.url), 'utf8');
 
 assert.match(botBodySource, /createBotEntry\(bot, scene, options = \{\}\)/,
   'bot entry builder must accept backwards-compatible presentation options');
-assert.match(botBodySource, /createSwordsmanEntry\(bot, scene, options\)/,
-  'presentation options must reach the swordsman builder');
-assert.equal((botBodySource.match(/\.getScene\(\) !== scene/g) || []).length >= 2, true,
-  'shared arm and shadow templates must never cross Babylon scenes');
-assert.match(swordsmanSource, /createSwordsmanEntry\(bot, scene, options = \{\}\)/,
-  'swordsman builder must accept backwards-compatible presentation options');
+assert.match(botBodySource, /createForgeCharacter\(bot, scene/,
+  'presentation options must reach the production Forge builder');
+assert.equal((botBodySource.match(/\.getScene\(\) !== scene/g) || []).length >= 1, true,
+  'the shared shadow template must never cross Babylon scenes');
 assert.match(cosmeticsSource, /forceEnabled/,
   'cosmetic application must expose an explicit shop-preview override');
-assert.match(botBodySource, /swordsman-body\.js\?v=20260712a/,
-  'presentation-only bot and swordsman modules must share one fresh module identity');
-assert.match(swordsmanSource, /bot-body\.js\?v=20260712a/,
-  'the bot/swordsman import cycle must use the same fresh module identity');
-assert.match(previewSource, /bot-body\.js\?v=20260712a/);
-assert.match(previewSource, /cosmetics\.js\?v=20260712a/);
-assert.match(previewSource, /swordsman-anims\.js\?v=20260712a/,
-  'preview must use the fresh swordsman animation module for its idle pose');
+assert.doesNotMatch(botBodySource, /swordsman-body\.js|weapons\.js|animations\.js/,
+  'the Shop entry path must not load retired character systems');
+assert.match(previewSource, /bot-body\.js\?v=20260712c/);
+assert.match(previewSource, /cosmetics\.js\?v=20260712c/);
+assert.doesNotMatch(previewSource, /swordsman-anims\.js|updateSwordsmanAnim|isSwordsman/,
+  'preview must execute only the Forge presentation path');
+assert.match(previewSource, /character-anims\.js\?v=20260712c/,
+  'preview must use the allocation-stable Forge animation module');
 assert.doesNotMatch(previewSource, /ArenaEngine|BotRenderer/,
   'shop preview must not construct the live spectator renderer');
 
@@ -136,7 +133,7 @@ const previewDependencies = `
     return {
       root: new window.BABYLON.TransformNode('preview-entry', scene),
       weapon: {getChildMeshes: () => []},
-      isSwordsman: true,
+      isForgeCharacter: true,
     };
   };
   const disposeBotEntry = () => globalThis.__previewEvents.push('dispose-entry');
@@ -155,8 +152,8 @@ globalThis.__previewCreateError = false;
 let isolatedPreviewSource = previewSource
   .replace(/import \{ createBotEntry, disposeBotEntry \} from '[^']+';\r?\n/, '')
   .replace(/import \{ applyBotCosmetics, disposeBotCosmetics \} from '[^']+';\r?\n/, previewDependencies)
-  .replace(/import \{ updateSwordsmanAnim \} from '[^']+';\r?\n/,
-    'const updateSwordsmanAnim = () => { globalThis.__previewAnimationCount += 1; };\n');
+  .replace(/import \{ updateForgeCharacter \} from '[^']+';\r?\n/,
+    'const updateForgeCharacter = () => { globalThis.__previewAnimationCount += 1; };\n');
 
 class PreviewVector {
   constructor(x = 0, y = 0, z = 0) { this.x = x; this.y = y; this.z = z; }
@@ -267,10 +264,12 @@ const preview = new CosmeticShopPreview(canvas, {autoRotate: true, rotationSpeed
 assert.equal(preview.init(), preview, 'init should be chainable');
 assert.equal(preview.init(), preview, 'init should be idempotent');
 assert.equal(globalThis.__previewCreateCount, 1, 'one reusable bot model must be created');
-assert.equal(globalThis.__previewAnimationCount, 1, 'initialization must establish one stable swordsman pose');
+assert.equal(globalThis.__previewAnimationCount, 1, 'initialization must establish one stable Forge pose');
 assert.deepEqual(globalThis.__previewCreateOptions, {presentationOnly: true});
 assert.equal(applyCalls.length, 1);
 assert.deepEqual(applyCalls[0].options, {forceEnabled: true});
+assert.equal(canvas.tabIndex, -1,
+  'Babylon must not place the pointer-driven preview canvas before the Shop skip link in keyboard order');
 assert.equal(preview.engine.hardwareScalingLevel, 1, 'preview must cap HiDPI rendering at 1x');
 assert.equal(resizeObservers[0].target, canvas);
 assert.equal(intersectionObservers[0].target, canvas);
@@ -306,7 +305,8 @@ mediaQuery.listener({matches: true});
 const reducedMotionRotation = preview.turntable.rotation.y;
 preview.engine.renderCallback();
 assert.equal(preview.scene.renderCount, 2);
-assert.equal(globalThis.__previewAnimationCount, 2);
+assert.equal(globalThis.__previewAnimationCount, 3,
+  'reduced motion must still apply the production sampler in its restrained mode');
 assert.equal(preview.turntable.rotation.y, reducedMotionRotation,
   'reduced motion must suppress automatic rotation and idle pose updates');
 preview.rotateBy(Math.PI / 4);

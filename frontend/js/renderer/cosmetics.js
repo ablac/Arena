@@ -53,7 +53,6 @@ function finishMesh(mesh, group, material) {
   mesh.parent = group;
   mesh.material = material;
   mesh.isPickable = false;
-  mesh.alwaysSelectAsActiveMesh = true;
   return mesh;
 }
 
@@ -62,6 +61,160 @@ function cosmeticMaterial(state, name, scene, color, options = {}) {
   material.freeze();
   state.materials.push(material);
   return material;
+}
+
+function isForgeEntry(entry) {
+  return entry?.isForgeCharacter === true && entry.mounts && entry.mountMetrics;
+}
+
+function forgeMetric(entry, key, fallback) {
+  const value = Number(entry.mountMetrics?.[key]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function forgeGroup(state, entry, mount, name, scene) {
+  const semanticMounts = {
+    chest: entry.mounts?.chest,
+    head: entry.mounts?.head,
+    back: entry.mounts?.back,
+    shoulderL: entry.mounts?.shoulderL,
+    shoulderR: entry.mounts?.shoulderR,
+  };
+  const group = createGroup(
+    name,
+    semanticMounts[mount] || entry.mounts?.cosmeticRoot || entry.root,
+    scene,
+  );
+  state.groups.push(group);
+  return group;
+}
+
+function buildForgeProceduralSkin(state, asset, entry, bot, scene) {
+  const B = window.BABYLON;
+  const {palette, skin} = asset.theme;
+  const primary = cosmeticMaterial(state, `cosmetic-set-skin-primary-${bot.bot_id}`, scene, parseColor(palette.primary), {
+    emissiveFactor: 0.5, specular: parseColor(palette.secondary),
+  });
+  const accent = cosmeticMaterial(state, `cosmetic-set-skin-accent-${bot.bot_id}`, scene, parseColor(palette.accent), {
+    emissiveFactor: 0.9, noLight: true,
+  });
+  const layers = Math.min(3, Math.max(1, Number(skin.layers) || 1));
+  const torsoWidth = forgeMetric(entry, 'torsoWidth', 7);
+  const torsoHeight = forgeMetric(entry, 'torsoHeight', 8.15);
+  const torsoDepth = forgeMetric(entry, 'torsoDepth', 3.75);
+
+  if (skin.pattern === 'bands') {
+    const group = forgeGroup(state, entry, 'chest', `cosmetic-skin-${bot.bot_id}`, scene);
+    for (let index = 0; index < layers; index += 1) {
+      const ring = B.MeshBuilder.CreateTorus(`cosmetic-set-band-${bot.bot_id}-${index}`, {
+        diameter: torsoWidth * (0.82 + index * 0.08),
+        thickness: Math.max(0.22, torsoWidth * 0.045), tessellation: 16,
+      }, scene);
+      ring.position.y = 1.12 + torsoHeight * (0.27 + index * 0.22);
+      ring.rotation.z = skin.angle;
+      finishMesh(ring, group, index === layers - 1 ? accent : primary);
+    }
+    return;
+  }
+
+  if (skin.pattern === 'plates') {
+    for (const side of [-1, 1]) {
+      const mount = side < 0 ? 'shoulderL' : 'shoulderR';
+      const group = forgeGroup(state, entry, mount, `cosmetic-skin-${bot.bot_id}-${mount}`, scene);
+      const plate = B.MeshBuilder.CreateBox(`cosmetic-set-plate-${bot.bot_id}-${side}`, {
+        width: Math.max(2.35, torsoWidth * (0.29 + layers * 0.025)),
+        height: Math.max(1.25, torsoHeight * (0.14 + layers * 0.012)),
+        depth: torsoDepth * 1.06,
+      }, scene);
+      plate.position.set(side * 0.2, -0.42, 0);
+      plate.rotation.z = side * (0.14 + Math.abs(skin.angle));
+      finishMesh(plate, group, side > 0 ? accent : primary);
+    }
+    return;
+  }
+
+  const group = forgeGroup(state, entry, 'chest', `cosmetic-skin-${bot.bot_id}`, scene);
+  const chestY = 1.12 + torsoHeight * 0.54;
+  const chestZ = -(torsoDepth * 0.5 + 0.32);
+  if (skin.pattern === 'chevrons') {
+    for (const side of [-1, 1]) {
+      const chevron = B.MeshBuilder.CreateBox(`cosmetic-set-chevron-${bot.bot_id}-${side}`, {
+        width: Math.max(0.72, torsoWidth * 0.13),
+        height: torsoHeight * (0.48 + layers * 0.045),
+        depth: 0.48,
+      }, scene);
+      chevron.position.set(side * torsoWidth * 0.23, chestY, chestZ);
+      chevron.rotation.z = side * (0.48 + skin.angle);
+      finishMesh(chevron, group, side > 0 ? accent : primary);
+    }
+    return;
+  }
+
+  const coreDiameter = Math.max(1.65, torsoWidth * (0.23 + layers * 0.025));
+  const core = B.MeshBuilder.CreateSphere(`cosmetic-set-core-${bot.bot_id}`, {
+    diameter: coreDiameter, segments: 8,
+  }, scene);
+  core.position.set(0, chestY, chestZ);
+  finishMesh(core, group, accent);
+  const bezel = B.MeshBuilder.CreateTorus(`cosmetic-set-core-bezel-${bot.bot_id}`, {
+    diameter: coreDiameter * 1.45, thickness: Math.max(0.22, coreDiameter * 0.11), tessellation: 16,
+  }, scene);
+  bezel.position.set(0, chestY, chestZ - 0.04);
+  bezel.rotation.x = Math.PI / 2;
+  finishMesh(bezel, group, primary);
+}
+
+function buildForgeBotSkin(state, asset, entry, bot, scene) {
+  const B = window.BABYLON;
+  const assetKey = asset.key;
+  if (asset.kind === 'procedural') {
+    buildForgeProceduralSkin(state, asset, entry, bot, scene);
+    return;
+  }
+
+  const torsoWidth = forgeMetric(entry, 'torsoWidth', 7);
+  const torsoHeight = forgeMetric(entry, 'torsoHeight', 8.15);
+  const torsoDepth = forgeMetric(entry, 'torsoDepth', 3.75);
+  if (assetKey === 'neon_grid') {
+    const group = forgeGroup(state, entry, 'chest', `cosmetic-skin-${bot.bot_id}`, scene);
+    const neon = cosmeticMaterial(state, `cosmetic-neon-${bot.bot_id}`, scene, parseColor(bot.avatar_color), {
+      emissiveFactor: 1, noLight: true,
+    });
+    for (const [index, fraction] of [0.28, 0.72].entries()) {
+      const ring = B.MeshBuilder.CreateTorus(`cosmetic-neon-ring-${bot.bot_id}-${index}`, {
+        diameter: torsoWidth * (index === 0 ? 0.96 : 0.82),
+        thickness: Math.max(0.25, torsoWidth * 0.05), tessellation: 18,
+      }, scene);
+      ring.position.y = 1.12 + torsoHeight * fraction;
+      finishMesh(ring, group, neon);
+    }
+    return;
+  }
+
+  if (assetKey === 'carbon_armor') {
+    const carbon = cosmeticMaterial(state, `cosmetic-carbon-${bot.bot_id}`, scene,
+      new B.Color3(0.045, 0.055, 0.075), {
+        emissiveFactor: 0.08, specular: new B.Color3(0.42, 0.48, 0.55),
+      });
+    const chestGroup = forgeGroup(state, entry, 'chest', `cosmetic-skin-${bot.bot_id}-chest`, scene);
+    const chestDepth = Math.max(0.74, torsoDepth * 0.28);
+    const chest = B.MeshBuilder.CreateBox(`cosmetic-carbon-chest-${bot.bot_id}`, {
+      width: torsoWidth * 0.88, height: torsoHeight * 0.58, depth: chestDepth,
+    }, scene);
+    chest.position.set(0, 1.12 + torsoHeight * 0.55, -(torsoDepth * 0.5 + chestDepth * 0.38));
+    finishMesh(chest, chestGroup, carbon);
+    for (const side of [-1, 1]) {
+      const mount = side < 0 ? 'shoulderL' : 'shoulderR';
+      const shoulderGroup = forgeGroup(state, entry, mount, `cosmetic-skin-${bot.bot_id}-${mount}`, scene);
+      const plate = B.MeshBuilder.CreateBox(`cosmetic-carbon-shoulder-${bot.bot_id}-${side}`, {
+        width: Math.max(2.5, torsoWidth * 0.36),
+        height: Math.max(1.35, torsoHeight * 0.18), depth: torsoDepth * 1.1,
+      }, scene);
+      plate.position.set(side * 0.18, -0.42, 0);
+      plate.rotation.z = side * 0.2;
+      finishMesh(plate, shoulderGroup, carbon);
+    }
+  }
 }
 
 function buildProceduralSkin(state, asset, group, bot, scene) {
@@ -127,9 +280,17 @@ function buildProceduralSkin(state, asset, group, bot, scene) {
 function buildBotSkin(state, asset, entry, bot, scene) {
   const assetKey = asset.key;
   if (assetKey === 'standard') return;
+  if (isForgeEntry(entry)) {
+    buildForgeBotSkin(state, asset, entry, bot, scene);
+    return;
+  }
   const B = window.BABYLON;
   const color = parseColor(bot.avatar_color);
-  const group = createGroup(`cosmetic-skin-${bot.bot_id}`, entry.root, scene);
+  const group = createGroup(
+    `cosmetic-skin-${bot.bot_id}`,
+    entry.mounts?.cosmeticRoot || entry.root,
+    scene,
+  );
   state.groups.push(group);
 
   if (asset.kind === 'procedural') {
@@ -257,12 +418,168 @@ function buildProceduralAttachment(state, asset, group, bot, scene) {
   finishMesh(reactorGuard, group, primary);
 }
 
+function buildForgeProceduralAttachment(state, asset, entry, bot, scene) {
+  const B = window.BABYLON;
+  const {palette, attachment} = asset.theme;
+  const primary = cosmeticMaterial(state, `cosmetic-set-attachment-primary-${bot.bot_id}`, scene, parseColor(palette.primary), {
+    emissiveFactor: 0.55, specular: parseColor(palette.secondary),
+  });
+  const accent = cosmeticMaterial(state, `cosmetic-set-attachment-accent-${bot.bot_id}`, scene, parseColor(palette.accent), {
+    emissiveFactor: 1, noLight: true, alpha: 0.92,
+  });
+  const variant = Math.max(0, Math.min(3, Number(attachment.variant) || 0));
+  const headWidth = forgeMetric(entry, 'headWidth', 4.35);
+  const headHeight = forgeMetric(entry, 'headHeight', 3.55);
+  const headDepth = forgeMetric(entry, 'headDepth', 3.65);
+  const headSpan = Math.max(headWidth, headDepth);
+  const torsoWidth = forgeMetric(entry, 'torsoWidth', 7);
+  const torsoHeight = forgeMetric(entry, 'torsoHeight', 8.15);
+  const torsoDepth = forgeMetric(entry, 'torsoDepth', 3.75);
+
+  if (attachment.kind === 'halo') {
+    const group = forgeGroup(state, entry, 'head', `cosmetic-attachment-${bot.bot_id}`, scene);
+    const halo = B.MeshBuilder.CreateTorus(`cosmetic-set-halo-${bot.bot_id}`, {
+      diameter: headSpan * (1.82 + variant * 0.1),
+      thickness: Math.max(0.28, headSpan * 0.09), tessellation: 18,
+    }, scene);
+    halo.position.y = headHeight * (0.76 + variant * 0.035);
+    halo.rotation.x = variant * 0.08;
+    finishMesh(halo, group, accent);
+    return;
+  }
+
+  if (attachment.kind === 'antenna') {
+    const group = forgeGroup(state, entry, 'head', `cosmetic-attachment-${bot.bot_id}`, scene);
+    const mastHeight = headHeight * (1.18 + variant * 0.1);
+    const mast = B.MeshBuilder.CreateCylinder(`cosmetic-set-mast-${bot.bot_id}`, {
+      height: mastHeight, diameter: Math.max(0.34, headWidth * 0.11), tessellation: 8,
+    }, scene);
+    mast.position.y = headHeight * 0.5 + mastHeight * 0.5;
+    finishMesh(mast, group, primary);
+    const beacon = B.MeshBuilder.CreateSphere(`cosmetic-set-beacon-${bot.bot_id}`, {
+      diameter: headWidth * (0.32 + variant * 0.03), segments: 8,
+    }, scene);
+    beacon.position.y = headHeight * 0.5 + mastHeight;
+    finishMesh(beacon, group, accent);
+    return;
+  }
+
+  if (attachment.kind === 'crown') {
+    const group = forgeGroup(state, entry, 'head', `cosmetic-attachment-${bot.bot_id}`, scene);
+    for (const offset of [-1, 0, 1]) {
+      const height = headHeight * (0.58 + (offset === 0 ? 0.18 : 0) + variant * 0.045);
+      const point = B.MeshBuilder.CreateCylinder(`cosmetic-set-crown-${bot.bot_id}-${offset}`, {
+        height, diameterTop: 0, diameterBottom: headWidth * 0.27, tessellation: 6,
+      }, scene);
+      point.position.set(offset * headWidth * 0.34, headHeight * 0.5 + height * 0.5, 0);
+      finishMesh(point, group, offset === 0 ? accent : primary);
+    }
+    return;
+  }
+
+  if (attachment.kind === 'orbitals') {
+    const group = forgeGroup(state, entry, 'head', `cosmetic-attachment-${bot.bot_id}`, scene);
+    for (const axis of [0, 1]) {
+      const orbit = B.MeshBuilder.CreateTorus(`cosmetic-set-orbit-${bot.bot_id}-${axis}`, {
+        diameter: headSpan * (1.7 + axis * 0.28 + variant * 0.06),
+        thickness: Math.max(0.2, headSpan * 0.065), tessellation: 16,
+      }, scene);
+      orbit.position.y = headHeight * 0.08;
+      orbit.rotation.x = axis ? Math.PI / 2.8 : Math.PI / 2;
+      orbit.rotation.z = axis ? 0.45 : -0.35;
+      finishMesh(orbit, group, axis ? accent : primary);
+    }
+    return;
+  }
+
+  if (attachment.kind === 'fins') {
+    for (const side of [-1, 1]) {
+      const mount = side < 0 ? 'shoulderL' : 'shoulderR';
+      const group = forgeGroup(state, entry, mount, `cosmetic-attachment-${bot.bot_id}-${mount}`, scene);
+      const fin = B.MeshBuilder.CreateBox(`cosmetic-set-fin-${bot.bot_id}-${side}`, {
+        width: Math.max(0.72, torsoWidth * 0.11),
+        height: torsoHeight * (0.38 + variant * 0.03),
+        depth: Math.max(2.0, torsoDepth * 0.82),
+      }, scene);
+      fin.position.set(side * torsoWidth * 0.08, -torsoHeight * 0.08, torsoDepth * 0.18);
+      fin.rotation.z = side * 0.42;
+      finishMesh(fin, group, side > 0 ? accent : primary);
+    }
+    return;
+  }
+
+  const group = forgeGroup(state, entry, 'back', `cosmetic-attachment-${bot.bot_id}`, scene);
+  const reactorDiameter = Math.max(1.65, torsoWidth * (0.25 + variant * 0.018));
+  const reactor = B.MeshBuilder.CreateSphere(`cosmetic-set-reactor-${bot.bot_id}`, {
+    diameter: reactorDiameter, segments: 8,
+  }, scene);
+  reactor.position.set(0, 0, torsoDepth * 0.08);
+  finishMesh(reactor, group, accent);
+  const reactorGuard = B.MeshBuilder.CreateTorus(`cosmetic-set-reactor-guard-${bot.bot_id}`, {
+    diameter: reactorDiameter * 1.5, thickness: Math.max(0.22, reactorDiameter * 0.11), tessellation: 14,
+  }, scene);
+  reactorGuard.position.set(0, 0, torsoDepth * 0.1);
+  reactorGuard.rotation.x = Math.PI / 2;
+  finishMesh(reactorGuard, group, primary);
+}
+
+function buildForgeAttachment(state, asset, entry, bot, scene) {
+  const B = window.BABYLON;
+  if (asset.kind === 'procedural') {
+    buildForgeProceduralAttachment(state, asset, entry, bot, scene);
+    return;
+  }
+
+  const headWidth = forgeMetric(entry, 'headWidth', 4.35);
+  const headHeight = forgeMetric(entry, 'headHeight', 3.55);
+  if (asset.key === 'signal_antenna') {
+    const group = forgeGroup(state, entry, 'head', `cosmetic-attachment-${bot.bot_id}`, scene);
+    const metal = cosmeticMaterial(state, `cosmetic-antenna-metal-${bot.bot_id}`, scene,
+      new B.Color3(0.45, 0.5, 0.58), { emissiveFactor: 0.12, specular: B.Color3.White() });
+    const glow = cosmeticMaterial(state, `cosmetic-antenna-glow-${bot.bot_id}`, scene, parseColor(bot.avatar_color), {
+      emissiveFactor: 1, noLight: true,
+    });
+    const mastHeight = headHeight * 1.35;
+    const mast = B.MeshBuilder.CreateCylinder(`cosmetic-antenna-mast-${bot.bot_id}`, {
+      height: mastHeight, diameter: Math.max(0.38, headWidth * 0.12), tessellation: 8,
+    }, scene);
+    mast.position.y = headHeight * 0.5 + mastHeight * 0.5;
+    finishMesh(mast, group, metal);
+    const beacon = B.MeshBuilder.CreateSphere(`cosmetic-antenna-beacon-${bot.bot_id}`, {
+      diameter: headWidth * 0.4, segments: 8,
+    }, scene);
+    beacon.position.y = headHeight * 0.5 + mastHeight;
+    finishMesh(beacon, group, glow);
+    return;
+  }
+
+  if (asset.key === 'orbital_halo') {
+    const group = forgeGroup(state, entry, 'head', `cosmetic-attachment-${bot.bot_id}`, scene);
+    const halo = cosmeticMaterial(state, `cosmetic-halo-${bot.bot_id}`, scene, parseColor(bot.avatar_color), {
+      emissiveFactor: 1, noLight: true, alpha: 0.9,
+    });
+    const ring = B.MeshBuilder.CreateTorus(`cosmetic-halo-ring-${bot.bot_id}`, {
+      diameter: headWidth * 2.05, thickness: Math.max(0.34, headWidth * 0.11), tessellation: 24,
+    }, scene);
+    ring.position.y = headHeight * 0.8;
+    finishMesh(ring, group, halo);
+  }
+}
+
 function buildAttachment(state, asset, entry, bot, scene) {
   const assetKey = asset.key;
   if (assetKey === 'none') return;
+  if (isForgeEntry(entry)) {
+    buildForgeAttachment(state, asset, entry, bot, scene);
+    return;
+  }
   const B = window.BABYLON;
   const color = parseColor(bot.avatar_color);
-  const group = createGroup(`cosmetic-attachment-${bot.bot_id}`, entry.root, scene);
+  const group = createGroup(
+    `cosmetic-attachment-${bot.bot_id}`,
+    entry.mounts?.cosmeticRoot || entry.root,
+    scene,
+  );
   state.groups.push(group);
 
   if (asset.kind === 'procedural') {
@@ -303,7 +620,11 @@ function buildAttachment(state, asset, entry, bot, scene) {
 
 function applyWeaponFinish(state, asset, entry, bot) {
   const assetKey = asset.key;
-  if (assetKey === 'standard' || !entry.weapon || typeof entry.weapon.getChildMeshes !== 'function') return;
+  if (assetKey === 'standard' || !entry.weapon) return;
+  const weaponMeshes = Array.isArray(entry.weapon._forgeMeshes)
+    ? entry.weapon._forgeMeshes
+    : typeof entry.weapon.getChildMeshes === 'function' ? entry.weapon.getChildMeshes(false) : [];
+  if (weaponMeshes.length === 0) return;
   const B = window.BABYLON;
   const tint = asset.kind === 'procedural'
     ? parseColor(asset.theme.palette.primary)
@@ -320,7 +641,7 @@ function applyWeaponFinish(state, asset, entry, bot) {
       : new B.Color3(0.52, 0.2, 0.8);
   const emissiveFactor = asset.kind === 'procedural' ? asset.theme.weapon.emissive : (assetKey === 'solar_flare' ? 0.85 : 0.65);
 
-  for (const mesh of entry.weapon.getChildMeshes(false)) {
+  for (const mesh of weaponMeshes) {
     const original = mesh.material;
     if (!original || typeof original.clone !== 'function') continue;
     const clone = original.clone(`cosmetic-weapon-${assetKey}-${bot.bot_id}-${mesh.name}`);
@@ -383,4 +704,5 @@ export function applyBotCosmetics(entry, bot, scene, options = {}) {
   if (enabled.bot_skin) buildBotSkin(state, loadout.bot_skin, entry, bot, scene);
   if (enabled.weapon_skin) applyWeaponFinish(state, loadout.weapon_skin, entry, bot);
   if (enabled.attachment) buildAttachment(state, loadout.attachment, entry, bot, scene);
+  if (typeof entry.setLOD === 'function') entry.setLOD();
 }

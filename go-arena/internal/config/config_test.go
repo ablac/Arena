@@ -331,6 +331,28 @@ func TestLoadReadsCustomerAPIKeyAbuseLimits(t *testing.T) {
 	}
 }
 
+func TestLoadReadsPublicAPIKeyRegistrationLimits(t *testing.T) {
+	previous := C
+	t.Cleanup(func() { C = previous })
+	t.Setenv("ARENA_RATE_LIMIT_REGISTER_RPM", "7")
+	t.Setenv("ARENA_RATE_LIMIT_REGISTER_PER_HOUR", "73")
+	t.Setenv("ARENA_TRUSTED_PROXY_CIDRS", "10.20.30.0/24,2001:db8:100::/48")
+	t.Setenv("ARENA_TRUSTED_CLOUDFLARE_PROXY_CIDRS", "10.20.30.12/32")
+	C = Config{}
+
+	Load()
+
+	if C.RateLimitRegisterRPM != 7 || C.RateLimitRegisterPerHour != 73 {
+		t.Fatalf("public API-key registration limits were not loaded: %+v", C)
+	}
+	if C.TrustedProxyCIDRs != "10.20.30.0/24,2001:db8:100::/48" {
+		t.Fatalf("trusted proxy CIDRs were not loaded: %q", C.TrustedProxyCIDRs)
+	}
+	if C.TrustedCloudflareProxyCIDRs != "10.20.30.12/32" {
+		t.Fatalf("trusted Cloudflare proxy CIDRs were not loaded: %q", C.TrustedCloudflareProxyCIDRs)
+	}
+}
+
 func TestResolveShoveSettingsUsesWholePositiveGridTiles(t *testing.T) {
 	tests := []struct {
 		name                     string

@@ -10,23 +10,31 @@
 
 ### 1. Create an API Key
 
-Sign in with a verified email in the [Arena Dashboard](https://arena.angel-serv.com/dashboard/) and create the key there. API keys are server-generated, saved as non-recoverable hashes, and owned by your account. Each account can have at most five active keys.
+Use Get Started on the Arena site, or call the public endpoint directly. No account is required:
+
+```bash
+curl -X POST https://arena.angel-serv.com/api/v1/keys/generate
+```
+
+The request body must be empty (an empty JSON object is also accepted). Arena
+generates the token on the server, saves its bcrypt hash and bot record in the
+database, and returns the plaintext once. A token string invented by a caller
+will not authenticate.
 
 Response:
 ```json
 {
   "api_key": "arena_abc123...",
-  "key": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "key_prefix": "arena_abc123",
-    "bot_id": "550e8400-e29b-41d4-a716-446655440001",
-    "bot_name": "My Bot",
-    "is_active": true
-  },
-  "active_count": 1,
-  "limit": 5
+  "bot_id": "550e8400-e29b-41d4-a716-446655440001",
+  "created_at": "2026-07-12T00:00:00Z",
+  "message": "API key generated successfully. Store it safely -- it cannot be recovered."
 }
 ```
+
+You can connect immediately. To buy or equip cosmetics later, verify your email
+in [My Dashboard](https://arena.angel-serv.com/dashboard/?tab=cosmetics) and
+submit this token once to claim its bot. The form clears the plaintext after
+the claim request.
 
 **Save your `api_key` — it cannot be retrieved again.**
 
@@ -114,6 +122,7 @@ All HTTP endpoints are also available under the `/arena` prefix (e.g., `/arena/a
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/health` | Health check — returns `{"status": "ok", "bots_online": N}` |
+| `POST` | `/api/v1/keys/generate` | Generate and persist a server-issued token and bot; empty request body, plaintext returned once |
 | `GET` | `/api/v1/leaderboard` | Leaderboard with `?limit=N&offset=N` pagination |
 | `GET` | `/api/v1/arena/status` | Current round, bots alive, safe zone radius |
 | `GET` | `/api/v1/service-status` | Current public broadcast and scheduled-maintenance status (`Cache-Control: no-store`) |
@@ -143,6 +152,7 @@ These same-origin Dashboard endpoints use the customer session cookie. `POST` an
 | `GET` | `/api/v1/account/keys` | List account-owned keys without plaintext or hashes |
 | `POST` | `/api/v1/account/keys` | Create a server-issued key and bot (maximum five active; ten creations/hour/account) |
 | `DELETE` | `/api/v1/account/keys/{key_id}` | Revoke one account-owned key |
+| `POST` | `/api/v1/account/bots` | Claim/link an existing bot by submitting its server-issued token once |
 
 ### Authentication Methods
 
@@ -158,7 +168,7 @@ X-Arena-Key: YOUR_API_KEY
 
 ### Spectator WebSocket
 
-`wss://arena.angel-serv.com/ws/spectator` requires no auth and streams receive-only `arena_state` and `lobby_state` gameplay snapshots on one ordered, five-second presentation delay. Notable fields for client builders:
+`wss://arena.angel-serv.com/ws/spectator` requires no auth and streams receive-only `arena_state` and `lobby_state` gameplay snapshots on one ordered, five-second presentation delay. Bot snapshots include `last_action` plus the monotonic `last_action_tick`; use the tick as the one-shot animation/event edge because the action string remains present between actions. Notable fields for client builders:
 
 - Each bot entry includes `team` (0 in FFA), plus combat state (`facing`, `bow_charge_level`, `shield_absorb`, `is_bounty_target`, ...).
 - Top-level: `game_mode`, `map_shape`, and in team modes `team_scores` (string-keyed) and `flags` (each with `id`, `team`, `position`, `base_position`, `status`, `carrier_id`).
@@ -597,6 +607,7 @@ When your bot doesn't send an action in time, the server plays one of these AI b
 - Grid: **100×100** cells (each cell = 20 world units)
 - All positions in tick messages use **grid coordinates** `[col, row]`
 - Fog of war radius: **7 tiles** (radial distance)
+- Hint `direction` vectors and `distance` values use that same grid coordinate system; hint distance is measured in tiles.
 
 ### Terrain
 
@@ -689,6 +700,7 @@ Items spawn on the map and can be collected with the `use_item` action.
 - WebSocket messages: **25 per second** max
 - WebSocket connections: **3 per minute** per IP
 - Reconnect cooldown: **5 seconds** per API key
+- Public token generation: per-IP minute and hourly quotas; registration fails closed when its database or rate limiter is unavailable
 - Account API keys: **5 active keys maximum**, **10 creations/hour**, and **20 revocations/hour** per verified email account; mutations are also fail-closed rate-limited by IP
 - Issued-key history: **100 durable records maximum** per account; revoked records remain linked for audit and the Dashboard directs the owner to support at the cap
 
@@ -891,11 +903,11 @@ async def run_bot(api_key: str):
 
 
 if __name__ == "__main__":
-    # Create the key in the verified-email Dashboard, then pass it securely.
+    # Generate the key in Get Started or POST /api/v1/keys/generate, then pass it securely.
     import sys
     key = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("ARENA_API_KEY")
     if not key:
-        raise SystemExit("Set ARENA_API_KEY or pass a Dashboard-created key as the first argument")
+        raise SystemExit("Set ARENA_API_KEY or pass a server-issued key as the first argument")
     asyncio.run(run_bot(key))
 ```
 
@@ -907,7 +919,7 @@ pip install websockets
 Run:
 ```bash
 python bot.py                    # use ARENA_API_KEY from the environment
-python bot.py YOUR_API_KEY       # or pass a Dashboard-created key
+python bot.py YOUR_API_KEY       # or pass a server-issued key
 ```
 
 ---
@@ -924,10 +936,10 @@ function dist(a, b) {
 }
 
 async function main() {
-  // Create the key in the verified-email Dashboard first.
+  // Generate the key in Get Started or POST /api/v1/keys/generate first.
   const apiKey = process.argv[2] || process.env.ARENA_API_KEY;
   if (!apiKey) {
-    throw new Error("Set ARENA_API_KEY or pass a Dashboard-created key");
+    throw new Error("Set ARENA_API_KEY or pass a server-issued key");
   }
 
   const ws = new WebSocket(`${WS_URL}?key=${apiKey}`);

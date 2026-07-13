@@ -28,7 +28,7 @@ frontend/
   js/renderer/                  # Babylon.js modules (engine, bots, weapons, etc.)
   js/                           # App boot, spectator WS, leaderboard
   m/                            # Mobile spectator site (served at /m/, reuses js/renderer + spectator-ws)
-  dashboard/                    # Admin dashboard
+  dashboard/                    # Customer bot/account dashboard (Admin lives in admin/)
 sdk/
   python/arena_sdk/             # Python SDK (ArenaBot base class)
   nodejs/src/                   # Node.js SDK
@@ -104,5 +104,5 @@ cd sdk/nodejs && npm install
 
 - **Bot WebSocket:** `ws://host:8700/ws/bot?key=<api_key>` — ticks carry `your_state.team`, `game_mode`, and in team modes `team_scores` + `flags`; `void_tiles` + `sudden_death_stall` during sudden death
 - **Spectator WebSocket:** `ws://host:8700/ws/spectator` — per-bot `team`; top-level `game_mode`, `map_shape`, `team_scores`, `flags`; obstacles only on keyframe broadcasts (`ARENA_SPECTATOR_KEYFRAME_INTERVAL`, default 10, plus on join) — clients keep the last copy between keyframes
-- **REST API:** verified customer key management at `/api/v1/account/keys`, plus `/api/v1/arena/status`, `/api/v1/arena/map`, `/api/v1/leaderboard`, `/api/v1/bot-setup`, `/api/v1/version` (build identity: git commit + build time; shown in the site's About drawer), `/api/v1/admin/*`
+- **REST API:** public server-issued bot registration at `POST /api/v1/keys/generate` (empty body; plaintext returned once), optional verified-customer key management at `/api/v1/account/keys`, later bot claim at `POST /api/v1/account/bots`, plus `/api/v1/arena/status`, `/api/v1/arena/map`, `/api/v1/leaderboard`, `/api/v1/bot-setup`, `/api/v1/version` (build identity: git commit + build time; shown in the site's About drawer), `/api/v1/admin/*`
 - **Admin runtime tuning:** `PUT /api/v1/admin/game/config` accepts `game_mode`, `team_count`, `friendly_fire`, `map_shape` (plus round/zone/stat keys) — mode/shape changes take effect next round

@@ -39,6 +39,31 @@ type fakeAccountAPIKeyStore struct {
 	deactivateCalls int
 }
 
+type fakePublicAPIKeyStore struct {
+	allowed     bool
+	quotaErr    error
+	createErr   error
+	quotaCalls  int
+	createCalls int
+	lastIP      string
+	lastKeyID   string
+	lastHash    string
+	lastPrefix  string
+	lastBot     *db.Bot
+}
+
+func (f *fakePublicAPIKeyStore) CheckRegistrationQuota(_ context.Context, ip string, _ int) (bool, int, error) {
+	f.quotaCalls++
+	f.lastIP = ip
+	return f.allowed, 0, f.quotaErr
+}
+
+func (f *fakePublicAPIKeyStore) Create(_ context.Context, keyID, keyHash, keyPrefix, ip string, bot *db.Bot) error {
+	f.createCalls++
+	f.lastKeyID, f.lastHash, f.lastPrefix, f.lastIP, f.lastBot = keyID, keyHash, keyPrefix, ip, bot
+	return f.createErr
+}
+
 func (f *fakeAccountAPIKeyStore) Capacity(_ context.Context, accountID string) (int, int, error) {
 	f.lastAccountID = accountID
 	return f.capacityActive, f.capacityTotal, f.capacityErr
@@ -313,59 +338,181 @@ func TestAccountKeyRevokeQuotaStopsCreateRevokeCyclingAcrossSourceIPs(t *testing
 	}
 }
 
-func TestAnonymousKeyGenerationIsRetiredAtEveryMount(t *testing.T) {
+func TestPublicKeyGenerationIsMountedAtEveryPrefix(t *testing.T) {
 	originalPool := db.Pool
 	db.Pool = nil
 	t.Cleanup(func() { db.Pool = originalPool })
 
 	router := NewRouter(game.NewGameEngine())
-	for _, tc := range []struct {
-		path        string
-		replacement string
-	}{
-		{path: "/api/v1/keys/generate", replacement: "/api/v1/account/keys"},
-		{path: "/arena/api/v1/keys/generate", replacement: "/arena/api/v1/account/keys"},
-	} {
-		t.Run(tc.path, func(t *testing.T) {
+	for _, path := range []string{"/api/v1/keys/generate", "/arena/api/v1/keys/generate"} {
+		t.Run(path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, tc.path, nil))
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
 
-			if rec.Code != http.StatusGone {
-				t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusGone, rec.Body.String())
-			}
-			if !strings.Contains(rec.Body.String(), tc.replacement) {
-				t.Fatalf("body = %q, want authenticated replacement route", rec.Body.String())
+			if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "ACCOUNT_REQUIRED") {
+				t.Fatalf("status = %d, want mounted public registration with a fail-closed dependency; body: %s", rec.Code, rec.Body.String())
 			}
 		})
 	}
 }
 
-func TestGenerateKeyRequiresVerifiedCustomerSession(t *testing.T) {
+func TestGenerateKeyDoesNotRequireCustomerSession(t *testing.T) {
 	originalPool := db.Pool
 	db.Pool = nil
 	t.Cleanup(func() { db.Pool = originalPool })
 
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/generate", nil)
+	rec := httptest.NewRecorder()
+	GenerateKey(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "database") {
+		t.Fatalf("status = %d, want anonymous request to reach database requirement; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPublicKeyGenerationReturnsServerSecretAndPersistsHashOnly(t *testing.T) {
+	store := &fakePublicAPIKeyStore{allowed: true}
+	generated := 0
+	handler := newPublicKeysHandler(store, func() (string, string, string, error) {
+		generated++
+		return "arena_plaintext_once", "bcrypt-hash-only", "arena_plaint", nil
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/generate", nil)
+	req.RemoteAddr = "198.51.100.42:5000"
+	rec := httptest.NewRecorder()
+
+	handler.Create(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if generated != 1 || store.quotaCalls != 1 || store.createCalls != 1 {
+		t.Fatalf("calls: generated=%d quota=%d create=%d", generated, store.quotaCalls, store.createCalls)
+	}
+	if store.lastHash != "bcrypt-hash-only" || store.lastPrefix != "arena_plaint" || store.lastIP != "198.51.100.42" {
+		t.Fatalf("stored secret metadata: hash=%q prefix=%q ip=%q", store.lastHash, store.lastPrefix, store.lastIP)
+	}
+	if store.lastBot == nil || store.lastBot.APIKeyID != store.lastKeyID || store.lastBot.Name != "Unnamed Bot" {
+		t.Fatalf("stored bot=%+v key=%q", store.lastBot, store.lastKeyID)
+	}
+	if strings.Contains(store.lastHash, "plaintext_once") {
+		t.Fatalf("plaintext leaked into persisted hash field: %q", store.lastHash)
+	}
+	var payload KeyGenerateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.APIKey != "arena_plaintext_once" || payload.BotID != store.lastBot.ID {
+		t.Fatalf("payload=%+v", payload)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestPublicKeyGenerationRequiresSameOriginForBrowserRequests(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		session *CustomerSession
-		want    int
+		name   string
+		origin string
 	}{
-		{name: "anonymous", want: http.StatusUnauthorized},
-		{name: "unverified", session: &CustomerSession{AccountID: "account-1", Email: "owner@example.com"}, want: http.StatusForbidden},
+		{name: "cross origin", origin: "https://attacker.example"},
+		{name: "opaque null origin", origin: "null"},
+		{name: "empty origin header", origin: ""},
+		{name: "comma separated origins", origin: "https://arena.example, https://attacker.example"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/account/keys", nil)
-			if tc.session != nil {
-				req = req.WithContext(withCustomerSession(req.Context(), tc.session))
+			store := &fakePublicAPIKeyStore{allowed: true}
+			generated := 0
+			handler := newPublicKeysHandler(store, func() (string, string, string, error) {
+				generated++
+				return "arena_must_not_exist", "hash", "arena_must", nil
+			})
+			req := httptest.NewRequest(http.MethodPost, "https://arena.example/api/v1/keys/generate", nil)
+			req.Header.Set("Origin", tc.origin)
+			recorder := httptest.NewRecorder()
+
+			handler.Create(recorder, req)
+
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d; body: %s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 			}
-			rec := httptest.NewRecorder()
-
-			GenerateKey(rec, req)
-
-			if rec.Code != tc.want {
-				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tc.want, rec.Body.String())
+			if generated != 0 || store.quotaCalls != 0 || store.createCalls != 0 {
+				t.Fatalf("cross-origin rejection had side effects: generated=%d quota=%d create=%d", generated, store.quotaCalls, store.createCalls)
 			}
 		})
+	}
+}
+
+func TestPublicKeyGenerationAcceptsSameOriginBrowserRequest(t *testing.T) {
+	store := &fakePublicAPIKeyStore{allowed: true}
+	handler := newPublicKeysHandler(store, func() (string, string, string, error) {
+		return "arena_same_origin", "bcrypt-hash", "arena_same", nil
+	})
+	req := httptest.NewRequest(http.MethodPost, "https://arena.example/api/v1/keys/generate", nil)
+	req.Header.Set("Origin", "https://arena.example")
+	recorder := httptest.NewRecorder()
+
+	handler.Create(recorder, req)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+	if store.quotaCalls != 1 || store.createCalls != 1 {
+		t.Fatalf("same-origin request calls: quota=%d create=%d", store.quotaCalls, store.createCalls)
+	}
+}
+
+func TestPublicKeyGenerationRejectsCallerSelectedCredential(t *testing.T) {
+	store := &fakePublicAPIKeyStore{allowed: true}
+	generated := 0
+	handler := newPublicKeysHandler(store, func() (string, string, string, error) {
+		generated++
+		return "arena_server_value", "hash", "arena_server", nil
+	})
+	rec := httptest.NewRecorder()
+	handler.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/keys/generate",
+		strings.NewReader(`{"api_key":"arena_caller_chosen"}`)))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if generated != 0 || store.quotaCalls != 0 || store.createCalls != 0 || strings.Contains(rec.Body.String(), "caller_chosen") {
+		t.Fatalf("caller credential reached generation or persistence: generated=%d quota=%d create=%d body=%s",
+			generated, store.quotaCalls, store.createCalls, rec.Body.String())
+	}
+}
+
+func TestPublicKeyGenerationFailsClosedBeforeCreatingSecretWhenQuotaStoreFails(t *testing.T) {
+	store := &fakePublicAPIKeyStore{allowed: true, quotaErr: errors.New("quota database offline")}
+	generated := 0
+	handler := newPublicKeysHandler(store, func() (string, string, string, error) {
+		generated++
+		return "arena_must_not_exist", "hash", "arena_must", nil
+	})
+	recorder := httptest.NewRecorder()
+	handler.Create(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/keys/generate", strings.NewReader(`{}`)))
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body: %s", recorder.Code, http.StatusServiceUnavailable, recorder.Body.String())
+	}
+	if generated != 0 || store.createCalls != 0 || strings.Contains(recorder.Body.String(), "must_not_exist") {
+		t.Fatalf("quota failure leaked or persisted a secret: generated=%d create=%d body=%s",
+			generated, store.createCalls, recorder.Body.String())
+	}
+}
+
+func TestPublicKeyGenerationNeverReturnsSecretBeforeAtomicPersistenceSucceeds(t *testing.T) {
+	store := &fakePublicAPIKeyStore{allowed: true, createErr: errors.New("bot insert rejected")}
+	handler := newPublicKeysHandler(store, func() (string, string, string, error) {
+		return "arena_not_committed", "bcrypt-hash", "arena_not_co", nil
+	})
+	recorder := httptest.NewRecorder()
+	handler.Create(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/keys/generate", nil))
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", recorder.Code, http.StatusInternalServerError, recorder.Body.String())
+	}
+	if store.createCalls != 1 || strings.Contains(recorder.Body.String(), "not_committed") {
+		t.Fatalf("failed persistence returned the one-time secret: create=%d body=%s", store.createCalls, recorder.Body.String())
 	}
 }
 
@@ -374,13 +521,7 @@ func TestGenerateKeyRequiresDatabase(t *testing.T) {
 	db.Pool = nil
 	t.Cleanup(func() { db.Pool = originalPool })
 
-	verifiedAt := time.Now()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/account/keys", nil)
-	req = req.WithContext(withCustomerSession(req.Context(), &CustomerSession{
-		AccountID:       "account-1",
-		Email:           "owner@example.com",
-		EmailVerifiedAt: &verifiedAt,
-	}))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/generate", nil)
 	rec := httptest.NewRecorder()
 	GenerateKey(rec, req)
 

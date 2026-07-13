@@ -2,12 +2,46 @@ package demobots
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"arena-server/internal/db"
 )
+
+func TestDemoBotReconnectBackoffResetsAfterEstablishedSession(t *testing.T) {
+	b := newDemoBot(DemoConfigs[0], "http://arena.test")
+	outcomes := []demoBotSessionOutcome{
+		{Err: errors.New("dial failed")},
+		{Err: errors.New("dial failed")},
+		{Err: errors.New("dial failed")},
+		{Established: true, Err: errors.New("connection dropped")},
+		{Err: errors.New("dial failed")},
+	}
+	nextOutcome := 0
+	waits := make([]time.Duration, 0, len(outcomes))
+
+	b.runSessions(context.Background(), func(context.Context) demoBotSessionOutcome {
+		outcome := outcomes[nextOutcome]
+		nextOutcome++
+		return outcome
+	}, func(_ context.Context, delay time.Duration) bool {
+		waits = append(waits, delay)
+		return len(waits) < len(outcomes)
+	})
+
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, time.Second, 2 * time.Second}
+	if len(waits) != len(want) {
+		t.Fatalf("reconnect waits = %v, want %v", waits, want)
+	}
+	for i := range want {
+		if waits[i] != want[i] {
+			t.Fatalf("reconnect waits = %v, want %v; an established session must restore the initial retry inside the reconnect grace", waits, want)
+		}
+	}
+}
 
 func TestDemoBotRegistrationProvisionsCredentialInProcess(t *testing.T) {
 	originalPool := db.Pool

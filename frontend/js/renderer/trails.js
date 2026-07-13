@@ -9,8 +9,11 @@
 
 import { isEnabled } from '../settings.js';
 
-const MAX_HISTORY = 20;
-const SAMPLE_INTERVAL = 0.03;
+const MAX_HISTORY = 12;
+// Spectator positions arrive at 10 Hz. Sampling three times faster rebuilt the
+// same ribbon geometry from interpolated points without adding useful truth.
+const SAMPLE_INTERVAL = 0.1;
+const MAX_RENDERED_TRAILS = 48;
 const TRAIL_WIDTH = 6;
 const TRAIL_Y = 0.4;
 
@@ -20,6 +23,20 @@ export class TrailRenderer {
     this.scene = scene;
     /** @type {Map<string, Object>} */
     this.trails = new Map();
+  }
+
+  /** Break every existing ribbon at the latest snapped bot position. */
+  reset(botEntries) {
+    for (const [botId, trail] of this.trails) {
+      const entry = botEntries?.get(botId);
+      trail.timer = 0;
+      trail.history.length = 0;
+      if (entry?._interpReady) {
+        trail.history.push({x: entry.root.position.x, z: entry.root.position.z});
+      }
+      trail.dirty = false;
+      if (trail.mesh) trail.mesh.setEnabled(false);
+    }
   }
 
   /**
@@ -43,9 +60,12 @@ export class TrailRenderer {
 
     const B = window.BABYLON;
     const seen = new Set();
+    let renderedTrails = 0;
 
     for (const [botId, entry] of botEntries) {
       if (!entry.isAlive || !entry._interpReady) continue;
+      if (renderedTrails >= MAX_RENDERED_TRAILS) continue;
+      renderedTrails += 1;
       seen.add(botId);
 
       const x = entry.root.position.x;
@@ -83,12 +103,6 @@ export class TrailRenderer {
         this.trails.set(botId, trail);
       }
 
-      // Re-enable a mesh that was hidden while the effect was toggled off.
-      // Unconditional/idempotent so a stationary bot's trail (which can skip
-      // the dirty-geometry path below for many frames) still reappears the
-      // instant the toggle flips back on, not just next time it moves.
-      if (trail.mesh && !trail.mesh.isEnabled()) trail.mesh.setEnabled(true);
-
       // Sample position at fixed interval
       trail.timer += dt;
       if (trail.timer >= SAMPLE_INTERVAL) {
@@ -111,7 +125,13 @@ export class TrailRenderer {
         }
       }
 
-      if (trail.history.length < 2) continue;
+      if (trail.history.length < 2) {
+        if (trail.mesh) trail.mesh.setEnabled(false);
+        continue;
+      }
+      // A disabled/reset trail becomes visible only after fresh geometry is
+      // available; this prevents the old ribbon flashing on resume.
+      if (trail.mesh && !trail.mesh.isEnabled()) trail.mesh.setEnabled(true);
       if (!trail.dirty && trail.mesh) continue; // no change, skip update
       trail.dirty = false;
 
@@ -153,7 +173,6 @@ export class TrailRenderer {
           }, this.scene);
           ribbon.material = trail.mat;
           ribbon.isPickable = false;
-          ribbon.alwaysSelectAsActiveMesh = true;
           ribbon.hasVertexAlpha = true;
           trail.mesh = ribbon;
 
