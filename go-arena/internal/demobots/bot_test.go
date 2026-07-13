@@ -22,7 +22,8 @@ func TestDemoBotRegistrationProvisionsCredentialInProcess(t *testing.T) {
 			http.Error(w, "retired", http.StatusGone)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"bot_id":"demo-bot-id"}`))
 	}))
 	t.Cleanup(server.Close)
 
@@ -83,5 +84,55 @@ func TestDemoBotActsOnlyOnAliveTick(t *testing.T) {
 				t.Fatalf("shouldActOnTick() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDemoBotRegistrationProvisionsConfiguredCosmeticPack(t *testing.T) {
+	originalPool := db.Pool
+	db.Pool = nil
+	t.Cleanup(func() { db.Pool = originalPool })
+
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Arena-Key") != "arena_demo_cosmetic_test" {
+			t.Errorf("%s %s missing demo bot authentication", r.Method, r.URL.Path)
+		}
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		if r.URL.Path != "/api/v1/bot/config" || r.Method != http.MethodPut {
+			t.Errorf("unexpected request path %q", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"bot_id":"registered-demo-bot-id"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	cfg := DemoConfigs[0]
+	bot := newDemoBot(cfg, server.URL)
+	bot.credentialProvisioner = func(context.Context, BotConfig) (string, error) {
+		return "arena_demo_cosmetic_test", nil
+	}
+	provisionCalls := 0
+	bot.cosmeticProvisioner = func(_ context.Context, botID string, got BotConfig) ([]cosmeticSelection, error) {
+		provisionCalls++
+		if botID != "registered-demo-bot-id" {
+			t.Errorf("cosmetic provision bot ID = %q", botID)
+		}
+		if got.Name != cfg.Name || got.CosmeticPackID != cfg.CosmeticPackID {
+			t.Errorf("cosmetic provision config = %+v, want %+v", got, cfg)
+		}
+		return configuredCosmeticSelections(got), nil
+	}
+
+	if err := bot.register(context.Background()); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if provisionCalls != 1 {
+		t.Fatalf("cosmetic provision calls = %d, want 1", provisionCalls)
+	}
+
+	if len(requests) != 1 || requests[0] != "PUT /api/v1/bot/config" {
+		t.Errorf("demo bot made unexpected registration requests: %v", requests)
 	}
 }
