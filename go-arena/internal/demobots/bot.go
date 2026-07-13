@@ -31,7 +31,7 @@ type demoBot struct {
 	client                *http.Client
 	attackRange           int     // Chebyshev grid range from loadout_confirmed
 	maxHP                 float64 // max HP from loadout_confirmed
-	botID                 string  // bot ID from connected message
+	botID                 string  // bot ID from authenticated config, refreshed by connected messages
 	strategy              string  // stable configured archetype for comparable balance samples
 	credentialProvisioner demoBotCredentialProvisioner
 	cosmeticProvisioner   demoBotCosmeticProvisioner
@@ -128,7 +128,7 @@ func (b *demoBot) register(ctx context.Context) error {
 
 	if !reused {
 		// Demo credentials are provisioned inside the trusted server process. They
-		// never need the retired public account-key registration endpoint.
+		// do not use the public self-service key-generation route.
 		apiKey, err := b.credentialProvisioner(ctx, b.config)
 		if err != nil {
 			return fmt.Errorf("provision demo credential: %w", err)

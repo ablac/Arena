@@ -52,8 +52,8 @@ func TestDemoBotRegistrationProvisionsCredentialInProcess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests <- r.Method + " " + r.URL.Path
 		if r.URL.Path == "/api/v1/keys/generate" {
-			t.Error("demo bot called retired public key-generation route")
-			http.Error(w, "retired", http.StatusGone)
+			t.Error("demo bot called the public self-service key-generation route")
+			http.Error(w, "unexpected public key generation", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
