@@ -137,6 +137,41 @@ func TestAccountCosmeticsInventoryAccountQuotaStopsStoreWork(t *testing.T) {
 	}
 }
 
+func TestAccountCosmeticsInventoryIncludesLinkedBotPreviewMetadata(t *testing.T) {
+	store := &fakeCosmeticsStore{inventory: &db.CustomerCosmeticsInventory{
+		Bots: []db.AccountBot{{
+			BotID:         "bot-preview",
+			Name:          "Preview Bot",
+			KeyPrefix:     "arena_preview",
+			KeyIsActive:   true,
+			AvatarColor:   "#22ccff",
+			DefaultWeapon: "spear",
+		}},
+	}}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/account/cosmetics", nil)
+	request = request.WithContext(withCustomerSession(request.Context(), &CustomerSession{
+		AccountID: "account-preview",
+		Email:     "preview@example.com",
+	}))
+
+	handler.AccountInventory(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Bots []db.AccountBot `json:"bots"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode inventory: %v", err)
+	}
+	if len(response.Bots) != 1 || response.Bots[0].AvatarColor != "#22ccff" || response.Bots[0].DefaultWeapon != "spear" {
+		t.Fatalf("linked bot preview metadata = %+v", response.Bots)
+	}
+}
+
 func TestAccountCosmeticsInventoryReconcilesTimedMembershipBeforeReadback(t *testing.T) {
 	store := &fakeCosmeticsStore{
 		inventory:          &db.CustomerCosmeticsInventory{},

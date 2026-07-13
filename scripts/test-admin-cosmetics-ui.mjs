@@ -119,8 +119,8 @@ assert.match(accessWorkspace, /id="cosmeticAccessEmail"[^>]*type="email"[^>]*req
 assert.match(accessWorkspace, /id="cosmeticAccessLookupStatus"[^>]*role="status"[^>]*aria-live="polite"/,
   'customer lookup needs a concise live status');
 assert.match(accessWorkspace, /Cosmetics-only access/i, 'manual membership must be described as cosmetics-only access');
-assert.match(accessWorkspace, /future purchasable sets and trails/i,
-  'manual membership must explicitly include future purchasable sets and trails');
+assert.match(accessWorkspace, /future purchasable sets, full-body skins, and trails/i,
+  'manual membership must explicitly include future purchasable sets, full-body skins, and trails');
 assert.doesNotMatch(accessWorkspace, /(?:API[- ]?key|key)\s+(?:cap|limit)|\b5\s+API[- ]?keys?/i,
   'manual cosmetics membership must not claim an API-key limit');
 assert.match(accessWorkspace, /id="cosmeticMembershipDurationDays"[^>]*type="number"[^>]*min="1"/,

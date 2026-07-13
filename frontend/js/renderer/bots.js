@@ -6,7 +6,7 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260713d';
+import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260713f';
 import {
   forgeContactDelay,
   updateForgeCharacter,
@@ -15,9 +15,13 @@ import {
   triggerForgeHit,
   triggerForgeShove,
 } from './character-anims.js?v=20260712c';
-import {updateForgeCharacterLOD} from './character-rig.js?v=20260713d';
-import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260712c';
+import {updateForgeCharacterLOD} from './character-rig.js?v=20260713f';
+import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260713f';
+import {bodyFormKeyForBot} from './body-form-roster.js?v=20260713b';
 import { isEnabled } from '../settings.js';
+
+export const BODY_FORM_NEAR_CHARACTER_LIMIT = 64;
+const BODY_FORM_LOD_SELECTION_INTERVAL_MS = 250;
 
 export function cooldownActionStarted(action, previousAction, cooldown, previousCooldown, expectedAction) {
   const current = Number.isFinite(cooldown) ? cooldown : 0;
@@ -35,6 +39,67 @@ export function actionTickStarted(action, expectedAction, actionTick, previousAc
     return actionTick !== previousActionTick;
   }
   return fallbackStarted === true;
+}
+
+/** Resolve construction-time body geometry without letting a disabled skin leak through. */
+export function bodyFormRenderState(bot, skinsEnabled = true) {
+  const configuredKey = bodyFormKeyForBot(bot);
+  if (skinsEnabled || configuredKey === 'standard') {
+    return {bodyFormKey: configuredKey, renderBot: bot};
+  }
+  const cosmetics = bot?.cosmetics && typeof bot.cosmetics === 'object' ? bot.cosmetics : {};
+  return {
+    bodyFormKey: 'standard',
+    renderBot: {...bot, cosmetics: {...cosmetics, bot_skin: 'standard'}},
+  };
+}
+
+/** Keep only the closest bounded set of live full-body rigs at near detail. */
+export function selectNearBodyFormIDs(entries, camera, limit = BODY_FORM_NEAR_CHARACTER_LIMIT, selectedBotId = '') {
+  const cap = Math.max(0, Math.floor(Number(limit) || 0));
+  if (!entries || cap === 0) return new Set();
+  const focus = camera?.target || camera?.globalPosition || camera?.position || {x: 0, z: 0};
+  const focusX = Number(focus.x) || 0;
+  const focusZ = Number(focus.z) || 0;
+  const candidates = [];
+  for (const [id, entry] of entries) {
+    if (!entry || entry.presentationOnly || !entry.bodyFormKey || entry.bodyFormKey === 'standard') continue;
+    const rootEnabled = typeof entry.root?.isEnabled === 'function' ? entry.root.isEnabled() : true;
+    // Completed corpse animations remain in the renderer map until the next
+    // snapshot removes them. Once their root is hidden they must not consume a
+    // scarce near-detail slot; still-visible death animations remain eligible.
+    if (entry.isAlive === false && rootEnabled === false) continue;
+    const position = entry.root?.position;
+    const x = Number(position?.x ?? entry.currPos?.[0]) || 0;
+    const z = Number(position?.z ?? entry.currPos?.[1]) || 0;
+    const dx = x - focusX;
+    const dz = z - focusZ;
+    candidates.push({
+      id,
+      selected: id === selectedBotId,
+      alive: entry.isAlive !== false,
+      distanceSquared: dx * dx + dz * dz,
+    });
+  }
+  candidates.sort((left, right) =>
+    Number(right.selected) - Number(left.selected) ||
+    Number(right.alive) - Number(left.alive) ||
+    left.distanceSquared - right.distanceSquared ||
+    String(left.id).localeCompare(String(right.id))
+  );
+  return new Set(candidates.slice(0, cap).map(candidate => candidate.id));
+}
+
+function forEachForgeStatusMaterial(entry, visit) {
+  const materials = entry?._forgeStatusMaterials;
+  if (Array.isArray(materials) && materials.length) {
+    for (let index = 0; index < materials.length; index += 1) {
+      if (materials[index]) visit(materials[index], index);
+    }
+    return;
+  }
+  if (entry?.bodyMat) visit(entry.bodyMat, 0);
+  if (entry?.headMat && entry.headMat !== entry.bodyMat) visit(entry.headMat, 1);
 }
 
 export class BotRenderer {
@@ -57,6 +122,9 @@ export class BotRenderer {
     this.onGrapple = null;
     this.onSelectionChange = null;
     this.selectedBotId = null;
+    this._bodyFormNearIDs = new Set();
+    this._bodyFormLODRefreshAt = 0;
+    this._bodyFormLODSelectedBotId = '';
     this._initSelectionPanel();
   }
 
@@ -100,6 +168,7 @@ export class BotRenderer {
   update(bots) {
     const seen = new Set();
     const now = performance.now();
+    const skinsEnabled = isEnabled('botCosmetics', 'skins');
 
     // Build position lookup lazily — only when an attack needs it
     let posMap = null;
@@ -115,18 +184,20 @@ export class BotRenderer {
       seen.add(bot.bot_id);
       let entry = this.entries.get(bot.bot_id);
       const weaponType = bot.weapon || 'sword';
+      const bodyFormState = bodyFormRenderState(bot, skinsEnabled);
+      const bodyFormKey = bodyFormState.bodyFormKey;
 
       // A bot may change its configured loadout between rounds. The old
       // renderer kept the first mesh forever, so the server could report a
       // bow while spectators still saw a sword. Rebuild only at that explicit
       // chassis boundary; normal snapshots continue reusing the entry.
-      if (entry?.profile?.weapon !== weaponType) {
+      if (entry?.profile?.weapon !== weaponType || entry?.bodyFormKey !== bodyFormKey) {
         if (entry) {
           this._disposeTaunt(entry);
           disposeBotCosmetics(entry);
           disposeBotEntry(entry);
         }
-        entry = createBotEntry(bot, this.scene);
+        entry = createBotEntry(bodyFormState.renderBot, this.scene);
         this.entries.set(bot.bot_id, entry);
       }
       entry.botData = bot;
@@ -377,7 +448,18 @@ export class BotRenderer {
     const dt = Math.min((now - this._lastFrame) / 1000, 0.1);
     this._lastFrame = now;
 
-    for (const [, entry] of this.entries) {
+    if (now >= this._bodyFormLODRefreshAt || this._bodyFormLODSelectedBotId !== this.selectedBotId) {
+      this._bodyFormNearIDs = selectNearBodyFormIDs(
+        this.entries,
+        this.scene.activeCamera,
+        BODY_FORM_NEAR_CHARACTER_LIMIT,
+        this.selectedBotId,
+      );
+      this._bodyFormLODRefreshAt = now + BODY_FORM_LOD_SELECTION_INTERVAL_MS;
+      this._bodyFormLODSelectedBotId = this.selectedBotId;
+    }
+
+    for (const [id, entry] of this.entries) {
       if (entry.tauntBubble && entry.tauntBubble.isVisible &&
           (!entry.isAlive || now >= entry.tauntHideAt)) {
         entry.tauntBubble.isVisible = false;
@@ -407,7 +489,8 @@ export class BotRenderer {
       }
       // Tick the one production character system every frame. Far bots keep
       // their state clocks current without rewriting disabled articulated joints.
-      const farLOD = updateForgeCharacterLOD(entry, this.scene.activeCamera);
+      const forceFarBodyForm = entry.bodyFormKey !== 'standard' && !this._bodyFormNearIDs.has(id);
+      const farLOD = updateForgeCharacterLOD(entry, this.scene.activeCamera, forceFarBodyForm);
       updateForgeCharacter(entry, dt, this._motionQuery?.matches === true, !farLOD);
 
       // Damage flinch: Forge leaves root scaling free for this short squash.
@@ -437,16 +520,16 @@ export class BotRenderer {
     if (bot.is_alive) {
       const alpha = bot.is_dodging ? 0.5 : 1;
       if (entry._forgeStatusAlpha !== alpha) {
-        entry.bodyMat.alpha = alpha;
-        entry.headMat.alpha = alpha;
+        forEachForgeStatusMaterial(entry, material => { material.alpha = alpha; });
         entry._forgeStatusAlpha = alpha;
       }
     }
 
     // Stun — red emissive tint (transient, wins over the wounded look)
     if (bot.is_alive && bot.is_stunned) {
-      entry.bodyMat.emissiveColor.set(0.8, 0.15, 0.1);
-      entry.headMat.emissiveColor.set(0.8, 0.15, 0.1);
+      forEachForgeStatusMaterial(entry, material => {
+        material.emissiveColor.set(0.8, 0.15, 0.1);
+      });
     } else if (bot.is_alive || entry._stunActive || entry._woundedActive) {
       // Resting emissive. _updateStatusEffects is the single owner of the
       // non-stunned baseline, so the wounded look layers in here rather than
@@ -462,12 +545,15 @@ export class BotRenderer {
         const dim = wounded ? 0.6 : 1;
         // ~1.2Hz sine from the wall clock (0..1), scaled into a red add.
         const redBoost = critical ? (Math.sin(now * 0.00754) * 0.5 + 0.5) * 0.5 : 0;
-        const bc = entry.bodyMat.diffuseColor;
-        entry.bodyMat.emissiveColor.set(
-          Math.min(bc.r * 0.35 * dim + redBoost, 1), bc.g * 0.35 * dim, bc.b * 0.35 * dim);
-        const hc = entry.headMat.diffuseColor;
-        entry.headMat.emissiveColor.set(
-          Math.min(hc.r * 0.4 * dim + redBoost, 1), hc.g * 0.4 * dim, hc.b * 0.4 * dim);
+        forEachForgeStatusMaterial(entry, (material, index) => {
+          const resting = material._forgeRestEmissive;
+          const diffuse = material.diffuseColor;
+          const baseR = resting?.r ?? diffuse.r * (index === 0 ? 0.35 : 0.4);
+          const baseG = resting?.g ?? diffuse.g * (index === 0 ? 0.35 : 0.4);
+          const baseB = resting?.b ?? diffuse.b * (index === 0 ? 0.35 : 0.4);
+          material.emissiveColor.set(
+            Math.min(baseR * dim + redBoost, 1), baseG * dim, baseB * dim);
+        });
       }
       entry._woundedActive = wounded || critical;
     }
@@ -477,24 +563,16 @@ export class BotRenderer {
   /** @private Flash body white on death using Babylon.js Animation API. */
   _deathFlash(entry) {
     const B = window.BABYLON;
-    const origColor = entry.bodyMat.emissiveColor.clone();
-
-    const bodyAnim = new B.Animation('deathFlashBody', 'emissiveColor', 100,
-      B.Animation.ANIMATIONTYPE_COLOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
-    bodyAnim.setKeys([
-      { frame: 0, value: new B.Color3(1, 1, 1) },
-      { frame: 30, value: origColor.clone() }
-    ]);
-
-    const headAnim = new B.Animation('deathFlashHead', 'emissiveColor', 100,
-      B.Animation.ANIMATIONTYPE_COLOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
-    headAnim.setKeys([
-      { frame: 0, value: new B.Color3(1, 1, 1) },
-      { frame: 30, value: origColor.clone() }
-    ]);
-
-    this.scene.beginDirectAnimation(entry.bodyMat, [bodyAnim], 0, 30, false);
-    this.scene.beginDirectAnimation(entry.headMat, [headAnim], 0, 30, false);
+    forEachForgeStatusMaterial(entry, (material, index) => {
+      const original = material.emissiveColor.clone();
+      const animation = new B.Animation(`deathFlash-${index}`, 'emissiveColor', 100,
+        B.Animation.ANIMATIONTYPE_COLOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
+      animation.setKeys([
+        { frame: 0, value: new B.Color3(1, 1, 1) },
+        { frame: 30, value: original.clone() }
+      ]);
+      this.scene.beginDirectAnimation(material, [animation], 0, 30, false);
+    });
   }
 
   /**
@@ -561,22 +639,16 @@ export class BotRenderer {
     if (!entry.isAlive) return;
     if (!isEnabled('hitReactions', 'impactFlash')) return;
     const B = window.BABYLON;
-    const bodyOrig = entry.bodyMat.emissiveColor.clone();
-    const headOrig = entry.headMat.emissiveColor.clone();
-
-    const bodyAnim = new B.Animation('bowHitBody', 'emissiveColor', 100,
-      B.Animation.ANIMATIONTYPE_COLOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
-    bodyAnim.setKeys([
-      { frame: 0, value: new B.Color3(1, 1, 1) },
-      { frame: 10, value: bodyOrig.clone() }
-    ]);
-
-    const headAnim = new B.Animation('bowHitHead', 'emissiveColor', 100,
-      B.Animation.ANIMATIONTYPE_COLOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
-    headAnim.setKeys([
-      { frame: 0, value: new B.Color3(1, 1, 1) },
-      { frame: 10, value: headOrig.clone() }
-    ]);
+    forEachForgeStatusMaterial(entry, (material, index) => {
+      const original = material.emissiveColor.clone();
+      const animation = new B.Animation(`impactFlash-${index}`, 'emissiveColor', 100,
+        B.Animation.ANIMATIONTYPE_COLOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
+      animation.setKeys([
+        { frame: 0, value: new B.Color3(1, 1, 1) },
+        { frame: 10, value: original.clone() }
+      ]);
+      this.scene.beginDirectAnimation(material, [animation], 0, 10, false);
+    });
 
     const scaleAnim = new B.Animation('bowHitScale', 'scaling', 100,
       B.Animation.ANIMATIONTYPE_VECTOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
@@ -585,8 +657,6 @@ export class BotRenderer {
       { frame: 10, value: new B.Vector3(1, 1, 1) }
     ]);
 
-    this.scene.beginDirectAnimation(entry.bodyMat, [bodyAnim], 0, 10, false);
-    this.scene.beginDirectAnimation(entry.headMat, [headAnim], 0, 10, false);
     this.scene.beginDirectAnimation(entry.body, [scaleAnim], 0, 10, false);
     this.scene.beginDirectAnimation(entry.head, [scaleAnim], 0, 10, false);
   }

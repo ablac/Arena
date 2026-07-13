@@ -1,0 +1,405 @@
+.cosmetics-outfitter {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  margin-bottom: 16px;
+  padding: clamp(16px, 2.4vw, 28px);
+  border: 1px solid rgba(126, 228, 255, 0.2);
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 18% 16%, rgba(71, 215, 255, 0.14), transparent 34%),
+    radial-gradient(circle at 88% 0%, rgba(240, 192, 64, 0.09), transparent 28%),
+    linear-gradient(145deg, rgba(10, 23, 37, 0.98), rgba(5, 11, 20, 0.98));
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.28), inset 0 1px rgba(255, 255, 255, 0.035);
+}
+
+.cosmetics-outfitter::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  opacity: 0.32;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(126, 228, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(126, 228, 255, 0.035) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: linear-gradient(to bottom, #000, transparent 85%);
+}
+
+.cosmetics-outfitter-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.cosmetics-outfitter-head > div:first-child {
+  max-width: 720px;
+}
+
+.cosmetics-outfitter h2 {
+  margin: 4px 0 7px;
+  color: #f3f8ff;
+  font-size: clamp(19px, 2.4vw, 27px);
+  letter-spacing: -0.035em;
+}
+
+.cosmetics-outfitter-head p {
+  margin: 0;
+  color: #9db0c4;
+  font: 500 11px/1.65 'IBM Plex Mono', monospace;
+}
+
+.cosmetics-preview-bot-label {
+  display: grid;
+  flex: 0 1 300px;
+  gap: 7px;
+  color: #7ee4ff;
+  font: 650 9px/1 'IBM Plex Mono', monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.cosmetics-preview-bot-label select {
+  width: 100%;
+  min-height: 44px;
+  border-color: rgba(126, 228, 255, 0.24);
+  border-radius: 12px;
+  background: rgba(4, 10, 18, 0.78);
+  color: #eef7ff;
+  font-size: 12px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.cosmetics-outfitter-grid {
+  display: grid;
+  grid-template-columns: minmax(330px, 1.15fr) minmax(330px, 0.85fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.cosmetics-preview-stage {
+  position: relative;
+  display: grid;
+  min-height: clamp(360px, 42vw, 535px);
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid rgba(126, 228, 255, 0.18);
+  border-radius: 22px;
+  background:
+    radial-gradient(ellipse at 50% 82%, rgba(71, 215, 255, 0.16), transparent 38%),
+    linear-gradient(180deg, rgba(3, 10, 19, 0.72), rgba(1, 5, 12, 0.96));
+}
+
+.cosmetics-preview-stage::before,
+.cosmetics-preview-stage::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.cosmetics-preview-stage::before {
+  inset: 0;
+  background: linear-gradient(115deg, transparent 30%, rgba(126, 228, 255, 0.045) 50%, transparent 70%);
+}
+
+.cosmetics-preview-stage::after {
+  top: 15px;
+  right: 15px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #58e58f;
+  box-shadow: 0 0 16px rgba(88, 229, 143, 0.8);
+}
+
+#accountCosmeticsPreviewCanvas {
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  outline: none;
+  touch-action: pan-y;
+}
+
+#accountCosmeticsPreviewCanvas[hidden] {
+  display: none;
+}
+
+.cosmetics-preview-status {
+  position: relative;
+  z-index: 3;
+  max-width: 310px;
+  padding: 14px 18px;
+  border: 1px solid rgba(126, 228, 255, 0.16);
+  border-radius: 14px;
+  background: rgba(4, 10, 18, 0.76);
+  color: #a9b8c9;
+  font: 500 10px/1.6 'IBM Plex Mono', monospace;
+  text-align: center;
+}
+
+.cosmetics-preview-orbit {
+  position: absolute;
+  z-index: 1;
+  bottom: 9%;
+  left: 18%;
+  width: 64%;
+  height: 18%;
+  border: 1px solid rgba(126, 228, 255, 0.12);
+  border-radius: 50%;
+  box-shadow: 0 0 34px rgba(71, 215, 255, 0.07);
+  transform: perspective(300px) rotateX(62deg);
+}
+
+.cosmetics-preview-inspector {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 18px;
+  border: 1px solid rgba(126, 166, 207, 0.14);
+  border-radius: 22px;
+  background: rgba(5, 12, 21, 0.76);
+}
+
+.cosmetics-preview-inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid rgba(126, 166, 207, 0.12);
+}
+
+.cosmetics-preview-inspector-head > div {
+  min-width: 0;
+}
+
+.cosmetics-preview-inspector-head span {
+  display: block;
+  margin-bottom: 5px;
+  color: #7890a7;
+  font: 650 8px/1 'IBM Plex Mono', monospace;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.cosmetics-preview-inspector-head strong {
+  display: block;
+  overflow: hidden;
+  color: #edf7ff;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cosmetics-preview-inspector-head button {
+  flex: none;
+  min-height: 38px;
+  border-color: rgba(240, 192, 64, 0.28);
+  color: #f0c040;
+}
+
+.cosmetics-preview-inspector-head button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.cosmetics-preview-column-labels,
+.cosmetics-preview-slot {
+  display: grid;
+  grid-template-columns: minmax(76px, 0.55fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.cosmetics-preview-column-labels {
+  padding: 15px 11px 7px;
+  color: #688199;
+  font: 650 8px/1 'IBM Plex Mono', monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.cosmetics-preview-slots {
+  display: grid;
+  gap: 8px;
+}
+
+.cosmetics-preview-slots > p {
+  margin: 24px 8px;
+  color: #8fa3b7;
+  font: 500 10px/1.6 'IBM Plex Mono', monospace;
+}
+
+.cosmetics-preview-slot {
+  min-height: 68px;
+  padding: 10px;
+  border: 1px solid rgba(126, 166, 207, 0.11);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.cosmetics-preview-slot.is-staged {
+  border-color: rgba(240, 192, 64, 0.25);
+  background: linear-gradient(90deg, rgba(240, 192, 64, 0.055), rgba(71, 215, 255, 0.025));
+}
+
+.cosmetics-preview-slot-name {
+  color: #7ee4ff;
+  font: 650 9px/1.35 'IBM Plex Mono', monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cosmetics-preview-value {
+  min-width: 0;
+}
+
+.cosmetics-preview-value small,
+.cosmetics-preview-value strong,
+.cosmetics-preview-value em {
+  display: block;
+}
+
+.cosmetics-preview-value small {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  color: #688199;
+  font: 650 8px/1 'IBM Plex Mono', monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cosmetics-preview-value strong {
+  overflow: hidden;
+  color: #b5c3d1;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cosmetics-preview-slot.is-staged .cosmetics-preview-value:last-child strong {
+  color: #ffe08b;
+}
+
+.cosmetics-preview-value em {
+  margin-top: 4px;
+  color: #7a91a8;
+  font: 600 8px/1 'IBM Plex Mono', monospace;
+  font-style: normal;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.cosmetics-preview-slot.is-staged .cosmetics-preview-value:last-child em {
+  color: #f0c040;
+}
+
+.cosmetics-preview-safety {
+  margin: auto 0 0;
+  padding-top: 15px;
+  color: #71879c;
+  font: 500 9px/1.55 'IBM Plex Mono', monospace;
+}
+
+.cosmetic-license-actions .cosmetic-preview {
+  border-color: rgba(126, 228, 255, 0.28);
+  color: #7ee4ff;
+}
+
+.cosmetic-license-actions .cosmetic-preview:hover {
+  border-color: #7ee4ff;
+  background: rgba(71, 215, 255, 0.1);
+  color: #dff9ff;
+}
+
+.cosmetic-license-actions .cosmetic-preview:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+body.dashboard-embedded .cosmetics-outfitter {
+  border-radius: 22px;
+}
+
+@media (max-width: 900px) {
+  .cosmetics-outfitter-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cosmetics-preview-stage {
+    min-height: min(62vw, 500px);
+  }
+}
+
+@media (max-width: 620px) {
+  .cosmetics-outfitter {
+    margin-inline: -2px;
+    padding: 14px;
+    border-radius: 19px;
+  }
+
+  .cosmetics-outfitter-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cosmetics-preview-bot-label {
+    flex-basis: auto;
+  }
+
+  .cosmetics-preview-stage {
+    min-height: 390px;
+  }
+
+  .cosmetics-preview-inspector {
+    padding: 13px;
+  }
+
+  .cosmetics-preview-inspector-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cosmetics-preview-column-labels {
+    display: none;
+  }
+
+  .cosmetics-preview-slot {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    margin-top: 8px;
+  }
+
+  .cosmetics-preview-slot-name {
+    grid-column: 1 / -1;
+  }
+
+  .cosmetics-preview-value small {
+    position: static;
+    display: block;
+    width: auto;
+    height: auto;
+    margin-bottom: 5px;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cosmetics-preview-stage::before {
+    display: none;
+  }
+}

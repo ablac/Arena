@@ -9,8 +9,9 @@ import (
 
 func TestDefaultCosmeticCatalogIntegrity(t *testing.T) {
 	items := DefaultCosmeticCatalog()
-	if len(items) != 328 {
-		t.Fatalf("launch catalog has %d items, want 328", len(items))
+	wantItems := 328 + len(bodyFormCosmeticSeeds)
+	if len(items) != wantItems {
+		t.Fatalf("launch catalog has %d items, want %d", len(items), wantItems)
 	}
 
 	ids := make(map[string]bool)
@@ -55,11 +56,13 @@ func TestDefaultCosmeticCatalogIntegrity(t *testing.T) {
 
 func TestLaunchCosmeticCatalogHasOneHundredCompleteSets(t *testing.T) {
 	catalog := DefaultCosmeticCatalogData()
-	if len(catalog.Items) != 328 {
-		t.Fatalf("launch items = %d, want 328", len(catalog.Items))
+	wantItems := 328 + len(bodyFormCosmeticSeeds)
+	wantPacks := 124 + len(bodyFormCosmeticSeeds)
+	if len(catalog.Items) != wantItems {
+		t.Fatalf("launch items = %d, want %d", len(catalog.Items), wantItems)
 	}
-	if len(catalog.Packs) != 124 {
-		t.Fatalf("launch packs = %d, want 124", len(catalog.Packs))
+	if len(catalog.Packs) != wantPacks {
+		t.Fatalf("launch packs = %d, want %d", len(catalog.Packs), wantPacks)
 	}
 
 	defaultIDs := map[string]bool{
@@ -72,7 +75,7 @@ func TestLaunchCosmeticCatalogHasOneHundredCompleteSets(t *testing.T) {
 			t.Fatalf("duplicate launch item id %q", item.ID)
 		}
 		itemsByID[item.ID] = item
-		if !defaultIDs[item.ID] && item.Slot != CosmeticSlotTrail {
+		if !defaultIDs[item.ID] && item.Slot != CosmeticSlotTrail && item.CategoryID != CosmeticBodyFormCategoryID {
 			customMemberships[item.ID] = 0
 		}
 	}
@@ -87,6 +90,9 @@ func TestLaunchCosmeticCatalogHasOneHundredCompleteSets(t *testing.T) {
 		}
 		packIDs[pack.ID] = true
 		if pack.CategoryID == CosmeticTrailCategoryID {
+			continue
+		}
+		if pack.CategoryID == CosmeticBodyFormCategoryID {
 			continue
 		}
 		if len(pack.ItemIDs) != 3 || len(pack.Items) != 3 {
@@ -125,6 +131,38 @@ func TestLaunchCosmeticCatalogHasOneHundredCompleteSets(t *testing.T) {
 		if memberships != 1 {
 			t.Errorf("custom cosmetic %q belongs to %d packs, want exactly one", itemID, memberships)
 		}
+	}
+}
+
+func TestBodyFormCatalogHasOriginalSingletonSkinsAtSetPrice(t *testing.T) {
+	catalog := DefaultCosmeticCatalogData()
+	itemsByID := make(map[string]CosmeticItem, len(catalog.Items))
+	for _, item := range catalog.Items {
+		itemsByID[item.ID] = item
+	}
+
+	seen := make(map[string]bool, len(bodyFormCosmeticSeeds))
+	for _, pack := range catalog.Packs {
+		if pack.CategoryID != CosmeticBodyFormCategoryID {
+			continue
+		}
+		if len(pack.ItemIDs) != 1 || len(pack.Items) != 1 {
+			t.Fatalf("body-form pack %q must contain one independent license", pack.ID)
+		}
+		if !pack.IsActive || !pack.IsPurchasable || pack.IsFree || pack.PriceCents != CosmeticPackPriceCents || pack.Currency != "USD" {
+			t.Fatalf("body-form pack %q is not sale-ready at $1.99: %+v", pack.ID, pack)
+		}
+		item := itemsByID[pack.ItemIDs[0]]
+		if item.CategoryID != CosmeticBodyFormCategoryID || item.Slot != CosmeticSlotBotSkin || item.IsPurchasable || item.IsFree {
+			t.Fatalf("body-form item %q has invalid ownership metadata: %+v", item.ID, item)
+		}
+		if !IsSupportedCosmeticAsset(item.Slot, item.AssetKey) || seen[item.AssetKey] {
+			t.Fatalf("body-form asset %q is unsupported or duplicated", item.AssetKey)
+		}
+		seen[item.AssetKey] = true
+	}
+	if len(seen) != len(bodyFormCosmeticSeeds) || len(seen) < 18 {
+		t.Fatalf("body-form packs = %d, want %d", len(seen), len(bodyFormCosmeticSeeds))
 	}
 }
 
@@ -335,8 +373,9 @@ func TestDefaultCosmeticCatalogDataIncludesOrderedSaleReadyPacks(t *testing.T) {
 	if len(catalog.Categories) < 4 {
 		t.Fatalf("starter categories = %d, want at least 4", len(catalog.Categories))
 	}
-	if len(catalog.Packs) != 124 {
-		t.Fatalf("launch packs = %d, want 124", len(catalog.Packs))
+	wantPacks := 124 + len(bodyFormCosmeticSeeds)
+	if len(catalog.Packs) != wantPacks {
+		t.Fatalf("launch packs = %d, want %d", len(catalog.Packs), wantPacks)
 	}
 
 	for index, pack := range catalog.Packs {
@@ -347,7 +386,7 @@ func TestDefaultCosmeticCatalogDataIncludesOrderedSaleReadyPacks(t *testing.T) {
 			t.Errorf("pack %q sale metadata is inconsistent: %+v", pack.ID, pack)
 		}
 		wantItems := 3
-		if pack.CategoryID == CosmeticTrailCategoryID {
+		if pack.CategoryID == CosmeticTrailCategoryID || pack.CategoryID == CosmeticBodyFormCategoryID {
 			wantItems = 1
 		}
 		if len(pack.Items) != wantItems {

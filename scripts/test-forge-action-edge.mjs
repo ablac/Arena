@@ -36,13 +36,17 @@ const visibilityMeshes = [{visibility: 1}, {visibility: 1}, {visibility: 1}];
 const lowDetail = {visibility: 1};
 const color = () => ({
   diffuseColor: {r: 0.4, g: 0.5, b: 0.6},
-  emissiveColor: {set() {}},
+  emissiveColor: {r: 0.2, g: 0.25, b: 0.3, set(r, g, b) { Object.assign(this, {r, g, b}); }},
   alpha: 1,
 });
+const bodyStatus = color();
+const headStatus = color();
+const formAccentStatus = color();
 const statusEntry = {
   isForgeCharacter: true,
-  bodyMat: color(),
-  headMat: color(),
+  bodyMat: bodyStatus,
+  headMat: headStatus,
+  _forgeStatusMaterials: [bodyStatus, headStatus, formAccentStatus],
   _forgeMeshes: visibilityMeshes,
   lowDetail,
 };
@@ -61,6 +65,8 @@ assert.equal(statusEntry.bodyMat.alpha, 0.5,
   'dodge feedback must dim the bot-owned accent material');
 assert.equal(statusEntry.headMat.alpha, 0.5,
   'dodge feedback must dim the bot-owned core material');
+assert.equal(formAccentStatus.alpha, 0.5,
+  'dodge feedback must dim every visible full-body accent material');
 BotRenderer.prototype._updateStatusEffects.call({}, statusEntry, {
   is_alive: true,
   is_dodging: false,
@@ -72,5 +78,7 @@ assert.ok(visibilityMeshes.every(mesh => mesh.visibility === 1));
 assert.equal(lowDetail.visibility, 1);
 assert.equal(statusEntry.bodyMat.alpha, 1);
 assert.equal(statusEntry.headMat.alpha, 1);
+assert.equal(formAccentStatus.alpha, 1,
+  'full-body accent opacity must restore after dodge');
 
 console.log('Forge actions emit one edge and dodge feedback avoids unsupported instance visibility');

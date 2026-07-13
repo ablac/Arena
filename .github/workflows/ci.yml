@@ -82,6 +82,7 @@ jobs:
           node scripts/test-admin-connection-diagnostics.mjs
           node scripts/test-dashboard-startup.mjs
           node scripts/test-dashboard-account-cosmetics.mjs
+          node scripts/test-dashboard-cosmetics-preview.mjs
           node scripts/test-dashboard-email-auth.mjs
           node scripts/test-dashboard-cosmetics-checkout.mjs
           node scripts/test-embedded-stripe-checkout.mjs
@@ -92,10 +93,13 @@ jobs:
           node scripts/test-cosmetics-shop-preview.mjs
           node scripts/test-cosmetics-forge-mounts.mjs
           node scripts/test-character-roster.mjs
+          node scripts/test-body-form-roster.mjs
+          node scripts/test-body-form-renderer.mjs
           node scripts/test-character-animations.mjs
           node scripts/test-character-renderer-integration.mjs
           node scripts/test-character-shop.mjs
           node scripts/test-forge-action-edge.mjs
+          node scripts/test-forge-facing.mjs
           node scripts/test-forge-lod.mjs
           node scripts/test-forge-visibility.mjs
           node scripts/test-forge-mount-metrics.mjs
@@ -112,6 +116,7 @@ jobs:
           node scripts/test-spectator-client.mjs
           node scripts/test-swordsman-material-lifecycle.mjs
           node scripts/test-responsive-site-shell.mjs
+          node scripts/test-arena-brand-lockup.mjs
           node scripts/test-teleporter-readiness.mjs
           node scripts/test-service-status-ui.mjs
           node scripts/test-sdk-service-status.mjs

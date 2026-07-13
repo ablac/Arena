@@ -5,6 +5,11 @@ function dataModule(source) {
   return `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 }
 
+const bodyFormRosterURL = new URL(
+  '../frontend/js/renderer/body-form-roster.js?cosmetics-forge-mounts-test',
+  import.meta.url,
+).href;
+
 class FakeColor3 {
   constructor(r = 0, g = 0, b = 0) { Object.assign(this, {r, g, b}); }
   clone() { return new FakeColor3(this.r, this.g, this.b); }
@@ -98,7 +103,11 @@ source = source
       );
     };
     const makeMat = name => new window.FakeMaterial(name);
-  `);
+  `)
+  .replace(
+    /from '\.\/body-form-roster\.js[^']*';/,
+    `from '${bodyFormRosterURL}';`,
+  );
 const cosmetics = await import(dataModule(source));
 
 const METRICS = {

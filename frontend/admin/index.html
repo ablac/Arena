@@ -2011,7 +2011,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 
               <section class="ops-card">
                 <h3>Grant timed membership</h3>
-                <p class="muted">Cosmetics-only access includes all current and future purchasable sets and trails until automatic expiry. It does not create billing, change payment status, or change API-key access or limits.</p>
+                <p class="muted">Cosmetics-only access includes all current and future purchasable sets, full-body skins, and trails until automatic expiry. It does not create billing, change payment status, or change API-key access or limits.</p>
                 <form id="cosmeticMembershipForm" class="form-stack cosmetics-grant-form" onsubmit="grantCosmeticMembership(event)">
                   <label>Selected customer<input id="cosmeticMembershipEmail" type="email" readonly required placeholder="Look up an email first"></label>
                   <label>Duration preset<select id="cosmeticMembershipPreset" onchange="setCosmeticMembershipPreset(this.value)"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option><option value="365">1 year</option><option value="custom">Custom expiry</option></select></label>
@@ -5784,7 +5784,7 @@ function renderCosmeticCustomerAccess(data, email) {
     <article class="cosmetics-access-row">
       <div class="cosmetics-access-row-main">
         <div class="cosmetics-access-row-title">Timed cosmetics membership <span class="cosmetics-admin-badge ${membership.status === 'active' ? 'is-live' : 'is-inactive'}">${esc(membership.status || 'active')}</span></div>
-        <div class="cosmetics-access-row-meta">Current and future purchasable sets and trails · expires ${esc(fmtDateTime(membership.expires_at || ''))}${membership.note ? ' · ' + esc(membership.note) : ''}</div>
+        <div class="cosmetics-access-row-meta">Current and future purchasable sets, full-body skins, and trails · expires ${esc(fmtDateTime(membership.expires_at || ''))}${membership.note ? ' · ' + esc(membership.note) : ''}</div>
       </div>
       ${membership.status === 'active' ? `<button type="button" class="btn-danger" data-membership-id="${escAttr(membership.id)}" onclick="revokeCosmeticMembership(this.dataset.membershipId)">Revoke membership</button>` : '<span class="muted">Membership ended</span>'}
     </article>`).join('') : '<div class="muted">No timed cosmetics memberships found.</div>';

@@ -6,6 +6,11 @@ function dataModule(source) {
   return `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 }
 
+const bodyFormRosterURL = new URL(
+  '../frontend/js/renderer/body-form-roster.js?cosmetics-renderer-test',
+  import.meta.url,
+).href;
+
 class FakeColor3 {
   constructor(r, g, b) { this.r = r; this.g = g; this.b = b; }
   clone() { return new FakeColor3(this.r, this.g, this.b); }
@@ -69,7 +74,11 @@ rendererSource = rendererSource
       return new window.BABYLON.Color3(parseInt(hex.slice(0,2),16)/255, parseInt(hex.slice(2,4),16)/255, parseInt(hex.slice(4,6),16)/255);
     };
     const makeMat = name => new window.FakeMaterial(name);
-  `);
+  `)
+  .replace(
+    /from '\.\/body-form-roster\.js[^']*';/,
+    `from '${bodyFormRosterURL}';`,
+  );
 const renderer = await import(dataModule(rendererSource));
 
 assert.equal(renderer.resolveCosmeticAsset('bot_skin', 'neon_grid').key, 'neon_grid', 'legacy visuals must stay supported');

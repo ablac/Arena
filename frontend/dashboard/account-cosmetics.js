@@ -14,6 +14,24 @@
     return typeof value === 'string' ? value.trim() : '';
   }
 
+  const PREVIEW_SLOT_DEFAULTS = Object.freeze({
+    bot_skin: 'standard',
+    weapon_skin: 'standard',
+    attachment: 'none',
+    trail: 'standard',
+  });
+  const PREVIEW_SLOTS = Object.freeze(Object.keys(PREVIEW_SLOT_DEFAULTS));
+  const PREVIEW_ASSET_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/;
+
+  function emptyPreviewLoadout() {
+    return {...PREVIEW_SLOT_DEFAULTS};
+  }
+
+  function previewAssetKey(item) {
+    const assetKey = cleanText(item?.asset_key);
+    return PREVIEW_ASSET_KEY_PATTERN.test(assetKey) ? assetKey : '';
+  }
+
   function normalizeSession(payload) {
     const source = payload && typeof payload === 'object' ? payload : {};
     const rawAccount = source.account && typeof source.account === 'object'
@@ -49,6 +67,8 @@
       name: cleanText(bot.name || bot.bot_name) || 'Unnamed bot',
       key_prefix: cleanText(bot.key_prefix || bot.api_key_prefix),
       key_is_active: bot.key_is_active !== false && bot.is_active !== false,
+      avatar_color: cleanText(bot.avatar_color) || '#5edfff',
+      default_weapon: cleanText(bot.default_weapon || bot.weapon) || 'sword',
       linked_at: cleanText(bot.linked_at),
     };
   }
@@ -111,6 +131,91 @@
         ? normalizeSubscription(source.subscription)
         : null,
       subscription_offer: normalizeSubscriptionOffer(source.subscription_offer),
+    };
+  }
+
+  function currentPreviewState(snapshot, botID) {
+    const loadout = emptyPreviewLoadout();
+    const licenses = {};
+    if (!snapshot.bots.some(bot => bot.id === botID)) return {loadout, licenses};
+
+    for (const license of snapshot.licenses) {
+      const slot = license.item.slot;
+      if (!PREVIEW_SLOTS.includes(slot) || licenses[slot]) continue;
+      const equippedBotID = cleanText(license.equipped_bot_id || license.assigned_bot_id);
+      const assetKey = previewAssetKey(license.item);
+      if (license.status !== 'active' || license.item.is_active !== true || license.equipped !== true ||
+          equippedBotID !== botID || !assetKey) continue;
+      loadout[slot] = assetKey;
+      licenses[slot] = license;
+    }
+    return {loadout, licenses};
+  }
+
+  // Returns the server-authoritative visual loadout for one linked bot. A
+  // loadout entry can only come from an active, equipped license in the
+  // account snapshot; caller-provided asset keys are never accepted here.
+  function equippedLoadout(rawSnapshot, rawBotID) {
+    const snapshot = normalizeSnapshot(rawSnapshot);
+    const botID = cleanText(rawBotID);
+    return currentPreviewState(snapshot, botID).loadout;
+  }
+
+  // Builds a visual-only staged loadout. stagedBySlot must map a known slot to
+  // an owned license ID. Each choice is resolved again from the latest account
+  // snapshot, which prevents stale, inactive, wrong-slot, or arbitrary asset
+  // values from reaching the renderer or being mistaken for equip authority.
+  function previewModel(rawSnapshot, rawBotID, rawStagedBySlot) {
+    const snapshot = normalizeSnapshot(rawSnapshot);
+    const botID = cleanText(rawBotID);
+    const bot = snapshot.bots.find(entry => entry.id === botID) || null;
+    const current = currentPreviewState(snapshot, bot?.id || '');
+    const previewLoadout = {...current.loadout};
+    const stagedBySlot = {};
+    const stagedLicenses = {};
+    const requested = rawStagedBySlot && typeof rawStagedBySlot === 'object' && !Array.isArray(rawStagedBySlot)
+      ? rawStagedBySlot
+      : {};
+
+    if (bot) {
+      for (const slot of PREVIEW_SLOTS) {
+        const licenseID = cleanText(requested[slot]);
+        if (!licenseID) continue;
+        const license = snapshot.licenses.find(entry => entry.id === licenseID);
+        const assetKey = previewAssetKey(license?.item);
+        if (!license || license.status !== 'active' || license.item.is_active !== true ||
+            license.item.slot !== slot || !assetKey) continue;
+        stagedBySlot[slot] = license.id;
+        stagedLicenses[slot] = license;
+        previewLoadout[slot] = assetKey;
+      }
+    }
+
+    const slots = {};
+    for (const slot of PREVIEW_SLOTS) {
+      const stagedLicense = stagedLicenses[slot] || null;
+      const currentLicense = current.licenses[slot] || null;
+      slots[slot] = {
+        currentLicense,
+        stagedLicense,
+        assetKey: previewLoadout[slot],
+        canEquip: Boolean(
+          bot?.key_is_active && stagedLicense && stagedLicense.assigned_bot_id === bot.id &&
+          !(stagedLicense.equipped && (!stagedLicense.equipped_bot_id || stagedLicense.equipped_bot_id === bot.id)),
+        ),
+      };
+    }
+
+    return {
+      bot,
+      currentLoadout: current.loadout,
+      previewLoadout,
+      currentLicenses: current.licenses,
+      stagedLicenses,
+      stagedBySlot,
+      slots,
+      hasStaged: Object.keys(stagedBySlot).length > 0,
+      isDirty: PREVIEW_SLOTS.some(slot => previewLoadout[slot] !== current.loadout[slot]),
     };
   }
 
@@ -323,6 +428,7 @@
     const actionLabel = license.assigned_bot_id ? 'Move to bot' : 'Assign to bot';
     const assignedBotActive = assignedBot?.key_is_active === true;
     const equipped = license.equipped === true && (!license.equipped_bot_id || license.equipped_bot_id === license.assigned_bot_id);
+    const previewable = activeLicense && license.item.is_active && snapshot.bots.length > 0;
     const equippedCopy = !activeLicense
       ? `License ${escapeHTML(license.status)}; it cannot be assigned or equipped`
       : equipped
@@ -342,6 +448,7 @@
       <div class="cosmetic-assignment${license.assigned_bot_id ? ' assigned' : ''}">${assignedCopy}</div>
       <div class="cosmetic-equip-state${equipped ? ' equipped' : ''}">${equippedCopy}</div>
       <div class="cosmetic-license-actions">
+        ${activeLicense && license.item.is_active ? `<button class="sm cosmetic-preview" type="button" data-license-preview="${escapeHTML(license.id)}" aria-label="Preview ${escapeHTML(license.item.name)} on the selected bot"${previewable && !isBusy ? '' : ' disabled'}>${snapshot.bots.length ? 'Preview' : 'Link a bot to preview'}</button>` : ''}
         <select data-license-target="${escapeHTML(license.id)}" aria-label="Bot for ${escapeHTML(license.item.name)}"${activeLicense && assignableBots.length && !isBusy ? '' : ' disabled'}>
           ${snapshot.bots.length ? `<option value="">${license.assigned_bot_id ? 'Choose another bot...' : 'Choose a linked bot...'}</option>${options}` : '<option value="">Link a bot first</option>'}
         </select>
@@ -405,7 +512,7 @@
       <div class="all-access-copy">
         <div class="cosmetic-kicker">Monthly collection pass</div>
         <h2 id="all-access-title">All Access</h2>
-        <p>Every current and future cosmetic set and trail, with up to 5 active API keys.</p>
+        <p>Every current and future cosmetic set, full-body skin, and trail, with up to 5 active API keys.</p>
         <p class="all-access-removal">Cancellation keeps access through the paid period. When service ends, subscription cosmetics are removed from your account and any bots using them.</p>
       </div>
       <div class="all-access-offer">
@@ -745,6 +852,7 @@
     accountRoute,
     assignmentIntent,
     checkoutIntent,
+    equippedLoadout,
     escapeHTML,
     keyCreateIntent,
     keyRevokeIntent,
@@ -754,6 +862,7 @@
     normalizeSnapshot,
     normalizeSubscription,
     normalizeSubscriptionOffer,
+    previewModel,
     renderPanel,
     requestHeaders,
     slotLabel,
