@@ -118,11 +118,13 @@ function setupMobileOverlay(overlayEl, fabEl, { onOpen, onClose } = {}) {
 
 // Sets the iframe's src from data-src the first time its overlay opens, so
 // an idle mobile visitor never loads it. Shared by the Dashboard and Shop
-// overlays, which are otherwise identical lazy-iframe drawers.
+// overlays, which are otherwise identical lazy-iframe drawers. Returns the
+// {open, close} handle so callers can drive it from elsewhere (see the
+// window.ArenaOpen*/ArenaCloseOverlay hooks below).
 function setupLazyFrameOverlay(overlayId, fabId) {
   const overlay = document.getElementById(overlayId);
   const frame = overlay?.querySelector('iframe[data-src]');
-  setupMobileOverlay(overlay, document.getElementById(fabId), {
+  return setupMobileOverlay(overlay, document.getElementById(fabId), {
     onOpen: () => {
       if (frame && !frame.getAttribute('src')) {
         frame.setAttribute('src', appPath(frame.dataset.src));
@@ -135,8 +137,41 @@ function setupLazyFrameOverlay(overlayId, fabId) {
 // exactly (that module is unmodified and self-wires on DOMContentLoaded).
 function setupChatAndDashboard() {
   setupMobileOverlay(document.getElementById('chat-overlay'), document.getElementById('fab-chat'));
-  setupLazyFrameOverlay('dashboard-overlay', 'fab-dashboard');
-  setupLazyFrameOverlay('shop-overlay', 'fab-shop');
+  const dashboardOverlay = setupLazyFrameOverlay('dashboard-overlay', 'fab-dashboard');
+  const shopOverlay = setupLazyFrameOverlay('shop-overlay', 'fab-shop');
+
+  // Mirrors app.js's openDashboardOverlay/window.ArenaOpen*/ArenaCloseOverlay
+  // hooks for the mobile shell: the embedded Shop iframe (frontend/shop/)
+  // calls these same-origin globals instead of navigating with ?dash_open=1
+  // or a plain link, which would otherwise reload this whole mobile page
+  // just to switch drawers.
+  const dashboardFrame = document.querySelector('#dashboard-overlay iframe[data-src]');
+  window.ArenaOpenDashboard = ({ tab = '', plan = '', pack = '' } = {}) => {
+    if (dashboardFrame) {
+      const extra = [];
+      if (tab) extra.push(`tab=${encodeURIComponent(tab)}`);
+      if (plan) extra.push(`plan=${encodeURIComponent(plan)}`);
+      if (pack) extra.push(`pack=${encodeURIComponent(pack)}`);
+      const loaded = Boolean(dashboardFrame.getAttribute('src'));
+      if (!loaded) {
+        if (extra.length) {
+          const base = dashboardFrame.dataset.src || '';
+          dashboardFrame.dataset.src = base + (base.includes('?') ? '&' : '?') + extra.join('&');
+        }
+      } else if (plan || pack) {
+        const base = dashboardFrame.dataset.src || '/dashboard/?view=private';
+        dashboardFrame.setAttribute('src', appPath(base) + (base.includes('?') ? '&' : '?') + extra.join('&'));
+      } else if (tab && typeof dashboardFrame.contentWindow?.activateTab === 'function') {
+        dashboardFrame.contentWindow.activateTab(tab);
+      }
+    }
+    dashboardOverlay?.open();
+  };
+  window.ArenaOpenShop = () => shopOverlay?.open();
+  window.ArenaCloseOverlay = (overlayId) => {
+    if (overlayId === 'dashboard-overlay') dashboardOverlay?.close();
+    else if (overlayId === 'shop-overlay') shopOverlay?.close();
+  };
 
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;

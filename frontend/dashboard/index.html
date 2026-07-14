@@ -1169,6 +1169,14 @@ function siteRootPath() {
 }
 
 function openArenaShop() {
+  // Embedded in the Arena's own Dashboard drawer (desktop or mobile), the
+  // parent page can open its Shop drawer directly -- no reload needed. Only
+  // fall back to a real navigation when the Dashboard is its own standalone
+  // tab (e.g. reached via a bookmarked/emailed link) with no such parent.
+  if (window.top !== window.self && typeof window.top.ArenaOpenShop === 'function') {
+    window.top.ArenaOpenShop();
+    return;
+  }
   navigateAccount(siteRootPath() + '?shop_open=1');
 }
 
@@ -1330,11 +1338,32 @@ async function signOutAccount() {
   try {
     const logoutURL = accountSession.logout_url || '/dashboard/logout';
     const separator = logoutURL.includes('?') ? '&' : '?';
-    const payload = await accountRequest(logoutURL+separator+'return_to='+encodeURIComponent(accountReturnPath()), {method:'POST'});
-    navigateAccount(payload?.redirect_to || accountReturnPath());
+    await accountRequest(logoutURL+separator+'return_to='+encodeURIComponent(accountReturnPath()), {method:'POST'});
   } catch (error) {
     accountViewError = error.message || 'Could not sign out of the account session.';
     renderAccountCosmetics();
+    return;
+  }
+  // Signing out only clears the arena_customer_session cookie server-side --
+  // there's nothing left to navigate to. Reset the drawer's own state in
+  // place instead of reloading the whole Arena page just to land back on
+  // /dashboard/, and tell any other open tab to drop its session too
+  // (notifyOtherTabsSignedIn is named for the sign-in path but the signal
+  // it sends is direction-agnostic: "go re-check your session").
+  accountSession = {...accountSession, authenticated:false, account:{id:'',email:'',email_verified:false,name:''}, csrf_token:''};
+  accountSnapshot = null;
+  accountCatalog = null;
+  accountProfile = null;
+  notifyOtherTabsSignedIn();
+  if (apiKey) {
+    buildBotSwitcher();
+    updatePrivateAuthUI();
+    if (document.querySelector('.tbtn.active')?.dataset.auth === 'account') activateTab('overview');
+  } else {
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('login').style.display = 'flex';
+    updateAccountLoginUI();
+    updatePrivateAuthUI();
   }
 }
 

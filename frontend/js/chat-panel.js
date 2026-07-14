@@ -184,7 +184,7 @@ async function fetchChatConfig() {
 
 /** Sends a click to whichever page's Dashboard entry point actually exists. */
 function openDashboard() {
-  const desktopButton = document.querySelector('[data-overlay-open="dashboard-overlay"]');
+  const desktopButton = document.querySelector('.onboarding-rail[data-overlay-open="dashboard-overlay"]');
   if (desktopButton) {
     desktopButton.click();
     return;
