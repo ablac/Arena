@@ -511,7 +511,11 @@ export function updateForgeCharacter(entry, dt, reducedMotion = false, highDetai
   j.body.rotation.x = -(entry.profile.proportions.posture + pose[P.bodyPitch]);
   j.body.rotation.y = (base.bodyYaw || 0) + pose[P.bodyYaw];
   j.body.rotation.z = pose[P.bodyRoll];
-  j.head.rotation.x = (base.headPitch || 0) - pose[P.headPitch];
+  // Counter-rotate the head against most of the torso's forward pitch so a
+  // ready-stance lean keeps the eyes on the target instead of reading as a
+  // character about to tip over.
+  j.head.rotation.x = (base.headPitch || 0) - pose[P.headPitch]
+    + 0.6 * (entry.profile.proportions.posture + pose[P.bodyPitch]);
   j.head.rotation.y = pose[P.headYaw];
   j.leftArm.rotation.x = (base.armLPitch || 0) + pose[P.armLPitch];
   j.leftArm.rotation.z = base.armLRoll + pose[P.armLRoll];

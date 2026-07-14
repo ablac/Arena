@@ -36,13 +36,16 @@
 <div id="legend"></div>
 <canvas id="canvas"></canvas>
 <script type="module">
-import {createBotEntry} from './js/renderer/bot-body.js?v=20260714a';
+import {createBotEntry} from './js/renderer/bot-body.js?v=20260714e';
 import {
   updateForgeCharacter, triggerForgeAttack, triggerForgeDodge,
   triggerForgeHit, triggerForgeShove,
-} from './js/renderer/character-anims.js?v=20260714a';
-import {FORGE_WEAPONS} from './js/renderer/character-roster.js?v=20260714a';
-import {BODY_FORM_SPECS} from './js/renderer/body-form-roster.js?v=20260714a';
+} from './js/renderer/character-anims.js?v=20260714e';
+import {FORGE_WEAPONS} from './js/renderer/character-roster.js?v=20260714e';
+import {BODY_FORM_SPECS} from './js/renderer/body-form-roster.js?v=20260714e';
+import {applyBotCosmetics} from './js/renderer/cosmetics.js?v=20260714e';
+import {TrailRenderer} from './js/renderer/trails.js?v=20260714e';
+import './js/cosmetic-themes.js?v=20260713f';
 
 const canvas = document.getElementById('canvas');
 const engine = new BABYLON.Engine(canvas, true);
@@ -62,7 +65,14 @@ gmat.specularColor = BABYLON.Color3.Black();
 ground.material = gmat;
 
 const COLORS = ['#e94560', '#2ecc71', '#f5cd79', '#3dc1d3', '#6c5ce7', '#556270', '#c44569'];
+const TRAILS = ['ember_sparks', 'frost_shards', 'ion_stream', 'plasma_ribbon', 'void_motes',
+  'solar_wake', 'lunar_dust', 'comet_tail', 'nebula_pulse', 'storm_arcs', 'static_glitch',
+  'pixel_scatter', 'data_stream', 'holo_prism', 'toxic_spores', 'verdant_leaves', 'sand_wake',
+  'magma_cinders', 'ocean_spray', 'gilded_dust', 'rune_sparks', 'phantom_smoke', 'gear_sparks',
+  'bounty_flare', 'standard'];
+const setKey = n => `arena_set_${String(n).padStart(3, '0')}_lab`;
 const entries = [];
+const entryMap = new Map();
 const SPACING = 26;
 
 // Row 0 (front, z=0): the 7 default chassis, one per weapon.
@@ -70,8 +80,17 @@ FORGE_WEAPONS.forEach((weapon, i) => {
   const bot = {
     bot_id: `default-${weapon}`, name: weapon, weapon,
     avatar_color: COLORS[i % COLORS.length],
+    cosmetics: {
+      bot_skin: 'standard',
+      weapon_skin: i % 3 === 0 ? 'solar_flare' : setKey(i + 1),
+      attachment: i % 3 === 1 ? 'orbital_halo' : setKey(i + 40),
+      trail: TRAILS[i % TRAILS.length],
+    },
   };
   const entry = createBotEntry(bot, scene, {presentationOnly: true});
+  entry.botData = bot;
+  applyBotCosmetics(entry, bot, scene, {forceEnabled: true});
+  entryMap.set(bot.bot_id, entry);
   entry.root.position.set((i - 3) * SPACING, 0, 0);
   entry._homeX = (i - 3) * SPACING;
   entry._homeZ = 0;
@@ -86,9 +105,17 @@ BODY_FORM_SPECS.forEach((spec, i) => {
   const bot = {
     bot_id: `form-${spec.key}`, name: spec.label, weapon,
     avatar_color: COLORS[(i + 3) % COLORS.length],
-    cosmetics: {bot_skin: spec.assetKey},
+    cosmetics: {
+      bot_skin: spec.assetKey,
+      weapon_skin: setKey(i + 8),
+      attachment: setKey(i + 20),
+      trail: TRAILS[(i + 7) % TRAILS.length],
+    },
   };
   const entry = createBotEntry(bot, scene, {presentationOnly: true});
+  entry.botData = bot;
+  applyBotCosmetics(entry, bot, scene, {forceEnabled: true});
+  entryMap.set(bot.bot_id, entry);
   const row = 1 + Math.floor(i / 7);
   const col = i % 7;
   entry.root.position.set((col - 3) * SPACING, 0, row * 34);
@@ -105,6 +132,7 @@ for (let r = 0; r * 7 < BODY_FORM_SPECS.length; r += 1) {
 }
 document.getElementById('legend').textContent = legendLines.join('\n');
 
+const trailRenderer = new TrailRenderer(scene, {forceEnabled: true});
 let mode = 'idle';
 let visibleRow = -1; // -1 = all
 let modeClock = 0;
@@ -125,6 +153,7 @@ for (const button of document.querySelectorAll('#controls button[data-mode]')) {
       entry.anim.targetRotY = Math.PI; // face camera (-Z world)
       entry.root.setEnabled(true);
     }
+    trailRenderer.reset(entryMap);
   });
 }
 document.getElementById('row-toggle').addEventListener('click', (event) => {
@@ -169,7 +198,10 @@ scene.onBeforeRenderObservable.add(() => {
       entry.anim.targetRotY = Math.PI; // keep facing camera
     }
     updateForgeCharacter(entry, dt, false, true);
+    entry.isAlive = mode !== 'death';
+    entry._interpReady = true;
   }
+  trailRenderer.render(entryMap, dt);
 });
 
 engine.runRenderLoop(() => scene.render());

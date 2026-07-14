@@ -1,5 +1,21 @@
 'use strict';
 
+/**
+ * Bespoke near-detail geometry for every purchasable full-body form.
+ *
+ * Each form gets its own builder on the shared Forge joints: chunky mascot
+ * masses stacked with intent instead of one generic ellipsoid-with-parts
+ * base. All meshes clone five shared primitive templates, parent directly to
+ * animated joints, and stay within the form's declared mesh budget.
+ *
+ * Placement space is local to `joints.body`, which rides a full leg-length
+ * above the floor: hips at y=0, shoulders near +7.5, the head joint near
+ * +11.3, and the ground at -bodyY. Grounded forms (slime, spider) author
+ * geometry DOWN from the joint; biped mascots hang legs from the leg/knee
+ * joints so the shared gait animates them.
+ * @module renderer/body-form-geometry
+ */
+
 import {makeMat, parseColor} from './utils.js';
 
 const _nearResources = new WeakMap();
@@ -83,7 +99,7 @@ function part(B, meshes, shape, name, scene, parent, material, scaling, position
 /**
  * Place one Y-aligned primitive so it spans `from` -> `to` in the parent's
  * local space (Babylon YXZ Euler: pitch from +Y, then yaw). Cones point their
- * apex at `to`, which gives limbs tapered tips for free.
+ * apex at `to`, which gives limbs and tails tapered tips for free.
  */
 function limbSegment(B, meshes, shape, name, scene, parent, material, from, to, thickness) {
   const dx = to[0] - from[0];
@@ -96,168 +112,502 @@ function limbSegment(B, meshes, shape, name, scene, parent, material, from, to, 
     [Math.acos(Math.max(-1, Math.min(1, dy / length))), Math.atan2(dx, dz), 0]);
 }
 
-function bodyScaleFor(spec, width, height, depth) {
-  const scale = {width: 0.88, height: 0.82, depth: 0.94};
-  if (spec.family === 'mammal') Object.assign(scale, {width: 1.02, height: 0.78, depth: 1.08});
-  if (spec.family === 'avian') Object.assign(scale, {width: 0.92, height: 0.86, depth: 1.06});
-  if (spec.family === 'amphibian') Object.assign(scale, {width: 1.12, height: 0.68, depth: 1.08});
-  if (spec.family === 'marine') Object.assign(scale, {width: 0.94, height: 0.82, depth: 1.18});
-  if (spec.family === 'reptile') Object.assign(scale, {width: 1.02, height: 0.84, depth: 1.12});
-  if (spec.family === 'construct') Object.assign(scale, {width: 1.18, height: 0.92, depth: 1.08});
-  return [width * scale.width, height * scale.height, depth * scale.depth];
+/** Standard build context shared by every form builder. */
+function buildContext(spec, context) {
+  const m = context.metrics || {};
+  return {
+    B: window.BABYLON,
+    scene: context.scene,
+    id: context.id,
+    joints: context.joints,
+    key: spec.key,
+    tw: vector(m.torsoWidth, 7),
+    th: vector(m.torsoHeight, 8.15),
+    td: vector(m.torsoDepth, 3.75),
+    hw: vector(m.headWidth, 4.35),
+    hh: vector(m.headHeight, 3.55),
+    hd: vector(m.headDepth, 3.65),
+    ua: vector(m.upperArmLength, 4.25),
+    fa: vector(m.forearmLength, 3.65),
+    aw: vector(m.armWidth, 1.28),
+    ul: vector(m.upperLegLength, 5.25),
+    sl: vector(m.shinLength, 4.85),
+    lw: vector(m.legWidth, 1.72),
+    bodyY: vector(m.bodyY, 10.56),
+    headY: vector(m.headY, 11.26),
+  };
 }
 
-function addHumanoidBase(spec, context, materials, meshes) {
-  const {scene, id, joints} = context;
-  const B = window.BABYLON;
-  const m = context.metrics || {};
-  const torsoWidth = vector(m.torsoWidth, 7);
-  const torsoHeight = vector(m.torsoHeight, 8.15);
-  const torsoDepth = vector(m.torsoDepth, 3.75);
-  const headWidth = vector(m.headWidth, 4.35);
-  const headHeight = vector(m.headHeight, 3.55);
-  const headDepth = vector(m.headDepth, 3.65);
-  const upperArmLength = vector(m.upperArmLength, torsoHeight * 0.52);
-  const forearmLength = vector(m.forearmLength, torsoHeight * 0.45);
-  const upperLegLength = vector(m.upperLegLength, 5.25);
-  const shinLength = vector(m.shinLength, 4.85);
-  const thin = spec.family === 'undead' ? 0.11 : (spec.key === 'tyrant_rex' ? 0.14 : 0.18);
-  const limbWidth = torsoWidth * thin;
-  const bodyShape = ['human', 'construct', 'undead'].includes(spec.family) ? 'box' : 'sphere';
-  const headShape = spec.family === 'human' && spec.key !== 'wizard' ? 'sphere' : 'sphere';
-  const body = part(B, meshes, bodyShape, `body-form-${spec.key}-torso-${id}`, scene, joints.body,
-    materials.primary, bodyScaleFor(spec, torsoWidth, torsoHeight, torsoDepth),
-    [0, 1.08 + torsoHeight * 0.50, 0]);
-  const head = part(B, meshes, headShape, `body-form-${spec.key}-head-${id}`, scene, joints.head,
-    spec.family === 'human' ? materials.secondary : materials.primary,
-    [headWidth * (spec.family === 'amphibian' ? 1.20 : 1), headHeight, headDepth], [0, 0, 0]);
+const FOOT_STYLES = Object.freeze({
+  block: {shape: 'box', scale: [1.5, 0.42, 2.4], z: 0.50},
+  boot: {shape: 'box', scale: [1.7, 0.62, 2.5], z: 0.55},
+  paw: {shape: 'sphere', scale: [1.7, 0.95, 2.1], z: 0.45},
+  bigPaw: {shape: 'sphere', scale: [1.9, 1.0, 3.1], z: 0.85},
+  talon: {shape: 'box', scale: [2.1, 0.30, 2.9], z: 0.70},
+  hoof: {shape: 'box', scale: [1.5, 0.58, 1.8], z: 0.30},
+  web: {shape: 'sphere', scale: [2.6, 0.34, 3.1], z: 0.80},
+  stone: {shape: 'box', scale: [2.0, 0.68, 2.6], z: 0.50},
+});
 
+/** Six meshes: thigh + shin + styled foot per side, riding the shared gait. */
+function bipedLegs(c, meshes, {thick = 1, foot = 'block', legMat, shinMat, footMat, legShape = 'cylinder'}) {
+  const lw = c.lw * thick;
+  const style = FOOT_STYLES[foot] || FOOT_STYLES.block;
   for (const side of [-1, 1]) {
     const label = side < 0 ? 'left' : 'right';
-    part(B, meshes, spec.family === 'construct' ? 'box' : 'cylinder',
-      `body-form-${spec.key}-${label}-upper-arm-${id}`, scene, joints[`${label}Arm`], materials.primary,
-      [limbWidth, upperArmLength, limbWidth], [0, -upperArmLength * 0.5, 0]);
-    part(B, meshes, 'cylinder', `body-form-${spec.key}-${label}-forearm-${id}`, scene,
-      joints[`${label}Elbow`], materials.secondary,
-      [limbWidth * 0.88, forearmLength, limbWidth * 0.92], [0, -forearmLength * 0.5, 0]);
-    part(B, meshes, spec.family === 'construct' ? 'box' : 'cylinder',
-      `body-form-${spec.key}-${label}-upper-leg-${id}`, scene, joints[`${label}Leg`], materials.primary,
-      [limbWidth * 1.18, upperLegLength, limbWidth * 1.22], [0, -upperLegLength * 0.5, 0]);
-    part(B, meshes, 'cylinder', `body-form-${spec.key}-${label}-shin-${id}`, scene,
-      joints[`${label}Knee`], materials.secondary,
-      [limbWidth, shinLength, limbWidth * 1.05], [0, -shinLength * 0.5, 0]);
-    part(B, meshes, 'box', `body-form-${spec.key}-${label}-foot-${id}`, scene,
-      joints[`${label}Knee`], materials.accent,
-      [limbWidth * 1.45, Math.max(0.62, limbWidth * 0.5), limbWidth * 2.25],
-      [0, -shinLength + 0.06, -limbWidth * 0.45]);
+    part(c.B, meshes, legShape, `body-form-${c.key}-${label}-thigh-${c.id}`, c.scene,
+      c.joints[`${label}Leg`], legMat, [lw, c.ul, lw * 1.1], [0, -c.ul * 0.5, 0]);
+    part(c.B, meshes, 'cylinder', `body-form-${c.key}-${label}-shin-${c.id}`, c.scene,
+      c.joints[`${label}Knee`], shinMat, [lw * 0.85, c.sl, lw * 0.9], [0, -c.sl * 0.5, 0]);
+    part(c.B, meshes, style.shape, `body-form-${c.key}-${label}-foot-${c.id}`, c.scene,
+      c.joints[`${label}Knee`], footMat,
+      [lw * style.scale[0], lw * style.scale[1], lw * style.scale[2]],
+      [0, -c.sl + 0.05, -lw * style.z]);
   }
-  return {body, head, dimensions: {torsoWidth, torsoHeight, torsoDepth, headWidth, headHeight, headDepth}};
 }
 
-function addFeatureParts(spec, context, materials, meshes, dimensions) {
-  const {scene, id, joints} = context;
-  const B = window.BABYLON;
-  const {torsoWidth: tw, torsoHeight: th, torsoDepth: td, headWidth: hw, headHeight: hh, headDepth: hd} = dimensions;
-  const has = name => spec.features.includes(name);
-  const add = (shape, name, parent, material, scaling, position, rotation) =>
-    part(B, meshes, shape, `body-form-${spec.key}-${name}-${id}`, scene, parent, material, scaling, position, rotation);
+/** Four meshes: upper arm + forearm per side. */
+function bipedArms(c, meshes, {thick = 1, upperMat, foreMat, armShape = 'cylinder'}) {
+  const aw = c.aw * thick;
+  for (const side of [-1, 1]) {
+    const label = side < 0 ? 'left' : 'right';
+    part(c.B, meshes, armShape, `body-form-${c.key}-${label}-upper-arm-${c.id}`, c.scene,
+      c.joints[`${label}Arm`], upperMat, [aw, c.ua, aw * 1.05], [0, -c.ua * 0.5, 0]);
+    part(c.B, meshes, 'cylinder', `body-form-${c.key}-${label}-forearm-${c.id}`, c.scene,
+      c.joints[`${label}Elbow`], foreMat, [aw * 0.85, c.fa, aw * 0.9], [0, -c.fa * 0.5, 0]);
+  }
+}
 
-  if (has('beak')) add('cone', 'beak', joints.head, materials.accent,
-    [hw * 0.40, hd * 0.62, hw * 0.38], [0, -hh * 0.04, -hd * 0.66], [-Math.PI / 2, 0, 0]);
-  if (has('comb')) {
-    for (const [index, z] of [-0.35, 0, 0.35].entries()) add('cone', `comb-${index}`, joints.head,
-      materials.secondary, [hw * 0.22, hh * (0.42 - index * 0.04), hw * 0.22],
-      [0, hh * 0.58, z * hd], [0, 0, 0]);
+// === Bespoke form builders =================================================
+// Counted mesh budgets are asserted per-form by buildBodyFormGeometry.
+
+function buildChicken(spec, c, mats, meshes) {
+  // Plump low egg body over thin talon legs, wings on the arm joints so the
+  // flutter overlay flaps them, stacked comb and a wattle under the beak.
+  const body = part(c.B, meshes, 'sphere', `body-form-${spec.key}-body-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.42, c.th * 1.0, c.td * 1.65], [0, 2.1, 0.2]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-breast-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 1.0, c.th * 0.72, c.td * 1.0], [0, 1.2, -c.td * 0.55]);
+  part(c.B, meshes, 'cylinder', `body-form-${spec.key}-neck-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 0.34, c.hh * 1.5, c.hw * 0.34], [0, -c.hh * 0.85, 0]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-head-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 0.95, c.hh * 1.0, c.hd * 0.95], [0, 0, 0]);
+  part(c.B, meshes, 'cone', `body-form-${spec.key}-beak-${c.id}`, c.scene,
+    c.joints.head, mats.accent, [c.hw * 0.34, c.hd * 0.62, c.hw * 0.30],
+    [0, -c.hh * 0.06, -c.hd * 0.62], [-Math.PI / 2, 0, 0]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-wattle-${c.id}`, c.scene,
+    c.joints.head, mats.secondary, [c.hw * 0.20, c.hh * 0.34, c.hw * 0.18], [0, -c.hh * 0.42, -c.hd * 0.42]);
+  for (const [index, z] of [-0.30, 0, 0.30].entries()) {
+    part(c.B, meshes, 'cone', `body-form-${spec.key}-comb-${index}-${c.id}`, c.scene,
+      c.joints.head, mats.secondary, [c.hw * 0.20, c.hh * (0.44 - index * 0.05), c.hw * 0.26],
+      [0, c.hh * 0.52, z * c.hd], [z * 0.9, 0, 0]);
   }
-  if (has('wings')) {
-    for (const side of [-1, 1]) add('sphere', `wing-${side}`, side < 0 ? joints.leftArm : joints.rightArm,
-      materials.secondary, [tw * 0.22, th * 0.54, td * 0.42], [side * tw * 0.08, -th * 0.24, td * 0.06], [0, 0, side * 0.22]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'sphere', `body-form-${spec.key}-wing-${side}-${c.id}`, c.scene,
+      side < 0 ? c.joints.leftArm : c.joints.rightArm, mats.primary,
+      [c.tw * 0.18, c.th * 0.66, c.td * 1.0], [side * c.tw * 0.05, -c.th * 0.30, 0.1], [0, 0, side * 0.14]);
   }
-  if (has('tailFan')) {
-    for (const [index, side] of [-1, 0, 1].entries()) add('box', `tail-feather-${index}`, joints.body,
-      index === 1 ? materials.accent : materials.secondary,
-      [tw * 0.16, th * 0.44, td * 0.16], [side * tw * 0.16, th * 0.56, td * 0.82],
-      [0.40, 0, side * 0.28]);
+  for (const [index, x] of [-0.5, 0, 0.5].entries()) {
+    part(c.B, meshes, 'box', `body-form-${spec.key}-tail-${index}-${c.id}`, c.scene,
+      c.joints.body, index === 1 ? mats.accent : mats.secondary,
+      [c.tw * 0.16, c.th * 0.55, c.td * 0.18],
+      [x * c.tw * 0.30, 3.6, c.td * 1.05], [0.55, 0, x * 0.5]);
   }
-  if (has('muzzle')) add('sphere', 'muzzle', joints.head, materials.secondary,
-    [hw * 0.68, hh * 0.38, hd * 0.48], [0, -hh * 0.16, -hd * 0.48]);
-  if (has('horns')) for (const side of [-1, 1]) add('cone', `horn-${side}`, joints.head, materials.accent,
-    [hw * 0.25, hh * 0.62, hw * 0.25], [side * hw * 0.46, hh * 0.35, -hd * 0.05], [0, 0, -side * 0.52]);
-  if (has('ears') || has('catEars') || has('foxEars') || has('longEars') || has('rabbitEars')) {
-    const long = has('longEars') || has('rabbitEars');
-    const fox = has('foxEars');
-    for (const side of [-1, 1]) add(long ? 'box' : 'cone', `ear-${side}`, joints.head, materials.secondary,
-      [hw * (fox ? 0.34 : 0.28), hh * (long ? 1.15 : 0.56), hd * 0.22],
-      [side * hw * 0.34, hh * (long ? 0.78 : 0.53), 0], [0, 0, side * (long ? 0.10 : 0.18)]);
+  bipedLegs(c, meshes, {thick: 0.55, foot: 'talon', legMat: mats.accent, shinMat: mats.accent, footMat: mats.accent});
+  return {body, head, anchors: {headTopY: c.hh * 0.95, shoulderY: -c.th * 0.30, backPos: [0, 4.6, c.td * 0.55]}};
+}
+
+function buildPenguin(spec, c, mats, meshes) {
+  // Upright bowling-pin body, huge white belly, flippers, waddle feet.
+  const body = part(c.B, meshes, 'sphere', `body-form-${spec.key}-body-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.30, c.th * 1.45, c.td * 1.55], [0, 3.4, 0]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-belly-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 1.02, c.th * 1.18, c.td * 1.0], [0, 2.9, -c.td * 0.52]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-head-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 0.98, c.hh * 1.05, c.hd * 0.98], [0, -c.hh * 0.18, 0]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'sphere', `body-form-${spec.key}-cheek-${side}-${c.id}`, c.scene,
+      c.joints.head, mats.secondary, [c.hw * 0.30, c.hh * 0.40, c.hd * 0.24],
+      [side * c.hw * 0.26, -c.hh * 0.22, -c.hd * 0.36]);
   }
-  if (has('tail') || has('dinoTail')) add('cone', 'tail', joints.body, materials.primary,
-    [tw * 0.32, td * (has('dinoTail') ? 2.25 : 1.45), tw * 0.32],
-    [0, th * 0.30, td * 0.90], [Math.PI / 2, 0, 0]);
-  if (has('brushTail')) add('sphere', 'brush-tail', joints.body, materials.secondary,
-    [tw * 0.40, th * 0.70, td * 0.46], [0, th * 0.36, td * 1.05], [0.58, 0, 0]);
-  if (has('tailPom')) add('sphere', 'tail-pom', joints.body, materials.secondary,
-    [tw * 0.30, tw * 0.30, tw * 0.30], [0, th * 0.34, td * 0.72]);
-  if (has('stripes')) for (let index = 0; index < 3; index += 1) add('torus', `stripe-${index}`, joints.body,
-    materials.secondary, [tw * (0.68 + index * 0.05), th * 0.20, td * 0.72],
-    [0, th * (0.30 + index * 0.17), 0], [Math.PI / 2, 0, 0]);
-  if (has('belly')) add('sphere', 'belly', joints.body, materials.secondary,
-    [tw * 0.58, th * 0.58, td * 0.28], [0, th * 0.52, -td * 0.55]);
-  if (has('frogEyes')) for (const side of [-1, 1]) add('sphere', `eye-${side}`, joints.head, materials.accent,
-    [hw * 0.24, hw * 0.24, hw * 0.24], [side * hw * 0.31, hh * 0.42, -hd * 0.22]);
-  if (has('wideMouth')) add('box', 'wide-mouth', joints.head, materials.accent,
-    [hw * 0.72, hh * 0.10, hd * 0.14], [0, -hh * 0.24, -hd * 0.52]);
-  if (has('webFeet')) for (const side of [-1, 1]) add('sphere', `web-foot-${side}`,
-    side < 0 ? joints.leftKnee : joints.rightKnee, materials.accent,
-    [tw * 0.28, th * 0.08, td * 0.62], [0, -vector(context.metrics?.shinLength, 4.85), -td * 0.24]);
-  if (has('sharkSnout') || has('dinoSnout')) add('box', 'snout', joints.head, materials.secondary,
-    [hw * (has('dinoSnout') ? 0.88 : 0.78), hh * 0.42, hd * 0.82], [0, -hh * 0.10, -hd * 0.54]);
-  if (has('dorsal')) add('cone', 'dorsal-fin', joints.body, materials.secondary,
-    [tw * 0.42, th * 0.70, td * 0.24], [0, th * 0.98, td * 0.18], [0, 0, 0]);
-  if (has('tailFin')) add('box', 'tail-fin', joints.body, materials.secondary,
-    [tw * 0.18, th * 0.72, td * 0.62], [0, th * 0.34, td * 0.92], [0.18, 0, 0]);
-  if (has('teeth')) for (const side of [-1, 1]) add('cone', `tooth-${side}`, joints.head, materials.accent,
-    [hw * 0.12, hh * 0.25, hw * 0.12], [side * hw * 0.20, -hh * 0.28, -hd * 0.94], [Math.PI, 0, 0]);
-  if (has('brow')) for (const side of [-1, 1]) add('box', `brow-${side}`, joints.head, materials.accent,
-    [hw * 0.32, hh * 0.10, hd * 0.12], [side * hw * 0.22, hh * 0.17, -hd * 0.52], [0, 0, -side * 0.18]);
-  if (has('claws')) for (const side of [-1, 1]) add('cone', `claw-${side}`, side < 0 ? joints.leftKnee : joints.rightKnee,
-    materials.accent, [tw * 0.14, td * 0.48, tw * 0.14], [0, -vector(context.metrics?.shinLength, 4.85), -td * 0.72], [-Math.PI / 2, 0, 0]);
-  if (has('hair')) add('sphere', 'hair', joints.head, materials.accent,
-    [hw * 1.02, hh * 0.38, hd * 1.02], [0, hh * 0.40, hd * 0.04]);
-  if (has('belt')) add('torus', 'belt', joints.body, materials.accent,
-    [tw * 0.84, th * 0.13, td * 0.86], [0, th * 0.30, 0], [Math.PI / 2, 0, 0]);
-  if (has('boots')) for (const side of [-1, 1]) add('box', `boot-${side}`, side < 0 ? joints.leftKnee : joints.rightKnee,
-    materials.accent, [tw * 0.28, th * 0.16, td * 0.72], [0, -vector(context.metrics?.shinLength, 4.85), -td * 0.18]);
-  if (has('visor')) add('sphere', 'visor', joints.head, materials.accent,
-    [hw * 0.86, hh * 0.62, hd * 0.34], [0, hh * 0.02, -hd * 0.48]);
-  if (has('backpack')) add('box', 'backpack', joints.body, materials.secondary,
-    [tw * 0.66, th * 0.62, td * 0.48], [0, th * 0.54, td * 0.66]);
-  if (has('helmet')) add('sphere', 'helmet', joints.head, materials.primary,
-    [hw * 1.15, hh * 1.08, hd * 1.16], [0, hh * 0.05, 0]);
-  if (has('plume')) add('box', 'plume', joints.head, materials.accent,
-    [hw * 0.18, hh * 0.86, hd * 0.52], [0, hh * 0.78, hd * 0.18], [0.12, 0, 0]);
-  if (has('pauldrons')) for (const side of [-1, 1]) add('sphere', `pauldron-${side}`,
-    side < 0 ? joints.leftArm : joints.rightArm, materials.secondary,
-    [tw * 0.34, th * 0.22, td * 0.78], [side * tw * 0.05, -th * 0.05, 0]);
-  if (has('hat')) {
-    add('cone', 'hat-crown', joints.head, materials.primary,
-      [hw * 0.72, hh * 1.45, hd * 0.72], [0, hh * 0.86, 0], [0, 0, -0.12]);
-    add('torus', 'hat-brim', joints.head, materials.secondary,
-      [hw * 1.28, hh * 0.16, hd * 1.28], [0, hh * 0.48, 0], [Math.PI / 2, 0, 0]);
+  part(c.B, meshes, 'cone', `body-form-${spec.key}-beak-${c.id}`, c.scene,
+    c.joints.head, mats.accent, [c.hw * 0.26, c.hd * 0.70, c.hw * 0.22],
+    [0, -c.hh * 0.16, -c.hd * 0.60], [-Math.PI / 2, 0, 0]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'sphere', `body-form-${spec.key}-flipper-${side}-${c.id}`, c.scene,
+      side < 0 ? c.joints.leftArm : c.joints.rightArm, mats.primary,
+      [c.tw * 0.14, c.th * 0.85, c.td * 0.62], [side * c.tw * 0.10, -c.th * 0.38, 0], [0, 0, side * 0.30]);
   }
-  if (has('robe')) add('cone', 'robe', joints.body, materials.primary,
-    [tw * 1.10, th * 0.88, td * 1.05], [0, th * 0.40, 0], [Math.PI, 0, 0]);
-  if (has('rune')) add('torus', 'rune', joints.body, materials.accent,
-    [tw * 0.40, th * 0.26, td * 0.18], [0, th * 0.58, -td * 0.58], [Math.PI / 2, 0, 0]);
-  if (has('skull')) for (const side of [-1, 1]) add('sphere', `socket-${side}`, joints.head, materials.accent,
-    [hw * 0.19, hh * 0.19, hd * 0.12], [side * hw * 0.22, hh * 0.08, -hd * 0.51]);
-  if (has('ribs')) for (let index = 0; index < 4; index += 1) add('torus', `rib-${index}`, joints.body,
-    materials.secondary, [tw * (0.64 - index * 0.05), th * 0.18, td * 0.66],
-    [0, th * (0.32 + index * 0.14), 0], [Math.PI / 2, 0, 0]);
-  if (has('boulders')) for (const side of [-1, 1]) add('sphere', `boulder-${side}`,
-    side < 0 ? joints.leftArm : joints.rightArm, materials.secondary,
-    [tw * 0.42, tw * 0.42, td * 0.86], [side * tw * 0.04, -th * 0.08, 0]);
-  if (has('runes')) add('torus', 'golem-rune', joints.body, materials.accent,
-    [tw * 0.42, th * 0.28, td * 0.16], [0, th * 0.56, -td * 0.59], [Math.PI / 2, 0, 0]);
+  bipedLegs(c, meshes, {thick: 0.5, foot: 'talon', legMat: mats.primary, shinMat: mats.primary, footMat: mats.accent});
+  return {body, head, anchors: {headTopY: c.hh * 0.55, shoulderY: -c.th * 0.38, backPos: [0, 4.6, c.td * 0.85]}};
+}
+
+function buildCow(spec, c, mats, meshes) {
+  // Broad shaggy box body, eye fringe, wide muzzle, uplifted horns, rope
+  // tail with a tuft, hoofed legs.
+  const body = part(c.B, meshes, 'box', `body-form-${spec.key}-body-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.45, c.th * 0.95, c.td * 1.75], [0, 2.3, 0]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-chest-shag-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 1.15, c.th * 0.62, c.td * 0.6], [0, 1.2, -c.td * 0.72]);
+  const head = part(c.B, meshes, 'box', `body-form-${spec.key}-head-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 1.05, c.hh * 1.0, c.hd * 1.0], [0, -c.hh * 0.25, 0]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-fringe-${c.id}`, c.scene,
+    c.joints.head, mats.secondary, [c.hw * 1.12, c.hh * 0.42, c.hd * 0.5], [0, c.hh * 0.14, -c.hd * 0.34]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-muzzle-${c.id}`, c.scene,
+    c.joints.head, mats.accent, [c.hw * 0.72, c.hh * 0.48, c.hd * 0.42], [0, -c.hh * 0.52, -c.hd * 0.48]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'cone', `body-form-${spec.key}-horn-${side}-${c.id}`, c.scene,
+      c.joints.head, mats.accent, [c.hw * 0.20, c.hh * 0.85, c.hw * 0.20],
+      [side * c.hw * 0.62, c.hh * 0.10, 0], [0, 0, -side * 1.15]);
+    part(c.B, meshes, 'sphere', `body-form-${spec.key}-ear-${side}-${c.id}`, c.scene,
+      c.joints.head, mats.secondary, [c.hw * 0.28, c.hh * 0.22, c.hd * 0.16],
+      [side * c.hw * 0.55, -c.hh * 0.12, -c.hd * 0.05]);
+  }
+  limbSegment(c.B, meshes, 'cylinder', `body-form-${spec.key}-tail-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [0, 4.0, c.td * 0.85], [0, 0.6, c.td * 1.15], c.tw * 0.07);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-tail-tuft-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.16, c.tw * 0.20, c.tw * 0.16], [0, 0.2, c.td * 1.18]);
+  bipedLegs(c, meshes, {thick: 1.0, foot: 'hoof', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
+  bipedArms(c, meshes, {thick: 0.85, upperMat: mats.primary, foreMat: mats.primary});
+  return {body, head, anchors: {headTopY: c.hh * 0.75, backPos: [0, 4.2, c.td * 0.9]}};
+}
+
+function buildCorgi(spec, c, mats, meshes) {
+  // Long low loaf body, cream chest, oversized head with tall ears and a
+  // tiny nose, stubby paw legs.
+  const body = part(c.B, meshes, 'sphere', `body-form-${spec.key}-body-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.10, c.th * 0.72, c.td * 2.15], [0, 1.3, 0.3]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-chest-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.85, c.th * 0.60, c.td * 1.0], [0, 0.9, -c.td * 0.68]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-head-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 1.18, c.hh * 1.12, c.hd * 1.05], [0, -c.hh * 0.15, 0]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-muzzle-${c.id}`, c.scene,
+    c.joints.head, mats.secondary, [c.hw * 0.52, c.hh * 0.40, c.hd * 0.48], [0, -c.hh * 0.38, -c.hd * 0.46]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-nose-${c.id}`, c.scene,
+    c.joints.head, mats.accent, [c.hw * 0.14, c.hh * 0.12, c.hd * 0.10], [0, -c.hh * 0.28, -c.hd * 0.68]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'cone', `body-form-${spec.key}-ear-${side}-${c.id}`, c.scene,
+      c.joints.head, mats.primary, [c.hw * 0.34, c.hh * 0.95, c.hd * 0.26],
+      [side * c.hw * 0.38, c.hh * 0.62, 0], [0, 0, side * 0.16]);
+  }
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-tail-pom-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.26, c.tw * 0.26, c.tw * 0.26], [0, 1.9, c.td * 1.25]);
+  bipedLegs(c, meshes, {thick: 0.8, foot: 'paw', legMat: mats.primary, shinMat: mats.secondary, footMat: mats.secondary});
+  bipedArms(c, meshes, {thick: 0.7, upperMat: mats.primary, foreMat: mats.secondary});
+  if (c.joints.core?.position) c.joints.core.position.set(0, 3.6, -c.td * 0.9);
+  return {body, head, anchors: {headTopY: c.hh * 1.25, backPos: [0, 2.6, c.td * 0.9]}};
+}
+
+function buildCat(spec, c, mats, meshes) {
+  // Sleek chest-forward body with belly stripes, pointed ears, and a long
+  // raised two-segment tail.
+  const body = part(c.B, meshes, 'sphere', `body-form-${spec.key}-body-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.0, c.th * 1.05, c.td * 1.4], [0, 2.3, 0]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-chest-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.72, c.th * 0.78, c.td * 0.8], [0, 1.8, -c.td * 0.5]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-head-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 1.05, c.hh * 0.98, c.hd * 0.95], [0, -c.hh * 0.12, 0]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-muzzle-${c.id}`, c.scene,
+    c.joints.head, mats.secondary, [c.hw * 0.44, c.hh * 0.30, c.hd * 0.36], [0, -c.hh * 0.34, -c.hd * 0.44]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'cone', `body-form-${spec.key}-ear-${side}-${c.id}`, c.scene,
+      c.joints.head, mats.primary, [c.hw * 0.30, c.hh * 0.52, c.hd * 0.20],
+      [side * c.hw * 0.36, c.hh * 0.52, 0], [0, 0, side * 0.22]);
+  }
+  for (let index = 0; index < 2; index += 1) {
+    part(c.B, meshes, 'torus', `body-form-${spec.key}-stripe-${index}-${c.id}`, c.scene,
+      c.joints.body, mats.secondary, [c.tw * (0.74 + index * 0.06), c.th * 0.22, c.td * 1.05],
+      [0, 1.6 + index * 1.5, 0], [Math.PI / 2, 0, 0]);
+  }
+  limbSegment(c.B, meshes, 'cylinder', `body-form-${spec.key}-tail-a-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [0, 1.6, c.td * 0.65], [0, 4.4, c.td * 1.5], c.tw * 0.09);
+  limbSegment(c.B, meshes, 'cone', `body-form-${spec.key}-tail-b-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [0, 4.4, c.td * 1.5], [0, 7.2, c.td * 1.75], c.tw * 0.09);
+  bipedLegs(c, meshes, {thick: 0.72, foot: 'paw', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
+  bipedArms(c, meshes, {thick: 0.65, upperMat: mats.primary, foreMat: mats.secondary});
+  return {body, head, anchors: {headTopY: c.hh * 0.95, backPos: [0, 3.6, c.td * 0.5]}};
+}
+
+function buildFox(spec, c, mats, meshes) {
+  // Cream ruff, sharp cone snout, tall ears, and the signature fat brush
+  // tail with a pale tip.
+  const body = part(c.B, meshes, 'sphere', `body-form-${spec.key}-body-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.0, c.th * 1.02, c.td * 1.45], [0, 2.2, 0]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-ruff-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.88, c.th * 0.85, c.td * 0.85], [0, 2.6, -c.td * 0.42]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-head-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 1.05, c.hh * 0.95, c.hd * 1.0], [0, -c.hh * 0.12, 0]);
+  part(c.B, meshes, 'cone', `body-form-${spec.key}-snout-${c.id}`, c.scene,
+    c.joints.head, mats.secondary, [c.hw * 0.42, c.hd * 0.85, c.hh * 0.40],
+    [0, -c.hh * 0.30, -c.hd * 0.62], [-Math.PI / 2, 0, 0]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'cone', `body-form-${spec.key}-ear-${side}-${c.id}`, c.scene,
+      c.joints.head, mats.primary, [c.hw * 0.36, c.hh * 0.72, c.hd * 0.22],
+      [side * c.hw * 0.38, c.hh * 0.56, 0], [0, 0, side * 0.20]);
+  }
+  limbSegment(c.B, meshes, 'cylinder', `body-form-${spec.key}-tail-a-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [0, 1.8, c.td * 0.7], [0, 3.6, c.td * 2.2], c.tw * 0.34);
+  limbSegment(c.B, meshes, 'cone', `body-form-${spec.key}-tail-tip-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [0, 3.6, c.td * 2.2], [0, 4.9, c.td * 3.0], c.tw * 0.30);
+  bipedLegs(c, meshes, {thick: 0.70, foot: 'paw', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
+  bipedArms(c, meshes, {thick: 0.62, upperMat: mats.primary, foreMat: mats.secondary});
+  return {body, head, anchors: {headTopY: c.hh * 1.10, backPos: [0, 3.8, c.td * 0.5]}};
+}
+
+function buildRabbit(spec, c, mats, meshes) {
+  // Upright egg body, huge ears, cheek muzzle, pom tail, and oversized
+  // launcher feet for the hop gait.
+  const body = part(c.B, meshes, 'sphere', `body-form-${spec.key}-body-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.08, c.th * 1.12, c.td * 1.3], [0, 2.6, 0]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-belly-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.80, c.th * 0.85, c.td * 0.85], [0, 2.1, -c.td * 0.45]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-head-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 1.08, c.hh * 1.05, c.hd * 0.95], [0, -c.hh * 0.12, 0]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-muzzle-${c.id}`, c.scene,
+    c.joints.head, mats.secondary, [c.hw * 0.46, c.hh * 0.34, c.hd * 0.36], [0, -c.hh * 0.36, -c.hd * 0.42]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'cone', `body-form-${spec.key}-ear-${side}-${c.id}`, c.scene,
+      c.joints.head, mats.primary, [c.hw * 0.30, c.hh * 1.55, c.hd * 0.24],
+      [side * c.hw * 0.26, c.hh * 0.95, 0], [0, 0, side * 0.10]);
+  }
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-tail-pom-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.30, c.tw * 0.30, c.tw * 0.30], [0, 1.7, c.td * 0.95]);
+  bipedLegs(c, meshes, {thick: 0.85, foot: 'bigPaw', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
+  bipedArms(c, meshes, {thick: 0.62, upperMat: mats.primary, foreMat: mats.secondary});
+  return {body, head, anchors: {headTopY: c.hh * 1.85, backPos: [0, 2.8, c.td * 0.7]}};
+}
+
+function buildFrog(spec, c, mats, meshes) {
+  // Squat wide body that swallows the hips, pale throat, eyes on top of the
+  // head, and webbed feet; the head sits low so the whole thing reads crouched.
+  const body = part(c.B, meshes, 'sphere', `body-form-${spec.key}-body-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.55, c.th * 0.85, c.td * 1.7], [0, 1.2, 0]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-throat-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 1.05, c.th * 0.60, c.td * 0.9], [0, 0.6, -c.td * 0.62]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-head-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 1.55, c.hh * 0.85, c.hd * 1.25], [0, -c.hh * 0.95, -c.hd * 0.15]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'sphere', `body-form-${spec.key}-eye-${side}-${c.id}`, c.scene,
+      c.joints.head, mats.accent, [c.hw * 0.34, c.hw * 0.34, c.hw * 0.30],
+      [side * c.hw * 0.48, -c.hh * 0.48, -c.hd * 0.25]);
+  }
+  part(c.B, meshes, 'box', `body-form-${spec.key}-mouth-${c.id}`, c.scene,
+    c.joints.head, mats.secondary, [c.hw * 1.15, c.hh * 0.10, c.hd * 0.30],
+    [0, -c.hh * 1.12, -c.hd * 0.62]);
+  bipedLegs(c, meshes, {thick: 1.35, foot: 'web', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
+  bipedArms(c, meshes, {thick: 0.72, upperMat: mats.primary, foreMat: mats.secondary});
+  if (c.joints.core?.position) c.joints.core.position.set(0, 2.4, -c.td * 1.0);
+  return {body, head, anchors: {headTopY: -c.hh * 0.25, shoulderY: -c.th * 0.25, backPos: [0, 2.0, c.td * 0.8]}};
+}
+
+function buildShark(spec, c, mats, meshes) {
+  // Torpedo body with a pale belly, dorsal fin, pectoral fins on the arm
+  // joints, a raised two-segment tail with a vertical fluke, and teeth.
+  const body = part(c.B, meshes, 'sphere', `body-form-${spec.key}-body-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.12, c.th * 1.1, c.td * 1.85], [0, 2.6, 0.3]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-belly-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.72, c.th * 0.72, c.td * 1.05], [0, 1.5, -c.td * 0.30]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-head-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 1.30, c.hh * 1.0, c.hd * 1.45], [0, -c.hh * 0.15, -c.hd * 0.1]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-snout-${c.id}`, c.scene,
+    c.joints.head, mats.secondary, [c.hw * 0.78, c.hh * 0.38, c.hd * 0.72], [0, -c.hh * 0.32, -c.hd * 0.62]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'cone', `body-form-${spec.key}-tooth-${side}-${c.id}`, c.scene,
+      c.joints.head, mats.accent, [c.hw * 0.11, c.hh * 0.22, c.hw * 0.11],
+      [side * c.hw * 0.22, -c.hh * 0.52, -c.hd * 0.78], [Math.PI, 0, 0]);
+  }
+  part(c.B, meshes, 'cone', `body-form-${spec.key}-dorsal-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 0.14, c.th * 0.85, c.td * 0.85], [0, 6.4, 0.6], [0.35, 0, 0]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'sphere', `body-form-${spec.key}-pectoral-${side}-${c.id}`, c.scene,
+      side < 0 ? c.joints.leftArm : c.joints.rightArm, mats.primary,
+      [c.tw * 0.12, c.th * 0.72, c.td * 0.6], [side * c.tw * 0.06, -c.th * 0.30, 0], [0, 0, side * 0.55]);
+  }
+  limbSegment(c.B, meshes, 'cylinder', `body-form-${spec.key}-tail-a-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [0, 2.6, c.td * 1.35], [0, 4.2, c.td * 2.4], c.tw * 0.24);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-fluke-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.12, c.th * 0.72, c.td * 0.55], [0, 4.6, c.td * 2.6], [0.3, 0, 0]);
+  bipedLegs(c, meshes, {thick: 0.85, foot: 'block', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
+  return {body, head, anchors: {headTopY: c.hh * 0.45, backPos: [0, 2.2, c.td * 1.0]}};
+}
+
+function buildRex(spec, c, mats, meshes) {
+  // Heavy forward mass, huge head with a separate jaw and teeth, thick tail
+  // curving down behind, comically small two-piece arms, clawed feet.
+  const body = part(c.B, meshes, 'sphere', `body-form-${spec.key}-body-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.28, c.th * 1.05, c.td * 1.6], [0, 2.4, 0.2]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-head-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 1.35, c.hh * 1.25, c.hd * 1.3], [0, -c.hh * 0.05, 0]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-snout-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 0.92, c.hh * 0.55, c.hd * 0.95], [0, -c.hh * 0.18, -c.hd * 0.75]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-jaw-${c.id}`, c.scene,
+    c.joints.head, mats.secondary, [c.hw * 0.80, c.hh * 0.32, c.hd * 0.80], [0, -c.hh * 0.60, -c.hd * 0.62]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-brow-${c.id}`, c.scene,
+    c.joints.head, mats.secondary, [c.hw * 1.05, c.hh * 0.18, c.hd * 0.35], [0, c.hh * 0.28, -c.hd * 0.48]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'cone', `body-form-${spec.key}-tooth-${side}-${c.id}`, c.scene,
+      c.joints.head, mats.accent, [c.hw * 0.12, c.hh * 0.26, c.hw * 0.12],
+      [side * c.hw * 0.28, -c.hh * 0.42, -c.hd * 1.05], [Math.PI, 0, 0]);
+  }
+  limbSegment(c.B, meshes, 'cylinder', `body-form-${spec.key}-tail-a-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [0, 2.2, c.td * 1.1], [0, 1.0, c.td * 2.5], c.tw * 0.42);
+  limbSegment(c.B, meshes, 'cone', `body-form-${spec.key}-tail-b-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [0, 1.0, c.td * 2.5], [0, -0.8, c.td * 3.9], c.tw * 0.34);
+  for (const side of [-1, 1]) {
+    const arm = side < 0 ? c.joints.leftArm : c.joints.rightArm;
+    part(c.B, meshes, 'cylinder', `body-form-${spec.key}-arm-${side}-${c.id}`, c.scene,
+      arm, mats.primary, [c.aw * 0.75, c.ua * 0.5, c.aw * 0.75], [0, -c.ua * 0.25, -0.2], [-0.4, 0, 0]);
+    part(c.B, meshes, 'sphere', `body-form-${spec.key}-claw-hand-${side}-${c.id}`, c.scene,
+      arm, mats.secondary, [c.aw * 0.85, c.aw * 0.7, c.aw * 0.9], [0, -c.ua * 0.52, -1.1]);
+  }
+  bipedLegs(c, meshes, {thick: 1.25, foot: 'talon', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
+  return {body, head, anchors: {headTopY: c.hh * 0.85, backPos: [0, 3.6, c.td * 0.7]}};
+}
+
+function buildAdventurer(spec, c, mats, meshes) {
+  // Tunic over trousers, hair cap with a fringe, belt, satchel, boots.
+  const body = part(c.B, meshes, 'box', `body-form-${spec.key}-torso-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 1.02, c.th * 0.92, c.td * 1.02], [0, 1.08 + c.th * 0.5, 0]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-pelvis-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 0.72, c.th * 0.28, c.td * 0.92], [0, 0.5, 0]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-head-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 1.0, c.hh * 1.05, c.hd * 0.98], [0, 0, 0]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-hair-${c.id}`, c.scene,
+    c.joints.head, mats.accent, [c.hw * 1.06, c.hh * 0.52, c.hd * 1.04], [0, c.hh * 0.34, c.hd * 0.06]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-fringe-${c.id}`, c.scene,
+    c.joints.head, mats.accent, [c.hw * 0.9, c.hh * 0.20, c.hd * 0.25], [0, c.hh * 0.26, -c.hd * 0.44]);
+  part(c.B, meshes, 'torus', `body-form-${spec.key}-belt-${c.id}`, c.scene,
+    c.joints.body, mats.accent, [c.tw * 0.95, c.th * 0.16, c.td * 1.05], [0, 1.15, 0], [Math.PI / 2, 0, 0]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-satchel-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 0.34, c.th * 0.30, c.td * 0.45], [c.tw * 0.48, 1.6, c.td * 0.35]);
+  bipedLegs(c, meshes, {thick: 0.9, foot: 'boot', legMat: mats.primary, shinMat: mats.primary, footMat: mats.accent});
+  bipedArms(c, meshes, {thick: 0.85, upperMat: mats.secondary, foreMat: mats.primary});
+  return {body, head, anchors: {headTopY: c.hh * 0.80}};
+}
+
+function buildAstronaut(spec, c, mats, meshes) {
+  // Puffy white suit, glowing visor dome, chest panel, life-support pack
+  // with an antenna, moon boots.
+  const body = part(c.B, meshes, 'sphere', `body-form-${spec.key}-torso-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.15, c.th * 1.0, c.td * 1.25], [0, 1.08 + c.th * 0.48, 0]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-chest-panel-${c.id}`, c.scene,
+    c.joints.body, mats.accent, [c.tw * 0.42, c.th * 0.26, 0.4], [0, 1.1 + c.th * 0.58, -c.td * 0.60]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-pelvis-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.78, c.th * 0.26, c.td * 0.95], [0, 0.5, 0]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-helmet-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 1.22, c.hh * 1.25, c.hd * 1.22], [0, 0.1, 0]);
+  part(c.B, meshes, 'sphere', `body-form-${spec.key}-visor-${c.id}`, c.scene,
+    c.joints.head, mats.accent, [c.hw * 0.85, c.hh * 0.68, c.hd * 0.40], [0, 0, -c.hd * 0.48]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-pack-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.72, c.th * 0.62, c.td * 0.55], [0, 1.1 + c.th * 0.52, c.td * 0.72]);
+  part(c.B, meshes, 'cylinder', `body-form-${spec.key}-antenna-${c.id}`, c.scene,
+    c.joints.body, mats.accent, [0.16, c.th * 0.45, 0.16], [c.tw * 0.28, 1.1 + c.th * 0.92, c.td * 0.72]);
+  bipedLegs(c, meshes, {thick: 1.05, foot: 'boot', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
+  bipedArms(c, meshes, {thick: 1.0, upperMat: mats.primary, foreMat: mats.secondary});
+  return {body, head, anchors: {headTopY: c.hh * 0.95}};
+}
+
+function buildKnight(spec, c, mats, meshes) {
+  // Plate cuirass with a front wedge, round helm with a glowing visor slit,
+  // plume, ball pauldrons, armored boots.
+  const body = part(c.B, meshes, 'box', `body-form-${spec.key}-torso-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.08, c.th * 0.95, c.td * 1.05], [0, 1.08 + c.th * 0.5, 0]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-cuirass-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.78, c.th * 0.55, 0.55], [0, 1.1 + c.th * 0.55, -c.td * 0.55], [-0.06, 0, 0]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-fauld-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.82, c.th * 0.28, c.td * 0.98], [0, 0.5, 0]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-helm-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 1.15, c.hh * 1.18, c.hd * 1.12], [0, 0.05, 0]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-visor-slit-${c.id}`, c.scene,
+    c.joints.head, mats.accent, [c.hw * 0.72, c.hh * 0.14, 0.3], [0, 0.1, -c.hd * 0.52]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-plume-${c.id}`, c.scene,
+    c.joints.head, mats.accent, [c.hw * 0.16, c.hh * 0.85, c.hd * 0.60], [0, c.hh * 0.72, c.hd * 0.12], [0.15, 0, 0]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'sphere', `body-form-${spec.key}-pauldron-${side}-${c.id}`, c.scene,
+      side < 0 ? c.joints.leftArm : c.joints.rightArm, mats.secondary,
+      [c.tw * 0.36, c.th * 0.26, c.td * 0.80], [side * c.tw * 0.05, -c.th * 0.04, 0]);
+  }
+  bipedLegs(c, meshes, {thick: 1.0, foot: 'boot', legMat: mats.primary, shinMat: mats.secondary, footMat: mats.primary});
+  bipedArms(c, meshes, {thick: 0.95, upperMat: mats.primary, foreMat: mats.secondary});
+  return {body, head, anchors: {headTopY: c.hh * 1.30}};
+}
+
+function buildWizard(spec, c, mats, meshes) {
+  // Floor-swept robe cone, sash, beard, tall crooked hat with a brim, and a
+  // glowing rune on the chest.
+  const body = part(c.B, meshes, 'cone', `body-form-${spec.key}-robe-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.75, c.th * 1.6, c.td * 2.6], [0, 1.08 + c.th * 0.28, 0]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-sash-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.85, c.th * 0.20, c.td * 1.1], [0, 1.1 + c.th * 0.42, 0], [0, 0, 0.1]);
+  part(c.B, meshes, 'torus', `body-form-${spec.key}-rune-${c.id}`, c.scene,
+    c.joints.body, mats.accent, [c.tw * 0.40, c.th * 0.26, c.td * 0.20], [0, 1.1 + c.th * 0.62, -c.td * 0.62], [Math.PI / 2, 0, 0]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-head-${c.id}`, c.scene,
+    c.joints.head, mats.secondary, [c.hw * 0.98, c.hh * 1.0, c.hd * 0.95], [0, 0, 0]);
+  part(c.B, meshes, 'cone', `body-form-${spec.key}-beard-${c.id}`, c.scene,
+    c.joints.head, mats.secondary, [c.hw * 0.55, c.hh * 0.95, c.hd * 0.40],
+    [0, -c.hh * 0.72, -c.hd * 0.28], [Math.PI, 0, 0]);
+  part(c.B, meshes, 'cone', `body-form-${spec.key}-hat-crown-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 0.80, c.hh * 1.55, c.hd * 0.80], [0, c.hh * 0.95, 0], [0, 0, -0.14]);
+  part(c.B, meshes, 'torus', `body-form-${spec.key}-hat-brim-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 1.35, c.hh * 0.16, c.hd * 1.35], [0, c.hh * 0.42, 0], [Math.PI / 2, 0, 0]);
+  bipedLegs(c, meshes, {thick: 0.8, foot: 'boot', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
+  bipedArms(c, meshes, {thick: 0.9, upperMat: mats.primary, foreMat: mats.secondary});
+  if (c.joints.core?.position) c.joints.core.position.set(0, 1.1 + c.th * 0.62, -c.td * 0.62);
+  return {body, head, anchors: {headTopY: c.hh * 1.85}};
+}
+
+function buildSkeleton(spec, c, mats, meshes) {
+  // Dark void torso behind stacked ribs over a bone pelvis, a skull with
+  // glowing sockets and a separate jaw, and thin bone limbs.
+  const body = part(c.B, meshes, 'box', `body-form-${spec.key}-void-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.62, c.th * 0.85, c.td * 0.55], [0, 1.08 + c.th * 0.5, 0]);
+  part(c.B, meshes, 'cylinder', `body-form-${spec.key}-spine-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [0.5, c.th * 0.95, 0.5], [0, 1.08 + c.th * 0.5, c.td * 0.25]);
+  for (let index = 0; index < 3; index += 1) {
+    part(c.B, meshes, 'torus', `body-form-${spec.key}-rib-${index}-${c.id}`, c.scene,
+      c.joints.body, mats.primary, [c.tw * (0.85 - index * 0.10), c.th * 0.22, c.td * 1.0],
+      [0, 1.1 + c.th * (0.72 - index * 0.16), 0], [Math.PI / 2, 0, 0]);
+  }
+  part(c.B, meshes, 'box', `body-form-${spec.key}-pelvis-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 0.68, c.th * 0.20, c.td * 0.75], [0, 0.45, 0]);
+  const head = part(c.B, meshes, 'sphere', `body-form-${spec.key}-skull-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 1.05, c.hh * 1.05, c.hd * 1.0], [0, 0.1, 0]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-jaw-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 0.62, c.hh * 0.28, c.hd * 0.50], [0, -c.hh * 0.52, -c.hd * 0.12]);
+  for (const side of [-1, 1]) {
+    part(c.B, meshes, 'sphere', `body-form-${spec.key}-socket-${side}-${c.id}`, c.scene,
+      c.joints.head, mats.accent, [c.hw * 0.22, c.hh * 0.24, c.hd * 0.12],
+      [side * c.hw * 0.22, 0.12, -c.hd * 0.46]);
+  }
+  bipedLegs(c, meshes, {thick: 0.45, foot: 'block', legMat: mats.primary, shinMat: mats.primary, footMat: mats.primary});
+  bipedArms(c, meshes, {thick: 0.42, upperMat: mats.primary, foreMat: mats.primary});
+  return {body, head, anchors: {headTopY: c.hh * 0.75}};
+}
+
+function buildGolem(spec, c, mats, meshes) {
+  // Massive slab torso with a sunken head, boulder shoulders, oversized rock
+  // fists, glowing rune, and stone feet.
+  const body = part(c.B, meshes, 'box', `body-form-${spec.key}-torso-${c.id}`, c.scene,
+    c.joints.body, mats.primary, [c.tw * 1.42, c.th * 1.05, c.td * 1.35], [0, 1.08 + c.th * 0.48, 0]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-pelvis-${c.id}`, c.scene,
+    c.joints.body, mats.secondary, [c.tw * 0.92, c.th * 0.30, c.td * 1.05], [0, 0.5, 0]);
+  part(c.B, meshes, 'torus', `body-form-${spec.key}-rune-${c.id}`, c.scene,
+    c.joints.body, mats.accent, [c.tw * 0.45, c.th * 0.30, c.td * 0.18], [0, 1.1 + c.th * 0.58, -c.td * 0.70], [Math.PI / 2, 0, 0]);
+  const head = part(c.B, meshes, 'box', `body-form-${spec.key}-head-${c.id}`, c.scene,
+    c.joints.head, mats.secondary, [c.hw * 0.85, c.hh * 0.72, c.hd * 0.85], [0, -c.hh * 0.30, 0]);
+  part(c.B, meshes, 'box', `body-form-${spec.key}-brow-${c.id}`, c.scene,
+    c.joints.head, mats.primary, [c.hw * 0.95, c.hh * 0.22, c.hd * 0.45], [0, -c.hh * 0.08, -c.hd * 0.30]);
+  for (const side of [-1, 1]) {
+    const arm = side < 0 ? c.joints.leftArm : c.joints.rightArm;
+    const elbow = side < 0 ? c.joints.leftElbow : c.joints.rightElbow;
+    part(c.B, meshes, 'sphere', `body-form-${spec.key}-boulder-${side}-${c.id}`, c.scene,
+      arm, mats.primary, [c.tw * 0.52, c.tw * 0.48, c.td * 1.0], [side * c.tw * 0.06, -c.th * 0.02, 0]);
+    part(c.B, meshes, 'sphere', `body-form-${spec.key}-fist-${side}-${c.id}`, c.scene,
+      elbow, mats.secondary, [c.aw * 1.9, c.aw * 1.9, c.aw * 2.0], [0, -c.fa * 0.95, 0]);
+  }
+  bipedLegs(c, meshes, {thick: 1.35, foot: 'stone', legMat: mats.primary, shinMat: mats.secondary, footMat: mats.secondary, legShape: 'box'});
+  bipedArms(c, meshes, {thick: 1.3, upperMat: mats.primary, foreMat: mats.secondary, armShape: 'box'});
+  return {body, head, anchors: {headTopY: c.hh * 0.35, shoulderY: -c.th * 0.05}};
 }
 
 function buildSlime(spec, context, materials, meshes) {
@@ -296,7 +646,7 @@ function buildSlime(spec, context, materials, meshes) {
   // Sink the shared Arena status core into the gel crest instead of leaving
   // it hovering at the missing humanoid chest height.
   if (joints.core?.position) joints.core.position.set(0, floor + th * 1.02, -td * 0.35);
-  return {body, head};
+  return {body, head, anchors: {headTopY: floor + th * 1.62 - headY, shoulderY: -th * 0.95, backPos: [0, floor + th * 0.9, td * 0.9]}};
 }
 
 function buildDrone(spec, context, materials, meshes) {
@@ -334,8 +684,27 @@ function buildDrone(spec, context, materials, meshes) {
   // Sink the shared Arena status core onto the carapace so it reads as a
   // power light instead of hovering where the humanoid chest used to be.
   if (joints.core?.position) joints.core.position.set(0, standY + th * 0.10, -td * 0.60);
-  return {body, head};
+  return {body, head, anchors: {headTopY: standY - headY + 2.6, shoulderY: standY - vector(m.shoulderY, 7.47) + 1.0, backPos: [0, standY + 1.6, td * 0.8]}};
 }
+
+const FORM_BUILDERS = Object.freeze({
+  giant_chicken: buildChicken,
+  emperor_penguin: buildPenguin,
+  highland_cow: buildCow,
+  corgi: buildCorgi,
+  tabby_cat: buildCat,
+  red_fox: buildFox,
+  battle_rabbit: buildRabbit,
+  bullfrog: buildFrog,
+  land_shark: buildShark,
+  tyrant_rex: buildRex,
+  human_adventurer: buildAdventurer,
+  astronaut: buildAstronaut,
+  knight: buildKnight,
+  wizard: buildWizard,
+  skeleton: buildSkeleton,
+  stone_golem: buildGolem,
+});
 
 /** Build one bounded, articulated near-detail body on the shared Forge joints. */
 export function buildBodyFormGeometry(spec, context) {
@@ -348,15 +717,15 @@ export function buildBodyFormGeometry(spec, context) {
   if (spec.family === 'slime') canonical = buildSlime(spec, normalized, materials, meshes);
   else if (spec.family === 'drone') canonical = buildDrone(spec, normalized, materials, meshes);
   else {
-    canonical = addHumanoidBase(spec, normalized, materials, meshes);
-    addFeatureParts(spec, normalized, materials, meshes, canonical.dimensions);
+    const builder = FORM_BUILDERS[spec.key] || buildAdventurer;
+    canonical = builder(spec, buildContext(spec, normalized), materials, meshes);
   }
   if (meshes.length > spec.nearMeshBudget) {
     for (const mesh of meshes) mesh.dispose();
     for (const material of materials.all) material.dispose();
     throw new Error(`${spec.key} exceeded its ${spec.nearMeshBudget}-mesh budget`);
   }
-  return {meshes, materials: materials.all, body: canonical.body, head: canonical.head};
+  return {meshes, materials: materials.all, body: canonical.body, head: canonical.head, anchors: canonical.anchors || null};
 }
 
 function farSignatureParts(spec) {
