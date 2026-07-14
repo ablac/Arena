@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="-40 5 280 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- Halo (elegant arc) -->
+  <path d="M55 42 Q100 12 145 42" fill="none" stroke="#c9b98a" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Left Wing -->
+  <path d="M100 70 Q70 55 30 48 Q0 44 -32 50 Q-10 52 20 60 Q55 70 75 80" fill="none" stroke="#e8e4df" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M100 70 Q75 60 40 56 Q10 54 -20 62 Q5 62 35 68 Q65 76 85 85" fill="none" stroke="#e8e4df" stroke-width="1.4" stroke-linecap="round" opacity="0.7"/>
+  <path d="M100 70 Q80 65 50 65 Q25 66 0 76 Q25 72 50 76 Q75 82 92 90" fill="none" stroke="#e8e4df" stroke-width="1" stroke-linecap="round" opacity="0.45"/>
+  <!-- Right Wing -->
+  <path d="M100 70 Q130 55 170 48 Q200 44 232 50 Q210 52 180 60 Q145 70 125 80" fill="none" stroke="#e8e4df" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M100 70 Q125 60 160 56 Q190 54 220 62 Q195 62 165 68 Q135 76 115 85" fill="none" stroke="#e8e4df" stroke-width="1.4" stroke-linecap="round" opacity="0.7"/>
+  <path d="M100 70 Q120 65 150 65 Q175 66 200 76 Q175 72 150 76 Q125 82 108 90" fill="none" stroke="#e8e4df" stroke-width="1" stroke-linecap="round" opacity="0.45"/>
+</svg>
