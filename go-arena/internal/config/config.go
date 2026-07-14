@@ -280,9 +280,9 @@ type Config struct {
 
 	// Teleport Pads
 	TeleportPadPairs         int `envconfig:"ARENA_TELEPORT_PAD_PAIRS" default:"3"`
-	TeleportCooldownTicks    int `envconfig:"ARENA_TELEPORT_COOLDOWN_TICKS" default:"50"`
-	TeleportCollectRadius    int `envconfig:"ARENA_TELEPORT_COLLECT_RADIUS" default:"1"`
-	TeleportPadLockTicks     int `envconfig:"ARENA_TELEPORT_PAD_LOCK_TICKS" default:"30"`
+	TeleportCooldownTicks    int `envconfig:"ARENA_TELEPORT_COOLDOWN_TICKS" default:"300"`
+	TeleportCollectRadius    int `envconfig:"ARENA_TELEPORT_COLLECT_RADIUS" default:"0"`
+	TeleportPadLockTicks     int `envconfig:"ARENA_TELEPORT_PAD_LOCK_TICKS" default:"300"`
 	TeleportHazardGraceTicks int `envconfig:"ARENA_TELEPORT_HAZARD_GRACE_TICKS" default:"2"`
 
 	// Capture Pad objective
