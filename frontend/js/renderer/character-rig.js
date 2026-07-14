@@ -11,11 +11,11 @@
  */
 
 import {parseColor, makeMat} from './utils.js';
-import {getCharacterProfile} from './character-roster.js?v=20260712c';
-import {ForgeAnimState} from './character-anims.js?v=20260712c';
-import {createForgeWeapon, disposeForgeWeapon} from './forge-weapons.js?v=20260713b';
-import {bodyFormForAsset} from './body-form-roster.js?v=20260713b';
-import {buildBodyFormGeometry, createBodyFormFarProxy} from './body-form-geometry.js?v=20260713b';
+import {getCharacterProfile} from './character-roster.js?v=20260714a';
+import {ForgeAnimState} from './character-anims.js?v=20260714a';
+import {createForgeWeapon, disposeForgeWeapon} from './forge-weapons.js?v=20260714a';
+import {bodyFormForAsset} from './body-form-roster.js?v=20260714a';
+import {buildBodyFormGeometry, createBodyFormFarProxy} from './body-form-geometry.js?v=20260714a';
 
 const _sceneResources = new WeakMap();
 
@@ -592,13 +592,22 @@ export function createForgeCharacter(bot, scene, options = {}) {
     rightKnee: legs.right.knee,
     core,
   };
+  // The roster stance is authored in character semantics (forward-positive);
+  // convert it once here into rig-space joint offsets. Torso/head content
+  // sits above its joint (forward = negative rig pitch) while limbs hang
+  // below theirs (forward = positive); knees are negated at application.
+  const stance = profile.stance || {};
   const basePose = {
-    bodyY,
-    armLRoll: profile.weapon === 'bow' ? -0.08 : 0.05,
-    armRRoll: profile.weapon === 'shield' ? 0.10 : -0.05,
-    elbowLPitch: profile.weapon === 'shield' ? -0.36 : -0.10,
-    elbowRPitch: profile.weapon === 'grapple' ? -0.28 : -0.10,
-    kneePitch: 0.05 + profile.motion.weight * 0.04,
+    bodyY: bodyY - (stance.crouch || 0),
+    bodyYaw: stance.bodyYaw || 0,
+    headPitch: -(stance.headPitch || 0),
+    armLPitch: stance.armL || 0,
+    armRPitch: stance.armR || 0,
+    armLRoll: stance.armLRoll ?? (profile.weapon === 'bow' ? -0.08 : 0.05),
+    armRRoll: stance.armRRoll ?? (profile.weapon === 'shield' ? 0.10 : -0.05),
+    elbowLPitch: stance.elbowL ?? 0.10,
+    elbowRPitch: stance.elbowR ?? 0.10,
+    kneePitch: (stance.knee || 0) + 0.05 + profile.motion.weight * 0.04,
   };
 
   let renderedBody = torso;
@@ -661,7 +670,9 @@ export function createForgeCharacter(bot, scene, options = {}) {
     hpFill: hud.hpFill,
     nameLabel: hud.nameLabel,
     pickMeshes: presentationOnly ? [] : [selector, renderedBody, renderedHead, lowDetail].filter(Boolean),
-    anim: new ForgeAnimState(profile.weapon),
+    anim: Object.assign(new ForgeAnimState(profile.weapon), {
+      formMotion: bodyForm?.motion || null,
+    }),
     isForgeCharacter: true,
     isAlive: true,
     _wasAlive: true,

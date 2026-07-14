@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Arena Character Lab</title>
+  <script src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
+  <script src="https://cdn.babylonjs.com/v9.14.0/gui/babylon.gui.min.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0a0e18; overflow: hidden; }
+    #canvas { width: 100%; height: 100%; display: block; }
+    #controls {
+      position: fixed; top: 8px; left: 8px; z-index: 10;
+      font-family: monospace; color: #cfe6ff; font-size: 12px;
+    }
+    #controls button {
+      background: #16233b; color: #cfe6ff; border: 1px solid #3a5a8a;
+      margin: 2px; padding: 4px 10px; font-family: monospace; cursor: pointer;
+    }
+    #controls button.active { background: #2a4a7a; }
+    #legend {
+      position: fixed; bottom: 8px; left: 8px; z-index: 10;
+      font-family: monospace; color: #9ab8d8; font-size: 11px; white-space: pre;
+    }
+  </style>
+</head>
+<body>
+<div id="controls">
+  <button data-mode="idle" class="active">Idle</button>
+  <button data-mode="walk">Walk</button>
+  <button data-mode="attack">Attack</button>
+  <button data-mode="hit">Hit</button>
+  <button data-mode="dodge">Dodge</button>
+  <button data-mode="death">Death</button>
+  <button id="row-toggle">Rows: all</button>
+</div>
+<div id="legend"></div>
+<canvas id="canvas"></canvas>
+<script type="module">
+import {createBotEntry} from './js/renderer/bot-body.js?v=20260714a';
+import {
+  updateForgeCharacter, triggerForgeAttack, triggerForgeDodge,
+  triggerForgeHit, triggerForgeShove,
+} from './js/renderer/character-anims.js?v=20260714a';
+import {FORGE_WEAPONS} from './js/renderer/character-roster.js?v=20260714a';
+import {BODY_FORM_SPECS} from './js/renderer/body-form-roster.js?v=20260714a';
+
+const canvas = document.getElementById('canvas');
+const engine = new BABYLON.Engine(canvas, true);
+const scene = new BABYLON.Scene(engine);
+scene.clearColor = new BABYLON.Color4(0.04, 0.06, 0.10, 1);
+new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0.2, 1, 0.3), scene);
+
+const camera = new BABYLON.ArcRotateCamera('cam', -Math.PI / 2, 1.05, 190,
+  new BABYLON.Vector3(0, 8, 30), scene);
+camera.attachControl(canvas, true);
+camera.wheelPrecision = 2;
+
+const ground = BABYLON.MeshBuilder.CreateGround('ground', {width: 400, height: 300}, scene);
+const gmat = new BABYLON.StandardMaterial('gmat', scene);
+gmat.diffuseColor = new BABYLON.Color3(0.07, 0.10, 0.16);
+gmat.specularColor = BABYLON.Color3.Black();
+ground.material = gmat;
+
+const COLORS = ['#e94560', '#2ecc71', '#f5cd79', '#3dc1d3', '#6c5ce7', '#556270', '#c44569'];
+const entries = [];
+const SPACING = 26;
+
+// Row 0 (front, z=0): the 7 default chassis, one per weapon.
+FORGE_WEAPONS.forEach((weapon, i) => {
+  const bot = {
+    bot_id: `default-${weapon}`, name: weapon, weapon,
+    avatar_color: COLORS[i % COLORS.length],
+  };
+  const entry = createBotEntry(bot, scene, {presentationOnly: true});
+  entry.root.position.set((i - 3) * SPACING, 0, 0);
+  entry._homeX = (i - 3) * SPACING;
+  entry._homeZ = 0;
+  entry._weapon = weapon;
+  entry._row = 0;
+  entries.push(entry);
+});
+
+// Rows 1+ (behind): every body form, 7 per row, cycling weapons.
+BODY_FORM_SPECS.forEach((spec, i) => {
+  const weapon = FORGE_WEAPONS[i % FORGE_WEAPONS.length];
+  const bot = {
+    bot_id: `form-${spec.key}`, name: spec.label, weapon,
+    avatar_color: COLORS[(i + 3) % COLORS.length],
+    cosmetics: {bot_skin: spec.assetKey},
+  };
+  const entry = createBotEntry(bot, scene, {presentationOnly: true});
+  const row = 1 + Math.floor(i / 7);
+  const col = i % 7;
+  entry.root.position.set((col - 3) * SPACING, 0, row * 34);
+  entry._homeX = (col - 3) * SPACING;
+  entry._homeZ = row * 34;
+  entry._weapon = weapon;
+  entry._row = row;
+  entries.push(entry);
+});
+
+const legendLines = ['row0 (front): ' + FORGE_WEAPONS.join(' | ')];
+for (let r = 0; r * 7 < BODY_FORM_SPECS.length; r += 1) {
+  legendLines.push(`row${r + 1}: ` + BODY_FORM_SPECS.slice(r * 7, r * 7 + 7).map(s => s.key).join(' | '));
+}
+document.getElementById('legend').textContent = legendLines.join('\n');
+
+let mode = 'idle';
+let visibleRow = -1; // -1 = all
+let modeClock = 0;
+
+for (const button of document.querySelectorAll('#controls button[data-mode]')) {
+  button.addEventListener('click', () => {
+    mode = button.dataset.mode;
+    modeClock = 0;
+    document.querySelectorAll('#controls button').forEach(b => b.classList.remove('active'));
+    button.classList.add('active');
+    for (const entry of entries) {
+      entry.isAlive = true;
+      entry.anim.wasAlive = true;
+      entry.anim.deathTimer = -1;
+      entry.root.position.set(entry._homeX, 0, entry._homeZ);
+      entry._poseX = entry._homeX;
+      entry._poseZ = entry._homeZ;
+      entry.anim.targetRotY = Math.PI; // face camera (-Z world)
+      entry.root.setEnabled(true);
+    }
+  });
+}
+document.getElementById('row-toggle').addEventListener('click', (event) => {
+  const maxRow = 1 + Math.ceil(BODY_FORM_SPECS.length / 7) - 1;
+  visibleRow = visibleRow >= maxRow ? -1 : visibleRow + 1;
+  event.target.textContent = visibleRow < 0 ? 'Rows: all' : `Row: ${visibleRow}`;
+  for (const entry of entries) {
+    entry.root.setEnabled(visibleRow < 0 || entry._row === visibleRow);
+  }
+  const targetZ = visibleRow < 0 ? 30 : visibleRow * 34;
+  camera.target.z = targetZ;
+  camera.radius = visibleRow < 0 ? 190 : 120;
+});
+
+let speedScale = 1;
+let last = performance.now();
+scene.onBeforeRenderObservable.add(() => {
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.1) * speedScale;
+  last = now;
+  modeClock += dt;
+  if (dt === 0) return;
+
+  for (const entry of entries) {
+    if (mode === 'walk') {
+      // Walk a small loop so gait + facing engage.
+      const t = modeClock * 1.4;
+      entry.root.position.x = entry._homeX + Math.sin(t) * 9;
+      entry.root.position.z = entry._homeZ + Math.cos(t) * 5;
+    } else if (mode === 'attack') {
+      if (entry.anim.attackTimer < 0 && (modeClock % 1.6) < 0.05) {
+        triggerForgeAttack(entry.anim, entry._weapon);
+      }
+    } else if (mode === 'hit') {
+      if (entry.anim.hitTimer < 0 && (modeClock % 1.2) < 0.05) triggerForgeHit(entry.anim, 0.8);
+    } else if (mode === 'dodge') {
+      if (entry.anim.dodgeTimer < 0 && (modeClock % 1.4) < 0.05) triggerForgeDodge(entry.anim, 0.5);
+    } else if (mode === 'death') {
+      entry.isAlive = false;
+    }
+    if (mode !== 'walk') {
+      entry.anim.targetRotY = Math.PI; // keep facing camera
+    }
+    updateForgeCharacter(entry, dt, false, true);
+  }
+});
+
+engine.runRenderLoop(() => scene.render());
+window.addEventListener('resize', () => engine.resize());
+window._lab = {
+  entries, scene, camera,
+  setSpeed(s) { speedScale = s; },
+  // Freeze every character mid-attack at the given fraction of its swing.
+  attackAt(fraction) {
+    speedScale = 0;
+    for (const entry of entries) {
+      entry.anim.attackTimer = -1;
+      entry.anim.targetRotY = Math.PI;
+      entry.root.rotation.y = Math.PI;
+      triggerForgeAttack(entry.anim, entry._weapon);
+      const step = 1 / 120;
+      let t = 0;
+      const target = entry.anim.attackDuration * fraction;
+      while (t < target) { updateForgeCharacter(entry, step, false, true); t += step; }
+    }
+  },
+};
+</script>
+</body>
+</html>

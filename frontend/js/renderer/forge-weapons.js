@@ -254,7 +254,8 @@ const REST_ROTATION = Object.freeze({
   spear: {x: 0.08, y: 0, z: -0.44},
   daggers: {x: 0, y: 0, z: 0},
   staff: {x: 0.04, y: 0, z: 0.10},
-  shield: {x: 0, y: 0.14, z: -0.12},
+  // -x pitch keeps the shield face vertical against the raised-forearm carry.
+  shield: {x: -0.45, y: 0.14, z: -0.12},
   grapple: {x: -0.08, y: 0, z: 0},
 });
 

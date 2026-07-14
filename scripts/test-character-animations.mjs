@@ -88,6 +88,47 @@ updateForgeCharacter(daggerEntry, 0.05, false, true);
 assert.ok(leftDagger.rotation.z < 0 && rightDagger.rotation.z > 0,
   'the two hand-mounted daggers must receive mirrored attack rotations');
 
+// Rig-space sign conventions: the model faces local -Z, torso content sits
+// above its joint, and limbs hang below theirs. These directions regressed
+// once (high-posture classes leaned backward and swings wound up behind the
+// body), so pin them.
+const spearProfile = getCharacterProfile('spear');
+const spearWeapon = joint();
+const spearEntry = {
+  root: joint(),
+  profile: spearProfile,
+  anim: new ForgeAnimState('spear'),
+  isAlive: true,
+  joints: {
+    body: joint(), head: joint(), leftArm: joint(), leftElbow: joint(),
+    rightArm: joint(), rightElbow: joint(), leftLeg: joint(), leftKnee: joint(),
+    rightLeg: joint(), rightKnee: joint(), core: joint(),
+  },
+  basePose: {
+    bodyY: 10, armLRoll: 0, armRRoll: 0, elbowLPitch: 0, elbowRPitch: 0, kneePitch: 0.09,
+  },
+  weaponPoseNodes: [spearWeapon],
+  weaponBases: [{x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0, sign: 1}],
+};
+updateForgeCharacter(spearEntry, 0.016, false, true);
+assert.ok(spearEntry.joints.body.rotation.x < 0,
+  'a positive roster posture must render as a FORWARD lean (negative rig pitch)');
+assert.ok(spearEntry.joints.leftKnee.rotation.x < 0,
+  'the knee pre-bend must tuck the shin backward (negative rig pitch)');
+// Drive the spear to its thrust contact frame and confirm the weapon and
+// striking arm both travel forward, not into the character's own back.
+for (let step = 0; step < 6; step += 1) updateForgeCharacter(spearEntry, 0.058 * 0.62 / 6, false, true);
+assert.equal(spearEntry.anim.attackTimer, -1, 'spear entry starts at rest');
+triggerForgeAttack(spearEntry.anim, 'spear');
+let spearFrames = Math.round((spearEntry.anim.attackDuration * 0.62) / 0.008);
+for (let step = 0; step < spearFrames; step += 1) updateForgeCharacter(spearEntry, 0.008, false, true);
+assert.ok(spearWeapon.position.z < -1,
+  'the spear thrust must translate the weapon toward -Z (the authored facing)');
+assert.ok(spearEntry.joints.rightArm.rotation.x > 0,
+  'the thrusting arm must swing forward (positive rig pitch for a hanging limb)');
+assert.ok(spearEntry.joints.body.rotation.x < -spearProfile.proportions.posture,
+  'the thrust must deepen the forward lean beyond the resting posture');
+
 const animSource = readFileSync(
   new URL('../frontend/js/renderer/character-anims.js', import.meta.url),
   'utf8',
