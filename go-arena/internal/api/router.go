@@ -235,8 +235,13 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 		// Admin routes (token-authenticated or OIDC session, rate-limited).
 		api.Route("/admin", func(admin chi.Router) {
-			admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
+			// Rate limiting must wrap OUTSIDE auth: chi composes Use() in
+			// registration order (first = outermost), so an auth-first
+			// ordering here would let unlimited invalid X-Admin-Token
+			// guesses skip the limiter entirely, since the auth middleware
+			// returns without calling next on every rejection path.
 			admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
+			admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
 			adminHandler.Routes(admin)
 			registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
 			admin.Get("/cosmetics/orders", commerceHandler.AdminOrders)
@@ -329,8 +334,11 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 			// Admin routes (mirrored under /arena prefix).
 			api.Route("/admin", func(admin chi.Router) {
-				admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
+				// See the matching comment on the primary /admin mount above:
+				// rate limiting must wrap OUTSIDE auth or failed-auth guesses
+				// bypass it entirely.
 				admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
+				admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
 				adminHandler.Routes(admin)
 				registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
 				admin.Get("/cosmetics/orders", commerceHandler.AdminOrders)

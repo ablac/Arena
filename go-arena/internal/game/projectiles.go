@@ -90,7 +90,13 @@ func UpdateProjectiles(projectiles *[]Projectile, bots map[string]*BotState, obs
 			}
 
 			if ownerOk {
-				ApplyDamage(victim, owner, proj.Damage, proj.Weapon, tickCount)
+				// proj.Damage is weaponDmg*attackMult computed at fire time
+				// (the eventual victim isn't known yet); apply the actual
+				// victim's defense reduction here, at impact, the same way
+				// every other weapon applies target.DefenseReduction right
+				// before ApplyDamage.
+				dmg := CalculateDamage(proj.Damage, 1, victim.DefenseReduction)
+				ApplyDamage(victim, owner, dmg, proj.Weapon, tickCount)
 				ApplyAttributedGridKnockback(victim, owner, proj.Position.Sub(proj.Direction.Scale(proj.Speed*dt)), 1, obstacles, proj.Weapon, tickCount)
 				owner.RoundShotsHit++
 			}

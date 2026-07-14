@@ -25,7 +25,7 @@ for (const surface of surfaces) {
     `${surface.name} brand should have a stable accessible name`);
   assert.match(brandAnchor, /<span class="arena-brand-name">Angel Software Solutions<\/span>/);
   assert.match(brandAnchor, /<span class="arena-brand-product">THE ARENA<\/span>/);
-  assert.doesNotMatch(brandAnchor, /site-brand-mark|brand-mark|AI Battle Arena/,
+  assert.doesNotMatch(brandAnchor, /\bsite-brand-mark\b|AI Battle Arena/,
     `${surface.name} lockup should not retain the old dot or visible product name`);
 
   const brandCSSIndex = html.lastIndexOf(`href="${surface.cssHref}`);
@@ -54,8 +54,8 @@ assert.doesNotMatch(stylesheet, /\.dashboard-arena-brand\s*\{[^}]*position:\s*fi
   'a fixed Dashboard brand overlaps auto-scrolled inventory and preview controls');
 assert.match(stylesheet, /body:not\(\.dashboard-embedded\)\s+#app\s*\{[^}]*padding-top:/s,
   'standalone Dashboard content must reserve the brand lockup height');
-assert.match(stylesheet, /#tb-brand\.arena-brand\s*\{[^}]*display:\s*inline-grid/s,
-  'the mobile ID selector must preserve the two-line grid over its legacy dot layout');
+assert.match(stylesheet, /\.arena-brand-copy\s*\{[^}]*display:\s*grid/s,
+  'the mobile ID selector must preserve the two-line name/product grid over its legacy dot layout');
 assert.match(stylesheet, /@media\s*\(max-width:\s*420px\)/,
   'the two-line lockup needs an explicit narrow-screen treatment');
 

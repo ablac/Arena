@@ -267,7 +267,6 @@ type Config struct {
 	BcryptRounds                int    `envconfig:"ARENA_BCRYPT_ROUNDS" default:"12"`
 	TrustedProxyCIDRs           string `envconfig:"ARENA_TRUSTED_PROXY_CIDRS" default:"127.0.0.1/32,::1/128"`
 	TrustedCloudflareProxyCIDRs string `envconfig:"ARENA_TRUSTED_CLOUDFLARE_PROXY_CIDRS" default:""`
-	RateLimitRPM                int    `envconfig:"ARENA_RATE_LIMIT_RPM" default:"1200"`
 	RateLimitRegisterRPM        int    `envconfig:"ARENA_RATE_LIMIT_REGISTER_RPM" default:"10"`
 	RateLimitRegisterPerHour    int    `envconfig:"ARENA_RATE_LIMIT_REGISTER_PER_HOUR" default:"500"`
 
@@ -329,9 +328,7 @@ type Config struct {
 	SuddenDeathMaxOvertime float64 `envconfig:"ARENA_SUDDEN_DEATH_MAX_OVERTIME" default:"90"`
 
 	// Bounty System
-	BountyKillStreakThreshold int     `envconfig:"ARENA_BOUNTY_KILL_STREAK" default:"3"`
-	BountyBonusPoints         float64 `envconfig:"ARENA_BOUNTY_BONUS_POINTS" default:"50"`
-	BountyWinStreakThreshold  int     `envconfig:"ARENA_BOUNTY_WIN_STREAK" default:"1"`
+	BountyWinStreakThreshold int `envconfig:"ARENA_BOUNTY_WIN_STREAK" default:"1"`
 	BountyBoardBasePoints     int     `envconfig:"ARENA_BOUNTY_BOARD_BASE_POINTS" default:"6"`
 	BountyBoardStepPoints     int     `envconfig:"ARENA_BOUNTY_BOARD_STEP_POINTS" default:"4"`
 	BountyBoardMaxPoints      int     `envconfig:"ARENA_BOUNTY_BOARD_MAX_POINTS" default:"18"`
