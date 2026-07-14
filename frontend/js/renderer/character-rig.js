@@ -11,11 +11,11 @@
  */
 
 import {parseColor, makeMat} from './utils.js';
-import {getCharacterProfile} from './character-roster.js?v=20260714a';
-import {ForgeAnimState} from './character-anims.js?v=20260714a';
-import {createForgeWeapon, disposeForgeWeapon} from './forge-weapons.js?v=20260714a';
-import {bodyFormForAsset} from './body-form-roster.js?v=20260714a';
-import {buildBodyFormGeometry, createBodyFormFarProxy} from './body-form-geometry.js?v=20260714a';
+import {getCharacterProfile} from './character-roster.js?v=20260714b';
+import {ForgeAnimState} from './character-anims.js?v=20260714b';
+import {createForgeWeapon, disposeForgeWeapon} from './forge-weapons.js?v=20260714b';
+import {bodyFormForAsset} from './body-form-roster.js?v=20260714b';
+import {buildBodyFormGeometry, createBodyFormFarProxy} from './body-form-geometry.js?v=20260714b';
 
 const _sceneResources = new WeakMap();
 
