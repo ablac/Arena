@@ -1269,6 +1269,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
         <div class="tab-item" data-tab="anticheat"><span class="tab-dot" style="background:var(--red)"></span>Anti-Cheat</div>
         <div class="tab-item" data-tab="apikeys">API Keys</div>
         <div class="tab-item" data-tab="admintokens">Admin Tokens</div>
+        <div class="tab-item" data-tab="chatmod">Chat Moderation</div>
         <div class="tab-item" data-tab="audit">Audit Log</div>
       </div>
     </div>
@@ -1782,6 +1783,99 @@ tr:hover td{background:rgba(88,166,255,0.07)}
         <thead><tr><th>Label</th><th>Token Hint</th><th>Source</th><th>Created</th><th>Actions</th></tr></thead>
         <tbody id="adminTokenTableBody"></tbody>
       </table>
+    </div>
+
+    <!-- Chat Moderation Panel -->
+    <div class="panel" id="panel-chatmod">
+      <div class="cards" id="chatmodOverview">
+        <div class="card"><div class="label">Chat Status</div><div class="value" id="chatmodStatusValue">--</div></div>
+        <div class="card"><div class="label">Connected Clients</div><div class="value" id="chatmodClientsValue">--</div></div>
+        <div class="card"><div class="label">Blocked Keywords</div><div class="value" id="chatmodKeywordCountValue">--</div></div>
+        <div class="card"><div class="label">Active Bans</div><div class="value" id="chatmodBanCountValue">--</div></div>
+      </div>
+
+      <div class="ctrl-section">
+        <h3>Chat Kill Switch</h3>
+        <div class="ctrl-row">
+          <button class="btn-success" id="chatmodEnableBtn" onclick="setChatEnabled(true)">Enable</button>
+          <button class="btn-danger" id="chatmodDisableBtn" onclick="setChatEnabled(false)">Disable</button>
+        </div>
+        <div class="ctrl-result" id="chatmodToggleResult"></div>
+      </div>
+
+      <div class="ctrl-section">
+        <h3>Live Messages</h3>
+        <div class="surface-toolbar">
+          <button onclick="loadChatMessages()">Refresh</button>
+          <div class="spacer"></div>
+          <span id="chatmodMessageCount" style="color:var(--text2);font-size:11px">0 messages</span>
+        </div>
+        <div style="overflow-x:auto;margin-top:8px">
+          <table id="chatmodMessageTable">
+            <thead><tr>
+              <th>Time</th>
+              <th>Handle</th>
+              <th>Account ID</th>
+              <th>Message</th>
+              <th>IP</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr></thead>
+            <tbody id="chatmodMessageTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="ctrl-section">
+        <h3>Ban Management</h3>
+        <div class="ctrl-row">
+          <label style="color:var(--text2);font-size:11px">Account ID:</label>
+          <input id="chatmodBanAccountId" placeholder="acc_x" style="width:200px">
+          <label style="color:var(--text2);font-size:11px">Minutes:</label>
+          <input id="chatmodBanMinutes" type="number" placeholder="60" style="width:90px">
+          <button onclick="document.getElementById('chatmodBanMinutes').value=10">10m</button>
+          <button onclick="document.getElementById('chatmodBanMinutes').value=60">60m</button>
+          <button onclick="document.getElementById('chatmodBanMinutes').value=1440">1440m</button>
+        </div>
+        <div class="ctrl-row">
+          <label style="color:var(--text2);font-size:11px">Reason:</label>
+          <input id="chatmodBanReason" placeholder="optional" style="width:260px">
+          <button class="btn-danger" onclick="submitChatBan()">Submit Ban</button>
+        </div>
+        <div class="ctrl-result" id="chatmodBanResult"></div>
+
+        <div style="overflow-x:auto;margin-top:8px">
+          <table id="chatmodBansTable">
+            <thead><tr><th>Account ID</th><th>Email</th><th>Display Name</th><th>Banned Until</th><th>Actions</th></tr></thead>
+            <tbody id="chatmodBansTableBody"></tbody>
+          </table>
+        </div>
+
+        <details style="margin-top:10px">
+          <summary style="cursor:pointer;color:var(--text2);font-size:11px">Ban History</summary>
+          <div style="overflow-x:auto;margin-top:8px">
+            <table id="chatmodBanLogTable">
+              <thead><tr><th>Account ID</th><th>Minutes</th><th>Until</th><th>Reason</th><th>Created</th></tr></thead>
+              <tbody id="chatmodBanLogTableBody"></tbody>
+            </table>
+          </div>
+        </details>
+      </div>
+
+      <div class="ctrl-section">
+        <h3>Blocked Keywords</h3>
+        <div class="ctrl-row">
+          <input id="chatmodKeywordInput" placeholder="keyword to block" style="width:220px" onkeydown="if(event.key==='Enter')addChatKeyword()">
+          <button class="btn-success" onclick="addChatKeyword()">Add Keyword</button>
+        </div>
+        <div class="ctrl-result" id="chatmodKeywordResult"></div>
+        <div style="overflow-x:auto;margin-top:8px">
+          <table id="chatmodKeywordsTable">
+            <thead><tr><th>Keyword</th><th>Added</th><th>Actions</th></tr></thead>
+            <tbody id="chatmodKeywordsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <!-- Leaderboard Panel -->
@@ -2313,6 +2407,7 @@ const PANEL_META = {
   anticheat: ['Secure', 'Anti-Cheat', 'Scan behavior, IP reuse, and suspicious activity.'],
   apikeys: ['Secure', 'API Keys', 'Review bot keys, online state, and revocation actions.'],
   admintokens: ['Secure', 'Admin Tokens', 'Issue and revoke dashboard admin credentials.'],
+  chatmod: ['Secure', 'Chat Moderation', 'Hide messages, mute accounts, and manage the blocked-keyword list.'],
   leaderboard: ['Operate', 'Leaderboard', 'Rank bot performance across selectable periods.'],
   connlog: ['Observe', 'Connection Log', 'Historical connection stream for dashboard review.'],
   broadcasts: ['Tune + Publish', 'Site Broadcast', 'Publish, clear, and review site-wide visitor notices.'],
@@ -2623,6 +2718,7 @@ function switchTab(tabName, sourceItem=null) {
   if (currentTab === 'forensics') { loadDiffSelects(); renderDeathForensics(); }
   if (currentTab === 'apikeys') refreshAPIKeys();
   if (currentTab === 'admintokens') refreshAdminTokens();
+  if (currentTab === 'chatmod') loadChatModeration();
   if (currentTab === 'leaderboard') refreshLeaderboard();
   if (currentTab === 'controls') renderConfigHistory();
 }
@@ -6703,6 +6799,220 @@ async function deleteAdminToken(id, label) {
     toast('Admin token deleted: ' + label, 'success');
     refreshAdminTokens();
   } catch(e) { toast('Failed to delete token', 'error'); }
+}
+
+// ========== Chat Moderation ==========
+function loadChatModeration() {
+  loadChatOverview();
+  loadChatMessages();
+  loadChatBans();
+  loadChatKeywords();
+}
+
+async function loadChatOverview() {
+  try {
+    const data = await api('/chat/overview');
+    const statusEl = document.getElementById('chatmodStatusValue');
+    statusEl.textContent = data.enabled ? 'Enabled' : 'Disabled';
+    statusEl.className = 'value ' + (data.enabled ? 'green' : 'red');
+    document.getElementById('chatmodClientsValue').textContent = data.connected_clients ?? '--';
+    document.getElementById('chatmodKeywordCountValue').textContent = data.keyword_count ?? '--';
+    document.getElementById('chatmodBanCountValue').textContent = data.active_ban_count ?? '--';
+    document.getElementById('chatmodEnableBtn').disabled = !!data.enabled;
+    document.getElementById('chatmodDisableBtn').disabled = !data.enabled;
+  } catch(e) {
+    ['chatmodStatusValue','chatmodClientsValue','chatmodKeywordCountValue','chatmodBanCountValue'].forEach(id => {
+      const el = document.getElementById(id);
+      el.textContent = 'unavailable';
+      el.className = 'value red';
+    });
+  }
+}
+
+async function setChatEnabled(enabled) {
+  const el = document.getElementById('chatmodToggleResult');
+  try {
+    const data = await api('/chat/enabled', {method:'PUT', body:JSON.stringify({enabled})});
+    if (el) { el.textContent = 'Chat ' + (data.enabled ? 'enabled' : 'disabled'); el.style.color = 'var(--green)'; }
+    toast('Chat ' + (data.enabled ? 'enabled' : 'disabled'), 'success');
+    loadChatOverview();
+  } catch(e) {
+    if (el) { el.textContent = 'Failed to update chat status'; el.style.color = 'var(--red)'; }
+    toast('Failed to update chat status', 'error');
+  }
+}
+
+async function loadChatMessages() {
+  const tbody = document.getElementById('chatmodMessageTableBody');
+  try {
+    const data = await api('/chat/messages?limit=100');
+    const messages = data.messages || [];
+    document.getElementById('chatmodMessageCount').textContent = messages.length + ' messages';
+    tbody.innerHTML = messages.length ? messages.map(m => {
+      const time = m.created_at ? new Date(m.created_at).toLocaleString() : '--';
+      const hidden = !!m.hidden;
+      const statusBadge = hidden ? '<span class="status-badge s5xx">hidden</span>' : '<span class="status-badge s2xx">visible</span>';
+      const banBtn = m.account_id ? `<button style="font-size:10px;padding:2px 6px" onclick="prefillChatBan('${escAttr(m.account_id)}')">Ban</button>` : '';
+      const hideBtn = hidden
+        ? `<button class="btn-success" style="font-size:10px;padding:2px 6px" onclick="unhideChatMessage(${Number(m.id)})">Unhide</button>`
+        : `<button class="btn-warn" style="font-size:10px;padding:2px 6px" onclick="hideChatMessage(${Number(m.id)})">Hide</button>`;
+      return `<tr>
+        <td style="font-size:11px;color:var(--text2)">${time}</td>
+        <td>${esc(m.handle||'--')}</td>
+        <td style="font-size:11px;color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escAttr(m.account_id||'')}">${esc(m.account_id||'--')}</td>
+        <td>${esc(m.body||'')}</td>
+        <td style="font-size:11px;color:var(--text2)">${esc(m.ip||'--')}</td>
+        <td>${statusBadge}</td>
+        <td>${hideBtn} ${banBtn}</td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="7" style="color:var(--text2);text-align:center;padding:16px">No messages</td></tr>';
+  } catch(e) {
+    document.getElementById('chatmodMessageCount').textContent = '0 messages';
+    tbody.innerHTML = '<tr><td colspan="7" style="color:var(--red);text-align:center;padding:16px">Chat messages unavailable</td></tr>';
+  }
+}
+
+async function hideChatMessage(id) {
+  try {
+    await api('/chat/messages/' + id + '/hide', {method:'POST'});
+    toast('Message hidden', 'success');
+    loadChatMessages();
+  } catch(e) { toast('Failed to hide message', 'error'); }
+}
+
+async function unhideChatMessage(id) {
+  try {
+    await api('/chat/messages/' + id + '/unhide', {method:'POST'});
+    toast('Message unhidden', 'success');
+    loadChatMessages();
+  } catch(e) { toast('Failed to unhide message', 'error'); }
+}
+
+function prefillChatBan(accountId) {
+  const input = document.getElementById('chatmodBanAccountId');
+  input.value = accountId;
+  input.scrollIntoView({behavior:'smooth', block:'center'});
+  input.focus();
+}
+
+async function submitChatBan() {
+  const el = document.getElementById('chatmodBanResult');
+  const accountId = document.getElementById('chatmodBanAccountId').value.trim();
+  const minutesRaw = document.getElementById('chatmodBanMinutes').value;
+  const reason = document.getElementById('chatmodBanReason').value.trim();
+  if (!accountId) { if (el) { el.textContent = 'Account ID is required'; el.style.color = 'var(--red)'; } return; }
+  const minutes = Number(minutesRaw);
+  if (minutesRaw === '' || Number.isNaN(minutes)) { if (el) { el.textContent = 'Minutes must be a number'; el.style.color = 'var(--red)'; } return; }
+  try {
+    const body = {account_id: accountId, minutes};
+    if (reason) body.reason = reason;
+    const data = await api('/chat/ban', {method:'POST', body:JSON.stringify(body)});
+    if (el) { el.textContent = data.banned_until ? ('Banned until ' + new Date(data.banned_until).toLocaleString()) : 'Ban cleared'; el.style.color = 'var(--green)'; }
+    toast(minutes > 0 ? 'Account banned' : 'Ban cleared', 'success');
+    document.getElementById('chatmodBanReason').value = '';
+    loadChatBans();
+    loadChatOverview();
+  } catch(e) {
+    if (el) { el.textContent = 'Failed to submit ban'; el.style.color = 'var(--red)'; }
+    toast('Failed to submit ban', 'error');
+  }
+}
+
+async function loadChatBans() {
+  const tbody = document.getElementById('chatmodBansTableBody');
+  try {
+    const data = await api('/chat/bans');
+    const bans = data.bans || [];
+    tbody.innerHTML = bans.length ? bans.map(b => {
+      const until = b.banned_until ? new Date(b.banned_until).toLocaleString() : '--';
+      return `<tr>
+        <td style="font-size:11px">${esc(b.account_id||'--')}</td>
+        <td style="font-size:11px;color:var(--text2)">${esc(b.email||'--')}</td>
+        <td style="font-size:11px;color:var(--text2)">${esc(b.display_name||'--')}</td>
+        <td style="font-size:11px;color:var(--text2)">${until}</td>
+        <td><button class="btn-success" style="font-size:10px;padding:2px 6px" onclick="unbanChatAccount('${escAttr(b.account_id)}')">Unban now</button></td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="5" style="color:var(--text2);text-align:center;padding:16px">No active bans</td></tr>';
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--red);text-align:center;padding:16px">Bans unavailable</td></tr>';
+  }
+  loadChatBanLog();
+}
+
+async function unbanChatAccount(accountId) {
+  try {
+    await api('/chat/ban', {method:'POST', body:JSON.stringify({account_id: accountId, minutes: 0})});
+    toast('Ban cleared', 'success');
+    loadChatBans();
+    loadChatOverview();
+  } catch(e) { toast('Failed to clear ban', 'error'); }
+}
+
+async function loadChatBanLog() {
+  const tbody = document.getElementById('chatmodBanLogTableBody');
+  try {
+    const data = await api('/chat/ban-log?limit=50');
+    const log = data.log || [];
+    tbody.innerHTML = log.length ? log.map(l => {
+      const until = l.until ? new Date(l.until).toLocaleString() : '--';
+      const created = l.created_at ? new Date(l.created_at).toLocaleString() : '--';
+      return `<tr>
+        <td style="font-size:11px">${esc(l.account_id||'--')}</td>
+        <td style="font-size:11px;color:var(--text2)">${l.minutes ?? '--'}</td>
+        <td style="font-size:11px;color:var(--text2)">${until}</td>
+        <td style="font-size:11px;color:var(--text2)">${esc(l.reason||'--')}</td>
+        <td style="font-size:11px;color:var(--text2)">${created}</td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="5" style="color:var(--text2);text-align:center;padding:16px">No ban history</td></tr>';
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--red);text-align:center;padding:16px">Ban history unavailable</td></tr>';
+  }
+}
+
+async function loadChatKeywords() {
+  const tbody = document.getElementById('chatmodKeywordsTableBody');
+  try {
+    const data = await api('/chat/keywords');
+    const keywords = data.keywords || [];
+    tbody.innerHTML = keywords.length ? keywords.map(k => {
+      const created = k.created_at ? new Date(k.created_at).toLocaleString() : '--';
+      return `<tr>
+        <td>${esc(k.keyword||'')}</td>
+        <td style="font-size:11px;color:var(--text2)">${created}</td>
+        <td><button class="btn-danger" style="font-size:10px;padding:2px 6px" onclick="removeChatKeyword(${Number(k.id)})">Remove</button></td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="3" style="color:var(--text2);text-align:center;padding:16px">No blocked keywords</td></tr>';
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="3" style="color:var(--red);text-align:center;padding:16px">Keyword list unavailable</td></tr>';
+  }
+}
+
+async function addChatKeyword() {
+  const el = document.getElementById('chatmodKeywordResult');
+  const input = document.getElementById('chatmodKeywordInput');
+  const keyword = input.value.trim();
+  if (!keyword) return;
+  try {
+    await api('/chat/keywords', {method:'POST', body:JSON.stringify({keyword})});
+    input.value = '';
+    if (el) { el.textContent = 'Keyword added'; el.style.color = 'var(--green)'; }
+    toast('Keyword added', 'success');
+    loadChatKeywords();
+    loadChatOverview();
+  } catch(e) {
+    const msg = /409|exist/i.test(e.message || '') ? 'Keyword already exists' : (e.message || 'Failed to add keyword');
+    if (el) { el.textContent = msg; el.style.color = 'var(--red)'; }
+    toast(msg, 'error');
+  }
+}
+
+async function removeChatKeyword(id) {
+  try {
+    await api('/chat/keywords/' + id, {method:'DELETE'});
+    toast('Keyword removed', 'success');
+    loadChatKeywords();
+    loadChatOverview();
+  } catch(e) { toast('Failed to remove keyword', 'error'); }
 }
 
 // ========== Theme Toggle ==========

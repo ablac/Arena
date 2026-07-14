@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="../css/embedded-checkout.css?v=20260713a">
 <link rel="stylesheet" href="./cosmetics-preview.css?v=20260713a">
 <script src="../js/embedded-checkout.js?v=20260713a"></script>
+<script type="module" src="../js/consent-gate.js?v=20260714a"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--border:#30363d;--text:#c9d1d9;--text2:#8b949e;--accent:#58a6ff;--green:#3fb950;--red:#f85149;--orange:#d29922;--purple:#bc8cff;--cyan:#39d353;--gold:#f0c040}
@@ -275,6 +276,14 @@ body.dashboard-embedded header{
 }
 body.dashboard-embedded header h1{
   display:none;
+}
+.dashboard-open-new-tab{
+  display:none;
+}
+body.dashboard-embedded .dashboard-open-new-tab{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
 }
 .dashboard-status-cache{
   display:none;
@@ -616,9 +625,34 @@ button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.5;tra
 .cosmetic-purchase-facts span,.cosmetic-purchase-facts time,.cosmetic-purchase-money span{padding:5px 7px;border:1px solid rgba(126,166,207,.1);border-radius:9px;background:rgba(255,255,255,.02)}
 .cosmetic-purchase-money strong{color:#ecf4ff}
 .cosmetic-purchase-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;color:#91a6bd;font:500 9px/1.4 'IBM Plex Mono',monospace}
-:is(.tbtn,.cosmetic-shop-buy,.cosmetic-shop-search input,.all-access-plan button,.account-key-manager button,.account-key-manager input):focus-visible{outline:2px solid #7ee4ff;outline-offset:3px}
+.account-profile-form{margin-bottom:16px;padding:18px;border:1px solid rgba(71,215,255,.2);border-radius:18px;background:rgba(6,12,20,.62)}
+.profile-field{margin-bottom:14px}
+.profile-field:last-child{margin-bottom:0}
+.profile-field label,.profile-field-label{display:block;margin-bottom:6px;color:#ecf4ff;font-size:11px;font-weight:700}
+.account-profile-form input[type=text],.account-profile-form textarea{width:100%;min-height:44px;font-size:14px}
+.account-profile-form textarea{min-height:88px;resize:vertical;font-family:inherit;line-height:1.5}
+.profile-chat-handle-preview{margin-top:6px;color:#91a6bd;font:500 10px/1.5 'IBM Plex Mono',monospace}
+.profile-chat-handle-preview strong{color:#47d7ff}
+.profile-bio-counter{margin-top:5px;color:#91a6bd;font:500 9px/1.4 'IBM Plex Mono',monospace;text-align:right}
+.profile-bio-counter.is-over{color:#ff9a92}
+.profile-color-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.profile-color-swatch{width:26px;height:26px;padding:0;border:2px solid rgba(255,255,255,.14);border-radius:50%;cursor:pointer}
+.profile-color-swatch.is-selected{border-color:#fff;box-shadow:0 0 0 2px rgba(71,215,255,.45)}
+.account-profile-form #profileAvatarColorInput{width:44px;min-height:36px;padding:2px}
+.profile-toggle{display:flex!important;align-items:center;gap:8px;color:#ecf4ff!important;font-size:12px!important;font-weight:500!important}
+.profile-form-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.profile-preview{padding:18px;border:1px solid rgba(126,166,207,.14);border-radius:22px;background:rgba(6,12,20,.55)}
+.profile-preview h3{margin:4px 0 12px;color:#ecf4ff;font-size:16px;letter-spacing:-.02em}
+.profile-preview-head{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.profile-preview-avatar{width:40px;height:40px;flex-shrink:0;border:1px solid rgba(255,255,255,.16);border-radius:50%}
+.profile-preview-head strong{color:#ecf4ff;font-size:14px}
+.profile-preview p{margin:8px 0;color:#c4cfdb;font-size:12px;line-height:1.55}
+.profile-bot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-top:10px}
+.profile-bot-card{padding:10px 12px;border:1px solid rgba(126,166,207,.12);border-radius:14px;background:rgba(255,255,255,.025)}
+.profile-bot-card strong{display:block;margin-bottom:6px;color:#ecf4ff;font-size:12px}
+:is(.tbtn,.cosmetic-shop-buy,.cosmetic-shop-search input,.all-access-plan button,.account-key-manager button,.account-key-manager input,.account-profile-form button,.account-profile-form input,.account-profile-form textarea,.profile-color-swatch):focus-visible{outline:2px solid #7ee4ff;outline-offset:3px}
 @media (max-width:760px){.login-shell{grid-template-columns:1fr}.all-access-plan{grid-template-columns:minmax(0,1fr)}.all-access-offer{justify-items:start;min-width:0;text-align:left}.account-key-form,.account-generated-key-field,.account-key-row{grid-template-columns:minmax(0,1fr)}.account-key-meta{justify-content:flex-start}.account-key-row button{justify-self:start}.cosmetic-layout{grid-template-columns:minmax(0,1fr)}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.linked-bot-list li{align-items:flex-start;flex-wrap:wrap}.linked-bot-actions{flex-wrap:wrap}.cosmetic-license-grid{grid-template-columns:minmax(0,1fr)}.cosmetic-license-actions select{flex-basis:100%;min-width:0;width:100%}.cosmetic-shop-pack{grid-template-columns:68px minmax(0,1fr)}.cosmetic-shop-swatch{width:68px}.cosmetic-shop-offer{grid-column:1/-1;grid-template-columns:1fr auto;align-items:center;justify-items:start;width:100%}.cosmetic-shop-offer .cosmetic-shop-buy{justify-self:end}}
-@media (pointer:coarse){.cosmetic-shop button,.all-access-plan button,.account-key-manager button,.tbtn{min-height:44px}.cosmetic-shop-search input,.account-key-manager input{font-size:16px}}
+@media (pointer:coarse){.cosmetic-shop button,.all-access-plan button,.account-key-manager button,.tbtn{min-height:44px}.cosmetic-shop-search input,.account-key-manager input{font-size:16px}.account-profile-form button{min-height:44px}.account-profile-form input[type=text],.account-profile-form textarea{font-size:16px}}
 @media (prefers-reduced-motion:reduce){.cosmetic-shop *,.all-access-plan *,.account-key-manager *{scroll-behavior:auto!important;transition-duration:.01ms!important}}
 </style>
 <link rel="stylesheet" href="../css/brand-lockup.css?v=20260714a">
@@ -693,6 +727,7 @@ if (window.self !== window.top) {
   <div class="tabs-shell">
     <div class="tabs" role="tablist" aria-label="Dashboard sections">
       <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-cosmetics" data-tab="cosmetics" data-view="private" data-auth="account">Cosmetics</button>
+      <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-profile" data-tab="profile" data-view="private" data-auth="account">Profile</button>
       <button type="button" class="tbtn active" role="tab" aria-selected="true" aria-controls="tab-overview" data-tab="overview" data-view="private" data-auth="bot">Overview</button>
       <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-compare" data-tab="compare" data-view="private" data-auth="bot">Compare Bots</button>
       <button type="button" class="tbtn" role="tab" aria-selected="false" aria-controls="tab-allbots" data-tab="allbots" data-view="private" data-auth="bot">All My Bots</button>
@@ -706,6 +741,7 @@ if (window.self !== window.top) {
     </div>
     <div class="tabs-toolbar" data-view="private">
       <span class="account-toolbar-identity" id="accountToolbarIdentity"></span>
+      <button type="button" class="sm dashboard-open-new-tab" id="dashboardOpenNewTab" onclick="window.open(window.location.href, '_blank', 'noopener')">Open in new tab &#8599;</button>
       <select id="botSwitcher" onchange="switchBot(this.value)" style="font-size:11px"></select>
       <button class="sm" id="refreshBtn" onclick="refreshAll()">Refresh</button>
       <button class="sm" id="accountLogoutBtn" type="button" style="display:none">Sign out account</button>
@@ -755,6 +791,15 @@ if (window.self !== window.top) {
     </section>
     <div class="section">
       <div id="accountCosmeticsPanel" class="cosmetic-loading">Loading your account-owned cosmetics...</div>
+    </div>
+  </div>
+
+  <div class="tpanel" id="tab-profile" data-view="private" data-auth="account">
+    <div class="section">
+      <div class="cosmetic-kicker">Public identity</div>
+      <h2>Profile</h2>
+      <p style="font-size:11px;color:var(--text2);margin-bottom:12px">Your chat username, bio, and avatar color are visible to other players and control what appears on your public profile page.</p>
+      <div id="accountProfilePanel" class="cosmetic-loading">Loading your profile...</div>
     </div>
   </div>
 
@@ -840,6 +885,7 @@ if (window.self !== window.top) {
 
 <script src="../js/cosmetic-themes.js?v=20260713f"></script>
 <script src="./account-cosmetics.js?v=20260713f"></script>
+<script src="./account-profile.js?v=20260714a"></script>
 <script>
 const WEAPON_META = {
   sword:{name:'Sword',badge:'SWD',role:'Balanced frontline weapon.',desc:'Reliable melee with cleave pressure when fights stack up.',build:'hp:5 speed:5 attack:5 defense:5',strongVs:'Daggers, shield',counter:'Bow, staff'},
@@ -994,6 +1040,9 @@ let accountPreviewStagedBySlot = {};
 let accountCosmeticsPreviewController = null;
 let accountCosmeticsPreviewModulePromise = null;
 let accountCosmeticsPreviewRenderSequence = 0;
+let accountProfile = null;
+let accountProfileError = '';
+let accountProfileLoadSequence = 0;
 const DASHBOARD_PARAMS = new URLSearchParams(window.location.search);
 let pendingCustomerEmailToken = takeCustomerEmailTokenFromHash();
 let accountShopQuery = DASHBOARD_PARAMS.get('pack') || '';
@@ -1006,6 +1055,17 @@ let accountCheckoutState = checkoutReturn === 'success'
       ? {status:'cancelled',packID:'',message:''}
       : {status:'idle',packID:'',message:''};
 const DASHBOARD_VIEW = DASHBOARD_PARAMS.get('view') === 'public' ? 'public' : 'private';
+// Deep links (e.g. dashboard/?tab=profile from the Cosmetics shop or key
+// generator) request an account-auth tab by id. Only honor the request if it
+// names a tab that actually requires account auth, otherwise keep whatever
+// default the caller passes (cosmetics today, but this generalizes to any
+// future account tab without hardcoding its id here).
+function resolveAccountLandingTab(fallback) {
+  const requested = DASHBOARD_PARAMS.get('tab') || '';
+  const matches = requested && [...document.querySelectorAll('.tbtn[data-auth="account"]')]
+    .some(button => button.dataset.tab === requested);
+  return matches ? requested : fallback;
+}
 function dashboardAPIBase(pathname, paths) {
   if (paths && typeof paths.apiBase === 'function') {
     return paths.apiBase(pathname);
@@ -1127,6 +1187,10 @@ async function startCustomerEmailAuth(event) {
     return;
   }
   if (!form.reportValidity()) return;
+  if (window.ArenaConsentGate) {
+    const accepted = await window.ArenaConsentGate.ensureConsent();
+    if (!accepted) return;
+  }
   submit.disabled = true;
   submit.textContent = 'Sending secure link...';
   status.className = 'account-email-status';
@@ -1179,7 +1243,7 @@ async function confirmCustomerEmailToken() {
   }
 }
 
-function startAccountLogin() {
+async function startAccountLogin() {
   const button = document.getElementById('accountSignInButton');
   if (button?.dataset.retrySession === 'true') {
     button.disabled = true;
@@ -1192,6 +1256,10 @@ function startAccountLogin() {
   if (!accountSession.oidc_login_enabled) {
     document.getElementById('loginError').textContent = 'SSO sign-in is not configured on this Arena.';
     return;
+  }
+  if (window.ArenaConsentGate) {
+    const accepted = await window.ArenaConsentGate.ensureConsent();
+    if (!accepted) return;
   }
   const loginURL = accountSession.login_url || getBase()+'/dashboard/login';
   const separator = loginURL.includes('?') ? '&' : '?';
@@ -1472,6 +1540,130 @@ async function refreshAccountCosmetics(notice='') {
   }
   renderAccountCosmetics();
   await Promise.all([ordersRequest, keysRequest]);
+}
+
+// ========== Profile tab ==========
+function renderAccountProfile() {
+  const root = document.getElementById('accountProfilePanel');
+  if (!root || !window.ArenaAccountProfile) return;
+  if (!accountProfile) {
+    if (accountProfileError) {
+      root.className = '';
+      root.innerHTML = `<div class="tip warn" role="alert"><b>Could not load your profile:</b> ${esc(accountProfileError)} <button type="button" class="sm" data-account-profile-retry>Retry</button></div>`;
+    } else {
+      root.className = 'cosmetic-loading';
+      root.textContent = 'Loading your profile...';
+    }
+    return;
+  }
+  root.className = '';
+  root.innerHTML = window.ArenaAccountProfile.renderPanel(accountProfile);
+}
+
+async function refreshAccountProfile() {
+  const requestID = ++accountProfileLoadSequence;
+  try {
+    const accountID = accountSession.account?.id || '';
+    if (!accountID) throw new Error('Your account session is missing an account id.');
+    const payload = await accountRequest(window.ArenaAccountProfile.accountProfileRoute('profile', accountID));
+    if (requestID !== accountProfileLoadSequence) return;
+    if (!payload || typeof payload !== 'object') throw new Error('The profile service returned an invalid response.');
+    accountProfile = window.ArenaAccountProfile.normalizeProfile(payload);
+    accountProfileError = '';
+  } catch (error) {
+    if (requestID !== accountProfileLoadSequence) return;
+    accountProfile = null;
+    accountProfileError = error.message || 'Could not load your profile.';
+  }
+  renderAccountProfile();
+}
+
+async function handleAccountProfileSave(event) {
+  event.preventDefault();
+  const form = document.getElementById('profileForm');
+  const nameInput = document.getElementById('profileDisplayNameInput');
+  const bioInput = document.getElementById('profileBioInput');
+  const colorInput = document.getElementById('profileAvatarColorInput');
+  const showBotsInput = document.getElementById('profileShowBotsInput');
+  const submit = document.getElementById('profileSaveBtn');
+  const status = document.getElementById('profileFormStatus');
+  if (!form || !nameInput || !bioInput || !colorInput || !showBotsInput || !submit || !status) return;
+  if (!form.reportValidity()) return;
+  submit.disabled = true;
+  submit.textContent = 'Saving...';
+  status.className = 'account-email-status';
+  status.textContent = '';
+  try {
+    const payload = await accountRequest(window.ArenaAccountProfile.accountProfileRoute('update'), {
+      method: 'PATCH',
+      body: JSON.stringify({
+        display_name: nameInput.value.trim(),
+        bio: bioInput.value,
+        avatar_color: colorInput.value,
+        show_bots_public: showBotsInput.checked,
+      }),
+    });
+    if (!payload || typeof payload !== 'object') throw new Error('The profile service returned an invalid response.');
+    accountProfile = window.ArenaAccountProfile.normalizeProfile(payload);
+    accountProfileError = '';
+    renderAccountProfile();
+    const savedStatus = document.getElementById('profileFormStatus');
+    if (savedStatus) {
+      savedStatus.className = 'account-email-status is-success';
+      savedStatus.textContent = 'Profile saved.';
+    }
+  } catch (error) {
+    status.className = 'account-email-status is-error';
+    status.textContent = error.message || 'Could not save your profile.';
+    submit.disabled = false;
+    submit.textContent = 'Save profile';
+  }
+}
+
+function handleAccountProfilePanelInput(event) {
+  if (!window.ArenaAccountProfile) return;
+  if (event.target.id === 'profileBioInput') {
+    const counter = document.getElementById('profileBioCounter');
+    if (!counter) return;
+    const remaining = window.ArenaAccountProfile.BIO_MAX_LENGTH - event.target.value.length;
+    counter.textContent = `${remaining} characters remaining`;
+    counter.classList.toggle('is-over', remaining < 0);
+    return;
+  }
+  if (event.target.id === 'profileDisplayNameInput' && accountProfile) {
+    const preview = document.getElementById('profileChatHandlePreview');
+    if (!preview) return;
+    const handle = window.ArenaAccountProfile.previewChatHandle(accountProfile, event.target.value);
+    preview.innerHTML = `You'll appear in chat as: <strong>${esc(handle)}</strong>`;
+  }
+}
+
+function handleAccountProfilePanelClick(event) {
+  const retryButton = event.target.closest('[data-account-profile-retry]');
+  if (retryButton) {
+    accountProfileError = '';
+    renderAccountProfile();
+    refreshAccountProfile();
+    return;
+  }
+  const swatch = event.target.closest('[data-profile-swatch]');
+  if (swatch) {
+    const colorInput = document.getElementById('profileAvatarColorInput');
+    if (colorInput) colorInput.value = swatch.dataset.profileSwatch;
+    document.querySelectorAll('[data-profile-swatch]').forEach(node => {
+      node.classList.toggle('is-selected', node === swatch);
+    });
+  }
+}
+
+function bindAccountProfileUI() {
+  const panel = document.getElementById('tab-profile');
+  if (!panel) return;
+  panel.addEventListener('submit', event => {
+    if (event.target && event.target.id === 'profileForm') handleAccountProfileSave(event);
+  });
+  panel.addEventListener('click', handleAccountProfilePanelClick);
+  panel.addEventListener('input', handleAccountProfilePanelInput);
 }
 
 async function createAccountKey(form) {
@@ -2261,7 +2453,7 @@ async function initializeAccountMode() {
     apiKey = '';
     buildBotSwitcher();
     updatePrivateAuthUI();
-    activateTab('cosmetics');
+    activateTab(resolveAccountLandingTab('cosmetics'));
     return true;
   } catch (e) {
     accountSession.login_enabled = false;
@@ -2304,7 +2496,7 @@ async function testAuth(label) {
       document.getElementById('app').style.display='block';
       buildBotSwitcher();
       updatePrivateAuthUI();
-      activateTab('cosmetics');
+      activateTab(resolveAccountLandingTab('cosmetics'));
       await refreshAccountCosmetics();
       accountViewError = 'That API key could not open bot performance. Your account-owned cosmetics are still available.';
       renderAccountCosmetics();
@@ -2373,6 +2565,7 @@ function activateTab(tabName) {
   if (tabName==='skills') renderSkills();
   if (tabName==='allbots') loadAllBots();
   if (tabName==='cosmetics' && hasVerifiedAccount()) refreshAccountCosmetics();
+  if (tabName==='profile' && hasVerifiedAccount()) refreshAccountProfile();
   if (tabName==='strategy') renderStrategy();
   if (tabName==='builds') renderBuilds();
   if (tabName==='mapviewer') loadMapViewer();
@@ -2440,6 +2633,7 @@ async function startDashboard() {
   }
   initDashboardMode();
   bindAccountCosmeticsUI();
+  bindAccountProfileUI();
   await initializeAccountMode();
 }
 

@@ -129,10 +129,10 @@ assert.deepEqual(shop.itemPreviewLoadout(pack.items[4]), {
 }, 'individual trail preview must isolate the selected trail against standard defaults');
 assert.deepEqual(shop.packItems(pack).map(item => item.id), ['body-first', 'body-alt', 'weapon', 'attachment', 'trail'],
   'pack detail must preserve every catalog item, including multiple items in one slot');
-assert.equal(shop.dashboardPurchasePath('ember pack', '/shop/'), '/dashboard/?tab=cosmetics&pack=ember%20pack');
-assert.equal(shop.dashboardPurchasePath('ember pack', '/arena/shop/'), '/arena/dashboard/?tab=cosmetics&pack=ember%20pack');
-assert.equal(shop.subscriptionDashboardPath('/shop/'), '/dashboard/?tab=cosmetics&plan=all-access');
-assert.equal(shop.subscriptionDashboardPath('/arena/shop/'), '/arena/dashboard/?tab=cosmetics&plan=all-access');
+assert.equal(shop.dashboardPurchasePath('ember pack', '/shop/'), '/?dash_open=1&dash_tab=cosmetics');
+assert.equal(shop.dashboardPurchasePath('ember pack', '/arena/shop/'), '/arena/?dash_open=1&dash_tab=cosmetics');
+assert.equal(shop.subscriptionDashboardPath('/shop/'), '/?dash_open=1&dash_tab=cosmetics&dash_plan=all-access');
+assert.equal(shop.subscriptionDashboardPath('/arena/shop/'), '/arena/?dash_open=1&dash_tab=cosmetics&dash_plan=all-access');
 assert.equal(shop.catalogPath('/arena/shop/'), '/arena/api/v1/cosmetics/catalog');
 
 class FakeStyle {
@@ -311,7 +311,7 @@ assert.equal(controller.snapshot().selectedPackID, 'signal-set-099',
   'a search typed during fetch must determine the selected pack when the response arrives');
 assert.equal(packList.children.length, 1);
 assert.equal(subscriptionPrice.textContent, '$19.99 / month');
-assert.equal(subscriptionAction.href, '/dashboard/?tab=cosmetics&plan=all-access');
+assert.equal(subscriptionAction.href, '/?dash_open=1&dash_tab=cosmetics&dash_plan=all-access');
 assert.equal(subscriptionAction.hidden, false);
 assert.match(subscriptionState.textContent, /current and future/i);
 
@@ -371,7 +371,7 @@ assert.equal(controller.snapshot().selectedPackID, 'ember-pack');
 assert.equal(itemList.children.length, 5, 'selecting a pack must render every item, including its trail');
 assert.equal(packCount.textContent, '5 included items');
 assert.equal(packPrice.textContent, '$1.99');
-assert.equal(purchase.href, '/dashboard/?tab=cosmetics&pack=ember-pack');
+assert.equal(purchase.href, '/?dash_open=1&dash_tab=cosmetics');
 assert.equal(purchase.hidden, false);
 assert.deepEqual(previewCalls.at(-1).loadout, shop.packPreviewLoadout(pack));
 

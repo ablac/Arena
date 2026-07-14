@@ -329,9 +329,9 @@ type Config struct {
 
 	// Bounty System
 	BountyWinStreakThreshold int `envconfig:"ARENA_BOUNTY_WIN_STREAK" default:"1"`
-	BountyBoardBasePoints     int     `envconfig:"ARENA_BOUNTY_BOARD_BASE_POINTS" default:"6"`
-	BountyBoardStepPoints     int     `envconfig:"ARENA_BOUNTY_BOARD_STEP_POINTS" default:"4"`
-	BountyBoardMaxPoints      int     `envconfig:"ARENA_BOUNTY_BOARD_MAX_POINTS" default:"18"`
+	BountyBoardBasePoints    int `envconfig:"ARENA_BOUNTY_BOARD_BASE_POINTS" default:"6"`
+	BountyBoardStepPoints    int `envconfig:"ARENA_BOUNTY_BOARD_STEP_POINTS" default:"4"`
+	BountyBoardMaxPoints     int `envconfig:"ARENA_BOUNTY_BOARD_MAX_POINTS" default:"18"`
 
 	// Occasional special round modifiers
 	RoundModifierChance                  float64 `envconfig:"ARENA_ROUND_MODIFIER_CHANCE" default:"0.30"`
@@ -388,17 +388,21 @@ type Config struct {
 
 	// Customer OIDC is deliberately a separate client/application from admin
 	// SSO. A public customer login must never mint an admin-authorized session.
-	CustomerOIDCEnabled         bool   `envconfig:"ARENA_CUSTOMER_OIDC_ENABLED" default:"false"`
-	CustomerOIDCIssuer          string `envconfig:"ARENA_CUSTOMER_OIDC_ISSUER" default:""`
-	CustomerOIDCClientID        string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_ID" default:""`
-	CustomerOIDCClientSecret    string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_SECRET" default:""`
-	CustomerOIDCRedirectURI     string `envconfig:"ARENA_CUSTOMER_OIDC_REDIRECT_URI" default:""`
-	CustomerOIDCSessionTTL      int    `envconfig:"ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS" default:"24"`
-	CustomerBotLinkRPM          int    `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
-	CustomerBotLinkPerHour      int    `envconfig:"ARENA_CUSTOMER_BOT_LINK_PER_HOUR" default:"10"`
-	CustomerAPIKeyMutationRPM   int    `envconfig:"ARENA_CUSTOMER_API_KEY_MUTATION_RPM" default:"30"`
-	CustomerAPIKeyCreatePerHour int    `envconfig:"ARENA_CUSTOMER_API_KEY_CREATE_PER_HOUR" default:"10"`
-	CustomerAPIKeyRevokePerHour int    `envconfig:"ARENA_CUSTOMER_API_KEY_REVOKE_PER_HOUR" default:"20"`
+	CustomerOIDCEnabled      bool   `envconfig:"ARENA_CUSTOMER_OIDC_ENABLED" default:"false"`
+	CustomerOIDCIssuer       string `envconfig:"ARENA_CUSTOMER_OIDC_ISSUER" default:""`
+	CustomerOIDCClientID     string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_ID" default:""`
+	CustomerOIDCClientSecret string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_SECRET" default:""`
+	CustomerOIDCRedirectURI  string `envconfig:"ARENA_CUSTOMER_OIDC_REDIRECT_URI" default:""`
+	// 720h (30 days) with sliding renewal on use (see customerSessionTTL in
+	// customer_oidc.go): a visitor who returns at least once within any
+	// 30-day window never has to sign back in, while an abandoned or stolen
+	// cookie still lapses.
+	CustomerOIDCSessionTTL      int `envconfig:"ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS" default:"720"`
+	CustomerBotLinkRPM          int `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
+	CustomerBotLinkPerHour      int `envconfig:"ARENA_CUSTOMER_BOT_LINK_PER_HOUR" default:"10"`
+	CustomerAPIKeyMutationRPM   int `envconfig:"ARENA_CUSTOMER_API_KEY_MUTATION_RPM" default:"30"`
+	CustomerAPIKeyCreatePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_CREATE_PER_HOUR" default:"10"`
+	CustomerAPIKeyRevokePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_REVOKE_PER_HOUR" default:"20"`
 
 	// Native customer email auth is an alternative to customer OIDC. It sends
 	// one-time passwordless links through the deployment's transactional SMTP

@@ -581,4 +581,37 @@ function setupOverlays() {
       if (topOverlayId) closeOverlay(topOverlayId);
     }
   });
+
+  applyDeepLinkedDashboardOpen(openOverlay);
+}
+
+// Other pages (the Shop, a freshly generated key's "claim this bot" link)
+// cannot reach into this page's overlay JS directly, so they hand off by
+// navigating here with ?dash_open=1 (plus optional dash_tab/dash_plan). This
+// is what makes "Dashboard" open in the slide-out drawer everywhere instead
+// of sometimes landing on /dashboard/ as a bare full-page navigation.
+function applyDeepLinkedDashboardOpen(openOverlay) {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('dash_open') !== '1') return;
+
+  const frame = document.getElementById('dashboard-frame');
+  if (frame) {
+    const extra = [];
+    const tab = params.get('dash_tab');
+    const plan = params.get('dash_plan');
+    if (tab) extra.push(`tab=${encodeURIComponent(tab)}`);
+    if (plan) extra.push(`plan=${encodeURIComponent(plan)}`);
+    if (extra.length) {
+      const base = frame.dataset.src || '';
+      frame.dataset.src = base + (base.includes('?') ? '&' : '?') + extra.join('&');
+    }
+  }
+  openOverlay('dashboard-overlay');
+
+  params.delete('dash_open');
+  params.delete('dash_tab');
+  params.delete('dash_plan');
+  const query = params.toString();
+  const cleanURL = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
+  window.history.replaceState(null, '', cleanURL);
 }
