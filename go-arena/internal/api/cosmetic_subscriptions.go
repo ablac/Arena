@@ -1,14 +1,13 @@
 package api
 
 import (
+	"arena-server/internal/db"
 	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 )
-
-import "arena-server/internal/db"
 
 type cosmeticSubscriptionStore interface {
 	Reserve(context.Context, string, CosmeticCheckoutPresentation) (*db.CosmeticSubscription, bool, error)

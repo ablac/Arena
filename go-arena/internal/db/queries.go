@@ -240,9 +240,6 @@ func EnsureCoreSchema(ctx context.Context) error {
 	if err := EnsureRoundBotStatsTable(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema round_bot_stats: %w", err)
 	}
-	if err := EnsureDemoBotKeysTable(ctx); err != nil {
-		return fmt.Errorf("EnsureCoreSchema demo_bot_keys: %w", err)
-	}
 	if err := EnsureAdminTokensTable(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema admin_tokens: %w", err)
 	}
@@ -398,15 +395,6 @@ func EnsureAdminRegistryTables(ctx context.Context) error {
 			label TEXT NOT NULL DEFAULT '',
 			value TEXT NOT NULL DEFAULT '',
 			published BOOLEAN NOT NULL DEFAULT true,
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)`,
-		`CREATE TABLE IF NOT EXISTS demo_bot_templates (
-			name TEXT PRIMARY KEY,
-			weapon TEXT NOT NULL,
-			strategy TEXT NOT NULL,
-			color TEXT NOT NULL,
-			stats JSONB NOT NULL DEFAULT '{}'::jsonb,
-			enabled BOOLEAN NOT NULL DEFAULT true,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE TABLE IF NOT EXISTS custom_map_templates (
@@ -657,40 +645,6 @@ func GetTimeBasedLeaderboard(ctx context.Context, since time.Time, sortBy string
 	return results, rows.Err()
 }
 
-// ---------- demo_bot_keys ----------
-
-// EnsureDemoBotKeysTable creates the demo_bot_keys table if it doesn't exist.
-func EnsureDemoBotKeysTable(ctx context.Context) error {
-	if Pool == nil {
-		return nil
-	}
-	_, err := Pool.Exec(ctx,
-		`CREATE TABLE IF NOT EXISTS demo_bot_keys (
-			name TEXT PRIMARY KEY,
-			api_key TEXT NOT NULL,
-			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)`)
-	return err
-}
-
-// GetDemoBotKey returns the stored API key for a demo bot by name, or empty if not found.
-func GetDemoBotKey(ctx context.Context, name string) (string, error) {
-	if Pool == nil {
-		return "", ErrNoDatabase
-	}
-	var key string
-	err := Pool.QueryRow(ctx,
-		`SELECT api_key FROM demo_bot_keys WHERE name = $1`, name,
-	).Scan(&key)
-	if err != nil {
-		if err.Error() == "no rows in result set" {
-			return "", nil
-		}
-		return "", err
-	}
-	return key, nil
-}
-
 // GetAllDemoBotKeys returns all demo bot name→key mappings.
 func GetAllDemoBotKeys(ctx context.Context) (map[string]string, error) {
 	if Pool == nil {
@@ -710,19 +664,6 @@ func GetAllDemoBotKeys(ctx context.Context) (map[string]string, error) {
 		result[name] = key
 	}
 	return result, rows.Err()
-}
-
-// SaveDemoBotKey upserts a demo bot's API key.
-func SaveDemoBotKey(ctx context.Context, name, apiKey string) error {
-	if Pool == nil {
-		return ErrNoDatabase
-	}
-	_, err := Pool.Exec(ctx,
-		`INSERT INTO demo_bot_keys (name, api_key) VALUES ($1, $2)
-		 ON CONFLICT (name) DO UPDATE SET api_key = $2`,
-		name, apiKey,
-	)
-	return err
 }
 
 // ---------- admin_tokens ----------

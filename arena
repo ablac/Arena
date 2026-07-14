@@ -255,7 +255,6 @@ case "${1:-help}" in
       echo "Usage: arena admin <endpoint> [curl-args...]"
       echo ""
       echo "Examples:"
-      echo "  arena admin demobots              List demo bots"
       echo "  arena admin debug/connections      WebSocket connections"
       echo "  arena admin debug/game-state       Current game state"
       echo "  arena admin debug/metrics          Server metrics"
@@ -267,8 +266,6 @@ case "${1:-help}" in
       echo "  arena admin logs?lines=50          Server logs"
       echo ""
       echo "POST examples:"
-      echo "  arena admin demobots/stop -X POST"
-      echo "  arena admin demobots/start -X POST -d '{\"count\":5}'"
       echo "  arena admin game/pause -X POST"
       echo "  arena admin game/resume -X POST"
       echo "  arena admin game/restart-round -X POST"
@@ -315,7 +312,7 @@ case "${1:-help}" in
   arena token-rotate        Generate + rebuild + restart (one step)
 
   arena admin <endpoint>    Quick admin API call (localhost)
-                            e.g. arena admin demobots
+                            e.g. arena admin bots
                                  arena admin debug/metrics
                                  arena admin health/deep
 

@@ -21,7 +21,6 @@ go-arena/
     config/                     # Env-based config (100+ params)
     db/                         # PostgreSQL queries & models
     game/                       # Core game engine, combat, pathfinding, weapons
-    demobots/                   # Built-in demo bot AI (danger-aware pathfinding, team/CTF play)
     security/                   # Auth, rate limiting, input validation
     ws/                         # WebSocket handlers (bot + spectator)
 frontend/
@@ -83,7 +82,6 @@ cd sdk/nodejs && npm install
 | Bot SDK features | `sdk/python/arena_sdk/bot.py` / `sdk/nodejs/src/ArenaBot.js` |
 | 3D rendering | `frontend/js/renderer/*.js` |
 | Admin features | `go-arena/internal/api/admin.go` |
-| Demo bot AI | `go-arena/internal/demobots/ai.go` |
 | Graphics/animation toggle (settings panel) | `docs/settings-system.md` - read before adding any new visual effect |
 | Build, deploy, or anything touching security headers/static caching | `docs/build-and-deploy.md` - read before touching `security_headers.go` or `noCacheStaticHandler`; has a list of regressions that already shipped once |
 
