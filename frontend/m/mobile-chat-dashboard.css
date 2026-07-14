@@ -1,8 +1,8 @@
 /* Mobile Chat + Dashboard overlays.
-   Chat markup/behavior is driven entirely by ../js/chat-panel.js (unmodified) --
-   this file only supplies layout for the ids it expects, reusing
-   ../css/chat.css (also loaded on this page) for the message rows, form and
-   sign-in block. Both overlays share the same full-screen "sheet" shell. */
+   Chat markup/behavior is driven entirely by ../js/chat-panel.js -- this
+   file only supplies layout for the ids it expects, reusing ../css/chat.css
+   (also loaded on this page) for the message rows, form, and read-only
+   watermark. Both overlays share the same full-screen "sheet" shell. */
 
 /* Chat FAB stays hidden until chat-panel.js confirms the server has chat
    enabled (it adds body.chat-enabled) -- mirrors the pattern already used
@@ -112,7 +112,7 @@ body.chat-enabled #fab-chat {
 }
 
 /* ---------- Chat body ---------- */
-/* .chat-panel / .chat-messages / .chat-form / .chat-signin styling comes
+/* .chat-panel / .chat-messages / .chat-form / .chat-watermark styling comes
    from ../css/chat.css; this just fits the flex column into the sheet body. */
 .mobile-overlay-body.chat-panel {
   display: flex;
