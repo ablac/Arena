@@ -172,6 +172,41 @@ func TestAccountCosmeticsInventoryIncludesLinkedBotPreviewMetadata(t *testing.T)
 	}
 }
 
+func TestAccountCosmeticsInventoryIncludesActiveAdminMembership(t *testing.T) {
+	expires := time.Now().Add(30 * 24 * time.Hour).UTC()
+	store := &fakeCosmeticsStore{inventory: &db.CustomerCosmeticsInventory{
+		Membership: &db.CosmeticAdminMembership{
+			ID:        "membership-1",
+			AccountID: "account-membership",
+			Status:    "active",
+			GrantedBy: "admin@example.com",
+			ExpiresAt: expires,
+		},
+	}}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/account/cosmetics", nil)
+	request = request.WithContext(withCustomerSession(request.Context(), &CustomerSession{
+		AccountID: "account-membership",
+		Email:     "member@example.com",
+	}))
+
+	handler.AccountInventory(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Membership *db.CosmeticAdminMembership `json:"membership"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode inventory: %v", err)
+	}
+	if response.Membership == nil || response.Membership.Status != "active" || response.Membership.ID != "membership-1" {
+		t.Fatalf("membership = %+v, want an active admin membership in the inventory response", response.Membership)
+	}
+}
+
 func TestAccountCosmeticsInventoryReconcilesTimedMembershipBeforeReadback(t *testing.T) {
 	store := &fakeCosmeticsStore{
 		inventory:          &db.CustomerCosmeticsInventory{},

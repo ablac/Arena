@@ -128,7 +128,8 @@ body.shop-page {
   display: none;
   gap: 4px;
 }
-body.shop-embedded .shop-site-nav a {
+body.shop-embedded .shop-site-nav a,
+body.shop-embedded .shop-footer nav a:not([target="_blank"]) {
   display: none;
 }
 body.shop-embedded .shop-open-new-tab {

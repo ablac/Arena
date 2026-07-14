@@ -584,6 +584,7 @@ function setupOverlays() {
 
   applyDeepLinkedDashboardOpen(openOverlay);
   applyEmailTokenHandoff(openOverlay);
+  applyDeepLinkedShopOpen(openOverlay);
 }
 
 // Other pages (the Shop, a freshly generated key's "claim this bot" link)
@@ -600,8 +601,10 @@ function applyDeepLinkedDashboardOpen(openOverlay) {
     const extra = [];
     const tab = params.get('dash_tab');
     const plan = params.get('dash_plan');
+    const pack = params.get('dash_pack');
     if (tab) extra.push(`tab=${encodeURIComponent(tab)}`);
     if (plan) extra.push(`plan=${encodeURIComponent(plan)}`);
+    if (pack) extra.push(`pack=${encodeURIComponent(pack)}`);
     if (extra.length) {
       const base = frame.dataset.src || '';
       frame.dataset.src = base + (base.includes('?') ? '&' : '?') + extra.join('&');
@@ -612,6 +615,24 @@ function applyDeepLinkedDashboardOpen(openOverlay) {
   params.delete('dash_open');
   params.delete('dash_tab');
   params.delete('dash_plan');
+  params.delete('dash_pack');
+  const query = params.toString();
+  const cleanURL = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
+  window.history.replaceState(null, '', cleanURL);
+}
+
+// The Shop (frontend/shop/) hands off here the same way the Dashboard's own
+// deep links do: navigating to ?shop_open=1 rather than reaching into this
+// page's overlay JS directly. Used by the Dashboard's "Browse the Shop" link
+// so leaving the Cosmetics tab to look for something else reopens the same
+// slide-out drawer instead of a bare /shop/ page load.
+function applyDeepLinkedShopOpen(openOverlay) {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('shop_open') !== '1') return;
+
+  openOverlay('shop-overlay');
+
+  params.delete('shop_open');
   const query = params.toString();
   const cleanURL = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
   window.history.replaceState(null, '', cleanURL);

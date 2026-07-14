@@ -377,6 +377,18 @@ body.arena-fullscreen .site-header {
   width: min(1080px, calc(100vw - 212px));
 }
 
+/* The Shop's own layout (frontend/css/shop.css) is a three-column browser
+   that only activates at >=1200px of its own viewport width. The shared
+   1180px drawer cap left it permanently stuck in its single-column mobile
+   fallback no matter how wide the browser was, so the Shop gets a wider
+   drawer than Dashboard/Toolkit. Gated to >=769px so it never fights the
+   full-screen mobile fallback below. */
+@media (min-width: 769px) {
+  .shop-overlay .dashboard-drawer {
+    width: min(1720px, calc(100vw - 64px));
+  }
+}
+
 .dashboard-header {
   justify-content: flex-end;
   margin-bottom: 12px;

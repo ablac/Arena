@@ -134,6 +134,57 @@ func TestPostgresAdminCosmeticAccessLookupByEmail(t *testing.T) {
 	}
 }
 
+// TestPostgresCustomerInventoryReflectsActiveAdminMembership is a
+// regression test for a Dashboard bug: an admin-granted "All Access"
+// membership materialized per-item licenses correctly, but the customer
+// inventory response never surfaced the membership itself, so the
+// Dashboard's All Access status kept showing "Available" instead of
+// "Access active".
+func TestPostgresCustomerInventoryReflectsActiveAdminMembership(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	account := createAdminMembershipTestAccount(t, ctx, "granted-member@example.com", "admin-inventory-membership")
+	expiresAt := time.Now().UTC().Add(14 * 24 * time.Hour)
+	membership, _, err := CreateCosmeticAdminMembership(
+		ctx, account.Email, expiresAt, "Support ticket #42", "admin-token",
+	)
+	if err != nil {
+		t.Fatalf("CreateCosmeticAdminMembership: %v", err)
+	}
+
+	found, err := GetActiveCosmeticAdminMembership(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetActiveCosmeticAdminMembership: %v", err)
+	}
+	if found == nil || found.ID != membership.ID || found.Status != "active" {
+		t.Fatalf("GetActiveCosmeticAdminMembership = %+v, want the granted membership", found)
+	}
+
+	inventory, err := GetCustomerCosmeticsInventory(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetCustomerCosmeticsInventory: %v", err)
+	}
+	if inventory.Membership == nil || inventory.Membership.ID != membership.ID {
+		t.Fatalf("inventory.Membership = %+v, want it populated from the admin grant", inventory.Membership)
+	}
+	if len(inventory.Licenses) != launchSubscriptionCosmeticCount {
+		t.Fatalf("inventory.Licenses = %d, want %d from the membership grant", len(inventory.Licenses), launchSubscriptionCosmeticCount)
+	}
+
+	if _, _, _, err := RevokeCosmeticAdminMembership(ctx, membership.ID, "admin-token", "test cleanup"); err != nil {
+		t.Fatalf("RevokeCosmeticAdminMembership: %v", err)
+	}
+	afterRevoke, err := GetActiveCosmeticAdminMembership(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetActiveCosmeticAdminMembership after revoke: %v", err)
+	}
+	if afterRevoke != nil {
+		t.Fatalf("GetActiveCosmeticAdminMembership after revoke = %+v, want nil", afterRevoke)
+	}
+}
+
 func TestPostgresAdminMembershipExpiryAndRevokeRemoveOnlyMappedUse(t *testing.T) {
 	tests := []struct {
 		name       string
