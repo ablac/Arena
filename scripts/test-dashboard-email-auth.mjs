@@ -119,5 +119,5 @@ assert.equal(safeRedirect('https://attacker.example/dashboard/'), '/dashboard/')
 assert.equal(safeRedirect('//attacker.example/dashboard/'), '/dashboard/');
 assert.equal(safeRedirect('/admin/'), '/dashboard/');
 
-assert.match(dashboard, /account-cosmetics\.js\?v=20260713f/);
+assert.match(dashboard, /account-cosmetics\.js\?v=20260714g/);
 console.log('dashboard preserves the validated cosmetic purchase path after verified-email registration');

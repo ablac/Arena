@@ -516,6 +516,7 @@ tr:hover td{background:rgba(71,215,255,.035)}
 .all-access-copy h2{margin:5px 0 6px;color:#ecf4ff;font-size:24px;letter-spacing:-.04em}
 .all-access-copy p{max-width:76ch;margin:0;color:#c4cfdb;font-size:12px;line-height:1.55}
 .all-access-copy .all-access-removal{margin-top:7px;color:#91a6bd;font:500 9px/1.55 'IBM Plex Mono',monospace}
+.all-access-copy .all-access-grant-note{margin-top:7px;color:#58e58f;font:600 9px/1.55 'IBM Plex Mono',monospace}
 .all-access-offer{display:grid;justify-items:end;gap:8px;min-width:220px;text-align:right}
 .all-access-offer>strong{color:#f0c040;font:700 24px/1 'IBM Plex Mono',monospace;white-space:nowrap}
 .all-access-offer>strong small{color:#a9b8c9;font-size:10px;font-weight:500}
@@ -596,8 +597,6 @@ button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.5;tra
 .cosmetic-empty-inventory{padding:24px;text-align:center;border:1px dashed rgba(126,166,207,.18);border-radius:16px}
 .cosmetic-loading{padding:40px;text-align:center;color:#91a6bd;font:500 11px/1.5 'IBM Plex Mono',monospace}
 .cosmetic-shop{margin-bottom:16px;padding:18px;border:1px solid rgba(240,192,64,.18);border-radius:22px;background:rgba(6,12,20,.55)}
-.cosmetic-shop-search{display:grid;gap:7px;margin-bottom:13px;color:#ecf4ff;font-size:11px;font-weight:700}
-.cosmetic-shop-search input{min-height:44px;width:100%;font-size:16px}
 .cosmetic-shop-grid{display:grid;gap:9px;content-visibility:auto}
 .cosmetic-shop-pack{display:grid;grid-template-columns:88px minmax(0,1fr) auto;gap:14px;align-items:center;min-width:0;padding:12px;border:1px solid rgba(126,166,207,.14);border-radius:17px;background:rgba(9,16,25,.74)}
 .cosmetic-shop-swatch{width:88px;aspect-ratio:1;border:1px solid rgba(255,255,255,.13);border-radius:14px;background:linear-gradient(135deg,#24364a,#0c141f);box-shadow:inset 0 0 0 5px rgba(4,9,15,.28)}
@@ -650,9 +649,9 @@ button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.5;tra
 .profile-bot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-top:10px}
 .profile-bot-card{padding:10px 12px;border:1px solid rgba(126,166,207,.12);border-radius:14px;background:rgba(255,255,255,.025)}
 .profile-bot-card strong{display:block;margin-bottom:6px;color:#ecf4ff;font-size:12px}
-:is(.tbtn,.cosmetic-shop-buy,.cosmetic-shop-search input,.all-access-plan button,.account-key-manager button,.account-key-manager input,.account-profile-form button,.account-profile-form input,.account-profile-form textarea,.profile-color-swatch):focus-visible{outline:2px solid #7ee4ff;outline-offset:3px}
+:is(.tbtn,.cosmetic-shop-buy,.all-access-plan button,.account-key-manager button,.account-key-manager input,.account-profile-form button,.account-profile-form input,.account-profile-form textarea,.profile-color-swatch):focus-visible{outline:2px solid #7ee4ff;outline-offset:3px}
 @media (max-width:760px){.login-shell{grid-template-columns:1fr}.all-access-plan{grid-template-columns:minmax(0,1fr)}.all-access-offer{justify-items:start;min-width:0;text-align:left}.account-key-form,.account-generated-key-field,.account-key-row{grid-template-columns:minmax(0,1fr)}.account-key-meta{justify-content:flex-start}.account-key-row button{justify-self:start}.cosmetic-layout{grid-template-columns:minmax(0,1fr)}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.linked-bot-list li{align-items:flex-start;flex-wrap:wrap}.linked-bot-actions{flex-wrap:wrap}.cosmetic-license-grid{grid-template-columns:minmax(0,1fr)}.cosmetic-license-actions select{flex-basis:100%;min-width:0;width:100%}.cosmetic-shop-pack{grid-template-columns:68px minmax(0,1fr)}.cosmetic-shop-swatch{width:68px}.cosmetic-shop-offer{grid-column:1/-1;grid-template-columns:1fr auto;align-items:center;justify-items:start;width:100%}.cosmetic-shop-offer .cosmetic-shop-buy{justify-self:end}}
-@media (pointer:coarse){.cosmetic-shop button,.all-access-plan button,.account-key-manager button,.tbtn{min-height:44px}.cosmetic-shop-search input,.account-key-manager input{font-size:16px}.account-profile-form button{min-height:44px}.account-profile-form input[type=text],.account-profile-form textarea{font-size:16px}}
+@media (pointer:coarse){.cosmetic-shop button,.all-access-plan button,.account-key-manager button,.tbtn{min-height:44px}.account-key-manager input{font-size:16px}.account-profile-form button{min-height:44px}.account-profile-form input[type=text],.account-profile-form textarea{font-size:16px}}
 @media (prefers-reduced-motion:reduce){.cosmetic-shop *,.all-access-plan *,.account-key-manager *{scroll-behavior:auto!important;transition-duration:.01ms!important}}
 </style>
 <link rel="stylesheet" href="../css/brand-lockup.css?v=20260714a">
@@ -896,7 +895,7 @@ if (window.self !== window.top) {
 </div>
 
 <script src="../js/cosmetic-themes.js?v=20260713f"></script>
-<script src="./account-cosmetics.js?v=20260713f"></script>
+<script src="./account-cosmetics.js?v=20260714g"></script>
 <script src="./account-profile.js?v=20260714a"></script>
 <script>
 const WEAPON_META = {
@@ -1057,7 +1056,7 @@ let accountProfileError = '';
 let accountProfileLoadSequence = 0;
 const DASHBOARD_PARAMS = new URLSearchParams(window.location.search);
 let pendingCustomerEmailToken = takeCustomerEmailTokenFromHash();
-let accountShopQuery = DASHBOARD_PARAMS.get('pack') || '';
+let accountPendingPackID = DASHBOARD_PARAMS.get('pack') || '';
 const checkoutReturn = String(DASHBOARD_PARAMS.get('checkout') || DASHBOARD_PARAMS.get('checkout_status') || '').toLowerCase();
 let accountCheckoutState = checkoutReturn === 'success'
   ? {status:'success',packID:'',message:''}
@@ -1150,6 +1149,18 @@ function safeCustomerEmailRedirectPath(raw) {
 function navigateAccount(url) {
   if (window.top !== window.self) window.top.location.assign(url);
   else location.assign(url);
+}
+
+// Mirrors the "mounted" check dashboardAPIBase() uses for the API prefix, so
+// the Shop link lands on the live Arena root that actually contains a
+// shop-overlay drawer instead of drifting into an unrelated deployment path.
+function siteRootPath() {
+  const mounted = location.pathname === '/arena' || location.pathname.startsWith('/arena/');
+  return mounted ? '/arena/' : '/';
+}
+
+function openArenaShop() {
+  navigateAccount(siteRootPath() + '?shop_open=1');
 }
 
 function takeCustomerEmailTokenFromHash() {
@@ -1472,7 +1483,7 @@ function renderAccountCosmetics() {
     notice: accountViewNotice,
     catalog: accountCatalog,
     catalogError: accountCatalogError,
-    shopQuery: accountShopQuery,
+    pendingPackID: accountPendingPackID,
     checkoutState: accountCheckoutState,
     busyOrderID: accountBusyOrderID,
     orders: accountOrders,
@@ -2261,6 +2272,11 @@ async function unlinkAccountBot(botID) {
 }
 
 function handleAccountPanelClick(event) {
+  const openShopButton = event.target.closest('[data-open-shop]');
+  if (openShopButton) {
+    openArenaShop();
+    return;
+  }
   const previewButton = event.target.closest('[data-license-preview]');
   if (previewButton) {
     previewAccountLicense(previewButton.dataset.licensePreview);
@@ -2336,18 +2352,6 @@ function handleAccountPanelClick(event) {
   if (unlinkButton) unlinkAccountBot(unlinkButton.dataset.botUnlink);
 }
 
-function handleAccountPanelInput(event) {
-  const search = event.target.closest('[data-account-shop-search]');
-  if (!search) return;
-  accountShopQuery = search.value;
-  renderAccountCosmetics();
-  const refreshedSearch = document.querySelector('[data-account-shop-search]');
-  if (refreshedSearch) {
-    refreshedSearch.focus();
-    refreshedSearch.setSelectionRange(accountShopQuery.length, accountShopQuery.length);
-  }
-}
-
 function handleAccountPanelChange(event) {
   const previewBot = event.target.closest('#accountCosmeticsPreviewBot');
   if (previewBot) {
@@ -2409,7 +2413,6 @@ function bindAccountCosmeticsUI() {
   panel.addEventListener('submit', handleAccountPanelSubmit);
   panel.addEventListener('click', handleAccountPanelClick);
   panel.addEventListener('change', handleAccountPanelChange);
-  panel.addEventListener('input', handleAccountPanelInput);
   window.addEventListener('pagehide', event => {
     if (event.persisted) return;
     accountCosmeticsPreviewController?.dispose();

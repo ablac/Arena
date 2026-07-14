@@ -83,12 +83,13 @@ export function itemPreviewLoadout(item) {
 }
 
 export function dashboardPurchasePath(packID, pathname = window.location.pathname) {
-  // The Dashboard now opens as a slide-out overlay on the main site rather
-  // than a full-page navigation to /dashboard/. The overlay's deep-link
-  // contract (see applyDeepLinkedDashboardOpen in js/app.js) only forwards
-  // dash_tab/dash_plan into the embedded iframe, so packID is accepted for
-  // API compatibility but no longer has a query param to travel in.
-  return appPath('/?dash_open=1&dash_tab=cosmetics', pathname);
+  // The Dashboard opens as a slide-out overlay on the main site rather than
+  // a full-page navigation to /dashboard/. dash_pack travels alongside
+  // dash_open/dash_tab (see applyDeepLinkedDashboardOpen in js/app.js, which
+  // forwards it into the embedded iframe as ?pack=) so the Dashboard lands
+  // straight on a one-item purchase card instead of a duplicate shop grid.
+  const suffix = packID ? `&dash_pack=${encodeURIComponent(packID)}` : '';
+  return appPath('/?dash_open=1&dash_tab=cosmetics' + suffix, pathname);
 }
 
 export function subscriptionDashboardPath(pathname = window.location.pathname) {

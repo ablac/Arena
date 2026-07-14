@@ -73,6 +73,12 @@ type CustomerCosmeticsInventory struct {
 	Licenses          []CosmeticLicense         `json:"licenses"`
 	Subscription      *CosmeticSubscription     `json:"subscription"`
 	SubscriptionOffer CosmeticSubscriptionOffer `json:"subscription_offer"`
+	// Membership is the account's active admin-granted "All Access" grant, if
+	// any. It is a distinct entitlement from Subscription (Stripe-driven) --
+	// both can grant the same catalog access, but only Subscription implies a
+	// recurring charge. The Dashboard's All Access status must treat either as
+	// "access active" or a staff-granted membership silently looks inactive.
+	Membership *CosmeticAdminMembership `json:"membership,omitempty"`
 }
 
 type CosmeticAssignmentChange struct {
@@ -608,7 +614,13 @@ func GetCustomerCosmeticsInventory(ctx context.Context, accountID string) (*Cust
 	if err != nil {
 		return nil, err
 	}
-	return &CustomerCosmeticsInventory{Account: *account, Bots: bots, Licenses: licenses, Subscription: subscription}, nil
+	membership, err := GetActiveCosmeticAdminMembership(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	return &CustomerCosmeticsInventory{
+		Account: *account, Bots: bots, Licenses: licenses, Subscription: subscription, Membership: membership,
+	}, nil
 }
 
 // GrantCosmeticLicense is the email-owned payment/manual fulfillment seam.

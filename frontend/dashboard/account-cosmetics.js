@@ -131,6 +131,24 @@
         ? normalizeSubscription(source.subscription)
         : null,
       subscription_offer: normalizeSubscriptionOffer(source.subscription_offer),
+      membership: normalizeMembership(source.membership),
+    };
+  }
+
+  // An admin-granted "All Access" membership is a distinct entitlement from
+  // the Stripe subscription: it grants the same catalog access without a
+  // recurring charge. Only "active" is ever surfaced -- expired/revoked
+  // memberships have already been synced away from the license list, so
+  // showing them here would just contradict the license grid below.
+  function normalizeMembership(payload) {
+    const source = payload && typeof payload === 'object' ? payload : null;
+    if (!source || cleanText(source.status).toLowerCase() !== 'active') return null;
+    return {
+      id: cleanText(source.id),
+      status: 'active',
+      granted_at: cleanText(source.granted_at),
+      expires_at: cleanText(source.expires_at),
+      note: cleanText(source.note),
     };
   }
 
@@ -483,15 +501,26 @@
     const catalogOffer = view.catalog ? normalizeCatalog(view.catalog).subscription_offer : null;
     const offer = snapshot.subscription_offer.enabled ? snapshot.subscription_offer : (catalogOffer || snapshot.subscription_offer);
     const subscription = snapshot.subscription;
+    const membership = snapshot.membership;
     const intent = subscriptionIntent(offer, subscription);
     const periodEnd = subscriptionPeriodLabel(subscription?.current_period_end);
+    const membershipEnd = subscriptionPeriodLabel(membership?.expires_at);
     let status = 'Available';
     let statusClass = '';
+    let grantNote = '';
     if (subscription?.has_access) {
       status = subscription.cancel_at_period_end
         ? (periodEnd ? `Access active until ${periodEnd}` : 'Access active until period end')
         : 'Access active';
       statusClass = ' is-active';
+    } else if (membership) {
+      // A staff-granted membership materializes the same per-item licenses a
+      // paid subscription would, but it lives in a separate table with no
+      // Stripe record -- without this branch the status above would say
+      // "Available" even though the account already has every set.
+      status = membershipEnd ? `Access active until ${membershipEnd}` : 'Access active';
+      statusClass = ' is-active';
+      grantNote = 'Granted by Arena staff. Subscribing keeps access going after the grant ends.';
     } else if (subscription) {
       if (subscription.status === 'billing_mismatch') status = 'Billing needs attention';
       else if (['created', 'checkout_pending'].includes(subscription.status)) status = 'Checkout pending';
@@ -502,7 +531,7 @@
     const action = intent.ok && intent.kind === 'portal'
       ? '<button type="button" class="sm all-access-action" data-subscription-portal>Manage subscription</button>'
       : intent.ok
-        ? '<button type="button" class="sm all-access-action" data-subscription-checkout>Subscribe for $19.99 / month</button>'
+        ? `<button type="button" class="sm all-access-action" data-subscription-checkout>${membership ? 'Subscribe to keep access' : 'Subscribe for $19.99 / month'}</button>`
         : '<span class="all-access-unavailable">Subscription checkout is not open yet</span>';
     const pending = view.subscriptionState?.status === 'pending';
     const feedback = view.subscriptionState?.status === 'error'
@@ -514,6 +543,7 @@
         <h2 id="all-access-title">All Access</h2>
         <p>Every current and future cosmetic set, full-body skin, and trail, with up to 5 active API keys.</p>
         <p class="all-access-removal">Cancellation keeps access through the paid period. When service ends, subscription cosmetics are removed from your account and any bots using them.</p>
+        ${grantNote ? `<p class="all-access-grant-note">${escapeHTML(grantNote)}</p>` : ''}
       </div>
       <div class="all-access-offer">
         <span class="all-access-status${statusClass}">${escapeHTML(status)}</span>
@@ -618,9 +648,16 @@
     </article>`;
   }
 
-  function renderSetShop(view) {
+  // The Dashboard shows only what an account owns; browsing and buying live
+  // in the Shop (frontend/shop/) so there is exactly one place to shop. The
+  // one exception is a purchase already in flight: the Shop's "Buy" link
+  // hands off here with the chosen pack's id (see dashboardPurchasePath in
+  // js/cosmetics-shop.js) so the customer lands on a single ready-to-pay
+  // card instead of re-finding the same item in a duplicate catalog.
+  function renderPendingPurchase(view) {
+    const pendingPackID = cleanText(view.pendingPackID);
+    if (!pendingPackID) return '';
     const catalog = view.catalog ? normalizeCatalog(view.catalog) : null;
-    const query = cleanText(view.shopQuery);
     const checkoutState = view.checkoutState || {status: 'idle', packID: '', message: ''};
     let feedback = '';
     if (checkoutState.status === 'success') {
@@ -634,48 +671,40 @@
     } else if (checkoutState.status === 'error') {
       feedback = `<div class="tip warn" role="alert"><b>Checkout could not start:</b> ${escapeHTML(checkoutState.message || 'Try again in a moment.')}</div>`;
     } else if (checkoutState.status === 'disabled') {
-      feedback = `<div class="tip" role="status"><b>Checkout is not open yet.</b> Preview the cosmetics now and return when sales are enabled.</div>`;
+      feedback = `<div class="tip" role="status"><b>Checkout is not open yet.</b> Return to the Shop and try again once sales are enabled.</div>`;
     }
-
+    const head = `<div class="cosmetic-inventory-head"><div><div class="cosmetic-kicker">From the Shop</div><h2 id="cosmetic-pending-title">Complete your purchase</h2></div></div>`;
     if (view.catalogError) {
-      return `<section class="cosmetic-shop" aria-labelledby="cosmetic-shop-title">
-        <div class="cosmetic-inventory-head"><div><div class="cosmetic-kicker">Cosmetics shop</div><h2 id="cosmetic-shop-title">Sets and trails</h2></div></div>
-        ${feedback}<div class="tip warn" role="alert"><b>Shop unavailable:</b> ${escapeHTML(view.catalogError)}</div>
+      return `<section class="cosmetic-shop cosmetic-pending-purchase" aria-labelledby="cosmetic-pending-title">
+        ${head}${feedback}<div class="tip warn" role="alert"><b>Could not load that item:</b> ${escapeHTML(view.catalogError)}</div>
       </section>`;
     }
     if (!catalog) {
-      return `<section class="cosmetic-shop" aria-labelledby="cosmetic-shop-title">
-        <div class="cosmetic-inventory-head"><div><div class="cosmetic-kicker">Cosmetics shop</div><h2 id="cosmetic-shop-title">Sets and trails</h2></div></div>
-        ${feedback}<div class="cosmetic-loading">Loading cosmetic products...</div>
+      return `<section class="cosmetic-shop cosmetic-pending-purchase" aria-labelledby="cosmetic-pending-title">
+        ${head}${feedback}<div class="cosmetic-loading">Loading your selection...</div>
       </section>`;
     }
-
-    const normalizedQuery = query.toLowerCase();
-    const matches = catalog.packs.filter(pack => {
-      if (!normalizedQuery) return true;
-      const itemText = (Array.isArray(pack.items) ? pack.items : []).flatMap(item => [item.id, item.name, item.description]);
-      return [pack.id, pack.name, pack.description, ...itemText]
-        .filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery);
-    });
-    const visible = matches.slice(0, 12);
-    const summary = matches.length
-      ? `Showing ${visible.length} of ${matches.length} products`
-      : 'No cosmetic products match';
-    const packs = visible.length
-      ? visible.map(pack => renderShopPack(pack, catalog, checkoutState)).join('')
-      : `<div class="cosmetic-empty cosmetic-empty-inventory">No cosmetic products match "${escapeHTML(query)}". Try a theme, set number, trail, or item name.</div>`;
-
-    return `<section class="cosmetic-shop" aria-labelledby="cosmetic-shop-title">
-      <div class="cosmetic-inventory-head">
-        <div><div class="cosmetic-kicker">Cosmetics shop</div><h2 id="cosmetic-shop-title">Sets and trails</h2></div>
-        <span>${escapeHTML(summary)}</span>
-      </div>
+    const pack = catalog.packs.find(entry => cleanText(entry.id) === pendingPackID);
+    if (!pack) {
+      return `<section class="cosmetic-shop cosmetic-pending-purchase" aria-labelledby="cosmetic-pending-title">
+        ${head}${feedback}<div class="cosmetic-empty cosmetic-empty-inventory">That item is no longer available in the Shop.</div>
+      </section>`;
+    }
+    return `<section class="cosmetic-shop cosmetic-pending-purchase" aria-labelledby="cosmetic-pending-title">
+      ${head}
       <p class="cosmetic-rule">Buying a pack grants one license for every included item. Each purchased item copy can be assigned to one bot at a time; items from the same pack can be assigned to different bots.</p>
       ${feedback}
-      <label class="cosmetic-shop-search" for="accountCosmeticSearch">Find a cosmetic
-        <input type="search" id="accountCosmeticSearch" data-account-shop-search value="${escapeHTML(query)}" placeholder="Search set, trail, or item" autocomplete="off">
-      </label>
-      <div class="cosmetic-shop-grid">${packs}</div>
+      <div class="cosmetic-shop-grid">${renderShopPack(pack, catalog, checkoutState)}</div>
+    </section>`;
+  }
+
+  function renderShopLink() {
+    return `<section class="cosmetic-shop cosmetic-shop-link" aria-labelledby="cosmetic-shop-link-title">
+      <div class="cosmetic-inventory-head">
+        <div><div class="cosmetic-kicker">Looking for more?</div><h2 id="cosmetic-shop-link-title">Browse the Shop</h2></div>
+      </div>
+      <p class="cosmetic-rule">Preview and buy new sets, full-body skins, and trails on your linked bots before you commit.</p>
+      <button type="button" class="sm" data-open-shop>Open the Shop</button>
     </section>`;
   }
 
@@ -823,7 +852,8 @@
     ${view.notice ? `<div class="tip good" role="status"><b>Saved:</b> ${escapeHTML(view.notice)}</div>` : ''}
     ${renderAllAccessPlan(snapshot, view)}
     ${renderAccountKeys(view)}
-    ${renderSetShop(view)}
+    ${renderPendingPurchase(view)}
+    ${renderShopLink()}
     ${renderRecentPurchases(view)}
     <div class="cosmetic-layout">
       <section class="cosmetic-sidebar">

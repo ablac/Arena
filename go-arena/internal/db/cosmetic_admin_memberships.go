@@ -298,6 +298,26 @@ func SyncCustomerCosmeticAdminMembershipLicenses(ctx context.Context, accountID 
 	return created, nil
 }
 
+// GetActiveCosmeticAdminMembership returns the account's active,
+// unexpired admin-granted membership, or nil if it has none. The unique
+// partial index on (account_id) WHERE status = 'active' guarantees at most
+// one row matches.
+func GetActiveCosmeticAdminMembership(ctx context.Context, accountID string) (*CosmeticAdminMembership, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
+	membership, err := scanCosmeticAdminMembership(Pool.QueryRow(ctx,
+		cosmeticAdminMembershipSelect()+`
+		WHERE m.account_id = $1 AND m.status = 'active' AND m.expires_at > NOW()`, accountID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("GetActiveCosmeticAdminMembership: %w", err)
+	}
+	return membership, nil
+}
+
 func GetCosmeticAdminAccessByEmail(ctx context.Context, rawEmail string) (*CosmeticAdminAccess, error) {
 	if Pool == nil {
 		return nil, ErrNoDatabase

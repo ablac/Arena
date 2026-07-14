@@ -330,25 +330,30 @@ const catalog = {
   }],
 };
 const shopHTML = cosmetics.renderPanel(snapshot, {catalog});
-assert.equal((shopHTML.match(/data-shop-pack=/g) || []).length, 12, 'dashboard shop should bound its initial pack render');
-assert.match(shopHTML, /data-pack-checkout="set-001-pack"/, 'enabled sale-ready packs should expose checkout');
-assert.match(shopHTML, /\$1\.99/, 'every one-time cosmetic set should display the $1.99 catalog price');
+assert.doesNotMatch(shopHTML, /data-shop-pack=/,
+  'the Dashboard must not render a browsable catalog -- browsing lives only in the Shop');
+assert.doesNotMatch(shopHTML, /data-pack-checkout=/, 'no pending purchase means no checkout button');
+assert.match(shopHTML, /data-open-shop/, 'the Dashboard must link out to the Shop for browsing and buying');
 assert.match(shopHTML, /All Access/);
 assert.match(shopHTML, /\$19\.99[\s\S]*month/);
 assert.match(shopHTML, /every current and future cosmetic set, full-body skin, and trail/i);
 assert.match(shopHTML, /up to 5 active API keys/i);
 assert.match(shopHTML, /subscription cosmetics are removed/i);
 assert.match(shopHTML, /data-subscription-checkout/, 'accounts without a managed subscription should be able to start All Access checkout');
-const searchedShopHTML = cosmetics.renderPanel(snapshot, {catalog, shopQuery:'Signal Set 099'});
-assert.equal((searchedShopHTML.match(/data-shop-pack=/g) || []).length, 1, 'dashboard search should narrow the pack list');
-const trailShopHTML = cosmetics.renderPanel(snapshot, {catalog, shopQuery:'Ember Sparks'});
-assert.match(trailShopHTML, /Individual trail/);
-assert.match(trailShopHTML, /\$0\.99/);
-assert.match(trailShopHTML, /data-pack-checkout="trail-ember-sparks-pack"/);
-const noResultsHTML = cosmetics.renderPanel(snapshot, {catalog, shopQuery:'missing set'});
-assert.match(noResultsHTML, /No cosmetic products match/i);
-const disabledShopHTML = cosmetics.renderPanel(snapshot, {catalog:{...catalog,checkout_enabled:false}});
-assert.doesNotMatch(disabledShopHTML, /data-pack-checkout=/, 'checkout-disabled catalogs must not render purchase buttons');
+
+const pendingSetHTML = cosmetics.renderPanel(snapshot, {catalog, pendingPackID:'set-001-pack'});
+assert.equal((pendingSetHTML.match(/data-shop-pack=/g) || []).length, 1,
+  'a deep-linked purchase must show exactly the one pack the customer picked in the Shop, not a browsable grid');
+assert.match(pendingSetHTML, /data-pack-checkout="set-001-pack"/, 'enabled sale-ready packs should expose checkout');
+assert.match(pendingSetHTML, /\$1\.99/, 'every one-time cosmetic set should display the $1.99 catalog price');
+const pendingTrailHTML = cosmetics.renderPanel(snapshot, {catalog, pendingPackID:'trail-ember-sparks-pack'});
+assert.match(pendingTrailHTML, /Individual trail/);
+assert.match(pendingTrailHTML, /\$0\.99/);
+assert.match(pendingTrailHTML, /data-pack-checkout="trail-ember-sparks-pack"/);
+const missingPendingHTML = cosmetics.renderPanel(snapshot, {catalog, pendingPackID:'missing-pack'});
+assert.match(missingPendingHTML, /no longer available in the Shop/i);
+const disabledPendingHTML = cosmetics.renderPanel(snapshot, {catalog:{...catalog,checkout_enabled:false}, pendingPackID:'set-001-pack'});
+assert.doesNotMatch(disabledPendingHTML, /data-pack-checkout=/, 'checkout-disabled catalogs must not render purchase buttons');
 assert.deepEqual(
   JSON.parse(JSON.stringify(cosmetics.checkoutIntent(catalog, 'set-001-pack'))),
   {ok:true,path:'/account/cosmetics/checkout',body:{pack_id:'set-001-pack',quantity:1}},
@@ -357,6 +362,23 @@ assert.deepEqual(
   JSON.parse(JSON.stringify(cosmetics.checkoutIntent(catalog, 'trail-ember-sparks-pack'))),
   {ok:true,path:'/account/cosmetics/checkout',body:{pack_id:'trail-ember-sparks-pack',quantity:1}},
 );
+
+const membershipSnapshot = cosmetics.normalizeSnapshot({
+  account:{id:'acct-membership',email:'granted@example.com',email_verified:true},
+  bots:[], licenses:[],
+  membership:{id:'membership-1',status:'active',granted_at:'2026-07-01T00:00:00Z',expires_at:'2026-08-01T00:00:00Z'},
+});
+assert.equal(membershipSnapshot.membership?.id, 'membership-1');
+const membershipHTML = cosmetics.renderPanel(membershipSnapshot, {catalog});
+assert.match(membershipHTML, /Access active/, 'an active admin-granted membership must read as active access, not "Available"');
+assert.doesNotMatch(membershipHTML, /class="all-access-status ">Available/, 'a granted membership must not still show the unsubscribed status');
+assert.match(membershipHTML, /Granted by Arena staff/i);
+const revokedMembershipSnapshot = cosmetics.normalizeSnapshot({
+  account:{id:'acct-revoked',email:'revoked@example.com',email_verified:true},
+  bots:[], licenses:[],
+  membership:{id:'membership-2',status:'revoked',granted_at:'2026-07-01T00:00:00Z',expires_at:'2026-08-01T00:00:00Z'},
+});
+assert.equal(revokedMembershipSnapshot.membership, null, 'only an active membership should surface in the Dashboard UI');
 
 const baseOrder = {
   id:'order-001',
@@ -386,7 +408,7 @@ const failedOrdersHTML = cosmetics.renderPanel(snapshot, {
 recentPurchaseCheck('independent error state', () => {
   assert.match(failedOrdersHTML, /Recent purchases unavailable/);
   assert.match(failedOrdersHTML, /Ledger &lt;offline&gt;/);
-  assert.match(failedOrdersHTML, /data-shop-pack="set-001-pack"/, 'order failure must leave the shop visible');
+  assert.match(failedOrdersHTML, /data-open-shop/, 'order failure must leave the Shop link visible');
   assert.match(failedOrdersHTML, /data-license-id="license-1"/, 'order failure must leave owned inventory visible');
 });
 
@@ -583,7 +605,7 @@ const linkHandler = dashboardHTML.slice(
 assert.doesNotMatch(linkHandler, /saveKey|localStorage/, 'linking a bot must not persist the proof key in dashboard storage');
 
 recentPurchaseCheck('dashboard script cache version', () => {
-  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260713f/);
+  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260714g/);
   assert.match(dashboardHTML, /href="\.\.\/css\/embedded-checkout\.css\?v=20260713a"/);
   assert.match(dashboardHTML, /src="\.\.\/js\/embedded-checkout\.js\?v=20260713a"/);
 });
