@@ -401,10 +401,22 @@ function initChatPanel(cfg) {
     const groupEl = bodyEl.parentElement;
     bodyEl.remove();
     lineIndex.delete(id);
-    if (groupEl && !groupEl.querySelector('.chat-body')) {
+    if (!groupEl) return;
+
+    const remainingFirst = groupEl.querySelector('.chat-body');
+    if (!remainingFirst) {
       if (lastGroup && lastGroup.el === groupEl) lastGroup = null;
       groupEl.remove();
+      return;
     }
+    // The removed line may have been the group's first message, whose time
+    // the header displays (the handle does not need updating: every message
+    // in a group is from the same sender). Keep it in sync with whichever
+    // message is now first -- this matters here because eviction always
+    // removes the single oldest surviving line, which is always a group's
+    // first message.
+    const timeEl = groupEl.querySelector('.chat-time');
+    if (timeEl) timeEl.textContent = remainingFirst.title;
   }
 
   const socket = new ChatSocket(
@@ -432,6 +444,9 @@ function initChatPanel(cfg) {
         case 'chat_settings':
           runtimeEnabled = !!msg.enabled;
           setStatus(runtimeEnabled ? 'Chat re-enabled' : 'Chat disabled by an admin', runtimeEnabled ? 'ok' : 'warn');
+          // A "sign in to chat" prompt is pointless (and reads as
+          // contradictory) while there is nothing to sign in to post to.
+          if (!runtimeEnabled) watermark.hidden = true;
           updateComposer();
           break;
         case 'chat_history':
