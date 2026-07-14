@@ -120,6 +120,30 @@ func TestProcessTeleportsRequiresExitBeforeSameBotCanReenter(t *testing.T) {
 	}
 }
 
+// TestProcessTeleportsRequiresStandingOnPadAtDefaultRadius guards the
+// production default (ARENA_TELEPORT_COLLECT_RADIUS=0): a bot merely passing
+// adjacent to a pad must not be yanked through it. Only a bot occupying the
+// pad's own cell triggers a teleport.
+func TestProcessTeleportsRequiresStandingOnPadAtDefaultRadius(t *testing.T) {
+	grid := setTeleportTestWorld(t)
+	config.C.TeleportCollectRadius = 0
+	pads := teleportTestPads()
+
+	adjacent := teleportTestBot("adjacent", [2]int{3, 2}, grid) // one cell from pad "a" at (2,2)
+	if events := ProcessTeleports(map[string]*BotState{adjacent.BotID: adjacent}, pads, grid, 100, RoundModifierNone); len(events) != 0 {
+		t.Fatalf("bot merely adjacent to the pad was teleported: events=%d", len(events))
+	}
+	if got := ActiveTerrain.WorldToGrid(adjacent.Position); got != [2]int{3, 2} {
+		t.Fatalf("adjacent bot moved without teleporting: %v", got)
+	}
+
+	adjacent.Position = ActiveTerrain.GridToWorld([2]int{2, 2}) // now standing on the pad
+	grid.Update(adjacent.BotID, adjacent.Position)
+	if events := ProcessTeleports(map[string]*BotState{adjacent.BotID: adjacent}, pads, grid, 101, RoundModifierNone); len(events) != 1 {
+		t.Fatalf("bot standing exactly on the pad was not teleported: events=%d", len(events))
+	}
+}
+
 func TestSpawnBotAtClearsTeleportStateForNewRound(t *testing.T) {
 	grid := setTeleportTestWorld(t)
 	bot := &BotState{
