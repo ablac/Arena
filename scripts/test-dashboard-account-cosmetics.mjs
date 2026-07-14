@@ -303,8 +303,8 @@ inactiveState.licenses[0].status = 'active';
 assert.equal(cosmetics.assignmentIntent(inactiveState, 'license-refunded', 'bot-inactive').reason, 'bot-key-inactive');
 const inactiveHTML = cosmetics.renderPanel({...inactiveState, licenses:[{...inactiveState.licenses[0],status:'refunded'}]}, {});
 assert.match(inactiveHTML, /Refunded/);
-assert.match(inactiveHTML, /Key inactive/);
 assert.doesNotMatch(inactiveHTML, /data-license-equip="license-refunded"/);
+assert.match(cosmetics.renderLinkedBots(inactiveState, {}), /Key inactive/);
 const inactiveBotHTML = cosmetics.renderPanel({
   ...inactiveState,
   licenses:[{...inactiveState.licenses[0],status:'active',assigned_bot_id:'bot-inactive',equipped:false}],
@@ -524,7 +524,7 @@ assert.equal(cosmetics.assignmentIntent(unverified, 'license-2', 'bot-2').reason
 
 const html = cosmetics.renderPanel(snapshot, {});
 assert.match(html, /Purchases stay with this account even if a bot API key is rotated, revoked, or lost/);
-assert.match(html, /Each license can be assigned to one bot at a time/);
+assert.match(html, /assignable to one linked bot at a time/);
 assert.match(html, /Equipped on/);
 assert.match(html, /Assigned to <strong>Alpha \(arena_alpha\.\.\.\)<\/strong>/);
 assert.match(html, /Assigned, not equipped/);
@@ -534,10 +534,21 @@ assert.match(html, /data-license-id="license-2"/);
 assert.match(html, /Move to bot/);
 assert.match(html, /Alpha - arena_alpha\.\.\./, 'duplicate bot names must remain distinguishable by safe key prefix');
 assert.match(html, /Remove from bot/);
-assert.match(html, /data-bot-unlink="bot-1"/);
+assert.doesNotMatch(html, /data-bot-unlink=/, 'linked bots render on the Profile tab now, not inside the Cosmetics panel');
+assert.doesNotMatch(html, /id="accountKeyForm"/, 'API keys render on the Profile tab now, not inside the Cosmetics panel');
 assert.doesNotMatch(html, /Neon <Grid>/, 'cosmetic names must be escaped');
 assert.match(html, /Neon &lt;Grid&gt;/);
 assert.doesNotMatch(html, /value="arena_alpha"/, 'rendered account UI must not contain raw API keys');
+
+const linkedBotsHTML = cosmetics.renderLinkedBots(snapshot, {});
+assert.match(linkedBotsHTML, /id="linkBotForm"/);
+assert.match(linkedBotsHTML, /data-bot-unlink="bot-1"/);
+assert.match(linkedBotsHTML, /Alpha/);
+assert.match(linkedBotsHTML, /Beta/);
+recentPurchaseCheck('empty linked-bots state', () => {
+  const noBotsSnapshot = cosmetics.normalizeSnapshot({account:snapshot.account, bots:[], licenses:[]});
+  assert.match(cosmetics.renderLinkedBots(noBotsSnapshot, {}), /No bots linked yet/);
+});
 
 const managedHTML = cosmetics.renderPanel({
   ...snapshot,
@@ -547,20 +558,21 @@ const managedHTML = cosmetics.renderPanel({
     includes_future_sets:true,max_api_keys:5,
   },
   subscription_offer:subscriptionOffer,
-}, {
-  catalog,
-  keys:keyCollection,
-  generatedKey:{api_key:'arena_one_time_secret',bot_id:'bot-new',key:{id:'key-new',key_prefix:'arena_one'}},
-});
+}, {catalog});
 assert.match(managedHTML, /All Access/);
 assert.match(managedHTML, /Access active/);
 assert.match(managedHTML, /data-subscription-portal/, 'an existing provider subscription should expose customer portal management');
 assert.doesNotMatch(managedHTML, /data-subscription-checkout/, 'managed subscriptions must not offer a duplicate checkout');
-assert.match(managedHTML, /2 of 5 active/);
-assert.match(managedHTML, /id="accountKeyForm"/);
-assert.match(managedHTML, /data-account-key-revoke="key-1"/);
-assert.match(managedHTML, /value="arena_one_time_secret"/, 'a newly issued key should be shown exactly once inside the authenticated Dashboard');
-assert.match(managedHTML, /data-account-key-clear/);
+
+const managedKeysHTML = cosmetics.renderAccountKeys({
+  keys:keyCollection,
+  generatedKey:{api_key:'arena_one_time_secret',bot_id:'bot-new',key:{id:'key-new',key_prefix:'arena_one'}},
+});
+assert.match(managedKeysHTML, /2 of 5 active/);
+assert.match(managedKeysHTML, /id="accountKeyForm"/);
+assert.match(managedKeysHTML, /data-account-key-revoke="key-1"/);
+assert.match(managedKeysHTML, /value="arena_one_time_secret"/, 'a newly issued key should be shown exactly once inside the authenticated Dashboard');
+assert.match(managedKeysHTML, /data-account-key-clear/);
 
 const billingMismatchHTML = cosmetics.renderPanel({
   ...snapshot,
@@ -578,14 +590,12 @@ const pendingSubscriptionHTML = cosmetics.renderPanel({
 assert.match(pendingSubscriptionHTML, /Checkout pending/, 'an resumable hosted session must not be described as ended access');
 assert.match(pendingSubscriptionHTML, /data-subscription-checkout/);
 
-const atLimitHTML = cosmetics.renderPanel(snapshot, {
-  keys:{...keyCollection,active_count:5},
-});
+const atLimitHTML = cosmetics.renderAccountKeys({keys:{...keyCollection,active_count:5}});
 assert.match(atLimitHTML, /5 of 5 active/);
 assert.match(atLimitHTML, /id="accountKeyCreate"[^>]*disabled/, 'Dashboard must disable key generation at the five-active-key limit');
-const loadingKeysHTML = cosmetics.renderPanel(snapshot, {keys:null});
+const loadingKeysHTML = cosmetics.renderAccountKeys({keys:null});
 assert.match(loadingKeysHTML, /id="accountKeyCreate"[^>]*disabled/, 'Dashboard must not create a key before current usage is known');
-const failedKeysHTML = cosmetics.renderPanel(snapshot, {keys:null,keysError:'key service offline'});
+const failedKeysHTML = cosmetics.renderAccountKeys({keys:null,keysError:'key service offline'});
 assert.match(failedKeysHTML, /id="accountKeyCreate"[^>]*disabled/, 'Dashboard must keep generation fail-closed when the key list is unavailable');
 
 const dashboardHTML = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8');
@@ -594,7 +604,7 @@ assert.match(dashboardHTML, /id="accountSignInButton"[^>]*disabled/, 'email logi
 assert.match(dashboardHTML, /method:'POST'/, 'account sign-out should use a CSRF-protected POST');
 assert.match(dashboardHTML, /data-account-retry/, 'an initial inventory failure should expose a retry action');
 assert.match(dashboardHTML, /Retry email sign-in check/, 'a failed session capability request should be retryable, not mislabeled as unconfigured');
-assert.match(dashboardHTML, /tabName==='cosmetics' && hasVerifiedAccount\(\)\) refreshAccountCosmetics\(\)/, 'opening Cosmetics must fetch even when API-key login won the startup race');
+assert.match(dashboardHTML, /\(tabName==='cosmetics' \|\| tabName==='profile'\) && hasVerifiedAccount\(\)\) refreshAccountCosmetics\(\)/, 'opening Cosmetics or Profile must fetch even when API-key login won the startup race -- Profile now needs the same linked-bots/keys data Cosmetics does');
 assert.match(dashboardHTML, /sessionStorage\.setItem\('arena_keys'/, 'legacy bot-performance keys should be tab-scoped');
 assert.doesNotMatch(dashboardHTML, /localStorage\.setItem\('arena_keys'/, 'bot bearer keys must not persist across browser sessions');
 assert.match(dashboardHTML, /input\.value = '';/, 'the one-time link key should be cleared as soon as it is submitted');
@@ -605,7 +615,7 @@ const linkHandler = dashboardHTML.slice(
 assert.doesNotMatch(linkHandler, /saveKey|localStorage/, 'linking a bot must not persist the proof key in dashboard storage');
 
 recentPurchaseCheck('dashboard script cache version', () => {
-  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260714g/);
+  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260714h/);
   assert.match(dashboardHTML, /href="\.\.\/css\/embedded-checkout\.css\?v=20260713a"/);
   assert.match(dashboardHTML, /src="\.\.\/js\/embedded-checkout\.js\?v=20260713a"/);
 });

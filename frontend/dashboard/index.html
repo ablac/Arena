@@ -560,9 +560,8 @@ tr:hover td{background:rgba(71,215,255,.035)}
   text-transform:uppercase;
   white-space:nowrap;
 }
-.cosmetic-layout{display:grid;grid-template-columns:minmax(240px,300px) minmax(0,1fr);gap:16px;align-items:start}
-.cosmetic-sidebar,.cosmetic-inventory{min-width:0;padding:18px;border:1px solid rgba(126,166,207,.14);border-radius:22px;background:rgba(6,12,20,.55)}
-.cosmetic-sidebar>h3,.cosmetic-group>h3{margin:0 0 6px;color:#ecf4ff;font-size:13px}
+.cosmetic-sidebar,.cosmetic-inventory{min-width:0;padding:18px;margin-bottom:16px;border:1px solid rgba(126,166,207,.14);border-radius:22px;background:rgba(6,12,20,.55)}
+.cosmetic-group>h3{margin:0 0 6px;color:#ecf4ff;font-size:13px}
 .linked-bot-list{display:flex;flex-direction:column;gap:7px;margin:14px 0 16px;padding:0;list-style:none}
 .linked-bot-list li{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px;border:1px solid rgba(126,166,207,.12);border-radius:14px;background:rgba(255,255,255,.025)}
 .linked-bot-list li span:first-child{min-width:0;display:flex;flex-direction:column}
@@ -650,7 +649,7 @@ button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.5;tra
 .profile-bot-card{padding:10px 12px;border:1px solid rgba(126,166,207,.12);border-radius:14px;background:rgba(255,255,255,.025)}
 .profile-bot-card strong{display:block;margin-bottom:6px;color:#ecf4ff;font-size:12px}
 :is(.tbtn,.cosmetic-shop-buy,.all-access-plan button,.account-key-manager button,.account-key-manager input,.account-profile-form button,.account-profile-form input,.account-profile-form textarea,.profile-color-swatch):focus-visible{outline:2px solid #7ee4ff;outline-offset:3px}
-@media (max-width:760px){.login-shell{grid-template-columns:1fr}.all-access-plan{grid-template-columns:minmax(0,1fr)}.all-access-offer{justify-items:start;min-width:0;text-align:left}.account-key-form,.account-generated-key-field,.account-key-row{grid-template-columns:minmax(0,1fr)}.account-key-meta{justify-content:flex-start}.account-key-row button{justify-self:start}.cosmetic-layout{grid-template-columns:minmax(0,1fr)}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.linked-bot-list li{align-items:flex-start;flex-wrap:wrap}.linked-bot-actions{flex-wrap:wrap}.cosmetic-license-grid{grid-template-columns:minmax(0,1fr)}.cosmetic-license-actions select{flex-basis:100%;min-width:0;width:100%}.cosmetic-shop-pack{grid-template-columns:68px minmax(0,1fr)}.cosmetic-shop-swatch{width:68px}.cosmetic-shop-offer{grid-column:1/-1;grid-template-columns:1fr auto;align-items:center;justify-items:start;width:100%}.cosmetic-shop-offer .cosmetic-shop-buy{justify-self:end}}
+@media (max-width:760px){.login-shell{grid-template-columns:1fr}.all-access-plan{grid-template-columns:minmax(0,1fr)}.all-access-offer{justify-items:start;min-width:0;text-align:left}.account-key-form,.account-generated-key-field,.account-key-row{grid-template-columns:minmax(0,1fr)}.account-key-meta{justify-content:flex-start}.account-key-row button{justify-self:start}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.linked-bot-list li{align-items:flex-start;flex-wrap:wrap}.linked-bot-actions{flex-wrap:wrap}.cosmetic-license-grid{grid-template-columns:minmax(0,1fr)}.cosmetic-license-actions select{flex-basis:100%;min-width:0;width:100%}.cosmetic-shop-pack{grid-template-columns:68px minmax(0,1fr)}.cosmetic-shop-swatch{width:68px}.cosmetic-shop-offer{grid-column:1/-1;grid-template-columns:1fr auto;align-items:center;justify-items:start;width:100%}.cosmetic-shop-offer .cosmetic-shop-buy{justify-self:end}}
 @media (pointer:coarse){.cosmetic-shop button,.all-access-plan button,.account-key-manager button,.tbtn{min-height:44px}.account-key-manager input{font-size:16px}.account-profile-form button{min-height:44px}.account-profile-form input[type=text],.account-profile-form textarea{font-size:16px}}
 @media (prefers-reduced-motion:reduce){.cosmetic-shop *,.all-access-plan *,.account-key-manager *{scroll-behavior:auto!important;transition-duration:.01ms!important}}
 </style>
@@ -815,9 +814,10 @@ if (window.self !== window.top) {
 
   <div class="tpanel" id="tab-profile" data-view="private" data-auth="account">
     <div class="section">
-      <div class="cosmetic-kicker">Public identity</div>
+      <div class="cosmetic-kicker">Your bots &amp; identity</div>
       <h2>Profile</h2>
-      <p style="font-size:11px;color:var(--text2);margin-bottom:12px">Your chat username, bio, and avatar color are visible to other players and control what appears on your public profile page.</p>
+      <p style="font-size:11px;color:var(--text2);margin-bottom:12px">Link the bots you want to manage from this account and create their API keys here. Your chat username, bio, and avatar color are visible to other players and control what appears on your public profile page.</p>
+      <div id="accountBotsPanel" class="cosmetic-loading">Loading your linked bots and API keys...</div>
       <div id="accountProfilePanel" class="cosmetic-loading">Loading your profile...</div>
     </div>
   </div>
@@ -903,7 +903,7 @@ if (window.self !== window.top) {
 </div>
 
 <script src="../js/cosmetic-themes.js?v=20260713f"></script>
-<script src="./account-cosmetics.js?v=20260714g"></script>
+<script src="./account-cosmetics.js?v=20260714h"></script>
 <script src="./account-profile.js?v=20260714a"></script>
 <script>
 const WEAPON_META = {
@@ -1243,6 +1243,28 @@ async function startCustomerEmailAuth(event) {
   }
 }
 
+function notifyOtherTabsSignedIn() {
+  import('../js/account-session.js?v=20260714a')
+    .then(({notifySessionChanged}) => notifySessionChanged())
+    .catch(error => console.warn('Could not notify other Arena tabs of sign-in', error));
+}
+
+// The counterpart to notifyOtherTabsSignedIn(): keeps THIS dashboard in sync
+// when sign-in (or sign-out) happens somewhere else -- another tab finishing
+// a magic-link email, or this same drawer's own confirm step above. Skips
+// its own first callback (startSessionSync always fires once immediately
+// with the current session, which initializeAccountMode() already just
+// fetched) and only reacts to an actual account change after that.
+function watchAccountSessionAcrossTabs() {
+  import('../js/account-session.js?v=20260714a').then(({startSessionSync}) => {
+    let first = true;
+    startSessionSync(() => {
+      if (first) { first = false; return; }
+      initializeAccountMode();
+    });
+  }).catch(error => console.warn('Cross-tab session sync unavailable', error));
+}
+
 async function confirmCustomerEmailToken() {
   const button = document.getElementById('accountEmailConfirmButton');
   const status = document.getElementById('accountEmailConfirmStatus');
@@ -1260,6 +1282,12 @@ async function confirmCustomerEmailToken() {
     const redirectTo = safeCustomerEmailRedirectPath(payload?.redirect_to);
     pendingCustomerEmailToken = '';
     document.getElementById('accountEmailConfirm').hidden = true;
+    // A magic link always opens in a fresh tab (the browser controls that,
+    // not this page). This is the other half of the fix: tell any other
+    // already-open Arena tab it should pick up the new sign-in itself,
+    // instead of leaving it stuck on whatever it showed before the link was
+    // clicked. See watchAccountSessionAcrossTabs() below for the read side.
+    notifyOtherTabsSignedIn();
     if (redirectTo !== accountReturnPath()) {
       navigateAccount(redirectTo);
       return;
@@ -1441,7 +1469,7 @@ function renderAccountCosmeticsOutfitter() {
   if (!accountPreviewBotID) {
     name.textContent = 'No linked bot selected';
     reset.disabled = true;
-    slots.innerHTML = '<p>Link a bot to compare its current loadout with a staged preview.</p>';
+    slots.innerHTML = '<p>No bots linked yet. <button type="button" class="sm" data-goto-profile>Link one from the Profile tab</button> to compare its current loadout with a staged preview.</p>';
     syncAccountCosmeticsPreviewRenderer(null);
     return;
   }
@@ -1482,6 +1510,7 @@ function renderAccountCosmetics() {
       root.textContent = 'Loading your account-owned cosmetics...';
     }
     renderAccountCosmeticsOutfitter();
+    renderAccountBotsAndKeys();
     return;
   }
   root.className = '';
@@ -1496,14 +1525,41 @@ function renderAccountCosmetics() {
     busyOrderID: accountBusyOrderID,
     orders: accountOrders,
     ordersError: accountOrdersError,
-    keys: accountKeys,
-    keysError: accountKeysError,
-    keyCreateBusy: accountKeyCreateBusy,
-    busyKeyID: accountBusyKeyID,
-    generatedKey: accountGeneratedKey,
     subscriptionState: accountSubscriptionState,
   });
   renderAccountCosmeticsOutfitter();
+  renderAccountBotsAndKeys();
+}
+
+// Linked bots and API keys moved to the Profile tab (they're account/bot
+// credential management, not cosmetics), but the underlying data still
+// comes from the same account-cosmetics fetch as renderAccountCosmetics()
+// above, so this renders alongside it rather than needing its own separate
+// refresh plumbing threaded through every one of that function's ~40 call
+// sites.
+function renderAccountBotsAndKeys() {
+  const root = document.getElementById('accountBotsPanel');
+  if (!root || !window.ArenaAccountCosmetics) return;
+  if (!accountSnapshot) {
+    if (accountViewError) {
+      root.className = '';
+      root.innerHTML = `<div class="tip warn" role="alert"><b>Could not load your bots:</b> ${esc(accountViewError)} <button type="button" class="sm" data-account-retry>Retry</button></div>`;
+    } else {
+      root.className = 'cosmetic-loading';
+      root.textContent = 'Loading your linked bots and API keys...';
+    }
+    return;
+  }
+  root.className = '';
+  const snapshot = window.ArenaAccountCosmetics.normalizeSnapshot(accountSnapshot);
+  root.innerHTML = window.ArenaAccountCosmetics.renderLinkedBots(snapshot, {}) +
+    window.ArenaAccountCosmetics.renderAccountKeys({
+      keys: accountKeys,
+      keysError: accountKeysError,
+      keyCreateBusy: accountKeyCreateBusy,
+      busyKeyID: accountBusyKeyID,
+      generatedKey: accountGeneratedKey,
+    });
 }
 
 async function refreshAccountCosmetics(notice='') {
@@ -2280,6 +2336,11 @@ async function unlinkAccountBot(botID) {
 }
 
 function handleAccountPanelClick(event) {
+  const gotoProfileButton = event.target.closest('[data-goto-profile]');
+  if (gotoProfileButton) {
+    activateTab('profile');
+    return;
+  }
   const openShopButton = event.target.closest('[data-open-shop]');
   if (openShopButton) {
     openArenaShop();
@@ -2417,10 +2478,16 @@ function bindAccountCosmeticsUI() {
   document.getElementById('accountEmailConfirmButton').addEventListener('click', confirmCustomerEmailToken);
   document.getElementById('accountSignInButton').addEventListener('click', startAccountLogin);
   document.getElementById('accountLogoutBtn').addEventListener('click', signOutAccount);
-  const panel = document.getElementById('tab-cosmetics');
-  panel.addEventListener('submit', handleAccountPanelSubmit);
-  panel.addEventListener('click', handleAccountPanelClick);
-  panel.addEventListener('change', handleAccountPanelChange);
+  // Linked bots and API keys render into #tab-profile now (see
+  // renderAccountBotsAndKeys), but their submit/click/change handlers below
+  // are unchanged -- attach the same delegated listeners to both panels
+  // rather than duplicating the handlers themselves.
+  for (const panel of [document.getElementById('tab-cosmetics'), document.getElementById('tab-profile')]) {
+    if (!panel) continue;
+    panel.addEventListener('submit', handleAccountPanelSubmit);
+    panel.addEventListener('click', handleAccountPanelClick);
+    panel.addEventListener('change', handleAccountPanelChange);
+  }
   window.addEventListener('pagehide', event => {
     if (event.persisted) return;
     accountCosmeticsPreviewController?.dispose();
@@ -2587,7 +2654,11 @@ function activateTab(tabName) {
   if (tabName==='simulator') initSim();
   if (tabName==='skills') renderSkills();
   if (tabName==='allbots') loadAllBots();
-  if (tabName==='cosmetics' && hasVerifiedAccount()) refreshAccountCosmetics();
+  // Linked bots and API keys render on the Profile tab now, fed by the same
+  // account-cosmetics fetch as the Cosmetics tab -- landing directly on
+  // Profile (e.g. a deep link, or simply clicking it first) must trigger it
+  // too, or accountBotsPanel is stuck showing its loading state forever.
+  if ((tabName==='cosmetics' || tabName==='profile') && hasVerifiedAccount()) refreshAccountCosmetics();
   if (tabName==='profile' && hasVerifiedAccount()) refreshAccountProfile();
   if (tabName==='strategy') renderStrategy();
   if (tabName==='builds') renderBuilds();
@@ -2688,6 +2759,7 @@ async function startDashboard() {
   bindAccountCosmeticsUI();
   bindAccountProfileUI();
   await initializeAccountMode();
+  if (DASHBOARD_VIEW === 'private') watchAccountSessionAcrossTabs();
 }
 
 startDashboard();

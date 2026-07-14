@@ -813,9 +813,12 @@
     </section>`;
   }
 
-  function renderPanel(rawSnapshot, options) {
-    const snapshot = normalizeSnapshot(rawSnapshot);
-    const view = options && typeof options === 'object' ? options : {};
+  // Bot linking lives on the Profile tab now (it's account/credential
+  // management, not a cosmetics concern), rendered separately by index.html
+  // via window.ArenaAccountCosmetics.renderLinkedBots -- kept here because
+  // the underlying data (snapshot.bots) is still fetched alongside cosmetic
+  // inventory, not through account-profile.js's own data flow.
+  function renderLinkedBots(snapshot, view) {
     const email = snapshot.account.email || 'your verified email';
     const botRows = snapshot.bots.length
       ? snapshot.bots.map(bot => `<li data-linked-bot-id="${escapeHTML(bot.id)}">
@@ -823,6 +826,25 @@
           <span class="linked-bot-actions"><span class="linked-bot-state${bot.key_is_active ? '' : ' inactive'}">${bot.key_is_active ? 'Linked' : 'Key inactive'}</span><button type="button" class="sm danger" data-bot-unlink="${escapeHTML(bot.id)}">Unlink</button></span>
         </li>`).join('')
       : '<li class="cosmetic-empty">No bots linked yet. Link one by proving its API key below.</li>';
+    return `<section class="cosmetic-sidebar" aria-labelledby="linked-bots-title">
+      <div class="cosmetic-inventory-head">
+        <div><div class="cosmetic-kicker">Your bots</div><h2 id="linked-bots-title">Linked bots</h2></div>
+      </div>
+      <p class="cosmetic-rule">Claim a bot you started anonymously by proving its server-issued token. Linking does not transfer cosmetic ownership to the token -- purchases always stay with ${escapeHTML(email)}.</p>
+      <ul class="linked-bot-list">${botRows}</ul>
+      <form id="linkBotForm" class="link-bot-form">
+        <label for="linkBotKey">Claim or link an existing bot</label>
+        <input type="password" id="linkBotKey" name="api_key" placeholder="arena_..." autocomplete="off" spellcheck="false" required>
+        <button type="submit"${view?.linkBusy ? ' disabled' : ''}>${view?.linkBusy ? 'Linking...' : 'Verify & link bot'}</button>
+        <small>Paste the token Arena generated for that bot. It is sent once to prove control, then cleared from this form.</small>
+      </form>
+    </section>`;
+  }
+
+  function renderPanel(rawSnapshot, options) {
+    const snapshot = normalizeSnapshot(rawSnapshot);
+    const view = options && typeof options === 'object' ? options : {};
+    const email = snapshot.account.email || 'your verified email';
 
     const groups = new Map();
     snapshot.licenses.forEach(license => {
@@ -844,38 +866,24 @@
       <div>
         <div class="cosmetic-kicker">Verified owner</div>
         <h2>${escapeHTML(email)}</h2>
-        <p>Purchases stay with this account even if a bot API key is rotated, revoked, or lost.</p>
+        <p>What this account owns, and which linked bot wears each item. Purchases stay with this account even if a bot API key is rotated, revoked, or lost. Link a bot and manage API keys from the Profile tab.</p>
       </div>
       <span class="verified-email-badge">Email verified</span>
     </div>
     ${view.error ? `<div class="tip warn" role="alert"><b>Could not update cosmetics:</b> ${escapeHTML(view.error)}</div>` : ''}
     ${view.notice ? `<div class="tip good" role="status"><b>Saved:</b> ${escapeHTML(view.notice)}</div>` : ''}
     ${renderAllAccessPlan(snapshot, view)}
-    ${renderAccountKeys(view)}
     ${renderPendingPurchase(view)}
+    <section class="cosmetic-inventory">
+      <div class="cosmetic-inventory-head">
+        <div><div class="cosmetic-kicker">Your collection</div><h2>Cosmetic licenses</h2></div>
+        <span>${escapeHTML(licenseSummary)}</span>
+      </div>
+      <p class="cosmetic-rule">Every purchased pack item appears here as its own license, assignable to one linked bot at a time. <b>Assign</b> puts a license on a bot so it's available to that bot; <b>Equip</b> makes it the bot's active look in that slot right now.</p>
+      ${inventory}
+    </section>
     ${renderShopLink()}
-    ${renderRecentPurchases(view)}
-    <div class="cosmetic-layout">
-      <section class="cosmetic-sidebar">
-        <h3>Linked bots</h3>
-        <p>Claim a bot you started anonymously by proving its server-issued token. Linking does not transfer cosmetic ownership to the token.</p>
-        <ul class="linked-bot-list">${botRows}</ul>
-        <form id="linkBotForm" class="link-bot-form">
-          <label for="linkBotKey">Claim or link an existing bot</label>
-          <input type="password" id="linkBotKey" name="api_key" placeholder="arena_..." autocomplete="off" spellcheck="false" required>
-          <button type="submit"${view.linkBusy ? ' disabled' : ''}>${view.linkBusy ? 'Linking...' : 'Verify & link bot'}</button>
-          <small>Paste the token Arena generated for that bot. It is sent once to prove control, then cleared from this form. Purchases remain with ${escapeHTML(email)}.</small>
-        </form>
-      </section>
-      <section class="cosmetic-inventory">
-        <div class="cosmetic-inventory-head">
-          <div><div class="cosmetic-kicker">Your collection</div><h2>Cosmetic licenses</h2></div>
-          <span>${escapeHTML(licenseSummary)}</span>
-        </div>
-        <p class="cosmetic-rule">Every purchased pack item appears here as its own license. Each license can be assigned to one bot at a time. Items from the same pack may be assigned to different bots. Moving changes which bot may use a license; Equip is a separate, explicit action that can replace that bot's active cosmetic in the same slot.</p>
-        ${inventory}
-      </section>
-    </div>`;
+    ${renderRecentPurchases(view)}`;
   }
 
   root.ArenaAccountCosmetics = Object.freeze({
@@ -893,6 +901,8 @@
     normalizeSubscription,
     normalizeSubscriptionOffer,
     previewModel,
+    renderAccountKeys,
+    renderLinkedBots,
     renderPanel,
     requestHeaders,
     slotLabel,

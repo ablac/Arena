@@ -96,6 +96,7 @@ vm.runInContext(`
     return {redirect_to:'/dashboard/?pack=cosmetic-set-050'};
   }
   async function initializeAccountMode() { initializeCalls += 1; }
+  function notifyOtherTabsSignedIn() {}
   ${extractFunction(dashboard, 'accountReturnPath')}
   ${extractFunction(dashboard, 'safeCustomerEmailRedirectPath')}
   ${extractFunction(dashboard, 'navigateAccount')}
@@ -119,5 +120,5 @@ assert.equal(safeRedirect('https://attacker.example/dashboard/'), '/dashboard/')
 assert.equal(safeRedirect('//attacker.example/dashboard/'), '/dashboard/');
 assert.equal(safeRedirect('/admin/'), '/dashboard/');
 
-assert.match(dashboard, /account-cosmetics\.js\?v=20260714g/);
+assert.match(dashboard, /account-cosmetics\.js\?v=20260714h/);
 console.log('dashboard preserves the validated cosmetic purchase path after verified-email registration');
