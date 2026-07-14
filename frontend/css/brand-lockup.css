@@ -72,6 +72,83 @@
   outline-offset: 4px;
 }
 
+/* Explore dropdown: the brand lockup doubles as its trigger. */
+.explore-item {
+  position: relative;
+}
+
+/* Sits last in the desktop header's flex row so it lands at the far right,
+   matching the brand position on angel-serv.com and the Aquarium. Left
+   as-is on the mobile spectator topbar, which is a single compact inline
+   bar rather than a two-sided header. */
+.site-header .explore-item {
+  order: 3;
+}
+
+.explore-menu {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 4px;
+  z-index: 70;
+  min-width: 248px;
+  padding: 10px;
+  border: 1px solid rgba(126, 166, 207, 0.22);
+  border-radius: 16px;
+  background: rgba(6, 12, 20, 0.94);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px);
+  transition: opacity 180ms ease, transform 180ms ease, visibility 180ms;
+}
+
+.explore-item.is-open .explore-menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.explore-menu a {
+  display: block;
+  padding: 11px 13px;
+  border-radius: 10px;
+  color: var(--arena-brand-ink);
+  font: 600 0.84rem/1.3 var(--arena-brand-font);
+  text-decoration: none;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.explore-menu a:hover,
+.explore-menu a:focus-visible {
+  background: rgba(71, 215, 255, 0.1);
+  color: var(--arena-brand-accent);
+  outline: none;
+}
+
+.explore-menu a span {
+  display: block;
+  margin-top: 3px;
+  color: var(--arena-brand-muted);
+  font: 500 0.62rem/1.3 var(--arena-brand-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 420px) {
+  .explore-menu {
+    right: -4px;
+    min-width: 0;
+    width: min(280px, calc(100vw - 24px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .explore-menu {
+    transition-duration: 0.01ms;
+  }
+}
+
 .dashboard-arena-brand {
   position: absolute;
   inset-block-start: max(16px, env(safe-area-inset-top));
