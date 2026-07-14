@@ -103,11 +103,15 @@ export default class ArenaBot {
   moveTo(targetPos) {
     return { action: 'move_to', target_position: [targetPos[0], targetPos[1]] };
   }
-  /** Attack a target by ID. For staff, pass targetPosition [col, row] for area attack. */
+  /**
+   * Attack a target by ID. The server accepts exactly one aim mode per
+   * attack: for staff weapons, pass targetPosition [col, row] instead of
+   * targetId (equivalent to staffAttack()) - targetId is ignored when
+   * targetPosition is given.
+   */
   attack(targetId, targetPosition) {
-    const a = { action: 'attack', target: targetId };
-    if (targetPosition) a.target_position = [targetPosition[0], targetPosition[1]];
-    return a;
+    if (targetPosition) return { action: 'attack', target_position: [targetPosition[0], targetPosition[1]] };
+    return { action: 'attack', target: targetId };
   }
   /** Staff area attack at a position [col, row]. */
   staffAttack(targetPosition) {

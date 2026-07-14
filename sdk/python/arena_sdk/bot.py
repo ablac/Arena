@@ -202,12 +202,14 @@ class ArenaBot:
     def attack(self, target_id: str, target_position: tuple | list | None = None) -> dict:
         """Returns an attack action targeting target_id.
 
-        For staff weapons, pass target_position=[col, row] for the area attack location.
+        The server accepts exactly one aim mode per attack. For staff
+        weapons, pass target_position=[col, row] for the area attack
+        location instead of target_id (equivalent to staff_attack()) -
+        target_id is ignored when target_position is given.
         """
-        action: dict = {"action": "attack", "target": target_id}
         if target_position is not None:
-            action["target_position"] = [target_position[0], target_position[1]]
-        return action
+            return {"action": "attack", "target_position": [target_position[0], target_position[1]]}
+        return {"action": "attack", "target": target_id}
 
     def staff_attack(self, target_position: tuple | list) -> dict:
         """Returns a staff area attack at the given position [col, row]."""

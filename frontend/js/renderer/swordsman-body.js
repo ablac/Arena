@@ -34,7 +34,7 @@
  */
 
 import { parseColor, makeMat } from './utils.js';
-import { getGuiTexture, _getTplShadow } from './bot-body.js?v=20260712a';
+import { getGuiTexture, _getTplShadow } from './bot-body.js?v=20260714e';
 import { SwordsmanAnimState } from './swordsman-anims.js?v=20260712a';
 import { getSwordsmanMaterials } from './swordsman-materials.js?v=20260710b';
 
