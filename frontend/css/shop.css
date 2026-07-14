@@ -101,7 +101,8 @@ body.shop-page {
 }
 
 .shop-site-nav a,
-.shop-footer a {
+.shop-footer a,
+.shop-open-new-tab {
   min-height: 44px;
   display: inline-flex;
   align-items: center;
@@ -112,7 +113,26 @@ body.shop-page {
   font: 600 0.74rem/1 var(--font-mono);
   letter-spacing: 0.04em;
   text-decoration: none;
+  background: transparent;
+  cursor: pointer;
   transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+/* The Shop can run standalone (this page, reached directly) or embedded in
+   the main site's Shop drawer -- shop-embedded is set by the inline script
+   at the top of <body> when window.self !== window.top. Embedded, the
+   drawer's own chrome already offers a way back to the live arena and to
+   the Dashboard drawer, so those two links are redundant here; the pop-out
+   button is the one thing only this page can offer. */
+.shop-open-new-tab {
+  display: none;
+  gap: 4px;
+}
+body.shop-embedded .shop-site-nav a {
+  display: none;
+}
+body.shop-embedded .shop-open-new-tab {
+  display: inline-flex;
 }
 
 .shop-main {
