@@ -10,7 +10,7 @@ import { HudRenderer } from './renderer/hud.js?v=20260711b';
 import { Minimap } from './renderer/minimap.js?v=20260710d';
 import { SpectatorSocket } from './spectator-ws.js';
 import { initLeaderboardWidget } from './leaderboard.js?v=20260710f';
-import { initKeyGenerator } from './key-generator.js?v=20260712a';
+import { initKeyGenerator } from './key-generator.js?v=20260714i';
 import { isEnabled, onSettingsChange } from './settings.js';
 import { initSettingsPanel } from './settings-panel.js';
 import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';
@@ -170,11 +170,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     hud.setSelectedBot(botID);
   };
 
-  // Smooth scroll for CTA
+  // Smooth scroll for CTA. A bare href="#" (used by overlay-trigger links
+  // that need a real <a> for keyboard/middle-click semantics but have no
+  // scroll target of their own) is not a scroll link -- querySelector('#')
+  // throws, so skip it rather than matching every such link here too.
   document.querySelectorAll('a[href^="#"]').forEach((a) => {
+    const href = a.getAttribute('href');
+    if (href === '#') return;
     a.addEventListener('click', (e) => {
       e.preventDefault();
-      const target = document.querySelector(a.getAttribute('href'));
+      const target = document.querySelector(href);
       if (target) target.scrollIntoView({ behavior: 'smooth' });
     });
   });
@@ -549,9 +554,46 @@ function setupOverlays() {
     syncOverlayState();
   };
 
+  // Opens the Dashboard drawer already on the right tab, without a page or
+  // iframe reload when it's avoidable. Used both by same-page buttons (see
+  // data-dashboard-tab below) and by window.ArenaOpenDashboard, which other
+  // same-origin documents that can't reach this page's own overlay JS call
+  // directly -- the Shop iframe uses it instead of navigating with
+  // ?dash_open=1, which used to reload the whole Arena just to switch tabs.
+  const openDashboardOverlay = ({ tab = '', plan = '', pack = '' } = {}) => {
+    const frame = document.getElementById('dashboard-frame');
+    if (frame) {
+      const extra = [];
+      if (tab) extra.push(`tab=${encodeURIComponent(tab)}`);
+      if (plan) extra.push(`plan=${encodeURIComponent(plan)}`);
+      if (pack) extra.push(`pack=${encodeURIComponent(pack)}`);
+      const loaded = Boolean(frame.getAttribute('src'));
+      if (!loaded) {
+        if (extra.length) {
+          const base = frame.dataset.src || '';
+          frame.dataset.src = base + (base.includes('?') ? '&' : '?') + extra.join('&');
+        }
+      } else if (plan || pack) {
+        // Switching subscription plan or resuming a specific pack purchase
+        // needs the dashboard's own bootstrap to re-run (subscription offer
+        // resolution / pending-pack catalog lookup) -- reload just this
+        // small iframe, never the whole Arena page.
+        const base = frame.dataset.src || '/dashboard/?view=private';
+        frame.setAttribute('src', appPath(base) + (base.includes('?') ? '&' : '?') + extra.join('&'));
+      } else if (tab && typeof frame.contentWindow?.activateTab === 'function') {
+        frame.contentWindow.activateTab(tab);
+      }
+    }
+    openOverlay('dashboard-overlay');
+  };
+
   openButtons.forEach((button) => {
     button.addEventListener('click', (event) => {
       event.preventDefault();
+      if (button.dataset.overlayOpen === 'dashboard-overlay' && button.dataset.dashboardTab) {
+        openDashboardOverlay({ tab: button.dataset.dashboardTab });
+        return;
+      }
       if (!button.dataset.overlayTarget) {
         const overlay = document.getElementById(button.dataset.overlayOpen);
         if (overlay?.classList.contains('open')) {
@@ -582,35 +624,34 @@ function setupOverlays() {
     }
   });
 
-  applyDeepLinkedDashboardOpen(openOverlay);
+  // Same-origin documents this page doesn't control directly (the Shop
+  // iframe) call these instead of navigating with ?dash_open=1 or a plain
+  // top-level link, either of which used to reload the whole Arena just to
+  // switch drawers or go back to the already-running live view underneath.
+  window.ArenaOpenDashboard = openDashboardOverlay;
+  window.ArenaOpenShop = () => openOverlay('shop-overlay');
+  window.ArenaCloseOverlay = closeOverlay;
+
+  applyDeepLinkedDashboardOpen(openDashboardOverlay);
   applyEmailTokenHandoff(openOverlay);
   applyDeepLinkedShopOpen(openOverlay);
 }
 
-// Other pages (the Shop, a freshly generated key's "claim this bot" link)
-// cannot reach into this page's overlay JS directly, so they hand off by
-// navigating here with ?dash_open=1 (plus optional dash_tab/dash_plan). This
-// is what makes "Dashboard" open in the slide-out drawer everywhere instead
-// of sometimes landing on /dashboard/ as a bare full-page navigation.
-function applyDeepLinkedDashboardOpen(openOverlay) {
+// Pages that can't reach this page's overlay JS directly (a freshly
+// generated key's "claim this bot" link, or the Shop when it's reached as
+// its own standalone tab rather than embedded) hand off by navigating here
+// with ?dash_open=1 (plus optional dash_tab/dash_plan/dash_pack). This is
+// what makes "Dashboard" open in the slide-out drawer everywhere instead of
+// sometimes landing on /dashboard/ as a bare full-page navigation.
+function applyDeepLinkedDashboardOpen(openDashboardOverlay) {
   const params = new URLSearchParams(window.location.search);
   if (params.get('dash_open') !== '1') return;
 
-  const frame = document.getElementById('dashboard-frame');
-  if (frame) {
-    const extra = [];
-    const tab = params.get('dash_tab');
-    const plan = params.get('dash_plan');
-    const pack = params.get('dash_pack');
-    if (tab) extra.push(`tab=${encodeURIComponent(tab)}`);
-    if (plan) extra.push(`plan=${encodeURIComponent(plan)}`);
-    if (pack) extra.push(`pack=${encodeURIComponent(pack)}`);
-    if (extra.length) {
-      const base = frame.dataset.src || '';
-      frame.dataset.src = base + (base.includes('?') ? '&' : '?') + extra.join('&');
-    }
-  }
-  openOverlay('dashboard-overlay');
+  openDashboardOverlay({
+    tab: params.get('dash_tab') || '',
+    plan: params.get('dash_plan') || '',
+    pack: params.get('dash_pack') || '',
+  });
 
   params.delete('dash_open');
   params.delete('dash_tab');

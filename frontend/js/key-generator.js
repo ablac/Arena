@@ -84,13 +84,23 @@ function showKey(container, data) {
         <p class="keygen-warning">Copy this token now. Arena cannot show it again.</p>
         <p class="keygen-bot-id">Bot ID: <code>${escapeHTML(data.bot_id || '')}</code></p>
       </div>
-      <a class="keygen-next-link" href="?dash_open=1&dash_tab=cosmetics">Claim this bot in My Dashboard to buy and equip cosmetics</a>
+      <a class="keygen-next-link" href="#" data-keygen-dashboard>Claim this bot in My Dashboard to buy and equip cosmetics</a>
     </div>`;
 
   const keyField = container.querySelector('#key-display');
   const copyButton = container.querySelector('[data-keygen-copy]');
   const clearButton = container.querySelector('[data-keygen-clear]');
+  const dashboardLink = container.querySelector('[data-keygen-dashboard]');
   if (keyField) keyField.value = data.api_key;
+
+  // This result panel is injected after page load, so the click listeners
+  // setupOverlays() attaches once at startup never reach it -- open the
+  // Dashboard drawer directly via the same hook the Shop iframe uses,
+  // instead of a page-reloading ?dash_open=1 link.
+  dashboardLink?.addEventListener('click', (event) => {
+    event.preventDefault();
+    window.ArenaOpenDashboard?.({ tab: 'cosmetics' });
+  });
 
   copyButton?.addEventListener('click', async () => {
     if (!keyField?.value) return;

@@ -24,7 +24,7 @@
        it (unversioned), and a second versioned URL would create a separate
        module instance with its own banner controller racing the first. -->
   <script type="module" src="js/content-blocks.js?v=20260714f"></script>
-  <script type="module" src="js/app.js?v=20260714g"></script>
+  <script type="module" src="js/app.js?v=20260714i"></script>
   <script type="module" src="js/site-shell.js?v=20260713a"></script>
   <script type="module" src="js/chat-panel.js?v=20260711a"></script>
 </head>
@@ -180,7 +180,7 @@
   "created_at": "2026-07-12T00:00:00Z",
   "message": "API key generated successfully. Store it safely -- it cannot be recovered."
 }</pre>
-          <p>Copy the token immediately. When you want cosmetics, verify your email in <a href="?dash_open=1&dash_tab=cosmetics">My Dashboard</a> and submit the token once to claim its bot.</p>
+          <p>Copy the token immediately. When you want cosmetics, verify your email in <a href="#" data-overlay-open="dashboard-overlay" data-dashboard-tab="cosmetics">My Dashboard</a> and submit the token once to claim its bot.</p>
         </div>
       </details>
 
@@ -1552,7 +1552,7 @@ wss://arena.angel-serv.com/ws/spectator
             </div>
             <div class="card about-contact" aria-labelledby="about-contact-title">
               <p class="onboarding-kicker">Contact us</p>
-              <h4 class="onboarding-section-title" id="about-contact-title">Build with Angel-Serv</h4>
+              <h4 class="onboarding-section-title" id="about-contact-title">Build with Angel Software Solutions</h4>
               <p>Questions, partnerships, or ideas for the Arena?</p>
               <div class="about-contact-links">
                 <a href="https://angel-serv.com/" target="_blank" rel="noopener">Angel-Serv.com</a>
@@ -1631,7 +1631,7 @@ wss://arena.angel-serv.com/ws/spectator
                     <p class="keygen-panel-copy">Arena generates the token; arbitrary tokens you make yourself will not authenticate. The plaintext is shown once and is never persisted in browser storage.</p>
                     <button type="button" class="btn btn-gold keygen-btn">Generate API token</button>
                     <div class="keygen-result" aria-live="polite"></div>
-                    <p class="keygen-panel-copy">Later, verify your email and link the bot in <a href="?dash_open=1&dash_tab=cosmetics">My Dashboard</a> to purchase and equip cosmetics.</p>
+                    <p class="keygen-panel-copy">Later, verify your email and link the bot in <a href="#" data-overlay-open="dashboard-overlay" data-dashboard-tab="cosmetics">My Dashboard</a> to purchase and equip cosmetics.</p>
                   </div>
                 </div>
               </div>
@@ -1652,9 +1652,9 @@ wss://arena.angel-serv.com/ws/spectator
                       <strong>Preview here. Own through your verified account.</strong>
                       <span>Pack items become independent licenses, so different cosmetics from one pack can be assigned to different linked bots.</span>
                     </div>
-                    <a class="btn btn-gold" href="shop/">Open Cosmetic Shop</a>
+                    <button type="button" class="btn btn-gold" data-overlay-open="shop-overlay">Open Cosmetic Shop</button>
                   </div>
-                  <a class="btn btn-secondary" href="?dash_open=1">Manage owned cosmetics</a>
+                  <a class="btn btn-secondary" href="#" data-overlay-open="dashboard-overlay" data-dashboard-tab="cosmetics">Manage owned cosmetics</a>
                 </div>
               </section>
 
@@ -1678,7 +1678,7 @@ wss://arena.angel-serv.com/ws/spectator
                     </li>
                     <li>Connect via WebSocket: <code style="color:var(--accent-blue)">wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY</code></li>
                     <li>Respond to tick events with actions</li>
-                    <li>When you want cosmetics, verify your email in <a href="?dash_open=1&dash_tab=cosmetics" style="color:var(--accent-blue)">My Dashboard</a> and claim the bot with that token</li>
+                    <li>When you want cosmetics, verify your email in <a href="#" data-overlay-open="dashboard-overlay" data-dashboard-tab="cosmetics" style="color:var(--accent-blue)">My Dashboard</a> and claim the bot with that token</li>
                     <li>Climb the leaderboard!</li>
                   </ol>
                 </div>
