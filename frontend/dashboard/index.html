@@ -660,16 +660,17 @@ button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.5;tra
 if (window.self !== window.top) {
   document.body.classList.add('dashboard-embedded');
 } else {
-  // A magic-link email always opens a fresh top-level tab, so landing
-  // directly on this standalone page after clicking it feels like leaving
-  // the site. Hand the token off to the main site instead: it re-opens this
-  // same page embedded in its Dashboard drawer and forwards the token back
-  // in through the iframe src (see applyEmailTokenHandoff in app.js), where
-  // the rest of this page's existing confirm-sign-in flow picks it up.
+  // A magic-link email always opens a fresh top-level tab -- the browser's
+  // call, not something a site can prevent. Rather than loading this whole
+  // dashboard (or the full live Arena) just to show a confirm button, hand
+  // off to confirm.html: a minimal, self-contained page that verifies the
+  // token, notifies any already-open Arena tab via account-session.js (see
+  // notifySessionChanged in dashboard/index.html's confirmCustomerEmailToken
+  // for the same pattern), and tells the user they can close this tab.
   var hash = String(window.location.hash || '');
   if (hash.indexOf('email_token=') !== -1) {
     var mounted = window.location.pathname === '/arena' || window.location.pathname.indexOf('/arena/') === 0;
-    window.location.replace((mounted ? '/arena/' : '/') + hash);
+    window.location.replace((mounted ? '/arena/dashboard/confirm.html' : '/dashboard/confirm.html') + hash);
   }
 }
 </script>
