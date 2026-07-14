@@ -2068,7 +2068,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
           <div class="ops-status-strip">
             <div class="ops-stat"><div class="label">Version</div><div class="value" id="versionInfo">Loading</div></div>
             <div class="ops-stat"><div class="label">Map Pool</div><div class="value" id="opsMapPool">--</div></div>
-            <div class="ops-stat"><div class="label">Demo Templates</div><div class="value" id="opsDemoCount">--</div></div>
+            <div class="ops-stat"><div class="label">Demo Bots</div><div class="value" id="opsDemoCount">--</div></div>
           </div>
         </section>
 
@@ -2095,6 +2095,22 @@ tr:hover td{background:rgba(88,166,255,0.07)}
                 </div>
               </section>
             </div>
+
+            <section class="ops-card">
+              <h3>Demo Bot Fleet</h3>
+              <p class="muted">The demo bots run as their own container built from the private fleet repo. Update it to the latest bot build, or scale how many bots keep the arena busy. The arena server itself is untouched by fleet updates.</p>
+              <div id="fleetSummary" class="muted" style="margin-top:8px">Loading fleet status…</div>
+              <div class="ops-command-row" style="margin-top:10px">
+                <button onclick="loadDemoFleet()">Refresh Fleet</button>
+                <button class="btn-success" id="fleetUpdateBtn" onclick="startFleetUpdate()" style="display:none">Update Fleet</button>
+                <label style="display:inline-flex;align-items:center;gap:6px;margin-left:8px">Bots:
+                  <input type="number" id="fleetCountInput" min="0" max="100" style="width:70px">
+                </label>
+                <button onclick="applyFleetCount()">Apply Count</button>
+              </div>
+              <div class="ctrl-result" id="fleetResult"></div>
+              <div id="fleetBots" style="margin-top:10px"></div>
+            </section>
 
             <section class="ops-card">
               <h3>Match Flow &amp; Rule Tuning</h3>
@@ -4081,6 +4097,7 @@ let activeConfigGroup = 'all';
 async function loadOpsConsole() {
   await Promise.allSettled([
     loadVersionInfo(),
+    loadDemoFleet(),
     loadGameConfig(),
     loadMapWorkshop(),
     refreshIPBans()
@@ -4413,6 +4430,154 @@ async function forceGC() {
     showServerOutput(data);
     toast('Garbage collection triggered', 'success');
   } catch(e) { el.textContent = 'GC failed'; el.style.color = 'var(--red)'; }
+}
+
+// ========== Demo Bot Fleet ==========
+let _fleetUpdateTargetSha = null;
+
+async function loadDemoFleet() {
+  const summary = document.getElementById('fleetSummary');
+  const botsEl = document.getElementById('fleetBots');
+  const countInput = document.getElementById('fleetCountInput');
+  const updateBtn = document.getElementById('fleetUpdateBtn');
+  const opsStat = document.getElementById('opsDemoCount');
+  if (!summary) return;
+  updateBtn.style.display = 'none';
+  _fleetUpdateTargetSha = null;
+  try {
+    const st = await api('/demobots/status');
+    if (st.configured === false) {
+      summary.textContent = 'Fleet control not configured on this server (ARENA_DEMOBOTS_CONTROL_URL unset).';
+      botsEl.innerHTML = '';
+      if (opsStat) opsStat.textContent = '--';
+      return;
+    }
+    if (st.reachable === false) {
+      summary.innerHTML = `<span style="color:var(--red)">Fleet container unreachable.</span> <span style="color:var(--text2)">${esc(st.error || '')}</span>`;
+      botsEl.innerHTML = '';
+      if (opsStat) opsStat.textContent = 'down';
+      return;
+    }
+    const commitShort = (st.commit || 'unknown').slice(0, 7);
+    let html = `Running <code>${esc(commitShort)}</code> with <b>${st.count || 0}</b> bot${st.count === 1 ? '' : 's'}`;
+    if (st.buildTime && st.buildTime !== 'unknown') {
+      html += ` <span style="color:var(--text2)">(built ${esc(new Date(st.buildTime).toLocaleString())})</span>`;
+    }
+    summary.innerHTML = html;
+    if (opsStat) opsStat.textContent = String(st.count || 0);
+    if (countInput && document.activeElement !== countInput) countInput.value = st.count || 0;
+
+    const bots = Array.isArray(st.bots) ? st.bots : [];
+    botsEl.innerHTML = bots.length === 0 ? '<span class="muted">No bots running.</span>' :
+      '<table style="width:100%;font-size:12px"><tr><th style="text-align:left">Name</th><th style="text-align:left">Weapon</th><th style="text-align:left">Strategy</th><th style="text-align:left">Running</th></tr>' +
+      bots.map(b => `<tr><td><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${esc(b.color || '#888')};margin-right:6px"></span>${esc(b.name)}</td><td>${esc(b.weapon || '')}</td><td>${esc(b.strategy || '')}</td><td>${b.running ? '<span style="color:var(--green)">yes</span>' : '<span style="color:var(--orange)">no</span>'}</td></tr>`).join('') +
+      '</table>';
+
+    checkFleetVersion(st.commit || '');
+  } catch (e) {
+    summary.textContent = 'Failed to load fleet status: ' + e.message;
+    summary.style.color = 'var(--red)';
+  }
+}
+
+async function checkFleetVersion(runningCommit) {
+  const updateBtn = document.getElementById('fleetUpdateBtn');
+  const summary = document.getElementById('fleetSummary');
+  try {
+    const v = await api('/demobots/version');
+    if (v.configured === false) return;
+    if (!v.updaterConfigured) return;
+    const latest = v.latest && v.latest.commit;
+    if (!latest) {
+      if (v.latestError && summary) {
+        summary.innerHTML += ` <span style="color:var(--text2)">(latest check failed: ${esc(v.latestError)})</span>`;
+      }
+      return;
+    }
+    if (latest === runningCommit) {
+      if (summary) summary.innerHTML += ' <span style="color:var(--green)">Up to date.</span>';
+      return;
+    }
+    _fleetUpdateTargetSha = latest;
+    updateBtn.textContent = 'Update Fleet to ' + latest.slice(0, 7);
+    updateBtn.style.display = '';
+  } catch (_) { /* version comparison is best-effort */ }
+}
+
+async function applyFleetCount() {
+  const countInput = document.getElementById('fleetCountInput');
+  const res = document.getElementById('fleetResult');
+  const count = parseInt(countInput && countInput.value, 10);
+  if (isNaN(count) || count < 0 || count > 100) {
+    res.textContent = 'Count must be between 0 and 100.';
+    res.style.color = 'var(--red)';
+    return;
+  }
+  res.textContent = 'Scaling fleet…';
+  res.style.color = 'var(--text2)';
+  try {
+    const out = await api('/demobots/count', { method: 'PUT', body: JSON.stringify({ count }) });
+    const started = (out.started || []).length, stopped = (out.stopped || []).length;
+    res.textContent = `Fleet scaled to ${out.count} bot${out.count === 1 ? '' : 's'}` +
+      (started ? ` (+${started} started)` : '') + (stopped ? ` (-${stopped} stopped)` : '') +
+      '. New bots join at the next round.';
+    res.style.color = 'var(--green)';
+    setTimeout(loadDemoFleet, 1500);
+  } catch (e) {
+    res.textContent = 'Scale failed: ' + e.message;
+    res.style.color = 'var(--red)';
+  }
+}
+
+async function startFleetUpdate() {
+  if (!_fleetUpdateTargetSha) return;
+  if (!confirm('Update the demo bot fleet to ' + _fleetUpdateTargetSha.slice(0, 7) + '?\n\nThe fleet container is rebuilt from the private repo and recreated. The arena server keeps running; the bots briefly leave and rejoin.')) return;
+  const res = document.getElementById('fleetResult');
+  res.textContent = 'Starting fleet update…';
+  res.style.color = 'var(--text2)';
+  try {
+    await api('/demobots/update', { method: 'POST', body: JSON.stringify({ commitSha: _fleetUpdateTargetSha }) });
+  } catch (e) {
+    res.textContent = 'Fleet update failed to start: ' + e.message;
+    res.style.color = 'var(--red)';
+    return;
+  }
+  pollFleetUpdate(Date.now(), _fleetUpdateTargetSha);
+}
+
+async function pollFleetUpdate(start, targetSha) {
+  const res = document.getElementById('fleetResult');
+  const secs = Math.round((Date.now() - start) / 1000);
+  let st = null;
+  try {
+    const r = await fetch(API_BASE + '/update/status', { headers: { 'X-Admin-Token': token } });
+    if (r.ok) st = (await r.json()).demobots || null;
+  } catch (_) {}
+
+  if (st) {
+    if (st.phase === 'failed' || st.lastError) {
+      res.textContent = 'Fleet update failed: ' + (st.lastError || 'unknown error');
+      res.style.color = 'var(--red)';
+      return;
+    }
+    if (st.phase === 'done' || (!st.inProgress && st.lastCompletedCommit === targetSha)) {
+      res.textContent = 'Fleet updated to ' + targetSha.slice(0, 7) + '. Bots are reconnecting.';
+      res.style.color = 'var(--green)';
+      setTimeout(loadDemoFleet, 3000);
+      return;
+    }
+    res.textContent = `Fleet update: ${st.phase || 'working'}… (${secs}s)`;
+    res.style.color = 'var(--cyan)';
+  } else {
+    res.textContent = `Fleet update in progress… (${secs}s)`;
+    res.style.color = 'var(--cyan)';
+  }
+  if (secs > 900) {
+    res.textContent = 'Fleet update timed out after 15 minutes; check the updater logs.';
+    res.style.color = 'var(--red)';
+    return;
+  }
+  setTimeout(() => pollFleetUpdate(start, targetSha), 2500);
 }
 
 // ========== Version & Self-Update ==========

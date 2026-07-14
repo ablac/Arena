@@ -340,11 +340,14 @@ func (h *AdminHandler) Routes(r chi.Router) {
 	r.Get("/version", adminVersionInfo)
 	r.Post("/update", h.triggerUpdate)
 	r.Get("/update/status", updateStatus)
-}
 
-// ============================================================================
-// Demo bot management
-// ============================================================================
+	// Demo-bot fleet (external private container). See admin_demobots.go.
+	r.Get("/demobots/status", h.demobotsStatus)
+	r.Get("/demobots/config", h.demobotsConfig)
+	r.Put("/demobots/count", h.demobotsSetCount)
+	r.Get("/demobots/version", h.demobotsVersion)
+	r.Post("/demobots/update", h.demobotsTriggerUpdate)
+}
 
 // ============================================================================
 // Debug / inspection

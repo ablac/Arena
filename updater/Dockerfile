@@ -10,7 +10,7 @@ FROM docker:27-cli AS docker-cli
 FROM node:22-bookworm-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends rsync tar ca-certificates \
+  && apt-get install -y --no-install-recommends rsync tar ca-certificates git openssh-client \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
@@ -19,7 +19,7 @@ COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr
 WORKDIR /app
 # server.mjs imports ./compose.mjs at runtime -- both must be present in the
 # image, or the sidecar crash-loops on startup with ERR_MODULE_NOT_FOUND.
-COPY server.mjs compose.mjs manifest.mjs ./
+COPY server.mjs compose.mjs manifest.mjs demobots.mjs ./
 
 EXPOSE 8090
 CMD ["node", "server.mjs"]
