@@ -21,19 +21,19 @@ assert.match(mobileHTML, /data-mobile-cosmetic-shop[^>]+href="\.\.\/shop\/"/,
 assert.doesNotMatch(appSource, /initCosmeticsPanel|cosmetics-panel\.js/,
   'the live Arena must not retain the replaced embedded catalog');
 
-assert.match(desktopHTML, /js\/app\.js\?v=20260714d/);
-assert.match(mobileHTML, /mobile\.js\?v=20260714d/);
-assert.match(shopHTML, /cosmetics-shop\.js\?v=20260714d/);
-assert.match(appSource, /renderer\/engine\.js\?v=20260714d/);
-assert.match(mobileSource, /renderer\/engine\.js\?v=20260714d/);
-assert.match(shopSource, /shop-preview\.js\?v=20260714d/);
-assert.match(engineSource, /bots\.js\?v=20260714d/);
-assert.match(engineSource, /trails\.js\?v=20260714d/);
-assert.match(botsSource, /bot-body\.js\?v=20260714d/);
-assert.match(botsSource, /character-rig\.js\?v=20260714d/);
-assert.match(botsSource, /cosmetics\.js\?v=20260714d/);
-assert.match(botBodySource, /character-rig\.js\?v=20260714d/);
-assert.match(rigSource, /forge-weapons\.js\?v=20260714d/);
+assert.match(desktopHTML, /js\/app\.js\?v=20260714e/);
+assert.match(mobileHTML, /mobile\.js\?v=20260714e/);
+assert.match(shopHTML, /cosmetics-shop\.js\?v=20260714e/);
+assert.match(appSource, /renderer\/engine\.js\?v=20260714e/);
+assert.match(mobileSource, /renderer\/engine\.js\?v=20260714e/);
+assert.match(shopSource, /shop-preview\.js\?v=20260714e/);
+assert.match(engineSource, /bots\.js\?v=20260714e/);
+assert.match(engineSource, /trails\.js\?v=20260714e/);
+assert.match(botsSource, /bot-body\.js\?v=20260714e/);
+assert.match(botsSource, /character-rig\.js\?v=20260714e/);
+assert.match(botsSource, /cosmetics\.js\?v=20260714e/);
+assert.match(botBodySource, /character-rig\.js\?v=20260714e/);
+assert.match(rigSource, /forge-weapons\.js\?v=20260714e/);
 assert.doesNotMatch(botsSource, /swordsman-anims\.js|animations\.js/,
   'live renderer must not load retired character animators');
 assert.doesNotMatch(botBodySource, /swordsman-body\.js|weapons\.js|animations\.js/,
