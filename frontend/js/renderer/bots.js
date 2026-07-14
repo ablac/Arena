@@ -6,7 +6,7 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260714c';
+import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260714d';
 import {
   forgeContactDelay,
   updateForgeCharacter,
@@ -14,10 +14,10 @@ import {
   triggerForgeDodge,
   triggerForgeHit,
   triggerForgeShove,
-} from './character-anims.js?v=20260714c';
-import {updateForgeCharacterLOD} from './character-rig.js?v=20260714c';
-import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260714c';
-import {bodyFormKeyForBot} from './body-form-roster.js?v=20260714c';
+} from './character-anims.js?v=20260714d';
+import {updateForgeCharacterLOD} from './character-rig.js?v=20260714d';
+import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260714d';
+import {bodyFormKeyForBot} from './body-form-roster.js?v=20260714d';
 import { isEnabled } from '../settings.js';
 
 export const BODY_FORM_NEAR_CHARACTER_LIMIT = 64;

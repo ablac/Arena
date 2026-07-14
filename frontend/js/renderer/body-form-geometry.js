@@ -214,7 +214,7 @@ function buildChicken(spec, c, mats, meshes) {
       [x * c.tw * 0.30, 3.6, c.td * 1.05], [0.55, 0, x * 0.5]);
   }
   bipedLegs(c, meshes, {thick: 0.55, foot: 'talon', legMat: mats.accent, shinMat: mats.accent, footMat: mats.accent});
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 0.95, shoulderY: -c.th * 0.30, backPos: [0, 4.6, c.td * 0.55]}};
 }
 
 function buildPenguin(spec, c, mats, meshes) {
@@ -239,7 +239,7 @@ function buildPenguin(spec, c, mats, meshes) {
       [c.tw * 0.14, c.th * 0.85, c.td * 0.62], [side * c.tw * 0.10, -c.th * 0.38, 0], [0, 0, side * 0.30]);
   }
   bipedLegs(c, meshes, {thick: 0.5, foot: 'talon', legMat: mats.primary, shinMat: mats.primary, footMat: mats.accent});
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 0.55, shoulderY: -c.th * 0.38, backPos: [0, 4.6, c.td * 0.85]}};
 }
 
 function buildCow(spec, c, mats, meshes) {
@@ -269,7 +269,7 @@ function buildCow(spec, c, mats, meshes) {
     c.joints.body, mats.secondary, [c.tw * 0.16, c.tw * 0.20, c.tw * 0.16], [0, 0.2, c.td * 1.18]);
   bipedLegs(c, meshes, {thick: 1.0, foot: 'hoof', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
   bipedArms(c, meshes, {thick: 0.85, upperMat: mats.primary, foreMat: mats.primary});
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 0.75, backPos: [0, 4.2, c.td * 0.9]}};
 }
 
 function buildCorgi(spec, c, mats, meshes) {
@@ -295,7 +295,7 @@ function buildCorgi(spec, c, mats, meshes) {
   bipedLegs(c, meshes, {thick: 0.8, foot: 'paw', legMat: mats.primary, shinMat: mats.secondary, footMat: mats.secondary});
   bipedArms(c, meshes, {thick: 0.7, upperMat: mats.primary, foreMat: mats.secondary});
   if (c.joints.core?.position) c.joints.core.position.set(0, 3.6, -c.td * 0.9);
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 1.25, backPos: [0, 2.6, c.td * 0.9]}};
 }
 
 function buildCat(spec, c, mats, meshes) {
@@ -325,7 +325,7 @@ function buildCat(spec, c, mats, meshes) {
     c.joints.body, mats.secondary, [0, 4.4, c.td * 1.5], [0, 7.2, c.td * 1.75], c.tw * 0.09);
   bipedLegs(c, meshes, {thick: 0.72, foot: 'paw', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
   bipedArms(c, meshes, {thick: 0.65, upperMat: mats.primary, foreMat: mats.secondary});
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 0.95, backPos: [0, 3.6, c.td * 0.5]}};
 }
 
 function buildFox(spec, c, mats, meshes) {
@@ -351,7 +351,7 @@ function buildFox(spec, c, mats, meshes) {
     c.joints.body, mats.secondary, [0, 3.6, c.td * 2.2], [0, 4.9, c.td * 3.0], c.tw * 0.30);
   bipedLegs(c, meshes, {thick: 0.70, foot: 'paw', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
   bipedArms(c, meshes, {thick: 0.62, upperMat: mats.primary, foreMat: mats.secondary});
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 1.10, backPos: [0, 3.8, c.td * 0.5]}};
 }
 
 function buildRabbit(spec, c, mats, meshes) {
@@ -374,7 +374,7 @@ function buildRabbit(spec, c, mats, meshes) {
     c.joints.body, mats.secondary, [c.tw * 0.30, c.tw * 0.30, c.tw * 0.30], [0, 1.7, c.td * 0.95]);
   bipedLegs(c, meshes, {thick: 0.85, foot: 'bigPaw', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
   bipedArms(c, meshes, {thick: 0.62, upperMat: mats.primary, foreMat: mats.secondary});
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 1.85, backPos: [0, 2.8, c.td * 0.7]}};
 }
 
 function buildFrog(spec, c, mats, meshes) {
@@ -397,7 +397,7 @@ function buildFrog(spec, c, mats, meshes) {
   bipedLegs(c, meshes, {thick: 1.35, foot: 'web', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
   bipedArms(c, meshes, {thick: 0.72, upperMat: mats.primary, foreMat: mats.secondary});
   if (c.joints.core?.position) c.joints.core.position.set(0, 2.4, -c.td * 1.0);
-  return {body, head};
+  return {body, head, anchors: {headTopY: -c.hh * 0.25, shoulderY: -c.th * 0.25, backPos: [0, 2.0, c.td * 0.8]}};
 }
 
 function buildShark(spec, c, mats, meshes) {
@@ -428,7 +428,7 @@ function buildShark(spec, c, mats, meshes) {
   part(c.B, meshes, 'box', `body-form-${spec.key}-fluke-${c.id}`, c.scene,
     c.joints.body, mats.secondary, [c.tw * 0.12, c.th * 0.72, c.td * 0.55], [0, 4.6, c.td * 2.6], [0.3, 0, 0]);
   bipedLegs(c, meshes, {thick: 0.85, foot: 'block', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 0.45, backPos: [0, 2.2, c.td * 1.0]}};
 }
 
 function buildRex(spec, c, mats, meshes) {
@@ -461,7 +461,7 @@ function buildRex(spec, c, mats, meshes) {
       arm, mats.secondary, [c.aw * 0.85, c.aw * 0.7, c.aw * 0.9], [0, -c.ua * 0.52, -1.1]);
   }
   bipedLegs(c, meshes, {thick: 1.25, foot: 'talon', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 0.85, backPos: [0, 3.6, c.td * 0.7]}};
 }
 
 function buildAdventurer(spec, c, mats, meshes) {
@@ -482,7 +482,7 @@ function buildAdventurer(spec, c, mats, meshes) {
     c.joints.body, mats.primary, [c.tw * 0.34, c.th * 0.30, c.td * 0.45], [c.tw * 0.48, 1.6, c.td * 0.35]);
   bipedLegs(c, meshes, {thick: 0.9, foot: 'boot', legMat: mats.primary, shinMat: mats.primary, footMat: mats.accent});
   bipedArms(c, meshes, {thick: 0.85, upperMat: mats.secondary, foreMat: mats.primary});
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 0.80}};
 }
 
 function buildAstronaut(spec, c, mats, meshes) {
@@ -504,7 +504,7 @@ function buildAstronaut(spec, c, mats, meshes) {
     c.joints.body, mats.accent, [0.16, c.th * 0.45, 0.16], [c.tw * 0.28, 1.1 + c.th * 0.92, c.td * 0.72]);
   bipedLegs(c, meshes, {thick: 1.05, foot: 'boot', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
   bipedArms(c, meshes, {thick: 1.0, upperMat: mats.primary, foreMat: mats.secondary});
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 0.95}};
 }
 
 function buildKnight(spec, c, mats, meshes) {
@@ -529,7 +529,7 @@ function buildKnight(spec, c, mats, meshes) {
   }
   bipedLegs(c, meshes, {thick: 1.0, foot: 'boot', legMat: mats.primary, shinMat: mats.secondary, footMat: mats.primary});
   bipedArms(c, meshes, {thick: 0.95, upperMat: mats.primary, foreMat: mats.secondary});
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 1.30}};
 }
 
 function buildWizard(spec, c, mats, meshes) {
@@ -553,7 +553,7 @@ function buildWizard(spec, c, mats, meshes) {
   bipedLegs(c, meshes, {thick: 0.8, foot: 'boot', legMat: mats.primary, shinMat: mats.primary, footMat: mats.secondary});
   bipedArms(c, meshes, {thick: 0.9, upperMat: mats.primary, foreMat: mats.secondary});
   if (c.joints.core?.position) c.joints.core.position.set(0, 1.1 + c.th * 0.62, -c.td * 0.62);
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 1.85}};
 }
 
 function buildSkeleton(spec, c, mats, meshes) {
@@ -581,7 +581,7 @@ function buildSkeleton(spec, c, mats, meshes) {
   }
   bipedLegs(c, meshes, {thick: 0.45, foot: 'block', legMat: mats.primary, shinMat: mats.primary, footMat: mats.primary});
   bipedArms(c, meshes, {thick: 0.42, upperMat: mats.primary, foreMat: mats.primary});
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 0.75}};
 }
 
 function buildGolem(spec, c, mats, meshes) {
@@ -607,7 +607,7 @@ function buildGolem(spec, c, mats, meshes) {
   }
   bipedLegs(c, meshes, {thick: 1.35, foot: 'stone', legMat: mats.primary, shinMat: mats.secondary, footMat: mats.secondary, legShape: 'box'});
   bipedArms(c, meshes, {thick: 1.3, upperMat: mats.primary, foreMat: mats.secondary, armShape: 'box'});
-  return {body, head};
+  return {body, head, anchors: {headTopY: c.hh * 0.35, shoulderY: -c.th * 0.05}};
 }
 
 function buildSlime(spec, context, materials, meshes) {
@@ -646,7 +646,7 @@ function buildSlime(spec, context, materials, meshes) {
   // Sink the shared Arena status core into the gel crest instead of leaving
   // it hovering at the missing humanoid chest height.
   if (joints.core?.position) joints.core.position.set(0, floor + th * 1.02, -td * 0.35);
-  return {body, head};
+  return {body, head, anchors: {headTopY: floor + th * 1.62 - headY, shoulderY: -th * 0.95, backPos: [0, floor + th * 0.9, td * 0.9]}};
 }
 
 function buildDrone(spec, context, materials, meshes) {
@@ -684,7 +684,7 @@ function buildDrone(spec, context, materials, meshes) {
   // Sink the shared Arena status core onto the carapace so it reads as a
   // power light instead of hovering where the humanoid chest used to be.
   if (joints.core?.position) joints.core.position.set(0, standY + th * 0.10, -td * 0.60);
-  return {body, head};
+  return {body, head, anchors: {headTopY: standY - headY + 2.6, shoulderY: standY - vector(m.shoulderY, 7.47) + 1.0, backPos: [0, standY + 1.6, td * 0.8]}};
 }
 
 const FORM_BUILDERS = Object.freeze({
@@ -725,7 +725,7 @@ export function buildBodyFormGeometry(spec, context) {
     for (const material of materials.all) material.dispose();
     throw new Error(`${spec.key} exceeded its ${spec.nearMeshBudget}-mesh budget`);
   }
-  return {meshes, materials: materials.all, body: canonical.body, head: canonical.head};
+  return {meshes, materials: materials.all, body: canonical.body, head: canonical.head, anchors: canonical.anchors || null};
 }
 
 function farSignatureParts(spec) {
