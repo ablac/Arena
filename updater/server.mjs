@@ -26,6 +26,12 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
 import {
+  listReleaseFiles,
+  readManifest,
+  writeManifest,
+  removeVanishedFiles
+} from "./manifest.mjs";
+import {
   buildComposeBaseArgs,
   buildMigrationInvocation,
   forceRemoveMigrationContainer,
@@ -293,24 +299,33 @@ async function runUpdate(commitSha, githubToken, onPhase) {
 
     onPhase("syncing");
     log(`Syncing into ${DEPLOY_DIR}`);
-    // Deliberately no --delete: this repo's manual deploy runbook has always
-    // used a plain tar extraction (overwrite matching files, never remove
-    // extras), and this incident is exactly why -- the deploy directory
-    // legitimately holds files that only ever exist on the VPS and were
-    // never committed to git (compose.tailscale-admin.yml, .env). A
-    // --delete sync deletes anything not present in the fetched tree,
-    // including those; the first live use of this feature deleted
-    // compose.tailscale-admin.yml this way, breaking the next build until
-    // it was manually reconstructed. Matching the manual process's
-    // never-delete behavior removes the whole bug class, not just this one
-    // file, at the cost of the same limitation the manual process already
-    // has (a file removed from the repo lingers on disk until a human
-    // cleans it up).
+    // Deliberately no --delete: the deploy directory legitimately holds
+    // files that only ever exist on the VPS and were never committed to git
+    // (docker-compose.override.yml, .env); the first live use of --delete
+    // destroyed one of those and broke the next build. Repo-owned deletions
+    // are applied separately below via the release manifest: only files the
+    // PREVIOUS fetched release actually shipped, and the new release no
+    // longer ships, are removed. Operator-only files are never in a
+    // manifest, so they can never be deleted. Without this, a file deleted
+    // upstream lingered forever — the demobots refactor left an old Go file
+    // beside its replacements and the duplicate declarations broke the
+    // production build (2026-07-14).
+    const releaseFiles = await listReleaseFiles(stagingDir);
+    const previousRelease = await readManifest(DEPLOY_DIR);
     await execFileAsync(
       "rsync",
       ["-a", ...EXCLUDED_PATHS.map((path) => `--exclude=${path}`), `${stagingDir}/`, `${DEPLOY_DIR}/`],
       { timeout: RSYNC_TIMEOUT_MS }
     );
+    if (previousRelease) {
+      const removed = await removeVanishedFiles(DEPLOY_DIR, previousRelease, releaseFiles, EXCLUDED_PATHS);
+      if (removed.length > 0) {
+        log(`Removed ${removed.length} file(s) deleted upstream: ${removed.join(", ")}`);
+      }
+    } else {
+      log("No previous release manifest — skipping upstream-deletion sync for this update");
+    }
+    await writeManifest(DEPLOY_DIR, commitSha, releaseFiles);
 
     onPhase("fixing-ownership");
     await restoreOwnership();
