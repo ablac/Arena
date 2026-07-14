@@ -4,42 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"arena-server/internal/config"
-
 	"github.com/jackc/pgx/v5/pgconn"
 )
-
-func TestValidateDemoTemplateRejectsBadStats(t *testing.T) {
-	config.Load()
-	tpl := demoTemplatePayload{
-		Name:     "Broken",
-		Weapon:   "bow",
-		Strategy: "kite",
-		Color:    "#00ff88",
-		Stats:    map[string]int{"hp": 10, "speed": 10, "attack": 10, "defense": 10},
-	}
-	if _, err := validateDemoTemplate(tpl); err == nil {
-		t.Fatal("expected stat-budget validation error")
-	}
-}
-
-func TestValidateDemoTemplateAcceptsBalancedTemplate(t *testing.T) {
-	config.Load()
-	tpl := demoTemplatePayload{
-		Name:     "Night Archer",
-		Weapon:   "bow",
-		Strategy: "kite",
-		Color:    "#00ff88",
-		Stats:    map[string]int{"hp": 4, "speed": 6, "attack": 8, "defense": 2},
-	}
-	got, err := validateDemoTemplate(tpl)
-	if err != nil {
-		t.Fatalf("expected valid template, got %v", err)
-	}
-	if got.Name != "Night Archer" || got.Weapon != "bow" || got.Stats["attack"] != 8 {
-		t.Fatalf("unexpected validated template: %+v", got)
-	}
-}
 
 func TestBuildMapPreviewReturnsTerrainAndPlayablePercent(t *testing.T) {
 	prev, err := buildMapPreview(mapPreviewRequest{Shape: "circle", Cols: 48, Rows: 32})

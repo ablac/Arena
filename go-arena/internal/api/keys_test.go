@@ -16,6 +16,7 @@ import (
 	"arena-server/internal/db"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
+
 	"github.com/go-chi/chi/v5"
 )
 

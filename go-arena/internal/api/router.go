@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"arena-server/internal/config"
-	"arena-server/internal/demobots"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
 	"arena-server/internal/version"
@@ -76,13 +75,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 	// --- API v1 routes ---
 
-	// Create admin handler if demo manager provided.
-	var adminHandler *AdminHandler
-	if ro.demoManager != nil {
-		adminHandler = NewAdminHandler(engine, ro.demoManager)
-	} else {
-		adminHandler = NewAdminHandler(engine, nil)
-	}
+	adminHandler := NewAdminHandler(engine)
 	serviceStatus := NewServiceStatusService(engine, bus)
 	adminHandler.ServiceStatus = serviceStatus
 	adminHandler.Shutdown = ro.shutdown
@@ -466,19 +459,11 @@ func noCacheStaticHandler(next http.Handler) http.Handler {
 
 // routerOptions holds optional configuration for the router.
 type routerOptions struct {
-	demoManager *demobots.Manager
-	shutdown    func()
+	shutdown func()
 }
 
 // RouterOption is a functional option for NewRouter.
 type RouterOption func(*routerOptions)
-
-// WithDemoManager provides the demo bot manager to the router for admin endpoints.
-func WithDemoManager(m *demobots.Manager) RouterOption {
-	return func(o *routerOptions) {
-		o.demoManager = m
-	}
-}
 
 // WithShutdown provides the graceful process-cancellation callback used by the
 // authenticated admin restart endpoint.

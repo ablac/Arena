@@ -2056,7 +2056,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
           <div>
             <div class="ops-kicker">Arena command deck</div>
             <div class="ops-title">Shape the match while the bots keep fighting.</div>
-            <div class="ops-copy">Tune round pacing, map rotation, arena scale, and demo-bot personalities from one operational console.</div>
+            <div class="ops-copy">Tune round pacing, map rotation, and arena scale from one operational console.</div>
             <div class="ops-hero-actions">
               <button class="btn-warn" onclick="gameAction('pause')">Pause</button>
               <button class="btn-success" onclick="gameAction('resume')">Resume</button>
@@ -2108,43 +2108,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
               <div class="ctrl-result" id="configResult"></div>
             </section>
 
-            <section class="ops-card">
-              <h3>Demo Bot Builder</h3>
-              <div class="builder-layout">
-                <div>
-                  <div class="ops-command-row" style="margin-bottom:10px">
-                    <input type="number" id="demoBotCount" value="3" min="1" max="50" style="width:76px" title="Spawn count">
-                    <button class="btn-success" onclick="spawnSelectedDemoTemplate()">Spawn Selected</button>
-                    <button onclick="startDemoBots()">Start Default Set</button>
-                    <button class="btn-danger" onclick="stopDemoBots()">Stop All Demo Bots</button>
-                  </div>
-                  <div class="template-grid" id="demoTemplateList"></div>
-                </div>
-                <div class="ops-card" style="padding:12px">
-                  <h3 style="margin-bottom:8px">Template</h3>
-                  <div class="form-stack">
-                    <input type="hidden" id="demoTemplateSelected">
-                    <label>Name<input id="demoTemplateName" placeholder="Night Archer"></label>
-                    <label>Weapon<select id="demoTemplateWeapon"></select></label>
-                    <label>Strategy<select id="demoTemplateStrategy"></select></label>
-                    <label>Color<input id="demoTemplateColor" type="color" value="#00ff88"></label>
-                    <div class="config-grid">
-                      <label>HP<input type="number" id="demoStatHp" min="1" max="10" value="4"></label>
-                      <label>Speed<input type="number" id="demoStatSpeed" min="1" max="10" value="6"></label>
-                      <label>Attack<input type="number" id="demoStatAttack" min="1" max="10" value="8"></label>
-                      <label>Defense<input type="number" id="demoStatDefense" min="1" max="10" value="2"></label>
-                    </div>
-                    <label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type="checkbox" id="demoTemplateEnabled" checked style="width:auto"> Enabled</label>
-                    <div class="ops-command-row">
-                      <button class="btn-success" onclick="saveDemoTemplate()">Save Template</button>
-                      <button onclick="newDemoTemplate()">New</button>
-                      <button class="btn-danger" onclick="deleteDemoTemplate()">Delete</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="ctrl-result" id="demoResult"></div>
-            </section>
+            
 
             <section class="ops-card">
               <h3>Map Workshop</h3>
@@ -3831,7 +3795,7 @@ function renderBotCards(bots) {
   if (!root) return;
   renderBotRosterStats(bots);
   if (!bots.length) {
-    root.innerHTML = '<div class="signal-panel"><h3>No live bots</h3><div class="muted">Spawn demo bots or wait for competitors to connect.</div></div>';
+    root.innerHTML = '<div class="signal-panel"><h3>No live bots</h3><div class="muted">Wait for bots to connect, or start the external demo fleet.</div></div>';
     return;
   }
   root.innerHTML = bots.map(b => {
@@ -4105,8 +4069,6 @@ const OPS_CONFIG_GROUPS = [
   ]}
 ];
 const OPS_CONFIG_FIELDS = OPS_CONFIG_GROUPS.flatMap(g => g.fields);
-let opsDemoTemplates = [];
-let opsSelectedDemoTemplate = '';
 let opsMapSettings = null;
 let cosmeticAdminCatalog = {categories:[], packs:[], items:[], checkout_enabled:false};
 let cosmeticPublicProjection = {available:false, categories:new Set(), packs:new Set(), items:new Set()};
@@ -4120,7 +4082,6 @@ async function loadOpsConsole() {
   await Promise.allSettled([
     loadVersionInfo(),
     loadGameConfig(),
-    loadDemoBotStudio(),
     loadMapWorkshop(),
     refreshIPBans()
   ]);
@@ -4300,169 +4261,6 @@ async function saveGameConfig() {
     el.textContent = 'Failed to save config: ' + e.message;
     el.style.color = 'var(--red)';
     toast('Failed to save config', 'error');
-  }
-}
-
-function ensureDemoBuilderOptions() {
-  const weapon = document.getElementById('demoTemplateWeapon');
-  const strategy = document.getElementById('demoTemplateStrategy');
-  if (weapon && !weapon.options.length) weapon.innerHTML = OPS_WEAPON_OPTIONS.map(w => `<option value="${w}">${w}</option>`).join('');
-  if (strategy && !strategy.options.length) strategy.innerHTML = OPS_STRATEGY_OPTIONS.map(s => `<option value="${s}">${s}</option>`).join('');
-}
-
-async function loadDemoBotStudio() {
-  ensureDemoBuilderOptions();
-  const el = document.getElementById('demoResult');
-  try {
-    const data = await api('/demobots/templates');
-    opsDemoTemplates = data.templates || [];
-    const count = document.getElementById('opsDemoCount');
-    if (count) count.textContent = String(opsDemoTemplates.length);
-    renderDemoTemplates();
-    if (!opsSelectedDemoTemplate && opsDemoTemplates.length) selectDemoTemplate(opsDemoTemplates[0].name);
-    if (el) { el.textContent = 'Demo templates loaded'; el.style.color = 'var(--green)'; }
-  } catch(e) {
-    if (el) { el.textContent = 'Failed to load demo templates: ' + e.message; el.style.color = 'var(--red)'; }
-  }
-}
-
-function renderDemoTemplates() {
-  const root = document.getElementById('demoTemplateList');
-  if (!root) return;
-  root.innerHTML = opsDemoTemplates.map(t => {
-    const stats = t.stats || {};
-    const active = t.name === opsSelectedDemoTemplate ? ' active' : '';
-    return `<div class="template-card${active}" style="--bot-color:${esc(t.color||'#58a6ff')}" onclick="selectDemoTemplate('${escAttr(t.name)}')">
-      <div class="name">${esc(t.name)}</div>
-      <div class="meta">${esc(t.weapon)} / ${esc(t.strategy)} / ${esc(t.source||'custom')}</div>
-      <div class="stat-pips">
-        ${['hp','speed','attack','defense'].map(k => `<div class="stat-pip" title="${k}: ${stats[k]||0}"><span style="width:${Math.max(0, Math.min(100, (stats[k]||0)*10))}%"></span></div>`).join('')}
-      </div>
-    </div>`;
-  }).join('') || '<div class="muted">No demo templates found.</div>';
-}
-
-function selectDemoTemplate(name) {
-  opsSelectedDemoTemplate = name;
-  const t = opsDemoTemplates.find(x => x.name === name);
-  if (!t) return;
-  const stats = t.stats || {};
-  document.getElementById('demoTemplateSelected').value = t.name;
-  document.getElementById('demoTemplateName').value = t.name;
-  document.getElementById('demoTemplateWeapon').value = t.weapon || 'sword';
-  document.getElementById('demoTemplateStrategy').value = t.strategy || 'aggressive';
-  document.getElementById('demoTemplateColor').value = t.color || '#58a6ff';
-  document.getElementById('demoStatHp').value = stats.hp || 5;
-  document.getElementById('demoStatSpeed').value = stats.speed || 5;
-  document.getElementById('demoStatAttack').value = stats.attack || 5;
-  document.getElementById('demoStatDefense').value = stats.defense || 5;
-  document.getElementById('demoTemplateEnabled').checked = t.enabled !== false;
-  renderDemoTemplates();
-}
-
-function newDemoTemplate() {
-  opsSelectedDemoTemplate = '';
-  document.getElementById('demoTemplateSelected').value = '';
-  document.getElementById('demoTemplateName').value = 'New Challenger';
-  document.getElementById('demoTemplateWeapon').value = 'sword';
-  document.getElementById('demoTemplateStrategy').value = 'aggressive';
-  document.getElementById('demoTemplateColor').value = '#58a6ff';
-  document.getElementById('demoStatHp').value = 5;
-  document.getElementById('demoStatSpeed').value = 5;
-  document.getElementById('demoStatAttack').value = 7;
-  document.getElementById('demoStatDefense').value = 3;
-  document.getElementById('demoTemplateEnabled').checked = true;
-  renderDemoTemplates();
-}
-
-function readDemoTemplateForm() {
-  return {
-    name: document.getElementById('demoTemplateName').value.trim(),
-    weapon: document.getElementById('demoTemplateWeapon').value,
-    strategy: document.getElementById('demoTemplateStrategy').value,
-    color: document.getElementById('demoTemplateColor').value,
-    enabled: document.getElementById('demoTemplateEnabled').checked,
-    stats: {
-      hp: parseInt(document.getElementById('demoStatHp').value) || 0,
-      speed: parseInt(document.getElementById('demoStatSpeed').value) || 0,
-      attack: parseInt(document.getElementById('demoStatAttack').value) || 0,
-      defense: parseInt(document.getElementById('demoStatDefense').value) || 0
-    }
-  };
-}
-
-async function saveDemoTemplate() {
-  const el = document.getElementById('demoResult');
-  const body = readDemoTemplateForm();
-  try {
-    await api('/demobots/templates/' + encodeURIComponent(body.name), {method:'PUT', body:JSON.stringify(body)});
-    el.textContent = 'Saved demo template ' + body.name;
-    el.style.color = 'var(--green)';
-    opsSelectedDemoTemplate = body.name;
-    toast('Demo template saved', 'success');
-    await loadDemoBotStudio();
-  } catch(e) {
-    el.textContent = 'Failed to save template: ' + e.message;
-    el.style.color = 'var(--red)';
-    toast('Failed to save demo template', 'error');
-  }
-}
-
-async function deleteDemoTemplate() {
-  const name = document.getElementById('demoTemplateName').value.trim();
-  const el = document.getElementById('demoResult');
-  if (!name || !confirm('Delete custom demo template "' + name + '"? Built-in templates revert to defaults.')) return;
-  try {
-    await api('/demobots/templates/' + encodeURIComponent(name), {method:'DELETE'});
-    el.textContent = 'Deleted custom template ' + name;
-    el.style.color = 'var(--green)';
-    opsSelectedDemoTemplate = '';
-    await loadDemoBotStudio();
-  } catch(e) {
-    el.textContent = 'Delete failed: ' + e.message;
-    el.style.color = 'var(--red)';
-  }
-}
-
-async function spawnSelectedDemoTemplate() {
-  const name = document.getElementById('demoTemplateName').value.trim() || opsSelectedDemoTemplate;
-  const count = parseInt(document.getElementById('demoBotCount').value) || 1;
-  const el = document.getElementById('demoResult');
-  try {
-    const res = await api('/demobots/spawn-template', {method:'POST', body:JSON.stringify({name, count})});
-    el.textContent = 'Spawned ' + (res.count || count) + ' from ' + name;
-    el.style.color = 'var(--green)';
-    toast('Spawned demo bots', 'success');
-  } catch(e) {
-    el.textContent = 'Spawn failed: ' + e.message;
-    el.style.color = 'var(--red)';
-  }
-}
-
-async function startDemoBots() {
-  const count = parseInt(document.getElementById('demoBotCount').value) || 5;
-  const el = document.getElementById('demoResult');
-  try {
-    await api('/demobots/start', {method:'POST', body:JSON.stringify({count})});
-    el.textContent = 'Started ' + count + ' default demo bots';
-    el.style.color = 'var(--green)';
-    toast('Started default demo bots', 'success');
-  } catch(e) {
-    el.textContent = 'Failed to start demo bots: ' + e.message;
-    el.style.color = 'var(--red)';
-  }
-}
-
-async function stopDemoBots() {
-  const el = document.getElementById('demoResult');
-  try {
-    await api('/demobots/stop', {method:'POST'});
-    el.textContent = 'Stopped all demo bots';
-    el.style.color = 'var(--green)';
-    toast('Stopped all demo bots', 'success');
-  } catch(e) {
-    el.textContent = 'Failed to stop demo bots: ' + e.message;
-    el.style.color = 'var(--red)';
   }
 }
 

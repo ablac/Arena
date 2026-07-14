@@ -14,7 +14,6 @@ import (
 
 	"arena-server/internal/config"
 	"arena-server/internal/db"
-	"arena-server/internal/demobots"
 	"arena-server/internal/game"
 
 	"github.com/go-chi/chi/v5"
@@ -26,27 +25,6 @@ var (
 	hexColorRE         = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 	customMapNameRE    = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{1,39}$`)
 )
-
-type demoTemplatePayload struct {
-	Name     string         `json:"name"`
-	Weapon   string         `json:"weapon"`
-	Strategy string         `json:"strategy"`
-	Color    string         `json:"color"`
-	Stats    map[string]int `json:"stats"`
-	Enabled  *bool          `json:"enabled,omitempty"`
-}
-
-type demoTemplateRecord struct {
-	Name     string         `json:"name"`
-	Weapon   string         `json:"weapon"`
-	Strategy string         `json:"strategy"`
-	Color    string         `json:"color"`
-	Stats    map[string]int `json:"stats"`
-	Enabled  bool           `json:"enabled"`
-	Source   string         `json:"source"`
-	ReadOnly bool           `json:"read_only"`
-	Updated  *time.Time     `json:"updated_at,omitempty"`
-}
 
 type mapPreviewRequest struct {
 	Shape string `json:"shape"`
@@ -100,52 +78,6 @@ func isMissingAdminRegistryTable(err error) bool {
 		return pgErr.Code == "42P01" || pgErr.Code == "42501"
 	}
 	return false
-}
-
-func validateDemoTemplate(p demoTemplatePayload) (demobots.BotConfig, error) {
-	p.Name = strings.TrimSpace(p.Name)
-	p.Weapon = strings.ToLower(strings.TrimSpace(p.Weapon))
-	p.Strategy = strings.ToLower(strings.TrimSpace(p.Strategy))
-	p.Color = strings.TrimSpace(p.Color)
-
-	if !demoTemplateNameRE.MatchString(p.Name) {
-		return demobots.BotConfig{}, errors.New("name must be 2-40 letters, numbers, spaces, dots, underscores, or dashes")
-	}
-	if !hexColorRE.MatchString(p.Color) {
-		return demobots.BotConfig{}, errors.New("color must be a hex color like #00ff88")
-	}
-	if !stringIn(p.Weapon, game.GetAvailableWeapons()) {
-		return demobots.BotConfig{}, errors.New("weapon is not available")
-	}
-	if !stringIn(p.Strategy, []string{"aggressive", "defensive", "kite", "territorial", "assassin", "berserker"}) {
-		return demobots.BotConfig{}, errors.New("strategy is not available")
-	}
-
-	required := []string{"hp", "speed", "attack", "defense"}
-	stats := make(map[string]int, len(required))
-	total := 0
-	for _, key := range required {
-		v, ok := p.Stats[key]
-		if !ok {
-			return demobots.BotConfig{}, fmt.Errorf("missing %s stat", key)
-		}
-		if v < config.C.StatMin || v > config.C.StatMax {
-			return demobots.BotConfig{}, fmt.Errorf("%s stat must be between %d and %d", key, config.C.StatMin, config.C.StatMax)
-		}
-		stats[key] = v
-		total += v
-	}
-	if total != config.C.StatBudget {
-		return demobots.BotConfig{}, fmt.Errorf("stats must total %d", config.C.StatBudget)
-	}
-
-	return demobots.BotConfig{
-		Name:     p.Name,
-		Weapon:   p.Weapon,
-		Stats:    stats,
-		Strategy: p.Strategy,
-		Color:    p.Color,
-	}, nil
 }
 
 func buildMapPreview(req mapPreviewRequest) (mapPreviewResponse, error) {
@@ -355,169 +287,6 @@ func (h *AdminHandler) updateContentBlock(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, rec)
-}
-
-func (h *AdminHandler) listDemoTemplates(w http.ResponseWriter, r *http.Request) {
-	recordByName := make(map[string]demoTemplateRecord, len(demobots.DemoConfigs))
-	order := make([]string, 0, len(demobots.DemoConfigs))
-	for _, cfg := range demobots.DemoConfigs {
-		recordByName[cfg.Name] = demoTemplateRecord{
-			Name: cfg.Name, Weapon: cfg.Weapon, Strategy: cfg.Strategy, Color: cfg.Color,
-			Stats: cloneStats(cfg.Stats), Enabled: true, Source: "built_in", ReadOnly: true,
-		}
-		order = append(order, cfg.Name)
-	}
-	if db.Pool != nil {
-		rows, err := db.Pool.Query(r.Context(), `SELECT name, weapon, strategy, color, stats, enabled, updated_at FROM demo_bot_templates ORDER BY name`)
-		if err != nil {
-			if isMissingAdminRegistryTable(err) {
-				slog.Warn("demo template registry unavailable; using built-in defaults", "error", err)
-				records := make([]demoTemplateRecord, 0, len(recordByName))
-				for _, name := range order {
-					records = append(records, recordByName[name])
-				}
-				writeJSON(w, http.StatusOK, map[string]interface{}{"templates": records, "count": len(records), "source": "built_in"})
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "failed to query demo templates")
-			return
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var rec demoTemplateRecord
-			var stats []byte
-			var updated time.Time
-			if err := rows.Scan(&rec.Name, &rec.Weapon, &rec.Strategy, &rec.Color, &stats, &rec.Enabled, &updated); err != nil {
-				continue
-			}
-			_ = json.Unmarshal(stats, &rec.Stats)
-			rec.Source = "custom"
-			rec.Updated = &updated
-			if _, exists := recordByName[rec.Name]; !exists {
-				order = append(order, rec.Name)
-			}
-			recordByName[rec.Name] = rec
-		}
-	}
-	records := make([]demoTemplateRecord, 0, len(recordByName))
-	for _, name := range order {
-		records = append(records, recordByName[name])
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"templates": records, "count": len(records)})
-}
-
-func (h *AdminHandler) upsertDemoTemplate(w http.ResponseWriter, r *http.Request) {
-	if db.Pool == nil {
-		writeError(w, http.StatusServiceUnavailable, "database not available")
-		return
-	}
-	var req demoTemplatePayload
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if param := strings.TrimSpace(chi.URLParam(r, "name")); param != "" {
-		req.Name = param
-	}
-	cfg, err := validateDemoTemplate(req)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
-	stats, _ := json.Marshal(cfg.Stats)
-	var rec demoTemplateRecord
-	var updated time.Time
-	err = db.Pool.QueryRow(r.Context(), `
-		INSERT INTO demo_bot_templates (name, weapon, strategy, color, stats, enabled, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
-		ON CONFLICT (name) DO UPDATE
-		SET weapon = EXCLUDED.weapon, strategy = EXCLUDED.strategy, color = EXCLUDED.color,
-		    stats = EXCLUDED.stats, enabled = EXCLUDED.enabled, updated_at = NOW()
-		RETURNING name, weapon, strategy, color, stats, enabled, updated_at`,
-		cfg.Name, cfg.Weapon, cfg.Strategy, cfg.Color, stats, enabled,
-	).Scan(&rec.Name, &rec.Weapon, &rec.Strategy, &rec.Color, &stats, &rec.Enabled, &updated)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save demo template")
-		return
-	}
-	_ = json.Unmarshal(stats, &rec.Stats)
-	rec.Source = "custom"
-	rec.Updated = &updated
-	writeJSON(w, http.StatusOK, rec)
-}
-
-func (h *AdminHandler) deleteDemoTemplate(w http.ResponseWriter, r *http.Request) {
-	if db.Pool == nil {
-		writeError(w, http.StatusServiceUnavailable, "database not available")
-		return
-	}
-	name := strings.TrimSpace(chi.URLParam(r, "name"))
-	tag, err := db.Pool.Exec(r.Context(), `DELETE FROM demo_bot_templates WHERE name = $1`, name)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to delete demo template")
-		return
-	}
-	if tag.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "demo template not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "demo template deleted", "name": name})
-}
-
-func (h *AdminHandler) spawnDemoTemplate(w http.ResponseWriter, r *http.Request) {
-	if h.DemoManager == nil {
-		writeError(w, http.StatusServiceUnavailable, "demo bot manager not initialized")
-		return
-	}
-	var req struct {
-		Name  string `json:"name"`
-		Count int    `json:"count"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	req.Name = strings.TrimSpace(req.Name)
-	if req.Count <= 0 || req.Count > 50 {
-		writeError(w, http.StatusBadRequest, "count must be between 1 and 50")
-		return
-	}
-	cfg, err := h.demoTemplateByName(r.Context(), req.Name)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	}
-	names := h.DemoManager.StartTemplate(cfg, req.Count)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"started": names, "count": len(names)})
-}
-
-func (h *AdminHandler) demoTemplateByName(ctx context.Context, name string) (demobots.BotConfig, error) {
-	if db.Pool != nil {
-		var p demoTemplatePayload
-		var stats []byte
-		var enabled bool
-		err := db.Pool.QueryRow(ctx, `SELECT name, weapon, strategy, color, stats, enabled FROM demo_bot_templates WHERE name = $1`, name).
-			Scan(&p.Name, &p.Weapon, &p.Strategy, &p.Color, &stats, &enabled)
-		if err == nil {
-			if !enabled {
-				return demobots.BotConfig{}, fmt.Errorf("demo template %q is disabled", name)
-			}
-			if err := json.Unmarshal(stats, &p.Stats); err != nil {
-				return demobots.BotConfig{}, fmt.Errorf("demo template %q has invalid stats", name)
-			}
-			return validateDemoTemplate(p)
-		}
-	}
-	for _, cfg := range demobots.DemoConfigs {
-		if strings.EqualFold(cfg.Name, name) {
-			return cfg, nil
-		}
-	}
-	return demobots.BotConfig{}, fmt.Errorf("demo template %q not found", name)
 }
 
 func (h *AdminHandler) getMapSettings(w http.ResponseWriter, r *http.Request) {

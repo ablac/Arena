@@ -24,7 +24,6 @@ import (
 
 	"arena-server/internal/config"
 	"arena-server/internal/db"
-	"arena-server/internal/demobots"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
 	"arena-server/internal/ws"
@@ -35,7 +34,6 @@ import (
 // AdminHandler holds references needed by admin endpoints.
 type AdminHandler struct {
 	Engine        *game.GameEngine
-	DemoManager   *demobots.Manager
 	ServiceStatus *ServiceStatusService
 	Shutdown      func()
 	// ChatHub, when set, lets chat moderation purge hidden messages from
@@ -77,10 +75,9 @@ func (h *AdminHandler) persistAdminOverrides(ctx context.Context, scope string, 
 }
 
 // NewAdminHandler creates a new AdminHandler.
-func NewAdminHandler(engine *game.GameEngine, demoManager *demobots.Manager) *AdminHandler {
+func NewAdminHandler(engine *game.GameEngine) *AdminHandler {
 	h := &AdminHandler{
 		Engine:               engine,
-		DemoManager:          demoManager,
 		startTime:            time.Now(),
 		resetLeaderboardData: db.ResetLeaderboard,
 		activeConfig:         config.C,
@@ -253,14 +250,7 @@ func isLocalhost(r *http.Request) bool {
 // Routes registers all admin routes on the given chi.Router.
 func (h *AdminHandler) Routes(r chi.Router) {
 	// Demo bot management.
-	r.Get("/demobots", h.listDemoBots)
-	r.Post("/demobots/start", h.startDemoBots)
-	r.Post("/demobots/stop", h.stopDemoBots)
-	r.Delete("/demobots/{name}", h.stopDemoBotByName)
-	r.Get("/demobots/templates", h.listDemoTemplates)
-	r.Put("/demobots/templates/{name}", h.upsertDemoTemplate)
-	r.Delete("/demobots/templates/{name}", h.deleteDemoTemplate)
-	r.Post("/demobots/spawn-template", h.spawnDemoTemplate)
+	r.Post("/bots/demo-loadout", h.applyDemoLoadout)
 
 	// Debug / inspection.
 	r.Get("/debug/connections", h.debugConnections)
@@ -355,77 +345,6 @@ func (h *AdminHandler) Routes(r chi.Router) {
 // ============================================================================
 // Demo bot management
 // ============================================================================
-
-func (h *AdminHandler) listDemoBots(w http.ResponseWriter, r *http.Request) {
-	if h.DemoManager == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"demo_bots": []interface{}{},
-			"count":     0,
-			"message":   "demo bot manager not initialized",
-		})
-		return
-	}
-
-	bots := h.DemoManager.ListBots()
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"demo_bots": bots,
-		"count":     len(bots),
-	})
-}
-
-func (h *AdminHandler) startDemoBots(w http.ResponseWriter, r *http.Request) {
-	if h.DemoManager == nil {
-		writeError(w, http.StatusServiceUnavailable, "demo bot manager not initialized")
-		return
-	}
-
-	var req struct {
-		Count int `json:"count"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if req.Count <= 0 || req.Count > 50 {
-		writeError(w, http.StatusBadRequest, "count must be between 1 and 50")
-		return
-	}
-
-	names := h.DemoManager.StartN(req.Count)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"started": names,
-		"count":   len(names),
-	})
-}
-
-func (h *AdminHandler) stopDemoBots(w http.ResponseWriter, r *http.Request) {
-	if h.DemoManager == nil {
-		writeError(w, http.StatusServiceUnavailable, "demo bot manager not initialized")
-		return
-	}
-
-	h.DemoManager.Stop()
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "all demo bots stopped",
-	})
-}
-
-func (h *AdminHandler) stopDemoBotByName(w http.ResponseWriter, r *http.Request) {
-	if h.DemoManager == nil {
-		writeError(w, http.StatusServiceUnavailable, "demo bot manager not initialized")
-		return
-	}
-
-	name := chi.URLParam(r, "name")
-	if found := h.DemoManager.StopByName(name); !found {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("demo bot %q not found", name))
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message": fmt.Sprintf("demo bot %q stopped", name),
-	})
-}
 
 // ============================================================================
 // Debug / inspection
