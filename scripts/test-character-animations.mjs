@@ -144,5 +144,13 @@ assert.match(botSource, /this\._motionQuery\s*=\s*typeof window\.matchMedia[\s\S
   'the live renderer must retain one media-query object instead of querying per bot');
 assert.match(botSource, /updateForgeCharacter\(entry, dt, this\._motionQuery\?\.matches === true/,
   'the live renderer must pass the current reduced-motion preference into Forge animation');
+// Forge parts carry their dimensions in `scaling`, so the impact squash must
+// key relative to each part's authored scale. The legacy absolute 1,1,1 end
+// key collapsed torsos/heads to unit specks on the first ranged hit and left
+// every veteran bot looking half-missing (live regression, 2026-07-13).
+assert.match(botSource, /_impactScaleBase/,
+  'the impact squash must capture and restore each part\'s authored scale');
+assert.doesNotMatch(botSource, /value:\s*new B\.Vector3\(1,\s*1,\s*1\)/,
+  'the impact squash must never end on an absolute unit scale');
 
 console.log('all Forge-class motion states are allocation-stable, finite, reduced-motion aware, and return to rest');

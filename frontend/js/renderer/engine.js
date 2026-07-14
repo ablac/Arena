@@ -6,12 +6,12 @@
  */
 
 import { CameraController } from './camera.js?v=20260710d';
-import { BotRenderer } from './bots.js?v=20260714a';
+import { BotRenderer } from './bots.js?v=20260714e';
 import { EnvironmentRenderer } from './environment.js?v=20260712a';
 import { ObstacleRenderer } from './obstacles.js?v=20260710f';
 import { PickupRenderer } from './pickups.js?v=20260521m';
 import { EffectRenderer } from './effects.js?v=20260710f';
-import { TrailRenderer } from './trails.js?v=20260713c';
+import { TrailRenderer } from './trails.js?v=20260714e';
 import { ProjectileRenderer } from './projectiles.js?v=20260711a';
 import { GameplayRenderer } from './gameplay.js?v=20260710g';
 import { getState, isEnabled, onSettingsChange } from '../settings.js';

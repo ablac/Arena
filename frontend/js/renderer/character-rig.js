@@ -11,11 +11,11 @@
  */
 
 import {parseColor, makeMat} from './utils.js';
-import {getCharacterProfile} from './character-roster.js?v=20260714a';
-import {ForgeAnimState} from './character-anims.js?v=20260714a';
-import {createForgeWeapon, disposeForgeWeapon} from './forge-weapons.js?v=20260714a';
-import {bodyFormForAsset} from './body-form-roster.js?v=20260714a';
-import {buildBodyFormGeometry, createBodyFormFarProxy} from './body-form-geometry.js?v=20260714a';
+import {getCharacterProfile} from './character-roster.js?v=20260714e';
+import {ForgeAnimState} from './character-anims.js?v=20260714e';
+import {createForgeWeapon, disposeForgeWeapon} from './forge-weapons.js?v=20260714e';
+import {bodyFormForAsset} from './body-form-roster.js?v=20260714e';
+import {buildBodyFormGeometry, createBodyFormFarProxy} from './body-form-geometry.js?v=20260714e';
 
 const _sceneResources = new WeakMap();
 
@@ -156,11 +156,23 @@ function getResources(scene) {
   plate.isPickable = false;
   plate.setEnabled(false);
 
+  const dome = B.MeshBuilder.CreateSphere('forge-dome-template', {diameter: 1, segments: 8}, scene);
+  dome.material = graphite;
+  dome.isPickable = false;
+  dome.setEnabled(false);
+
+  const ring = B.MeshBuilder.CreateTorus('forge-ring-template', {
+    diameter: 1, thickness: 0.15, tessellation: 12,
+  }, scene);
+  ring.material = gunmetal;
+  ring.isPickable = false;
+  ring.setEnabled(false);
+
   // One merged humanoid silhouette replaces the articulated body on distant
   // live bots. Clones share this geometry and add one identity material each.
   const low = createFarSilhouetteTemplate(B, scene, farSilhouette);
 
-  resources = {graphite, gunmetal, farSilhouette, selector, box, head, plate, low};
+  resources = {graphite, gunmetal, farSilhouette, selector, box, head, plate, dome, ring, low};
   _sceneResources.set(scene, resources);
   return resources;
 }
@@ -188,6 +200,13 @@ function headInstance(resources, name, parent, scaling) {
 
 function plateInstance(resources, name, parent, position, scaling, rotation) {
   const mesh = resources.plate.createInstance(name);
+  mesh.parent = parent;
+  mesh.isPickable = false;
+  return setTransform(mesh, position, scaling, rotation);
+}
+
+function templateInstance(template, name, parent, position, scaling, rotation) {
+  const mesh = template.createInstance(name);
   mesh.parent = parent;
   mesh.isPickable = false;
   return setTransform(mesh, position, scaling, rotation);
@@ -274,6 +293,56 @@ const ARMOR_STYLE = Object.freeze({
   staff: Object.freeze({left: [1.30, 2.05, 1.8, -0.04], right: [1.30, 2.05, 1.8, -0.04]}),
   shield: Object.freeze({left: [3.65, 1.85, 3.1, 0.04], right: [3.15, 1.60, 3.0, -0.04]}),
   grapple: Object.freeze({left: [1.55, 0.90, 2.1, 0.22], right: [3.30, 1.35, 3.2, -0.32]}),
+});
+
+// Per-class chassis styling consumed once at build time: head/visor/plate
+// variants plus one signature flair mesh for classes whose weapon leaves
+// mesh-budget headroom (the daggers and grapple weapons already spend four
+// meshes, so those two classes style existing parts only).
+const CHASSIS_STYLE = Object.freeze({
+  sword: Object.freeze({
+    // Duelist: hex face forward, tall head crest, banded visor.
+    headYaw: Math.PI / 6, gauntlet: 1.18, flair: 'crest', crownY: 1.15,
+    visor: Object.freeze({w: 0.70, h: 0.58, y: 0.18}),
+    chest: Object.freeze({w: 0.78, h: 0.44, y: 0.60, pitch: -0.12}),
+  }),
+  bow: Object.freeze({
+    // Scout: hooded dome over a wide visor, light plating.
+    gauntlet: 1.04, flair: 'hood', crownY: 1.05,
+    visor: Object.freeze({w: 0.84, h: 0.44, y: 0.16}),
+    chest: Object.freeze({w: 0.56, h: 0.30, y: 0.62, pitch: 0.04}),
+  }),
+  spear: Object.freeze({
+    // Lancer: swept-back crest, steeply raked chest wedge.
+    headYaw: Math.PI / 6, gauntlet: 1.14, flair: 'sweptCrest', crownY: 1.2,
+    visor: Object.freeze({w: 0.64, h: 0.50, y: 0.20}),
+    chest: Object.freeze({w: 0.66, h: 0.42, y: 0.62, pitch: -0.24}),
+  }),
+  daggers: Object.freeze({
+    // Skirmisher: small head, slit visor, diagonal bandolier plate.
+    headScale: 0.88, gauntlet: 0.94, crownY: 0.5,
+    visor: Object.freeze({w: 0.56, h: 0.28, y: 0.26}),
+    chest: Object.freeze({w: 0.46, h: 0.60, y: 0.52, pitch: -0.04, roll: 0.45}),
+  }),
+  staff: Object.freeze({
+    // Arcanist: tall visor, robe skirt, floating halo ring.
+    gauntlet: 1.0, flair: 'halo', skirt: true, crownY: 0.75,
+    visor: Object.freeze({w: 0.60, h: 0.72, y: 0.10}),
+    chest: Object.freeze({w: 0.48, h: 0.64, y: 0.56, pitch: 0}),
+  }),
+  shield: Object.freeze({
+    // Bulwark: neckless head sunk between the shoulders, sloped plating
+    // front and back, heavy gauntlets.
+    headScaleY: 0.78, headDrop: 1.15, gauntlet: 1.30, flair: 'backplate', crownY: 0.08,
+    visor: Object.freeze({w: 0.58, h: 0.32, y: 0.24}),
+    chest: Object.freeze({w: 0.92, h: 0.52, y: 0.55, pitch: -0.30}),
+  }),
+  grapple: Object.freeze({
+    // Rigger: off-center mono-optic, chest plate relocated to a back winch.
+    gauntlet: 1.24, crownY: 0.6,
+    visor: Object.freeze({w: 0.30, h: 0.44, y: 0.20, x: 0.24}),
+    chest: Object.freeze({back: true, w: 0.62, h: 0.50}),
+  }),
 });
 
 function createHUD(bot, id, root, guiTexture) {
@@ -405,22 +474,75 @@ export function createForgeCharacter(bot, scene, options = {}) {
   cosmeticRoot.parent = bodyJoint;
   cosmeticRoot.position.y = -bodyY;
 
+  const style = CHASSIS_STYLE[profile.weapon] || CHASSIS_STYLE.sword;
   const torso = boxInstance(resources, `forge-torso-${id}`, bodyJoint,
     [0, 1.08 + torsoHeight / 2, 0], [torsoWidth, torsoHeight, torsoDepth]);
+  // Chest plating angles per class; the Rigger carries its plate behind the
+  // shoulders as a winch block instead of on the chest.
   const chestPlate = plateInstance(resources, `forge-chest-plate-${id}`, bodyJoint,
-    [0, 1.12 + torsoHeight * 0.57, -torsoDepth * 0.52],
-    [torsoWidth * 0.68, torsoHeight * 0.33, 0.38],
-    [-0.08, 0, 0]);
+    style.chest.back
+      ? [0, 1.12 + torsoHeight * 0.55, torsoDepth * 0.66]
+      : [0, 1.12 + torsoHeight * (style.chest.y ?? 0.6), -torsoDepth * 0.54],
+    [torsoWidth * style.chest.w, torsoHeight * style.chest.h, style.chest.back ? 1.5 : 0.48],
+    [style.chest.pitch || 0, 0, style.chest.roll || 0]);
   const pelvis = accentBox(B, `forge-pelvis-${id}`, scene, bodyJoint, bodyMat,
-    [0, 0.45, 0], [pelvisWidth, 1.75, torsoDepth * 0.84]);
+    [0, style.skirt ? 0.1 : 0.45, 0],
+    style.skirt
+      ? [pelvisWidth * 1.2, 3.6, torsoDepth * 0.95]
+      : [pelvisWidth, 2.0, torsoDepth * 0.88]);
 
   const headJoint = new B.TransformNode(`forge-head-joint-${id}`, scene);
   headJoint.parent = bodyJoint;
   headJoint.position.y = headY;
-  const head = headInstance(resources, `forge-head-${id}`, headJoint,
-    [headWidth, headHeight, headDepth]);
+  const headDrop = style.headDrop || 0;
+  const head = headInstance(resources, `forge-head-${id}`, headJoint, [
+    headWidth * (style.headScale || 1),
+    headHeight * (style.headScaleY ?? style.headScale ?? 1),
+    headDepth * (style.headScale || 1),
+  ]);
+  if (style.headYaw) head.rotation.y = style.headYaw;
+  if (headDrop) head.position.y = -headDrop;
   const visor = accentBox(B, `forge-visor-${id}`, scene, headJoint, headMat,
-    [0, 0.18, -headDepth * 0.51], [headWidth * 0.70, 0.58, 0.30]);
+    [(style.visor.x || 0) * headWidth, style.visor.y - headDrop, -headDepth * 0.51],
+    [headWidth * style.visor.w, style.visor.h, 0.30]);
+
+  // One signature flair per class where the weapon leaves mesh-budget room.
+  const flairMeshes = [];
+  switch (style.flair) {
+    case 'crest':
+      flairMeshes.push(accentBox(B, `forge-crest-${id}`, scene, headJoint, headMat,
+        [0, headHeight * 0.62, 0.1], [0.26, headHeight * 0.72, headDepth * 0.95], [0.06, 0, 0]));
+      break;
+    case 'sweptCrest':
+      flairMeshes.push(accentBox(B, `forge-crest-${id}`, scene, headJoint, headMat,
+        [0, headHeight * 0.58, 0.55], [0.26, headHeight * 0.95, headDepth * 0.70], [0.55, 0, 0]));
+      break;
+    case 'hood':
+      flairMeshes.push(templateInstance(resources.dome, `forge-hood-${id}`, headJoint,
+        [0, 0.42, 0.55], [headWidth * 1.24, headHeight * 1.02, headDepth * 1.18]));
+      break;
+    case 'halo':
+      flairMeshes.push(templateInstance(resources.ring, `forge-halo-${id}`, headJoint,
+        [0, headHeight * 0.42, headDepth * 0.72],
+        [headWidth * 1.55, headWidth * 1.55, headWidth * 1.55],
+        [Math.PI / 2 - 0.15, 0, 0]));
+      break;
+    case 'backplate':
+      flairMeshes.push(plateInstance(resources, `forge-back-slab-${id}`, bodyJoint,
+        [0, 1.12 + torsoHeight * 0.52, torsoDepth * 0.60],
+        [torsoWidth * 0.95, torsoHeight * 0.62, 0.55], [0.10, 0, 0]));
+      break;
+    default:
+      break;
+  }
+
+  // Cosmetic attachment anchor: where head-mounted cosmetics (halos, crowns,
+  // antennas) sit for THIS silhouette. Body-form builders reposition it so a
+  // halo hovers over a rabbit's ears, a wizard's hat, or a slime's crown
+  // rather than at the humanoid default.
+  const headTop = new B.TransformNode(`forge-head-top-${id}`, scene);
+  headTop.parent = headJoint;
+  headTop.position.y = headHeight * (style.crownY ?? 0.55);
 
   const core = B.MeshBuilder.CreateCylinder(`forge-core-mesh-${id}`, {
     height: 0.48, diameter: Math.max(1.6, torsoWidth * 0.25), tessellation: 8,
@@ -445,15 +567,18 @@ export function createForgeCharacter(bot, scene, options = {}) {
     const elbow = new B.TransformNode(`forge-${label}-elbow-${id}`, scene);
     elbow.parent = arm;
     elbow.position.y = -upperArmLength;
+    // Gauntlet forearms: wider than the upper arm per class weight so the
+    // limb tapers outward instead of reading as two equal sticks.
+    const gauntlet = armWidth * (style.gauntlet || 1);
     const forearm = boxInstance(resources, `forge-${label}-forearm-${id}`, elbow,
-      [0, -forearmLength / 2, -0.08], [armWidth * 0.88, forearmLength, armWidth]);
+      [0, -forearmLength / 2, -0.08], [gauntlet, forearmLength, gauntlet]);
     const hand = new B.TransformNode(`forge-${label}-hand-${id}`, scene);
     hand.parent = elbow;
     hand.position.y = -forearmLength;
 
-    const style = armorStyle[label];
+    const armor = armorStyle[label];
     const pauldron = accentBox(B, `forge-${label}-pauldron-${id}`, scene, arm, bodyMat,
-      [side * 0.18, -0.42, 0], [style[0], style[1], style[2]], [0, 0, side * style[3]]);
+      [side * 0.18, 0.14, 0], [armor[0], armor[1], armor[2]], [0, 0, side * armor[3]]);
     limbMeshes.push(upper, forearm, pauldron);
     arms[label] = {arm, elbow, hand};
   }
@@ -473,7 +598,7 @@ export function createForgeCharacter(bot, scene, options = {}) {
     const shin = boxInstance(resources, `forge-${label}-shin-${id}`, knee,
       [0, -shinLength / 2, 0], [legWidth * 0.86, shinLength, legWidth]);
     const foot = boxInstance(resources, `forge-${label}-foot-${id}`, knee,
-      [0, -shinLength + 0.05, -0.68], [legWidth * 1.06, 0.86, 2.75]);
+      [0, -shinLength + 0.05, -0.75], [legWidth * 1.12, 0.82, 2.95]);
     limbMeshes.push(upper, shin, foot);
     legs[label] = {leg, knee};
   }
@@ -493,6 +618,7 @@ export function createForgeCharacter(bot, scene, options = {}) {
     weapon: null,
     core,
     cosmeticRoot,
+    headTop,
   };
   const weapon = createForgeWeapon(profile, id, scene, mounts, headMat, {
     handSpan: shoulderX,
@@ -612,6 +738,7 @@ export function createForgeCharacter(bot, scene, options = {}) {
 
   let renderedBody = torso;
   let renderedHead = head;
+  let formShoulderY = null;
   let renderedBodyMat = bodyMat;
   let renderedHeadMat = headMat;
   let bodyFormMaterials = [];
@@ -627,10 +754,16 @@ export function createForgeCharacter(bot, scene, options = {}) {
     renderedBodyMat = geometry.materials[0];
     renderedHeadMat = geometry.materials[1];
     joints.torso = renderedBody;
+    // Snap the cosmetic anchors onto the form's actual silhouette so every
+    // attachment slot fits every skin.
+    const anchors = geometry.anchors || {};
+    if (Number.isFinite(anchors.headTopY)) headTop.position.y = anchors.headTopY;
+    if (Array.isArray(anchors.backPos)) backMount.position.set(...anchors.backPos);
+    if (Number.isFinite(anchors.shoulderY)) formShoulderY = anchors.shoulderY;
     // The skeleton, semantic mounts, Arena core, and weapon stay shared, but
     // the robot shell itself is removed so a full-body skin never overlays or
     // reveals an invisible second character.
-    for (const mesh of [torso, chestPlate, pelvis, head, visor, ...limbMeshes]) mesh.dispose();
+    for (const mesh of [torso, chestPlate, pelvis, head, visor, ...flairMeshes, ...limbMeshes]) mesh.dispose();
     // The standard-shell accent material no longer has a mesh after the shell
     // is removed. Release it immediately instead of retaining one dead mutable
     // material for every full-body character in a large crowd.
@@ -644,7 +777,7 @@ export function createForgeCharacter(bot, scene, options = {}) {
 
   const visibleMeshes = bodyForm
     ? [core, ...bodyFormMeshes, ...weapon._forgeMeshes]
-    : [torso, chestPlate, pelvis, head, visor, core, ...limbMeshes, ...weapon._forgeMeshes];
+    : [torso, chestPlate, pelvis, head, visor, core, ...flairMeshes, ...limbMeshes, ...weapon._forgeMeshes];
   // Status feedback owns this exact per-bot list. Body forms retain the
   // avatar-colored core/weapon accent plus all three form materials; generic
   // far-proxy materials remain excluded so overview silhouettes stay readable.
@@ -681,6 +814,9 @@ export function createForgeCharacter(bot, scene, options = {}) {
     joints,
     mounts,
     mountMetrics,
+    cosmeticAnchors: Object.freeze({
+      shoulderY: Number.isFinite(formShoulderY) ? formShoulderY : -torsoHeight * 0.08,
+    }),
     basePose,
     weaponBase,
     weaponPoseNodes,
