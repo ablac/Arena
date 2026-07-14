@@ -77,14 +77,6 @@
   position: relative;
 }
 
-/* Sits last in the desktop header's flex row so it lands at the far right,
-   matching the brand position on angel-serv.com and the Aquarium. Left
-   as-is on the mobile spectator topbar, which is a single compact inline
-   bar rather than a two-sided header. */
-.site-header .explore-item {
-  order: 3;
-}
-
 .explore-menu {
   position: absolute;
   top: calc(100% + 12px);
