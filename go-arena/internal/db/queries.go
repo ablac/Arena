@@ -1552,6 +1552,25 @@ func ReplaceBountyBoardEntries(ctx context.Context, entries []BountyBoardEntry) 
 	return nil
 }
 
+// getLatestWinnerBountySeedSQL orders by persisted_order, not round_number:
+// round_number resets to 0 every process restart (it is an in-memory
+// counter, never restored from the DB - see game.NewGameEngine), and this
+// query's whole purpose is reseeding the bounty board after a restart, so
+// ordering by it can surface rounds from a much older server run instead of
+// the actually-most-recent ones. persisted_order is a DB sequence and is
+// monotonic across restarts, matching how ListRecentWeaponPerformance above
+// orders "last N rounds".
+const getLatestWinnerBountySeedSQL = `
+	SELECT r.mvp_bot_id, b.name, b.avatar_color, b.default_weapon
+	FROM rounds r
+	JOIN bots b ON b.id = r.mvp_bot_id
+	WHERE r.status = 'completed'
+	  AND r.mvp_bot_id IS NOT NULL
+	  AND b.name NOT LIKE 'Legacy-%'
+	ORDER BY r.persisted_order DESC
+	LIMIT 32
+`
+
 // GetLatestWinnerBountySeed reconstructs a single bounty candidate from the most
 // recent consecutive completed round winners. It is used to repopulate the
 // bounty board after a restart if no persisted board state exists.
@@ -1559,16 +1578,7 @@ func GetLatestWinnerBountySeed(ctx context.Context, threshold, base, step, maxPo
 	if Pool == nil {
 		return nil, ErrNoDatabase
 	}
-	rows, err := Pool.Query(ctx, `
-		SELECT r.mvp_bot_id, b.name, b.avatar_color, b.default_weapon
-		FROM rounds r
-		JOIN bots b ON b.id = r.mvp_bot_id
-		WHERE r.status = 'completed'
-		  AND r.mvp_bot_id IS NOT NULL
-		  AND b.name NOT LIKE 'Legacy-%'
-		ORDER BY r.round_number DESC
-		LIMIT 32
-	`)
+	rows, err := Pool.Query(ctx, getLatestWinnerBountySeedSQL)
 	if err != nil {
 		return nil, fmt.Errorf("GetLatestWinnerBountySeed: %w", err)
 	}

@@ -40,11 +40,18 @@ func UpdateGravityWells(wells *[]GravityWell, bots map[string]*BotState, grid *S
 
 	for i := range *wells {
 		well := &(*wells)[i]
-		well.RemainingTicks--
 
+		// Check expiry BEFORE decrementing: a well is created with
+		// RemainingTicks = GravityWellDurationTicks (documented to bots as
+		// "3 seconds", i.e. DurationTicks ticks) in the same tick's
+		// processUseItems, which runs before this function. Decrementing
+		// first would consume one tick of the well's life before it ever
+		// got to pull anything, delivering only DurationTicks-1 ticks of
+		// actual pull.
 		if well.RemainingTicks <= 0 {
 			continue // expired
 		}
+		well.RemainingTicks--
 
 		owner := bots[well.OwnerID]
 		// Pull vulnerable enemies within radius toward center.

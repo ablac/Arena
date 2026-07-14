@@ -97,10 +97,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   const pulseShell = (cls) => {
     if (!arenaShell || arenaShell.classList.contains(cls)) return;
     arenaShell.classList.add(cls);
-    arenaShell.addEventListener('animationend', () => {
+    // animationend bubbles, so a descendant's own animation (e.g. the kill
+    // feed's killfeed-in entry animation) reaching this listener would strip
+    // the pulse class early, cutting the flash short. A pseudo-element's
+    // animationend targets the originating element itself, so filtering on
+    // event.target === arenaShell accepts the shell's own ::after animation
+    // and rejects everything bubbled up from inside it.
+    const onAnimationEnd = (event) => {
+      if (event.target !== arenaShell) return;
+      arenaShell.removeEventListener('animationend', onAnimationEnd);
       clearTimeout(pulseTimers[cls]);
       arenaShell.classList.remove(cls);
-    }, { once: true });
+    };
+    arenaShell.addEventListener('animationend', onAnimationEnd);
     // If the animation never runs (prefers-reduced-motion sets animation:
     // none, or the shell is display:none), animationend never fires and the
     // latched class would suppress every future pulse. The timer is tracked

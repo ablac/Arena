@@ -73,27 +73,30 @@ func UpdateMines(mines *[]Landmine, bots map[string]*BotState, tickCount int) []
 			continue
 		}
 
-		// Check if any enemy bot is in blast radius.
+		// Check if any enemy bot is in blast radius. An invulnerable
+		// (dodging) bot must not be able to trigger an enemy's mine at all -
+		// matching hazard zones, which skip invulnerable bots entirely
+		// rather than merely exempting them from damage - otherwise a
+		// dodging bot could walk through a mine, set it off, and splash
+		// damage onto a bystander while taking none itself.
 		triggered := false
 		for _, bot := range bots {
-			if !bot.IsAlive || bot.BotID == mine.OwnerID || !ActiveModeRules.CanDamage(owner, bot) {
+			if !bot.IsAlive || bot.BotID == mine.OwnerID || bot.InvulnTicks > 0 || !ActiveModeRules.CanDamage(owner, bot) {
 				continue
 			}
 			if _, enteredRange := firstMovementPositionInRange(bot, mine.Position, mine.BlastRadius); enteredRange {
-				// Detonate: deal damage to all bots in blast radius (except owner).
+				// Detonate: deal damage to all bots in blast radius (except
+				// owner). Routed through ApplyDamage (not a manual HP
+				// subtraction) so a mine blast is soaked by ShieldAbsorb and
+				// the shield weapon's passive reduction the same as every
+				// other damage source - it already handles the sudden-death
+				// multiplier, invulnerability, and attribution bookkeeping.
 				for _, target := range bots {
 					if !target.IsAlive || target.BotID == mine.OwnerID || !ActiveModeRules.CanDamage(owner, target) {
 						continue
 					}
 					if _, enteredRange := firstMovementPositionInRange(target, mine.Position, mine.BlastRadius); enteredRange {
-						if target.InvulnTicks > 0 {
-							continue
-						}
-						dmg := mine.Damage * SuddenDeathDamageMultiplier()
-						target.HP -= dmg
-						target.RoundDamageTaken += dmg
-						owner.RoundDamageDealt += dmg
-						recordAttributedDamage(target, owner, dmg, "landmine", tickCount)
+						ApplyDamage(target, owner, mine.Damage, "landmine", tickCount)
 					}
 				}
 				triggered = true
