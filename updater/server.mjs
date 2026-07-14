@@ -39,6 +39,11 @@ import {
   reconcileMigrationContainerAfterRunError,
   resolveDeployOwner
 } from "./compose.mjs";
+import {
+  demobotsLatestCommit,
+  demobotsState,
+  startDemobotsUpdate
+} from "./demobots.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -129,7 +134,53 @@ async function handleRequest(request, response) {
       return;
     }
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ ok: true, ...updateState }));
+    response.end(JSON.stringify({ ok: true, ...updateState, demobots: demobotsState() }));
+    return;
+  }
+
+  if (request.method === "GET" && request.url === "/demobots/latest") {
+    if (SHARED_SECRET === "" || !isAuthorized(request)) {
+      response.writeHead(401, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: false, error: "unauthorized" }));
+      return;
+    }
+    try {
+      const commit = await demobotsLatestCommit();
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true, commit }));
+    } catch (error) {
+      response.writeHead(502, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: false, error: error.message }));
+    }
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/demobots/update") {
+    if (SHARED_SECRET === "" || !isAuthorized(request)) {
+      response.writeHead(401, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: false, error: "unauthorized" }));
+      return;
+    }
+    let demobotsBody;
+    try {
+      demobotsBody = await readJsonBody(request);
+    } catch (error) {
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: false, error: error.message }));
+      return;
+    }
+    try {
+      const result = await startDemobotsUpdate(
+        typeof demobotsBody.commitSha === "string" ? demobotsBody.commitSha : "",
+        undefined,
+        log
+      );
+      response.writeHead(202, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true, ...result }));
+    } catch (error) {
+      response.writeHead(error.statusCode ?? 502, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: false, error: error.message }));
+    }
     return;
   }
 

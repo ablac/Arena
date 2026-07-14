@@ -102,6 +102,11 @@ services:
       GITHUB_OWNER: ablac
       GITHUB_REPO: Arena
       ARENA_INTERNAL_STATUS_URL: http://arena-server:8000/internal/updater/status
+      # Private demo-bot fleet (optional). SSH URL of the private repo the
+      # sidecar updates the fleet from; empty disables every fleet feature.
+      DEMOBOTS_GIT_URL: ${DEMOBOTS_GIT_URL:-}
+      DEMOBOTS_BRANCH: ${DEMOBOTS_BRANCH:-main}
+      DEMOBOTS_DEPLOY_DIR: /demobots-deploy
       # Owner/migrator role used only by the one-shot `/arena-server migrate`
       # container. The password is optional when it intentionally matches the
       # service's ARENA_DB_PASSWORD; set the dedicated value when they differ.
@@ -114,6 +119,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${PWD}:${PWD}
+      # The private demo-bot fleet's compose project + read-only deploy key
+      # (.deploy-key). Harmless when the fleet is not deployed on this host.
+      - ${DEMOBOTS_HOST_DIR:-/srv/docker/arena-demobots}:/demobots-deploy
     networks:
       arena_net:
 

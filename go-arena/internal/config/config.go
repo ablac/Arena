@@ -229,6 +229,12 @@ type Config struct {
 	UpdateRepo   string `envconfig:"ARENA_UPDATE_REPO" default:"ablac/Arena"`
 	UpdateBranch string `envconfig:"ARENA_UPDATE_BRANCH" default:"main"`
 
+	// Demo-bot fleet control (optional). Base URL of the private fleet's
+	// control API on the compose network (e.g. http://arena-demobots:9200).
+	// The admin panel's Demo Bot Fleet card is disabled when unset. Requests
+	// are authenticated with AdminToken, which the fleet shares.
+	DemobotsControlURL string `envconfig:"ARENA_DEMOBOTS_CONTROL_URL" default:""`
+
 	// CORS
 	CORSOrigins string `envconfig:"ARENA_CORS_ORIGINS" default:"*"`
 
