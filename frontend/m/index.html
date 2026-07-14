@@ -10,13 +10,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="mobile.css?v=20260712a">
-  <link rel="stylesheet" href="../css/brand-lockup.css?v=20260713b">
+  <link rel="stylesheet" href="../css/brand-lockup.css?v=20260713c">
   <script src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/materialsLibrary/babylonjs.materials.min.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/gui/babylon.gui.min.js"></script>
   <script src="../js/cosmetic-themes.js?v=20260713f"></script>
-  <script type="module" src="mobile.js?v=20260714e"></script>
+  <script type="module" src="mobile.js?v=20260713a"></script>
 </head>
 <body>
 
@@ -32,13 +32,21 @@
 
   <!-- Slim floating top bar -->
   <header id="topbar" class="floating-card">
-    <a id="tb-brand" class="arena-brand" href="https://angel-serv.com/" target="_blank" rel="noopener" aria-label="Angel Software Solutions home">
-      <img class="arena-brand-mark" src="../img/ethereal-wings-dark-icon.svg" alt="" width="118" height="46">
-      <span class="arena-brand-copy">
-        <span class="arena-brand-name">Angel Software Solutions</span>
-        <span class="arena-brand-product">THE ARENA</span>
-      </span>
-    </a>
+    <div class="explore-item" id="arenaExploreItem">
+      <a id="tb-brand" class="arena-brand" href="https://angel-serv.com/" target="_blank" rel="noopener" aria-label="Angel Software Solutions home" aria-haspopup="true" aria-expanded="false" aria-controls="arenaExploreMenu">
+        <img class="arena-brand-mark" src="../img/ethereal-wings-dark-icon.svg" alt="" width="118" height="46">
+        <span class="arena-brand-copy">
+          <span class="arena-brand-name">Angel Software Solutions</span>
+          <span class="arena-brand-product">THE ARENA</span>
+        </span>
+      </a>
+      <div class="explore-menu" id="arenaExploreMenu">
+        <a href="https://angel-serv.com/" target="_blank" rel="noopener">Angel-Serv.com <span>Technology consulting</span></a>
+        <a href="https://angel-serv.com/aquarium/" target="_blank" rel="noopener">The Aquarium <span>High-density browser world</span></a>
+        <a href="https://agentreef.net" target="_blank" rel="noopener">AgentReef <span>Agent federation platform</span></a>
+        <a href="https://kynetik.dev" target="_blank" rel="noopener">Kynetik <span>Design websites that move</span></a>
+      </div>
+    </div>
     <span id="tb-conn" class="conn"><span class="dot"></span></span>
     <span id="tb-round" class="tb-item mono">&mdash;</span>
     <span id="tb-mode" class="tb-chip">FFA</span>
