@@ -162,10 +162,16 @@ func isBotInHazardZone(pos Vec2, zone *HazardZone) bool {
 func BuildHazardZoneView(zone HazardZone, useGridPos bool, mod RoundModifier) map[string]interface{} {
 	onTicks, offTicks, damagePerTick := effectiveHazardProfile(mod, zone)
 	view := map[string]interface{}{
-		"type":            "hazard_zone",
-		"id":              zone.ID,
-		"width":           zone.Width,
-		"height":          zone.Height,
+		"type": "hazard_zone",
+		"id":   zone.ID,
+		// isBotInHazardZone/hazardRectOpen both extend zone.Width/2 (integer
+		// division) tiles in each direction from center, i.e. a span of
+		// 2*(Width/2)+1 tiles - one tile wider than Width itself whenever
+		// Width is even. Report the true span so a bot computing a safe
+		// standing distance from these fields doesn't still take damage
+		// just outside what it was told is the zone.
+		"width":           2*(zone.Width/2) + 1,
+		"height":          2*(zone.Height/2) + 1,
 		"active":          zone.Active,
 		"on_ticks":        onTicks,
 		"off_ticks":       offTicks,

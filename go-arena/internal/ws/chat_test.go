@@ -29,6 +29,7 @@ type fakeChatStore struct {
 	insertErr   error
 	insertPanic bool
 	linkedErr   error
+	banErr      error
 }
 
 func newFakeChatStore() *fakeChatStore {
@@ -65,6 +66,9 @@ func (s *fakeChatStore) Insert(ctx context.Context, m *db.ChatMessage) error {
 func (s *fakeChatStore) ChatBanUntil(ctx context.Context, accountID string) (*time.Time, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.banErr != nil {
+		return nil, s.banErr
+	}
 	return s.banUntil[accountID], nil
 }
 
@@ -397,6 +401,25 @@ func TestChatAliveLockFailsClosedOnDBError(t *testing.T) {
 	errMsg := readChatMessage(t, conn, "chat_error")
 	if errMsg["code"] != "POST_FAILED" {
 		t.Fatalf("alive-lock lookup error: code = %v, want POST_FAILED", errMsg["code"])
+	}
+}
+
+func TestChatBanCheckFailsClosedOnDBError(t *testing.T) {
+	withChatConfig(t)
+	env := newChatTestEnv(t)
+	env.store.banErr = errors.New("connection reset")
+
+	conn := env.dial(t, identityHeaders("acct-1", "Dev"))
+	readChatMessage(t, conn, "chat_status")
+	readChatMessage(t, conn, "chat_history")
+
+	// A ban-lookup failure must not let a possibly-banned poster through;
+	// fail closed rather than open (mirrors the alive-lock's own DB-error
+	// handling immediately below it in ChatHub.post).
+	postChat(t, conn, "post during outage")
+	errMsg := readChatMessage(t, conn, "chat_error")
+	if errMsg["code"] != "POST_FAILED" {
+		t.Fatalf("ban lookup error: code = %v, want POST_FAILED", errMsg["code"])
 	}
 }
 

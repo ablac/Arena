@@ -314,7 +314,17 @@ func (h *ChatHub) post(ctx context.Context, c *chatClient, rawBody string) *chat
 		return &chatPostError{"RATE_LIMITED", "slow down: too many messages"}
 	}
 
-	if until, err := h.store.ChatBanUntil(ctx, c.identity.AccountID); err == nil && until != nil && until.After(now) {
+	// Fails CLOSED on a real DB error, matching the alive-lock check below:
+	// a banned poster must not slip through on a transient outage.
+	// db.ErrNoDatabase (dev mode, no ban data) is the one intentional
+	// pass-through.
+	switch until, err := h.store.ChatBanUntil(ctx, c.identity.AccountID); {
+	case errors.Is(err, db.ErrNoDatabase):
+		// Dev mode: no ban table, check cannot apply.
+	case err != nil:
+		slog.Error("chat ban lookup failed", "error", err)
+		return &chatPostError{"POST_FAILED", "message could not be verified, try again"}
+	case until != nil && until.After(now):
 		return &chatPostError{"CHAT_BANNED", "you are muted in chat until " + until.UTC().Format(time.RFC3339)}
 	}
 
