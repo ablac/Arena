@@ -1,10 +1,10 @@
 'use strict';
 
-import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260714d';
-import { applyBotCosmetics, disposeBotCosmetics } from './renderer/cosmetics.js?v=20260714d';
-import { updateForgeCharacter } from './renderer/character-anims.js?v=20260714d';
-import { TrailRenderer } from './renderer/trails.js?v=20260714d';
-import {bodyFormKeyForBot} from './renderer/body-form-roster.js?v=20260714d';
+import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260714e';
+import { applyBotCosmetics, disposeBotCosmetics } from './renderer/cosmetics.js?v=20260714e';
+import { updateForgeCharacter } from './renderer/character-anims.js?v=20260714e';
+import { TrailRenderer } from './renderer/trails.js?v=20260714e';
+import {bodyFormKeyForBot} from './renderer/body-form-roster.js?v=20260714e';
 
 const DEFAULT_ALPHA = -Math.PI / 2;
 const DEFAULT_BETA = 1.12;
