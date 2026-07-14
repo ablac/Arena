@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"arena-server/internal/config"
@@ -103,8 +104,10 @@ func EnsureChatSchema(ctx context.Context) error {
 	return nil
 }
 
-// InsertChatMessage persists a lobby chat message and fills in the assigned
-// id and created_at on the passed struct.
+// InsertChatMessage persists a lobby chat message, fills in the assigned id
+// and created_at on the passed struct, and prunes the table back down to
+// config.C.ChatHistorySize rows so it never grows unbounded: the lobby is a
+// live, ephemeral surface, not a permanent record.
 func InsertChatMessage(ctx context.Context, m *ChatMessage) error {
 	if Pool == nil {
 		return ErrNoDatabase
@@ -117,6 +120,33 @@ func InsertChatMessage(ctx context.Context, m *ChatMessage) error {
 	).Scan(&m.ID, &m.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("InsertChatMessage: %w", err)
+	}
+	if err := pruneChatMessages(ctx, config.C.ChatHistorySize); err != nil {
+		// The message itself is already durably saved; a failed prune just
+		// means the table is a little larger than intended until the next
+		// successful insert retries it.
+		slog.Warn("chat message prune failed", "error", err)
+	}
+	return nil
+}
+
+// pruneChatMessages deletes every chat_messages row older than the most
+// recent keep rows (by id, which is monotonic with insertion order). A
+// non-positive keep is treated as "no limit" (nothing pruned) rather than
+// wiping the table.
+func pruneChatMessages(ctx context.Context, keep int) error {
+	if keep <= 0 {
+		return nil
+	}
+	_, err := Pool.Exec(ctx,
+		`DELETE FROM chat_messages
+		 WHERE id < (
+			SELECT COALESCE(MIN(id), 0) FROM (
+				SELECT id FROM chat_messages ORDER BY id DESC LIMIT $1
+			) recent
+		 )`, keep)
+	if err != nil {
+		return fmt.Errorf("pruneChatMessages: %w", err)
 	}
 	return nil
 }

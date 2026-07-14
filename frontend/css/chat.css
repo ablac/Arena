@@ -1,24 +1,113 @@
-/* Developer lobby chat panel. Dark-theme only, uses arena.css variables. */
+/* Developer lobby chat. Dark-theme only, uses arena.css variables.
+   Desktop: chat-panel.js builds its own floating bubble + panel (no static
+   markup needed, see .chat-bubble / .chat-floating-panel below) and mounts
+   them directly to <body>. Mobile keeps its own full-screen sheet, defined
+   in frontend/m/mobile-chat-dashboard.css, and reuses the shared classes
+   below (.chat-panel, .chat-messages, .chat-group, etc.) for its contents. */
 
-/* Chat entry points stay hidden until chat-panel.js confirms the server
-   has chat enabled. */
-[data-overlay-open="chat-overlay"] {
-  display: none;
+.chat-bubble {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 90;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card-strong, var(--bg-card));
+  border: 1px solid var(--border-strong, var(--border-color));
+  color: var(--accent-blue);
+  cursor: pointer;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  transition: border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
 }
-body.chat-enabled [data-overlay-open="chat-overlay"] {
-  display: inline-flex;
+.chat-bubble:hover {
+  border-color: var(--accent-blue);
+  transform: translateY(-2px);
+}
+.chat-bubble.is-active {
+  color: var(--accent-gold);
+  border-color: var(--accent-gold);
+}
+.chat-bubble svg {
+  width: 22px;
+  height: 22px;
+}
+
+.chat-floating-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 88px;
+  z-index: 89;
+  width: 336px;
+  max-width: calc(100vw - 32px);
+  height: 480px;
+  max-height: calc(100vh - 132px);
+  display: flex;
+  flex-direction: column;
+  background: rgba(9, 17, 28, 0.82);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--border-strong, var(--border-color));
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(10px) scale(0.98);
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.chat-floating-panel.open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+.chat-floating-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-color);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.chat-floating-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.chat-floating-close:hover {
+  color: var(--text-primary);
+}
+
+.chat-floating-panel .chat-panel {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px 12px;
 }
 
 .chat-panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   min-height: 0;
 }
 
 .chat-status-line {
+  flex: none;
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   color: var(--text-muted);
   letter-spacing: 0.04em;
 }
@@ -29,30 +118,40 @@ body.chat-enabled [data-overlay-open="chat-overlay"] {
   color: var(--text-muted);
 }
 
+.chat-messages-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 .chat-messages {
   flex: 1;
-  min-height: 220px;
-  max-height: 48vh;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  background: var(--bg-card);
+  gap: 10px;
+  padding: 8px;
+  background: rgba(10, 18, 30, 0.5);
   border: 1px solid var(--border-color);
   border-radius: 8px;
 }
 
-.chat-row {
+/* Discord-style grouping: consecutive messages from the same sender within
+   the grouping window (see GROUP_WINDOW_MS in chat-panel.js) share one
+   .chat-group, with the handle/time header shown only once. */
+.chat-group {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .chat-row-meta {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  margin-bottom: 2px;
 }
 
 .chat-handle {
@@ -75,12 +174,12 @@ body.chat-enabled [data-overlay-open="chat-overlay"] {
 
 .chat-time {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   color: var(--text-muted);
 }
 
 .chat-body {
-  font-size: 0.85rem;
+  font-size: 0.83rem;
   line-height: 1.35;
   color: var(--text-primary);
   overflow-wrap: anywhere;
@@ -89,12 +188,13 @@ body.chat-enabled [data-overlay-open="chat-overlay"] {
 
 .chat-row-notice {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   color: var(--text-muted);
   font-style: italic;
 }
 
 .chat-form {
+  flex: none;
   display: flex;
   gap: 8px;
 }
@@ -102,25 +202,25 @@ body.chat-enabled [data-overlay-open="chat-overlay"] {
 .chat-form input[type="text"] {
   flex: 1;
   min-width: 0;
-  padding: 9px 12px;
+  padding: 8px 10px;
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
 }
 .chat-form input[type="text"]:disabled {
   opacity: 0.55;
 }
 
 .chat-form button {
-  padding: 9px 16px;
+  padding: 8px 14px;
   background: var(--bg-card-strong, var(--bg-card));
   border: 1px solid var(--border-strong, var(--border-color));
   border-radius: 6px;
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   cursor: pointer;
 }
 .chat-form button:disabled {
@@ -131,62 +231,35 @@ body.chat-enabled [data-overlay-open="chat-overlay"] {
   border-color: var(--accent-blue);
 }
 
-.chat-signin {
+/* Read-only watermark: covers the message list (not the whole panel, so
+   history stays visible underneath) whenever the visitor is anonymous.
+   Clicking it opens the Dashboard drawer's own sign-in screen instead of
+   chat carrying its own sign-in form. */
+.chat-watermark {
+  position: absolute;
+  inset: 0;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 11, 18, 0.6);
+  border-radius: 8px;
+  backdrop-filter: blur(2px);
+}
+.chat-watermark[hidden] {
+  display: none;
+}
+.chat-watermark-btn {
+  font-family: var(--font-mono);
   font-size: 0.78rem;
-  color: var(--text-muted);
-}
-.chat-signin a {
-  color: var(--accent-blue);
-}
-
-.chat-signin-note {
-  margin: 0;
-}
-
-.chat-signin-form {
-  display: flex;
-  gap: 6px;
-}
-.chat-signin-form input[type="email"] {
-  flex: 1;
-  min-width: 0;
-  padding: 7px 10px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
+  letter-spacing: 0.03em;
   color: var(--text-primary);
-  font-size: 0.78rem;
-}
-.chat-signin-form button {
-  padding: 7px 12px;
   background: var(--bg-card-strong, var(--bg-card));
   border: 1px solid var(--border-strong, var(--border-color));
-  border-radius: 6px;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
+  border-radius: 8px;
+  padding: 10px 16px;
   cursor: pointer;
-  white-space: nowrap;
 }
-.chat-signin-form button:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.chat-signin-form button:not(:disabled):hover {
+.chat-watermark-btn:hover {
   border-color: var(--accent-blue);
-}
-
-.chat-signin-sso {
-  align-self: flex-start;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-}
-
-.chat-signin-status {
-  margin: 0;
-  font-size: 0.72rem;
-  min-height: 1em;
+  color: var(--accent-blue);
 }

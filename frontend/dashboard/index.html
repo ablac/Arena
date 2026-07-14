@@ -661,6 +661,18 @@ button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.5;tra
 <script>
 if (window.self !== window.top) {
   document.body.classList.add('dashboard-embedded');
+} else {
+  // A magic-link email always opens a fresh top-level tab, so landing
+  // directly on this standalone page after clicking it feels like leaving
+  // the site. Hand the token off to the main site instead: it re-opens this
+  // same page embedded in its Dashboard drawer and forwards the token back
+  // in through the iframe src (see applyEmailTokenHandoff in app.js), where
+  // the rest of this page's existing confirm-sign-in flow picks it up.
+  var hash = String(window.location.hash || '');
+  if (hash.indexOf('email_token=') !== -1) {
+    var mounted = window.location.pathname === '/arena' || window.location.pathname.indexOf('/arena/') === 0;
+    window.location.replace((mounted ? '/arena/' : '/') + hash);
+  }
 }
 </script>
 

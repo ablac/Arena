@@ -583,6 +583,7 @@ function setupOverlays() {
   });
 
   applyDeepLinkedDashboardOpen(openOverlay);
+  applyEmailTokenHandoff(openOverlay);
 }
 
 // Other pages (the Shop, a freshly generated key's "claim this bot" link)
@@ -613,5 +614,32 @@ function applyDeepLinkedDashboardOpen(openOverlay) {
   params.delete('dash_plan');
   const query = params.toString();
   const cleanURL = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
+  window.history.replaceState(null, '', cleanURL);
+}
+
+// A magic-link sign-in email always opens a fresh top-level tab. Landing
+// there takes visitors to /dashboard/ first, which immediately hands the
+// token back here via a same-origin redirect (see the inline script at the
+// top of dashboard/index.html) rather than showing its standalone
+// confirm-sign-in screen. This is the other half of that handoff: forward
+// the token into the embedded Dashboard drawer's iframe (as a hash fragment,
+// same as the original email link, so it never touches a server access log)
+// and open the drawer, so sign-in completes on the live arena instead of a
+// bare page.
+function applyEmailTokenHandoff(openOverlay) {
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const token = hash.get('email_token');
+  if (!token) return;
+
+  const frame = document.getElementById('dashboard-frame');
+  if (frame) {
+    const base = frame.dataset.src || '';
+    frame.dataset.src = base + '#email_token=' + encodeURIComponent(token);
+  }
+  openOverlay('dashboard-overlay');
+
+  hash.delete('email_token');
+  const remaining = hash.toString();
+  const cleanURL = window.location.pathname + window.location.search + (remaining ? `#${remaining}` : '');
   window.history.replaceState(null, '', cleanURL);
 }
