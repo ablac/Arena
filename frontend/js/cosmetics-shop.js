@@ -704,7 +704,37 @@ export function initCosmeticsShop(root, options = {}) {
   };
 }
 
+// Mirrors setupExploreBrand in js/site-shell.js and m/mobile.js: the brand
+// lockup doubles as the Explore dropdown trigger everywhere it appears.
+// Modifier/non-left clicks fall through to the real href instead of opening
+// the menu.
+function setupExploreBrand() {
+  const item = document.getElementById('arenaExploreItem');
+  const toggle = document.getElementById('arenaExploreToggle');
+  if (!item || !toggle) return;
+
+  const setOpen = (open) => {
+    toggle.setAttribute('aria-expanded', String(open));
+    item.classList.toggle('is-open', open);
+  };
+
+  toggle.addEventListener('click', (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    setOpen(!item.classList.contains('is-open'));
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!item.contains(event.target)) setOpen(false);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') setOpen(false);
+  });
+}
+
 if (typeof document !== 'undefined') {
   const root = document.getElementById('cosmetic-shop');
   if (root) initCosmeticsShop(root);
+  setupExploreBrand();
 }
