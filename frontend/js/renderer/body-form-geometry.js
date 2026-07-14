@@ -80,6 +80,22 @@ function part(B, meshes, shape, name, scene, parent, material, scaling, position
   return mesh;
 }
 
+/**
+ * Place one Y-aligned primitive so it spans `from` -> `to` in the parent's
+ * local space (Babylon YXZ Euler: pitch from +Y, then yaw). Cones point their
+ * apex at `to`, which gives limbs tapered tips for free.
+ */
+function limbSegment(B, meshes, shape, name, scene, parent, material, from, to, thickness) {
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const dz = to[2] - from[2];
+  const length = Math.max(0.01, Math.hypot(dx, dy, dz));
+  return part(B, meshes, shape, name, scene, parent, material,
+    [thickness, length, thickness],
+    [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2, (from[2] + to[2]) / 2],
+    [Math.acos(Math.max(-1, Math.min(1, dy / length))), Math.atan2(dx, dz), 0]);
+}
+
 function bodyScaleFor(spec, width, height, depth) {
   const scale = {width: 0.88, height: 0.82, depth: 0.94};
   if (spec.family === 'mammal') Object.assign(scale, {width: 1.02, height: 0.78, depth: 1.08});
@@ -249,18 +265,37 @@ function buildSlime(spec, context, materials, meshes) {
   const B = window.BABYLON;
   const m = context.metrics || {};
   const tw = vector(m.torsoWidth, 7), th = vector(m.torsoHeight, 8.15), td = vector(m.torsoDepth, 3.75);
+  const bodyY = vector(m.bodyY, 10.56);
+  const headY = vector(m.headY, 11.26);
+  // The chassis joint rides a full leg-length above the floor; the monarch is
+  // a grounded gel stack, so every piece is authored down from that joint.
+  const floor = -bodyY;
   const body = part(B, meshes, 'sphere', `body-form-${spec.key}-blob-${id}`, scene, joints.body, materials.primary,
-    [tw * 1.12, th * 1.02, td * 1.20], [0, th * 0.50, 0]);
+    [tw * 1.05, th * 1.05, td * 1.50], [0, floor + th * 0.72, 0]);
+  part(B, meshes, 'sphere', `body-form-${spec.key}-skirt-${id}`, scene, joints.body, materials.primary,
+    [tw * 1.45, th * 0.55, td * 2.05], [0, floor + th * 0.16, 0]);
+  for (const side of [-1, 1]) part(B, meshes, 'sphere', `body-form-${spec.key}-drip-${side}-${id}`,
+    scene, joints.body, materials.secondary,
+    [tw * 0.22, tw * 0.18, tw * 0.22], [side * tw * 0.62, floor + th * 0.10, -side * td * 0.55]);
+  // Face and crown ride the head joint (offset back down onto the mass) so
+  // head-look and hit whiplash still read on a body with no neck.
   const head = part(B, meshes, 'sphere', `body-form-${spec.key}-face-${id}`, scene, joints.head, materials.secondary,
-    [tw * 0.64, th * 0.42, td * 0.88], [0, -th * 0.08, 0]);
+    [tw * 0.62, th * 0.40, td * 0.70], [0, floor + th * 0.84 - headY, -td * 0.55]);
+  for (const side of [-1, 1]) part(B, meshes, 'sphere', `body-form-${spec.key}-eye-${side}-${id}`,
+    scene, joints.head, materials.accent,
+    [tw * 0.12, tw * 0.14, tw * 0.10], [side * tw * 0.17, floor + th * 0.95 - headY, -td * 0.78]);
+  for (const [index, side] of [-1, 0, 1].entries()) part(B, meshes, 'cone', `body-form-${spec.key}-crown-${index}-${id}`,
+    scene, joints.head, materials.accent, [tw * 0.20, th * (0.34 + (index === 1 ? 0.14 : 0)), tw * 0.20],
+    [side * tw * 0.22, floor + th * 1.32 - headY, 0]);
+  // Pseudopods rise out of the crest and wave with the shared arm gait.
   for (const side of [-1, 1]) part(B, meshes, 'sphere', `body-form-${spec.key}-arm-${side}-${id}`, scene,
     side < 0 ? joints.leftArm : joints.rightArm, materials.primary,
-    [tw * 0.32, th * 0.62, td * 0.52], [0, -th * 0.25, 0]);
-  for (const [index, side] of [-1, 0, 1].entries()) part(B, meshes, 'cone', `body-form-${spec.key}-crown-${index}-${id}`,
-    scene, joints.head, materials.accent, [tw * 0.20, th * (0.40 + (index === 1 ? 0.15 : 0)), tw * 0.20],
-    [side * tw * 0.22, th * 0.40, 0]);
+    [tw * 0.30, th * 0.55, td * 0.45], [side * 0.4, -th * 0.95, -td * 0.30]);
   part(B, meshes, 'sphere', `body-form-${spec.key}-core-${id}`, scene, joints.body, materials.accent,
-    [tw * 0.30, tw * 0.30, tw * 0.20], [0, th * 0.48, -td * 0.62]);
+    [tw * 0.32, tw * 0.32, tw * 0.24], [0, floor + th * 0.80, -td * 0.85]);
+  // Sink the shared Arena status core into the gel crest instead of leaving
+  // it hovering at the missing humanoid chest height.
+  if (joints.core?.position) joints.core.position.set(0, floor + th * 1.02, -td * 0.35);
   return {body, head};
 }
 
@@ -269,23 +304,36 @@ function buildDrone(spec, context, materials, meshes) {
   const B = window.BABYLON;
   const m = context.metrics || {};
   const tw = vector(m.torsoWidth, 7), th = vector(m.torsoHeight, 8.15), td = vector(m.torsoDepth, 3.75);
+  const bodyY = vector(m.bodyY, 10.56);
+  const headY = vector(m.headY, 11.26);
+  // Carapace hangs below the chassis joint; eight two-segment legs arch up
+  // from its rim and plant their tapered tips on the actual floor.
+  const standY = -bodyY * 0.18;
+  const groundY = -bodyY + 0.15;
   const body = part(B, meshes, 'sphere', `body-form-${spec.key}-carapace-${id}`, scene, joints.body, materials.primary,
-    [tw * 1.16, th * 0.50, td * 1.58], [0, th * 0.56, 0]);
+    [tw * 1.30, th * 0.42, td * 1.60], [0, standY, -td * 0.10]);
+  part(B, meshes, 'sphere', `body-form-${spec.key}-abdomen-${id}`, scene, joints.body, materials.secondary,
+    [tw * 0.95, th * 0.40, td * 1.15], [0, standY + 0.4, td * 0.95]);
   const head = part(B, meshes, 'sphere', `body-form-${spec.key}-sensor-head-${id}`, scene, joints.head, materials.secondary,
-    [tw * 0.62, th * 0.30, td * 0.78], [0, -th * 0.22, -td * 0.28]);
-  for (const side of [-1, 1]) {
-    part(B, meshes, 'cylinder', `body-form-${spec.key}-manipulator-${side}-${id}`, scene,
-      side < 0 ? joints.leftArm : joints.rightArm, materials.secondary,
-      [tw * 0.16, th * 0.70, tw * 0.16], [0, -th * 0.28, 0], [0, 0, side * 0.52]);
-    for (let index = 0; index < 4; index += 1) part(B, meshes, 'cylinder',
-      `body-form-${spec.key}-leg-${side}-${index}-${id}`, scene, joints.body,
-      index % 2 ? materials.secondary : materials.primary,
-      [tw * 0.13, tw * (0.86 + index * 0.08), tw * 0.13],
-      [side * tw * (0.62 + index * 0.12), th * (0.48 - index * 0.04), td * (index - 1.5) * 0.28],
-      [0.35 + index * 0.08, 0, side * (0.82 + index * 0.08)]);
-  }
+    [tw * 0.52, th * 0.26, td * 0.85], [0, standY - headY + 0.3, -td * 1.05]);
   part(B, meshes, 'sphere', `body-form-${spec.key}-optic-${id}`, scene, joints.head, materials.accent,
-    [tw * 0.20, tw * 0.20, tw * 0.16], [0, -th * 0.20, -td * 0.72]);
+    [tw * 0.20, tw * 0.20, tw * 0.16], [0, standY - headY + 0.45, -td * 1.45]);
+  for (const side of [-1, 1]) {
+    for (let index = 0; index < 4; index += 1) {
+      const spread = index - 1.5;
+      const hip = [side * tw * 0.58, standY + 0.5, spread * td * 0.50 - td * 0.10];
+      const knee = [side * tw * 1.30, standY + 3.4, spread * td * 1.00 - td * 0.10];
+      const foot = [side * tw * 1.80, groundY, spread * td * 1.45 - td * 0.10];
+      limbSegment(B, meshes, 'cylinder', `body-form-${spec.key}-femur-${side}-${index}-${id}`,
+        scene, joints.body, index % 2 ? materials.secondary : materials.primary,
+        hip, knee, tw * 0.11);
+      limbSegment(B, meshes, 'cone', `body-form-${spec.key}-tibia-${side}-${index}-${id}`,
+        scene, joints.body, materials.secondary, knee, foot, tw * 0.10);
+    }
+  }
+  // Sink the shared Arena status core onto the carapace so it reads as a
+  // power light instead of hovering where the humanoid chest used to be.
+  if (joints.core?.position) joints.core.position.set(0, standY + th * 0.10, -td * 0.60);
   return {body, head};
 }
 
