@@ -268,8 +268,17 @@ func (h *AdminHandler) Routes(r chi.Router) {
 	r.Get("/bots", h.listBots)
 
 	// Chat moderation.
+	r.Get("/chat/messages", h.listChatMessages)
 	r.Post("/chat/messages/{id}/hide", h.hideChatMessage)
+	r.Post("/chat/messages/{id}/unhide", h.unhideChatMessage)
 	r.Post("/chat/ban", h.setChatBan)
+	r.Get("/chat/bans", h.listChatBans)
+	r.Get("/chat/ban-log", h.chatBanLog)
+	r.Get("/chat/keywords", h.listChatKeywords)
+	r.Post("/chat/keywords", h.addChatKeyword)
+	r.Delete("/chat/keywords/{id}", h.deleteChatKeyword)
+	r.Put("/chat/enabled", h.setChatEnabled)
+	r.Get("/chat/overview", h.chatOverview)
 
 	// Game control.
 	r.Post("/game/pause", h.gamePause)

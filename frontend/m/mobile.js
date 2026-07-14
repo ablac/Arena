@@ -12,7 +12,7 @@
 import { ArenaEngine } from '../js/renderer/engine.js?v=20260714e';
 import { Minimap } from '../js/renderer/minimap.js?v=20260710d';
 import { SpectatorSocket } from '../js/spectator-ws.js';
-import { apiPath, wsURL } from '../js/paths.js?v=20260710a';
+import { apiPath, appPath, wsURL } from '../js/paths.js?v=20260710a';
 import { handleServiceStatus, initServiceStatus } from '../js/service-status.js';
 
 const ARENA_WIDTH = 2000;
@@ -77,9 +77,74 @@ function setupExploreBrand() {
   });
 }
 
+// Wires a single FAB <-> full-screen overlay pair: click toggles the
+// overlay's "open" class (chat-panel.js watches #chat-overlay for exactly
+// this), backdrop/close-button taps and Escape dismiss it, and opening one
+// overlay closes any other so the mobile viewport never stacks two.
+function setupMobileOverlay(overlayEl, fabEl, { onOpen, onClose } = {}) {
+  if (!overlayEl || !fabEl) return null;
+
+  const close = () => {
+    if (!overlayEl.classList.contains('open')) return;
+    overlayEl.classList.remove('open');
+    overlayEl.setAttribute('aria-hidden', 'true');
+    fabEl.classList.remove('active');
+    fabEl.setAttribute('aria-expanded', 'false');
+    onClose?.();
+  };
+
+  const open = () => {
+    document.querySelectorAll('.mobile-overlay.open').forEach((other) => {
+      if (other !== overlayEl) other._mobileOverlayClose?.();
+    });
+    overlayEl.classList.add('open');
+    overlayEl.setAttribute('aria-hidden', 'false');
+    fabEl.classList.add('active');
+    fabEl.setAttribute('aria-expanded', 'true');
+    onOpen?.();
+  };
+
+  overlayEl._mobileOverlayClose = close;
+  overlayEl.querySelectorAll('[data-mobile-overlay-close]').forEach((btn) => {
+    btn.addEventListener('click', close);
+  });
+  fabEl.addEventListener('click', () => {
+    if (overlayEl.classList.contains('open')) close();
+    else open();
+  });
+
+  return { open, close };
+}
+
+// Chat FAB opens #chat-overlay, whose markup/ids match ../js/chat-panel.js
+// exactly (that module is unmodified and self-wires on DOMContentLoaded).
+// Dashboard FAB opens a lazy iframe overlay, only setting the iframe's src
+// the first time it's opened so idle mobile visitors never load it.
+function setupChatAndDashboard() {
+  setupMobileOverlay(document.getElementById('chat-overlay'), document.getElementById('fab-chat'));
+
+  const dashboardOverlay = document.getElementById('dashboard-overlay');
+  const dashboardFrame = dashboardOverlay?.querySelector('iframe[data-src]');
+  setupMobileOverlay(dashboardOverlay, document.getElementById('fab-dashboard'), {
+    onOpen: () => {
+      if (dashboardFrame && !dashboardFrame.getAttribute('src')) {
+        dashboardFrame.setAttribute('src', appPath(dashboardFrame.dataset.src));
+      }
+    },
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    document.querySelectorAll('.mobile-overlay.open').forEach((overlay) => {
+      overlay._mobileOverlayClose?.();
+    });
+  });
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   initServiceStatus();
   setupExploreBrand();
+  setupChatAndDashboard();
   const el = (id) => document.getElementById(id);
   const ui = {
     conn: el('tb-conn'),

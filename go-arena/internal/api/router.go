@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"arena-server/internal/config"
+	"arena-server/internal/db"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
 	"arena-server/internal/version"
@@ -103,6 +105,20 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	if config.C.ChatEnabled {
 		warmCtx, cancelWarm := context.WithTimeout(context.Background(), 10*time.Second)
 		chatHub.WarmHistory(warmCtx)
+		if enabled, err := db.GetChatRuntimeEnabled(warmCtx); err == nil {
+			chatHub.SetEnabled(enabled)
+		} else if !errors.Is(err, db.ErrNoDatabase) {
+			slog.Warn("failed to load chat runtime enabled state", "error", err)
+		}
+		if keywords, err := db.ListChatBlockedKeywords(warmCtx); err == nil {
+			list := make([]string, len(keywords))
+			for i, k := range keywords {
+				list[i] = k.Keyword
+			}
+			chatHub.SetBlockedKeywords(list)
+		} else if !errors.Is(err, db.ErrNoDatabase) {
+			slog.Warn("failed to load chat blocked keywords", "error", err)
+		}
 		cancelWarm()
 	}
 	chatSessionResolver := func(r *http.Request) *ws.ChatIdentity {
@@ -197,7 +213,20 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			account.Put("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
 			account.Delete("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
 			account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountLicense)
+			account.With(
+				security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
+			).Patch("/profile", UpdateAccountProfileHandler)
 		})
+
+		// Public profile (read-only, no auth) — shown when a chat participant's
+		// handle is clicked.
+		api.Get("/profile/{account_id}", PublicProfileHandler)
+
+		// Consent acceptance beacon (public) — records TOS/Privacy acceptance
+		// for the audit trail; the actual gating happens client-side.
+		api.With(
+			security.RateLimitMiddleware(config.C.AdminRateLimitRPM),
+		).Post("/consent/accept", RecordConsentAcceptance)
 
 		// Public registration issues a server-generated, database-backed key and
 		// bot. Verified accounts can claim it later through /account/bots.
@@ -231,7 +260,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		api.Get("/arena/map", GetArenaMap(engine))
 
 		// Chat configuration (public).
-		api.Get("/chat/config", ChatConfigHandler)
+		api.Get("/chat/config", ChatConfigHandler(chatHub))
 
 		// Admin routes (token-authenticated or OIDC session, rate-limited).
 		api.Route("/admin", func(admin chi.Router) {
@@ -310,7 +339,14 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				account.Put("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
 				account.Delete("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
 				account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountLicense)
+				account.With(
+					security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
+				).Patch("/profile", UpdateAccountProfileHandler)
 			})
+			api.Get("/profile/{account_id}", PublicProfileHandler)
+			api.With(
+				security.RateLimitMiddleware(config.C.AdminRateLimitRPM),
+			).Post("/consent/accept", RecordConsentAcceptance)
 			api.With(
 				security.FailClosedRateLimitMiddleware(config.C.RateLimitRegisterRPM),
 			).Post("/keys/generate", GenerateKey)
@@ -330,7 +366,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			api.Get("/weapon-stats", GetWeaponStats)
 			api.Get("/arena/status", GetArenaStatus(engine))
 			api.Get("/arena/map", GetArenaMap(engine))
-			api.Get("/chat/config", ChatConfigHandler)
+			api.Get("/chat/config", ChatConfigHandler(chatHub))
 
 			// Admin routes (mirrored under /arena prefix).
 			api.Route("/admin", func(admin chi.Router) {

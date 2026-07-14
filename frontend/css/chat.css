@@ -63,6 +63,16 @@ body.chat-enabled [data-overlay-open="chat-overlay"] {
   overflow-wrap: anywhere;
 }
 
+.chat-handle-clickable {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.chat-handle-clickable:hover,
+.chat-handle-clickable:focus-visible {
+  color: var(--accent-gold);
+}
+
 .chat-time {
   font-family: var(--font-mono);
   font-size: 0.65rem;
@@ -122,9 +132,61 @@ body.chat-enabled [data-overlay-open="chat-overlay"] {
 }
 
 .chat-signin {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   font-size: 0.78rem;
   color: var(--text-muted);
 }
 .chat-signin a {
   color: var(--accent-blue);
+}
+
+.chat-signin-note {
+  margin: 0;
+}
+
+.chat-signin-form {
+  display: flex;
+  gap: 6px;
+}
+.chat-signin-form input[type="email"] {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+}
+.chat-signin-form button {
+  padding: 7px 12px;
+  background: var(--bg-card-strong, var(--bg-card));
+  border: 1px solid var(--border-strong, var(--border-color));
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chat-signin-form button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.chat-signin-form button:not(:disabled):hover {
+  border-color: var(--accent-blue);
+}
+
+.chat-signin-sso {
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.chat-signin-status {
+  margin: 0;
+  font-size: 0.72rem;
+  min-height: 1em;
 }

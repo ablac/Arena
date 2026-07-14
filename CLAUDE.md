@@ -25,9 +25,10 @@ go-arena/
     ws/                         # WebSocket handlers (bot + spectator)
 frontend/
   js/renderer/                  # Babylon.js modules (engine, bots, weapons, etc.)
-  js/                           # App boot, spectator WS, leaderboard
+  js/                           # App boot, spectator WS, leaderboard, chat panel, session sync, consent gate
   m/                            # Mobile spectator site (served at /m/, reuses js/renderer + spectator-ws)
   dashboard/                    # Customer bot/account dashboard (Admin lives in admin/)
+  legal/                        # Static Terms of Service / Privacy Policy / Acceptable Use pages
 sdk/
   python/arena_sdk/             # Python SDK (ArenaBot base class)
   nodejs/src/                   # Node.js SDK
@@ -82,6 +83,9 @@ cd sdk/nodejs && npm install
 | Bot SDK features | `sdk/python/arena_sdk/bot.py` / `sdk/nodejs/src/ArenaBot.js` |
 | 3D rendering | `frontend/js/renderer/*.js` |
 | Admin features | `go-arena/internal/api/admin.go` |
+| Chat moderation (keywords, bans, enable toggle) | `go-arena/internal/api/admin_chat.go` + `frontend/admin/index.html` (`panel-chatmod`) |
+| Chat panel / sign-in / profile popup | `frontend/js/chat-panel.js`, `frontend/js/account-session.js`, `frontend/js/profile-popup.js` |
+| Legal docs / consent gate | `frontend/legal/*.html`, `frontend/js/consent-gate.js` |
 | Graphics/animation toggle (settings panel) | `docs/settings-system.md` - read before adding any new visual effect |
 | Build, deploy, or anything touching security headers/static caching | `docs/build-and-deploy.md` - read before touching `security_headers.go` or `noCacheStaticHandler`; has a list of regressions that already shipped once |
 
@@ -102,5 +106,7 @@ cd sdk/nodejs && npm install
 
 - **Bot WebSocket:** `ws://host:8700/ws/bot?key=<api_key>` — ticks carry `your_state.team`, `game_mode`, and in team modes `team_scores` + `flags`; `void_tiles` + `sudden_death_stall` during sudden death
 - **Spectator WebSocket:** `ws://host:8700/ws/spectator` — per-bot `team`; top-level `game_mode`, `map_shape`, `team_scores`, `flags`; obstacles only on keyframe broadcasts (`ARENA_SPECTATOR_KEYFRAME_INTERVAL`, default 10, plus on join) — clients keep the last copy between keyframes
-- **REST API:** public server-issued bot registration at `POST /api/v1/keys/generate` (empty body; plaintext returned once), optional verified-customer key management at `/api/v1/account/keys`, later bot claim at `POST /api/v1/account/bots`, plus `/api/v1/arena/status`, `/api/v1/arena/map`, `/api/v1/leaderboard`, `/api/v1/bot-setup`, `/api/v1/version` (build identity: git commit + build time; shown in the site's About drawer), `/api/v1/admin/*`
-- **Admin runtime tuning:** `PUT /api/v1/admin/game/config` accepts `game_mode`, `team_count`, `friendly_fire`, `map_shape` (plus round/zone/stat keys) — mode/shape changes take effect next round
+- **Chat WebSocket:** `ws://host:8700/ws/chat` — developer lobby chat, deliberately separate from bot/spectator sockets; reading is public, posting requires a signed-in customer session and is blocked while a linked bot is alive in an active round (`ARENA_CHAT_ALIVE_LOCK`); wire messages carry `account_id` (used to open a profile popup on handle click) and a `chat_settings` broadcast fires when an admin toggles the live enable/disable switch
+- **REST API:** public server-issued bot registration at `POST /api/v1/keys/generate` (empty body; plaintext returned once), optional verified-customer key management at `/api/v1/account/keys`, later bot claim at `POST /api/v1/account/bots`, public profile at `GET /api/v1/profile/{account_id}` and editable via `PATCH /api/v1/account/profile` (display name/chat handle, bio, avatar color, bot visibility), consent audit beacon at `POST /api/v1/consent/accept`, chat config at `GET /api/v1/chat/config`, plus `/api/v1/arena/status`, `/api/v1/arena/map`, `/api/v1/leaderboard`, `/api/v1/bot-setup`, `/api/v1/version` (build identity: git commit + build time; shown in the site's About drawer), `/api/v1/admin/*`
+- **Admin runtime tuning:** `PUT /api/v1/admin/game/config` accepts `game_mode`, `team_count`, `friendly_fire`, `map_shape` (plus round/zone/stat keys) — mode/shape changes take effect next round. Chat moderation is separate and applies live (no restart): `PUT /api/v1/admin/chat/enabled`, `POST /admin/chat/ban` (with `reason`, audited in `chat_ban_log`), `GET/POST/DELETE /admin/chat/keywords` (blocklist), `GET /admin/chat/messages|bans|ban-log|overview`, `POST /admin/chat/messages/{id}/hide|unhide`
+- **Customer sessions:** the `arena_customer_session` cookie is durable across a server restart (`customer_sessions` table, write-through cache) with sliding renewal (`ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS`, default 720h/30 days) — a visitor who returns within any TTL-length window never has to sign in again. The dashboard (iframe) and the chat panel share this same cookie; `frontend/js/account-session.js` broadcasts sign-in/out across them live via a `storage` event plus a slow poll fallback.

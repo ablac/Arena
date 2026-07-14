@@ -83,12 +83,16 @@ export function itemPreviewLoadout(item) {
 }
 
 export function dashboardPurchasePath(packID, pathname = window.location.pathname) {
-  const query = `?tab=cosmetics&pack=${encodeURIComponent(String(packID || ''))}`;
-  return appPath(`/dashboard/${query}`, pathname);
+  // The Dashboard now opens as a slide-out overlay on the main site rather
+  // than a full-page navigation to /dashboard/. The overlay's deep-link
+  // contract (see applyDeepLinkedDashboardOpen in js/app.js) only forwards
+  // dash_tab/dash_plan into the embedded iframe, so packID is accepted for
+  // API compatibility but no longer has a query param to travel in.
+  return appPath('/?dash_open=1&dash_tab=cosmetics', pathname);
 }
 
 export function subscriptionDashboardPath(pathname = window.location.pathname) {
-  return appPath('/dashboard/?tab=cosmetics&plan=all-access', pathname);
+  return appPath('/?dash_open=1&dash_tab=cosmetics&dash_plan=all-access', pathname);
 }
 
 export function catalogPath(pathname = window.location.pathname) {
@@ -471,7 +475,7 @@ export function initCosmeticsShop(root, options = {}) {
 
     if (elements.purchase) {
       const saleReady = state.checkoutEnabled && pack.is_purchasable === true;
-      elements.purchase.href = saleReady ? dashboardPurchasePath(pack.id, pathname) : appPath('/dashboard/?tab=cosmetics', pathname);
+      elements.purchase.href = saleReady ? dashboardPurchasePath(pack.id, pathname) : appPath('/?dash_open=1&dash_tab=cosmetics', pathname);
       elements.purchase.hidden = !saleReady;
       elements.purchase.setAttribute('aria-disabled', String(!saleReady));
       const purchaseKind = isTrailPack(pack) ? 'trail' : isBodyFormPack(pack) ? 'skin' : 'pack';

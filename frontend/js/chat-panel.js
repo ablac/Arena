@@ -9,6 +9,9 @@
  */
 
 import { apiPath, wsURL } from './paths.js?v=20260710a';
+import { startSessionSync } from './account-session.js?v=20260714a';
+import { ensureConsent } from './consent-gate.js?v=20260714a';
+import { openProfilePopup } from './profile-popup.js?v=20260714a';
 
 const MAX_RENDERED_MESSAGES = 200;
 const OVERLAY_ID = 'chat-overlay';
@@ -162,20 +165,6 @@ async function fetchChatConfig() {
   }
 }
 
-async function fetchAccountSession() {
-  try {
-    const resp = await fetch(apiPath('/account/session'), {
-      credentials: 'same-origin',
-      cache: 'no-store',
-      headers: { Accept: 'application/json' },
-    });
-    if (!resp.ok) return null;
-    return await resp.json();
-  } catch (err) {
-    return null;
-  }
-}
-
 function initChatPanel(cfg) {
   const overlay = document.getElementById(OVERLAY_ID);
   const listEl = document.getElementById('chat-messages');
@@ -184,6 +173,11 @@ function initChatPanel(cfg) {
   const sendBtn = document.getElementById('chat-send');
   const statusEl = document.getElementById('chat-status-line');
   const signinEl = document.getElementById('chat-signin');
+  const signinForm = document.getElementById('chat-signin-form');
+  const signinEmail = document.getElementById('chat-signin-email');
+  const signinSubmit = document.getElementById('chat-signin-submit');
+  const signinStatus = document.getElementById('chat-signin-status');
+  const signinSSO = document.getElementById('chat-signin-sso');
   if (!overlay || !listEl || !formEl || !inputEl || !sendBtn || !statusEl || !signinEl) return;
 
   document.body.classList.add('chat-enabled');
@@ -196,6 +190,7 @@ function initChatPanel(cfg) {
   let canPost = false;
   let connected = false;
   let started = false;
+  let runtimeEnabled = true;
   const messageIndex = new Map();
 
   function setStatus(text, tone) {
@@ -204,7 +199,7 @@ function initChatPanel(cfg) {
   }
 
   function updateComposer() {
-    const ready = connected && canPost;
+    const ready = connected && canPost && runtimeEnabled;
     inputEl.disabled = !ready;
     sendBtn.disabled = !ready;
   }
@@ -226,6 +221,20 @@ function initChatPanel(cfg) {
     const handleEl = document.createElement('span');
     handleEl.className = 'chat-handle';
     handleEl.textContent = msg.handle || 'dev';
+    if (msg.account_id) {
+      handleEl.classList.add('chat-handle-clickable');
+      handleEl.setAttribute('role', 'button');
+      handleEl.setAttribute('tabindex', '0');
+      handleEl.title = 'View profile';
+      const openThisProfile = () => openProfilePopup(msg.account_id);
+      handleEl.addEventListener('click', openThisProfile);
+      handleEl.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openThisProfile();
+        }
+      });
+    }
     const timeEl = document.createElement('span');
     timeEl.className = 'chat-time';
     timeEl.textContent = formatTime(msg.ts);
@@ -276,15 +285,27 @@ function initChatPanel(cfg) {
       switch (msg.type) {
         case 'chat_status':
           canPost = !!msg.can_post;
-          if (canPost) {
+          if (msg.reason === 'chat_disabled') {
+            runtimeEnabled = false;
+            setStatus('Chat is temporarily disabled by an admin', 'warn');
+            signinEl.hidden = true;
+          } else if (canPost) {
+            runtimeEnabled = true;
             setStatus('Chatting as ' + (msg.handle || 'dev'), 'ok');
             signinEl.hidden = true;
           } else if (msg.reason === 'sign_in_required') {
+            runtimeEnabled = true;
             setStatus('Read-only: sign in to post', 'info');
             signinEl.hidden = false;
           } else {
+            runtimeEnabled = true;
             setStatus('Read-only', 'info');
           }
+          updateComposer();
+          break;
+        case 'chat_settings':
+          runtimeEnabled = !!msg.enabled;
+          setStatus(runtimeEnabled ? 'Chat re-enabled' : 'Chat disabled by an admin', runtimeEnabled ? 'ok' : 'warn');
           updateComposer();
           break;
         case 'chat_history':
@@ -302,6 +323,10 @@ function initChatPanel(cfg) {
         case 'chat_error':
           if (msg.code === 'BOT_ALIVE_LOCK') {
             appendNotice('Chat is locked while your bot is alive in the round.');
+          } else if (msg.code === 'BLOCKED_KEYWORD') {
+            appendNotice('Message blocked: it contains a restricted word.');
+          } else if (msg.code === 'CHAT_DISABLED') {
+            appendNotice('Chat is temporarily disabled by an admin.');
           } else {
             appendNotice(msg.message || 'Message rejected.');
           }
@@ -354,10 +379,64 @@ function initChatPanel(cfg) {
   });
   observer.observe(overlay, { attributes: true, attributeFilter: ['class'] });
 
-  fetchAccountSession().then((session) => {
-    const loginURL = (session && session.login_url) || apiPath('/dashboard/login');
-    const link = signinEl.querySelector('a');
-    if (link) link.href = loginURL;
+  function applySessionInfo(session) {
+    const emailLoginEnabled = !!(session && session.email_login_enabled);
+    const oidcEnabled = !!(session && session.oidc_login_enabled);
+    if (signinForm) signinForm.hidden = !emailLoginEnabled;
+    if (signinSSO) {
+      signinSSO.hidden = !oidcEnabled;
+      signinSSO.href = (session && session.login_url) || apiPath('/dashboard/login');
+    }
+  }
+
+  if (signinForm) {
+    signinForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const email = (signinEmail?.value || '').trim();
+      if (!email) return;
+
+      const accepted = await ensureConsent();
+      if (!accepted) return;
+
+      signinSubmit.disabled = true;
+      const previousLabel = signinSubmit.textContent;
+      signinSubmit.textContent = 'Sending...';
+      if (signinStatus) signinStatus.textContent = '';
+
+      try {
+        const resp = await fetch(apiPath('/account/email/start'), {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, return_to: '/dashboard/' }),
+        });
+        const payload = await resp.json().catch(() => ({}));
+        if (signinStatus) {
+          signinStatus.textContent = resp.ok
+            ? (payload.message || 'Check your email for a sign-in link.')
+            : (payload.error || payload.detail || 'Could not send a sign-in link.');
+        }
+        if (resp.ok && signinEmail) signinEmail.value = '';
+      } catch (err) {
+        if (signinStatus) signinStatus.textContent = 'Could not send a sign-in link. Try again shortly.';
+      } finally {
+        signinSubmit.disabled = false;
+        signinSubmit.textContent = previousLabel;
+      }
+    });
+  }
+
+  // Both the dashboard (in its own iframe) and this panel post to the same
+  // customer session cookie, so a sign-in on either side shows up on the
+  // other via startSessionSync -- reconnecting an already-open socket picks
+  // up the new identity, since the server resolves it once at WS upgrade.
+  startSessionSync((session) => {
+    applySessionInfo(session);
+    if (started) {
+      socket.disconnect();
+      setStatus('Connecting...', 'warn');
+      socket.connect();
+    }
   });
 }
 

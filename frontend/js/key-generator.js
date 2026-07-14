@@ -1,6 +1,7 @@
 'use strict';
 
 import { apiPath } from './paths.js?v=20260710a';
+import { ensureConsent } from './consent-gate.js?v=20260714a';
 
 /**
  * Public, one-time API token generation for the Get Started drawer.
@@ -19,6 +20,9 @@ export function initKeyGenerator(container) {
   if (!button || !result) return;
 
   button.addEventListener('click', async () => {
+    const accepted = await ensureConsent();
+    if (!accepted) return;
+
     button.disabled = true;
     button.textContent = 'Generating token...';
 
@@ -80,7 +84,7 @@ function showKey(container, data) {
         <p class="keygen-warning">Copy this token now. Arena cannot show it again.</p>
         <p class="keygen-bot-id">Bot ID: <code>${escapeHTML(data.bot_id || '')}</code></p>
       </div>
-      <a class="keygen-next-link" href="dashboard/?tab=cosmetics">Claim this bot in My Dashboard to buy and equip cosmetics</a>
+      <a class="keygen-next-link" href="?dash_open=1&dash_tab=cosmetics">Claim this bot in My Dashboard to buy and equip cosmetics</a>
     </div>`;
 
   const keyField = container.querySelector('#key-display');

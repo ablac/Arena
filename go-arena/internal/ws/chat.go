@@ -47,6 +47,7 @@ const (
 // package convention that outbound messages are classifiable by prefix.
 type chatWireMessage struct {
 	ID        int64  `json:"id"`
+	AccountID string `json:"account_id,omitempty"`
 	Handle    string `json:"handle"`
 	Body      string `json:"body"`
 	Timestamp int64  `json:"ts"`
@@ -83,6 +84,14 @@ type chatErrorMessage struct {
 type chatHeartbeat struct {
 	Type       string `json:"type"`
 	ServerTime int64  `json:"server_time"`
+}
+
+// chatSettingsMessage is broadcast to every connected client the moment an
+// admin flips the runtime enable/disable switch, so an open tab updates
+// without needing to reconnect.
+type chatSettingsMessage struct {
+	Type    string `json:"type"`
+	Enabled bool   `json:"enabled"`
 }
 
 // ChatPostMessage is the single client-to-server message type.
@@ -153,6 +162,16 @@ type ChatHub struct {
 	// memID hands out ids when the database is absent (dev mode) so hide
 	// and dedup still work within the process lifetime.
 	memID atomic.Int64
+
+	// enabled is the admin-toggled live kill switch, layered on top of
+	// config.ChatEnabled (which governs whether the subsystem exists at all).
+	// Lock-free so the hot post() path never blocks on it.
+	enabled atomic.Bool
+
+	// keywords holds the current blocked-keyword list (already lowercased) as
+	// a []string behind an atomic.Value, so readers on the post() path never
+	// contend with an admin updating the list.
+	keywords atomic.Value
 }
 
 // NewChatHub builds the production hub wired to the game engine and the
@@ -183,7 +202,57 @@ func newChatHub(store ChatStore, isBotAlive func(string) bool, roundActive func(
 		roundActive: roundActive,
 	}
 	h.memID.Store(time.Now().UnixMilli())
+	// Default to enabled: this is the "master switch is on" state, matching
+	// config.ChatEnabled already having gated construction of the hub at all.
+	// Callers that persist the runtime toggle (router.go) overwrite this from
+	// the database immediately after construction.
+	h.enabled.Store(true)
+	h.keywords.Store([]string{})
 	return h
+}
+
+// Enabled reports the current runtime kill-switch state.
+func (h *ChatHub) Enabled() bool {
+	return h.enabled.Load()
+}
+
+// SetEnabled flips the runtime kill switch and, if the state actually
+// changed, tells every connected client immediately so an open tab does not
+// need to reconnect to learn chat was paused or resumed.
+func (h *ChatHub) SetEnabled(enabled bool) {
+	if h.enabled.Swap(enabled) == enabled {
+		return
+	}
+	payload, _ := json.Marshal(chatSettingsMessage{Type: "chat_settings", Enabled: enabled})
+	h.mu.Lock()
+	h.broadcastLocked(payload)
+	h.mu.Unlock()
+}
+
+// SetBlockedKeywords replaces the blocked-keyword list. Callers pass already
+// normalized (trimmed, lowercased) keywords.
+func (h *ChatHub) SetBlockedKeywords(keywords []string) {
+	cloned := make([]string, len(keywords))
+	copy(cloned, keywords)
+	h.keywords.Store(cloned)
+}
+
+// blockedKeywordHit reports whether body contains any blocked keyword
+// (case-insensitive substring match). The matched keyword is never returned
+// to the caller-facing error so the blocklist contents cannot be probed by
+// trial and error.
+func (h *ChatHub) blockedKeywordHit(body string) bool {
+	keywords, _ := h.keywords.Load().([]string)
+	if len(keywords) == 0 {
+		return false
+	}
+	lower := strings.ToLower(body)
+	for _, kw := range keywords {
+		if kw != "" && strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // reservePostWindow reserves a post slot in the per-account fallback window
@@ -296,9 +365,17 @@ func (h *ChatHub) post(ctx context.Context, c *chatClient, rawBody string) *chat
 		return &chatPostError{"AUTH_REQUIRED", "sign in to post in chat"}
 	}
 
+	if !h.Enabled() {
+		return &chatPostError{"CHAT_DISABLED", "chat is temporarily disabled by an admin"}
+	}
+
 	body, ok := sanitizeChatBody(rawBody, config.C.ChatMaxBodyLen)
 	if !ok {
 		return &chatPostError{"INVALID_BODY", fmt.Sprintf("message must be 1-%d characters", config.C.ChatMaxBodyLen)}
+	}
+
+	if h.blockedKeywordHit(body) {
+		return &chatPostError{"BLOCKED_KEYWORD", "message contains a blocked word"}
 	}
 
 	now := time.Now()
@@ -397,12 +474,16 @@ func (h *ChatHub) historyPayload() []byte {
 }
 
 func toWireMessage(m db.ChatMessage) chatWireMessage {
-	return chatWireMessage{
+	wire := chatWireMessage{
 		ID:        m.ID,
 		Handle:    m.Handle,
 		Body:      m.Body,
 		Timestamp: m.CreatedAt.UnixMilli(),
 	}
+	if m.AccountID != nil {
+		wire.AccountID = *m.AccountID
+	}
+	return wire
 }
 
 // sanitizeChatBody normalizes a raw chat body: newlines and tabs collapse to
@@ -583,10 +664,14 @@ func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*htt
 		// cannot block. Registering first would let a concurrent broadcast
 		// fill the buffer and wedge these blocking sends on a channel whose
 		// writer has not started.
-		status := chatStatusMessage{Type: "chat_status", CanPost: identity != nil}
-		if identity != nil {
+		status := chatStatusMessage{Type: "chat_status", CanPost: identity != nil && hub.Enabled()}
+		switch {
+		case identity != nil && !hub.Enabled():
 			status.Handle = client.handle
-		} else {
+			status.Reason = "chat_disabled"
+		case identity != nil:
+			status.Handle = client.handle
+		default:
 			status.Reason = "sign_in_required"
 		}
 		statusPayload, _ := json.Marshal(status)

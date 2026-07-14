@@ -27,6 +27,10 @@ source = source.replace(
   /import \{ apiPath \} from '[^']+';\r?\n/,
   "const apiPath = path => '/api/v1' + path;\n",
 );
+source = source.replace(
+  /import \{ ensureConsent \} from '[^']+';\r?\n/,
+  'const ensureConsent = async () => true;\n',
+);
 
 class FakeElement {
   constructor() {

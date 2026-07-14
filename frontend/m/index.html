@@ -10,6 +10,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="mobile.css?v=20260712a">
+  <link rel="stylesheet" href="../css/chat.css?v=20260714a">
+  <link rel="stylesheet" href="mobile-chat-dashboard.css?v=20260714a">
   <link rel="stylesheet" href="../css/brand-lockup.css?v=20260714a">
   <script src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
@@ -17,6 +19,7 @@
   <script src="https://cdn.babylonjs.com/v9.14.0/gui/babylon.gui.min.js"></script>
   <script src="../js/cosmetic-themes.js?v=20260713f"></script>
   <script type="module" src="mobile.js?v=20260714e"></script>
+  <script type="module" src="../js/chat-panel.js?v=20260714a"></script>
 </head>
 <body>
 
@@ -73,6 +76,12 @@
     <button id="fab-zoom-out" class="fab" type="button" aria-label="Zoom out">&minus;</button>
     <button id="fab-autopan" class="fab active" type="button" aria-label="Toggle auto pan">AP</button>
     <button id="fab-minimap" class="fab" type="button" aria-label="Toggle minimap">MAP</button>
+    <button id="fab-dashboard" class="fab fab-dashboard" type="button" aria-label="Open bot dashboard" aria-haspopup="dialog" aria-controls="dashboard-overlay" aria-expanded="false">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+    </button>
+    <button id="fab-chat" class="fab fab-chat" type="button" aria-label="Open chat" aria-haspopup="dialog" aria-controls="chat-overlay" aria-expanded="false">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+    </button>
     <a class="fab fab-shop" data-mobile-cosmetic-shop href="../shop/" aria-label="Open the Arena Cosmetic Shop">SHOP</a>
   </div>
 
@@ -98,6 +107,57 @@
       </div>
     </div>
   </section>
+
+  <!-- Chat overlay. #chat-overlay and every id below are load-bearing for
+       ../js/chat-panel.js (self-initializing, unmodified) — it watches this
+       exact element's class attribute for "open" to lazy-connect its WS. -->
+  <div id="chat-overlay" class="mobile-overlay mobile-overlay-chat" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="chat-overlay-title">
+    <div class="mobile-overlay-backdrop" data-mobile-overlay-close></div>
+    <div class="mobile-overlay-panel">
+      <div class="mobile-overlay-header">
+        <span class="mobile-overlay-title" id="chat-overlay-title">Chat</span>
+        <button type="button" class="mobile-overlay-close" data-mobile-overlay-close aria-label="Close chat">&times;</button>
+      </div>
+      <div class="mobile-overlay-body chat-panel">
+        <div class="chat-status-line" id="chat-status-line" data-tone="info" aria-live="polite">Open to connect</div>
+        <div class="chat-messages" id="chat-messages" aria-label="Chat messages"></div>
+        <form class="chat-form" id="chat-form" autocomplete="off">
+          <input type="text" id="chat-input" name="chat-input" placeholder="Message the lobby" aria-label="Chat message" disabled>
+          <button type="submit" id="chat-send" disabled>Send</button>
+        </form>
+        <div class="chat-signin" id="chat-signin" hidden>
+          <p class="chat-signin-note">Read-only mode. Posting pauses while your bot is alive in a round.</p>
+          <form class="chat-signin-form" id="chat-signin-form" autocomplete="off" hidden>
+            <input type="email" id="chat-signin-email" name="email" placeholder="you@example.com" required aria-label="Email for a sign-in link" autocomplete="email">
+            <button type="submit" id="chat-signin-submit">Send sign-in link</button>
+          </form>
+          <a class="chat-signin-sso" id="chat-signin-sso" href="#" rel="nofollow" hidden>Continue with SSO</a>
+          <p class="chat-signin-status" id="chat-signin-status" aria-live="polite"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dashboard overlay: lazy iframe, src set on first open by mobile.js
+       (mirrors the desktop drawer's data-src pattern in js/app.js). -->
+  <div id="dashboard-overlay" class="mobile-overlay mobile-overlay-dashboard" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="dashboard-overlay-title">
+    <div class="mobile-overlay-backdrop" data-mobile-overlay-close></div>
+    <div class="mobile-overlay-panel">
+      <div class="mobile-overlay-header">
+        <span class="mobile-overlay-title" id="dashboard-overlay-title">Dashboard</span>
+        <button type="button" class="mobile-overlay-close" data-mobile-overlay-close aria-label="Close dashboard">&times;</button>
+      </div>
+      <div class="mobile-overlay-body mobile-overlay-body-frame">
+        <iframe
+          id="mobile-dashboard-frame"
+          class="mobile-dashboard-frame"
+          data-src="/dashboard/?view=private"
+          title="Arena Bot Dashboard"
+          loading="lazy"
+          referrerpolicy="same-origin"></iframe>
+      </div>
+    </div>
+  </div>
 
 </body>
 </html>

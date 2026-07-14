@@ -678,3 +678,75 @@ func TestChatSameOrigin(t *testing.T) {
 		})
 	}
 }
+
+func TestChatBlockedKeywordRejected(t *testing.T) {
+	withChatConfig(t)
+	env := newChatTestEnv(t)
+	env.hub.SetBlockedKeywords([]string{"badword"})
+
+	poster := env.dial(t, identityHeaders("acct-kw", "Kappa"))
+	readChatMessage(t, poster, "chat_status")
+	readChatMessage(t, poster, "chat_history")
+
+	postChat(t, poster, "this has a BadWord in it")
+	errMsg := readChatMessage(t, poster, "chat_error")
+	if errMsg["code"] != "BLOCKED_KEYWORD" {
+		t.Fatalf("blocked-keyword post: code = %v, want BLOCKED_KEYWORD", errMsg["code"])
+	}
+
+	postChat(t, poster, "this one is clean")
+	msg := readChatMessage(t, poster, "chat_message")
+	if msg["message"] == nil {
+		t.Fatalf("clean post after keyword rejection: expected a broadcast message")
+	}
+}
+
+func TestChatRuntimeDisableRejectsPostsAndNotifiesClients(t *testing.T) {
+	withChatConfig(t)
+	env := newChatTestEnv(t)
+
+	poster := env.dial(t, identityHeaders("acct-toggle", "Toggle"))
+	status := readChatMessage(t, poster, "chat_status")
+	if status["can_post"] != true {
+		t.Fatalf("initial chat_status: can_post = %v, want true", status["can_post"])
+	}
+	readChatMessage(t, poster, "chat_history")
+
+	env.hub.SetEnabled(false)
+	settings := readChatMessage(t, poster, "chat_settings")
+	if settings["enabled"] != false {
+		t.Fatalf("chat_settings broadcast: enabled = %v, want false", settings["enabled"])
+	}
+
+	postChat(t, poster, "still trying to post")
+	errMsg := readChatMessage(t, poster, "chat_error")
+	if errMsg["code"] != "CHAT_DISABLED" {
+		t.Fatalf("post while runtime-disabled: code = %v, want CHAT_DISABLED", errMsg["code"])
+	}
+
+	env.hub.SetEnabled(true)
+	settings = readChatMessage(t, poster, "chat_settings")
+	if settings["enabled"] != true {
+		t.Fatalf("chat_settings broadcast: enabled = %v, want true", settings["enabled"])
+	}
+	postChat(t, poster, "now it should work")
+	msg := readChatMessage(t, poster, "chat_message")
+	if msg["message"] == nil {
+		t.Fatalf("post after re-enable: expected a broadcast message")
+	}
+}
+
+func TestChatHandlerNewConnectionReflectsRuntimeDisabled(t *testing.T) {
+	withChatConfig(t)
+	env := newChatTestEnv(t)
+	env.hub.SetEnabled(false)
+
+	conn := env.dial(t, identityHeaders("acct-newconn", "Newcomer"))
+	status := readChatMessage(t, conn, "chat_status")
+	if status["can_post"] != false {
+		t.Fatalf("new connection while disabled: can_post = %v, want false", status["can_post"])
+	}
+	if status["reason"] != "chat_disabled" {
+		t.Fatalf("new connection while disabled: reason = %v, want chat_disabled", status["reason"])
+	}
+}

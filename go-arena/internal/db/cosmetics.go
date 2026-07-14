@@ -432,6 +432,12 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_accounts_oidc_identity
 			ON customer_accounts (oidc_issuer, oidc_subject)
 			WHERE oidc_issuer IS NOT NULL AND oidc_subject IS NOT NULL`,
+		// Public profile fields, editable from the dashboard. show_bots_public
+		// defaults to true so a fresh account's linked bots are visible unless
+		// the owner opts out.
+		`ALTER TABLE customer_accounts ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE customer_accounts ADD COLUMN IF NOT EXISTS avatar_color TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE customer_accounts ADD COLUMN IF NOT EXISTS show_bots_public BOOLEAN NOT NULL DEFAULT true`,
 		`CREATE TABLE IF NOT EXISTS customer_email_verifications (
 			email TEXT PRIMARY KEY CHECK (email = LOWER(email)),
 			display_name TEXT NOT NULL DEFAULT '',

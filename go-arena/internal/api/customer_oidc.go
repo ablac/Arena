@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -17,6 +18,19 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
+
+// customerSessionSlideThreshold controls sliding renewal: a session whose
+// remaining lifetime has dropped below this fraction of the full TTL is
+// extended back out to a full TTL on next use. This is what makes "stay
+// signed in" mean something beyond the raw TTL: an account used at least
+// this often never has to sign in again, while a cookie that is stolen and
+// never used by its real owner still expires.
+const customerSessionSlideFraction = 0.5
+
+func hashSessionToken(token string) []byte {
+	sum := sha256.Sum256([]byte(token))
+	return sum[:]
+}
 
 const (
 	customerSessionCookieName = "arena_customer_session"
@@ -295,10 +309,7 @@ func customerAccountAPIPath(r *http.Request, suffix string) string {
 }
 
 func (h *CustomerOIDCHandler) establishCustomerSession(w http.ResponseWriter, r *http.Request, account *db.CustomerAccount, subject string) *CustomerSession {
-	ttl := time.Duration(config.C.CustomerOIDCSessionTTL) * time.Hour
-	if ttl <= 0 {
-		ttl = 24 * time.Hour
-	}
+	ttl := customerSessionTTL()
 	now := time.Now().UTC()
 	sessionID := generateToken(32)
 	session := &CustomerSession{
@@ -314,6 +325,9 @@ func (h *CustomerOIDCHandler) establishCustomerSession(w http.ResponseWriter, r 
 	h.mu.Lock()
 	h.sessions[sessionID] = session
 	h.mu.Unlock()
+	// Best effort: a database outage at login time just means the session
+	// does not survive a restart, not that login fails.
+	_ = db.InsertCustomerSession(r.Context(), hashSessionToken(sessionID), account.ID, session.CSRFToken, now, session.ExpiresAt)
 	http.SetCookie(w, &http.Cookie{
 		Name:     customerSessionCookieName,
 		Value:    sessionID,
@@ -324,6 +338,43 @@ func (h *CustomerOIDCHandler) establishCustomerSession(w http.ResponseWriter, r 
 		SameSite: http.SameSiteLaxMode,
 	})
 	return session
+}
+
+// customerSessionTTL is the absolute lifetime granted to a freshly
+// established or freshly slid-forward session.
+func customerSessionTTL() time.Duration {
+	ttl := time.Duration(config.C.CustomerOIDCSessionTTL) * time.Hour
+	if ttl <= 0 {
+		ttl = 720 * time.Hour
+	}
+	return ttl
+}
+
+// refreshSessionCookie re-issues the session cookie with MaxAge recalculated
+// from the session's current ExpiresAt. GetSession slides ExpiresAt forward
+// server-side on an active session, but the browser cookie's own MaxAge was
+// fixed at login time; without this, the cookie itself would still vanish on
+// schedule even though the server considers the session renewed. Called from
+// the handlers a signed-in visitor's browser hits on every page load, so an
+// active user's cookie lifetime tracks the sliding server expiry.
+func (h *CustomerOIDCHandler) refreshSessionCookie(w http.ResponseWriter, r *http.Request, session *CustomerSession) {
+	cookie, err := r.Cookie(customerSessionCookieName)
+	if err != nil || cookie.Value == "" {
+		return
+	}
+	maxAge := int(time.Until(session.ExpiresAt).Seconds())
+	if maxAge <= 0 {
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     customerSessionCookieName,
+		Value:    cookie.Value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   secureCookie(r),
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 func clearCustomerCookie(w http.ResponseWriter, r *http.Request, name string) {
@@ -341,6 +392,7 @@ func (h *CustomerOIDCHandler) LogoutHandler(w http.ResponseWriter, r *http.Reque
 		h.mu.Lock()
 		delete(h.sessions, cookie.Value)
 		h.mu.Unlock()
+		_ = db.DeleteCustomerSession(r.Context(), hashSessionToken(cookie.Value))
 	}
 	clearCustomerCookie(w, r, customerSessionCookieName)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -357,10 +409,60 @@ func (h *CustomerOIDCHandler) GetSession(r *http.Request) *CustomerSession {
 	h.mu.RLock()
 	session := h.sessions[cookie.Value]
 	h.mu.RUnlock()
-	if session == nil || time.Now().After(session.ExpiresAt) {
+
+	if session == nil {
+		// Cache miss: either this process just restarted, or the session was
+		// established by a different replica. Fall back to the durable copy
+		// and, if found, rehydrate the in-memory cache so future lookups on
+		// this process are fast again. A missing database (dev mode, or a
+		// session that really does not exist) resolves to "not signed in".
+		row, err := db.GetCustomerSessionByTokenHash(r.Context(), hashSessionToken(cookie.Value))
+		if err != nil || row == nil {
+			return nil
+		}
+		session = &CustomerSession{
+			AccountID:       row.AccountID,
+			Email:           row.Email,
+			Name:            row.DisplayName,
+			EmailVerifiedAt: row.EmailVerifiedAt,
+			CSRFToken:       row.CSRFToken,
+			CreatedAt:       row.CreatedAt,
+			ExpiresAt:       row.ExpiresAt,
+		}
+		if time.Now().After(session.ExpiresAt) {
+			return nil
+		}
+		h.mu.Lock()
+		h.sessions[cookie.Value] = session
+		h.mu.Unlock()
+	} else if time.Now().After(session.ExpiresAt) {
 		return nil
 	}
+
+	h.maybeSlideSessionExpiry(r.Context(), cookie.Value, session)
 	return session
+}
+
+// maybeSlideSessionExpiry extends a session that is more than halfway to
+// expiry back out to a full TTL, both in memory and (best effort) in the
+// database. This is what makes a returning visitor stay signed in
+// indefinitely while an abandoned or stolen cookie still lapses.
+func (h *CustomerOIDCHandler) maybeSlideSessionExpiry(ctx context.Context, sessionID string, session *CustomerSession) {
+	ttl := customerSessionTTL()
+	remaining := time.Until(session.ExpiresAt)
+	if remaining > time.Duration(float64(ttl)*customerSessionSlideFraction) {
+		return
+	}
+	now := time.Now().UTC()
+	newExpiry := now.Add(ttl)
+
+	h.mu.Lock()
+	if current := h.sessions[sessionID]; current == session {
+		current.ExpiresAt = newExpiry
+	}
+	h.mu.Unlock()
+
+	_ = db.TouchCustomerSession(ctx, hashSessionToken(sessionID), now, newExpiry)
 }
 
 func (h *CustomerOIDCHandler) SessionInfoHandler(w http.ResponseWriter, r *http.Request) {
@@ -368,6 +470,9 @@ func (h *CustomerOIDCHandler) SessionInfoHandler(w http.ResponseWriter, r *http.
 	session := h.GetSession(r)
 	oidcEnabled := h != nil && h.oauth2Config != nil
 	emailEnabled := h != nil && h.emailSender != nil && h.emailStore != nil
+	if session != nil {
+		h.refreshSessionCookie(w, r, session)
+	}
 	if session == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"authenticated":       false,
@@ -472,6 +577,7 @@ func MakeCustomerAuthMiddleware(handler *CustomerOIDCHandler) func(http.Handler)
 				writeError(w, http.StatusUnauthorized, "customer authentication required")
 				return
 			}
+			handler.refreshSessionCookie(w, r, session)
 			switch r.Method {
 			case http.MethodGet, http.MethodHead, http.MethodOptions:
 			default:
@@ -507,5 +613,10 @@ func (h *CustomerOIDCHandler) cleanupLoop() {
 			}
 		}
 		h.mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := db.DeleteExpiredCustomerSessions(ctx); err != nil && !errors.Is(err, db.ErrNoDatabase) {
+			slog.Warn("failed to purge expired customer sessions", "error", err)
+		}
+		cancel()
 	}
 }

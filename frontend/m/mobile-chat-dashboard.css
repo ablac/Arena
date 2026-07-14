@@ -1,0 +1,136 @@
+/* Mobile Chat + Dashboard overlays.
+   Chat markup/behavior is driven entirely by ../js/chat-panel.js (unmodified) --
+   this file only supplies layout for the ids it expects, reusing
+   ../css/chat.css (also loaded on this page) for the message rows, form and
+   sign-in block. Both overlays share the same full-screen "sheet" shell. */
+
+/* Chat FAB stays hidden until chat-panel.js confirms the server has chat
+   enabled (it adds body.chat-enabled) -- mirrors the pattern already used
+   in css/chat.css for [data-overlay-open="chat-overlay"]. */
+#fab-chat {
+  display: none;
+}
+body.chat-enabled #fab-chat {
+  display: inline-flex;
+}
+
+.fab-chat svg,
+.fab-dashboard svg {
+  display: block;
+  pointer-events: none;
+}
+
+/* ---------- Overlay shell (shared by chat + dashboard) ---------- */
+
+.mobile-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.mobile-overlay.open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mobile-overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 8, 14, 0.6);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.mobile-overlay-panel {
+  position: relative;
+  width: 100%;
+  height: calc(100% - 24px - var(--safe-top));
+  background: var(--bg-card-strong);
+  border: 1px solid var(--border-strong);
+  border-bottom: none;
+  border-radius: 20px 20px 0 0;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  transform: translateY(16px);
+  transition: transform 0.24s cubic-bezier(0.22, 0.9, 0.3, 1);
+}
+
+.mobile-overlay.open .mobile-overlay-panel {
+  transform: translateY(0);
+}
+
+.mobile-overlay-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.mobile-overlay-title {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent-gold);
+}
+
+.mobile-overlay-close {
+  appearance: none;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-soft);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mobile-overlay-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 16px calc(16px + var(--safe-bottom));
+}
+
+/* ---------- Chat body ---------- */
+/* .chat-panel / .chat-messages / .chat-form / .chat-signin styling comes
+   from ../css/chat.css; this just fits the flex column into the sheet body. */
+.mobile-overlay-body.chat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ---------- Dashboard body (lazy iframe) ---------- */
+
+.mobile-overlay-body-frame {
+  padding: 0;
+  display: block;
+}
+
+.mobile-dashboard-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--bg-primary);
+}
