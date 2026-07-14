@@ -10,11 +10,11 @@ import (
 // ChatConfigHandler reports the public chat configuration so the frontend
 // can decide whether to show the chat panel at all (and how to validate
 // input client-side before the server enforces the same limits). enabled
-// reflects both the startup master switch (ARENA_CHAT_ENABLED) and the
-// admin-toggled runtime kill switch, so the frontend needs only one field.
+// reflects the live admin on/off switch (see ChatHub.Enabled), which an
+// admin can flip from the admin panel with no restart required.
 func ChatConfigHandler(hub *ws.ChatHub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		enabled := config.C.ChatEnabled && hub != nil && hub.Enabled()
+		enabled := hub != nil && hub.Enabled()
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"enabled":       enabled,
 			"max_body_len":  config.C.ChatMaxBodyLen,

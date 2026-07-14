@@ -200,10 +200,14 @@ func postChat(t *testing.T, conn *websocket.Conn, body string) {
 	}
 }
 
+// TestChatHandlerDisabled covers the admin-toggled kill switch, which is the
+// sole source of truth for whether the endpoint accepts connections at all
+// (config.ChatEnabled only seeds this at schema creation time, see
+// EnsureChatSchema; it has no runtime effect once the hub exists).
 func TestChatHandlerDisabled(t *testing.T) {
 	withChatConfig(t)
-	config.C.ChatEnabled = false
 	env := newChatTestEnv(t)
+	env.hub.SetEnabled(false)
 
 	resp, err := http.Get(env.server.URL)
 	if err != nil {
@@ -733,20 +737,5 @@ func TestChatRuntimeDisableRejectsPostsAndNotifiesClients(t *testing.T) {
 	msg := readChatMessage(t, poster, "chat_message")
 	if msg["message"] == nil {
 		t.Fatalf("post after re-enable: expected a broadcast message")
-	}
-}
-
-func TestChatHandlerNewConnectionReflectsRuntimeDisabled(t *testing.T) {
-	withChatConfig(t)
-	env := newChatTestEnv(t)
-	env.hub.SetEnabled(false)
-
-	conn := env.dial(t, identityHeaders("acct-newconn", "Newcomer"))
-	status := readChatMessage(t, conn, "chat_status")
-	if status["can_post"] != false {
-		t.Fatalf("new connection while disabled: can_post = %v, want false", status["can_post"])
-	}
-	if status["reason"] != "chat_disabled" {
-		t.Fatalf("new connection while disabled: reason = %v, want chat_disabled", status["reason"])
 	}
 }

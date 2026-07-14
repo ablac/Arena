@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"arena-server/internal/config"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -14,6 +16,13 @@ import (
 // chat-scoped ban column to customer_accounts. It runs after
 // EnsureCosmeticsSchema (which creates customer_accounts) and takes its own
 // advisory lock because multiple arena-server replicas can race startup DDL.
+//
+// It always runs, regardless of ARENA_CHAT_ENABLED: that env var only seeds
+// the initial value of the chat_runtime_settings row the first time this
+// schema is created (ON CONFLICT DO NOTHING leaves an admin's later choice
+// alone across restarts). The schema existing unconditionally is what lets
+// an operator turn chat on entirely from the admin panel, with no env var
+// edit or restart required.
 func EnsureChatSchema(ctx context.Context) error {
 	if Pool == nil {
 		return ErrNoDatabase
@@ -63,21 +72,29 @@ func EnsureChatSchema(ctx context.Context) error {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_chat_ban_log_account ON chat_ban_log (account_id, created_at DESC)`,
-		// Singleton row holding the admin-toggled runtime kill switch. This is
-		// layered on top of ARENA_CHAT_ENABLED: the env var controls whether the
-		// chat subsystem exists at all (schema, hub, routes), while this row
-		// lets an admin pause/resume it live without a restart.
+		// Singleton row holding the live admin on/off switch for chat. This is
+		// the single source of truth ChatHandler and the rest of the chat
+		// package check; see the seed INSERT below for how it starts out.
 		`CREATE TABLE IF NOT EXISTS chat_runtime_settings (
 			id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
 			enabled BOOLEAN NOT NULL DEFAULT TRUE,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
-		`INSERT INTO chat_runtime_settings (id, enabled) VALUES (TRUE, TRUE) ON CONFLICT (id) DO NOTHING`,
 	}
 	for _, stmt := range statements {
 		if _, err := tx.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("EnsureChatSchema exec: %w", err)
 		}
+	}
+	// Separate from the statements loop because it takes a parameter: seeds
+	// the row from ARENA_CHAT_ENABLED only the first time this schema is
+	// created (ON CONFLICT DO NOTHING), so an admin's later toggle in the
+	// panel is never silently reverted by a restart.
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO chat_runtime_settings (id, enabled) VALUES (TRUE, $1) ON CONFLICT (id) DO NOTHING`,
+		config.C.ChatEnabled,
+	); err != nil {
+		return fmt.Errorf("EnsureChatSchema seed runtime settings: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

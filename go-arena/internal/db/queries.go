@@ -271,13 +271,13 @@ func EnsureCoreSchema(ctx context.Context) error {
 	if err := EnsureConsentSchema(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema consent: %w", err)
 	}
-	// Chat is off by default and must not touch the schema (a new table plus
-	// an ALTER on customer_accounts) unless enabled. It depends on
+	// Chat is off by default (its runtime_settings row seeds from
+	// ARENA_CHAT_ENABLED, see EnsureChatSchema), but the schema itself is
+	// always created so an admin can turn chat on live from the admin panel
+	// without needing to set that env var and restart. It depends on
 	// customer_accounts from the cosmetics schema above, so it stays last.
-	if config.C.ChatEnabled {
-		if err := EnsureChatSchema(ctx); err != nil {
-			return fmt.Errorf("EnsureCoreSchema chat: %w", err)
-		}
+	if err := EnsureChatSchema(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema chat: %w", err)
 	}
 
 	return nil

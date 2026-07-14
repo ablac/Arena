@@ -284,21 +284,18 @@ function initChatPanel(cfg) {
     (msg) => {
       switch (msg.type) {
         case 'chat_status':
+          // A successful connection is itself proof chat is currently
+          // enabled (the server 404s the upgrade otherwise), so this always
+          // clears any earlier chat_settings-disabled state on (re)connect.
           canPost = !!msg.can_post;
-          if (msg.reason === 'chat_disabled') {
-            runtimeEnabled = false;
-            setStatus('Chat is temporarily disabled by an admin', 'warn');
-            signinEl.hidden = true;
-          } else if (canPost) {
-            runtimeEnabled = true;
+          runtimeEnabled = true;
+          if (canPost) {
             setStatus('Chatting as ' + (msg.handle || 'dev'), 'ok');
             signinEl.hidden = true;
           } else if (msg.reason === 'sign_in_required') {
-            runtimeEnabled = true;
             setStatus('Read-only: sign in to post', 'info');
             signinEl.hidden = false;
           } else {
-            runtimeEnabled = true;
             setStatus('Read-only', 'info');
           }
           updateComposer();
