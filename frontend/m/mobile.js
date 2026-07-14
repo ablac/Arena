@@ -49,8 +49,37 @@ function titleCase(value) {
     .join(' ');
 }
 
+// The brand lockup doubles as the Explore dropdown trigger, linking across
+// the other Angel Software Solutions properties. Modifier/non-left clicks
+// fall through to the real href instead of opening the menu.
+function setupExploreBrand() {
+  const item = document.getElementById('arenaExploreItem');
+  const toggle = document.getElementById('tb-brand');
+  if (!item || !toggle) return;
+
+  const setOpen = (open) => {
+    toggle.setAttribute('aria-expanded', String(open));
+    item.classList.toggle('is-open', open);
+  };
+
+  toggle.addEventListener('click', (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    setOpen(!item.classList.contains('is-open'));
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!item.contains(event.target)) setOpen(false);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') setOpen(false);
+  });
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   initServiceStatus();
+  setupExploreBrand();
   const el = (id) => document.getElementById(id);
   const ui = {
     conn: el('tb-conn'),
