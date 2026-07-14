@@ -163,9 +163,11 @@ type ChatHub struct {
 	// and dedup still work within the process lifetime.
 	memID atomic.Int64
 
-	// enabled is the admin-toggled live kill switch, layered on top of
-	// config.ChatEnabled (which governs whether the subsystem exists at all).
-	// Lock-free so the hot post() path never blocks on it.
+	// enabled is the single source of truth for whether chat is on: an admin
+	// toggles it from the admin panel (PUT /admin/chat/enabled), it persists
+	// in the chat_runtime_settings table, and ChatHandler checks it directly
+	// rather than requiring the ARENA_CHAT_ENABLED env var + a restart. Lock-
+	// free so the hot post() path never blocks on it.
 	enabled atomic.Bool
 
 	// keywords holds the current blocked-keyword list (already lowercased) as
@@ -202,10 +204,10 @@ func newChatHub(store ChatStore, isBotAlive func(string) bool, roundActive func(
 		roundActive: roundActive,
 	}
 	h.memID.Store(time.Now().UnixMilli())
-	// Default to enabled: this is the "master switch is on" state, matching
-	// config.ChatEnabled already having gated construction of the hub at all.
-	// Callers that persist the runtime toggle (router.go) overwrite this from
-	// the database immediately after construction.
+	// Default to enabled so dev mode without a database (where there is no
+	// chat_runtime_settings row to load) works out of the box. Production
+	// callers (router.go) overwrite this from the database immediately after
+	// construction, which is what actually decides the real starting state.
 	h.enabled.Store(true)
 	h.keywords.Store([]string{})
 	return h
@@ -601,7 +603,7 @@ func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*htt
 		defer admission.finish()
 
 		cfg := &config.C
-		if !cfg.ChatEnabled {
+		if !hub.Enabled() {
 			http.Error(w, "chat is disabled", http.StatusNotFound)
 			return
 		}
@@ -664,14 +666,15 @@ func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*htt
 		// cannot block. Registering first would let a concurrent broadcast
 		// fill the buffer and wedge these blocking sends on a channel whose
 		// writer has not started.
-		status := chatStatusMessage{Type: "chat_status", CanPost: identity != nil && hub.Enabled()}
-		switch {
-		case identity != nil && !hub.Enabled():
+		// hub.Enabled() is already guaranteed true here (the handler returned
+		// 404 above otherwise), so CanPost only turns on whether the visitor is
+		// signed in. An admin disabling chat mid-session reaches already
+		// registered clients through the chat_settings broadcast instead (see
+		// SetEnabled), not through this initial status.
+		status := chatStatusMessage{Type: "chat_status", CanPost: identity != nil}
+		if identity != nil {
 			status.Handle = client.handle
-			status.Reason = "chat_disabled"
-		case identity != nil:
-			status.Handle = client.handle
-		default:
+		} else {
 			status.Reason = "sign_in_required"
 		}
 		statusPayload, _ := json.Marshal(status)

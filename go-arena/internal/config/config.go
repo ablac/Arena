@@ -442,6 +442,13 @@ type Config struct {
 	// the poster's account is alive in an active round, so chat cannot be
 	// used to coordinate live bots (the spectator stream is delayed for the
 	// same reason).
+	//
+	// ChatEnabled only seeds the chat_runtime_settings DB row the first time
+	// the chat schema is created; from then on an admin can turn chat on or
+	// off live from the admin panel's Chat Moderation tab (PUT
+	// /admin/chat/enabled), with no env var edit or restart required. This
+	// field exists so a fresh deployment can opt in from day one without
+	// needing that extra click.
 	ChatEnabled     bool `envconfig:"ARENA_CHAT_ENABLED" default:"false"`
 	ChatMaxClients  int  `envconfig:"ARENA_CHAT_MAX_CLIENTS" default:"200"`
 	ChatHistorySize int  `envconfig:"ARENA_CHAT_HISTORY_SIZE" default:"50"`

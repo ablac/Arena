@@ -100,27 +100,30 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 	// Developer lobby chat hub. The session resolver maps a request cookie
 	// to a chat identity; it stays nil-safe when customer OIDC is disabled
-	// (chat is then read-only for everyone).
+	// (chat is then read-only for everyone). Loading runtime state runs
+	// unconditionally (not gated on ARENA_CHAT_ENABLED) so the live
+	// chat_runtime_settings row -- which an admin can flip from the admin
+	// panel at any time, with no restart -- is always what actually decides
+	// whether chat is on; the env var only seeds that row's initial value
+	// the first time the schema is created (see EnsureChatSchema).
 	chatHub := ws.NewChatHub(engine)
-	if config.C.ChatEnabled {
-		warmCtx, cancelWarm := context.WithTimeout(context.Background(), 10*time.Second)
-		chatHub.WarmHistory(warmCtx)
-		if enabled, err := db.GetChatRuntimeEnabled(warmCtx); err == nil {
-			chatHub.SetEnabled(enabled)
-		} else if !errors.Is(err, db.ErrNoDatabase) {
-			slog.Warn("failed to load chat runtime enabled state", "error", err)
-		}
-		if keywords, err := db.ListChatBlockedKeywords(warmCtx); err == nil {
-			list := make([]string, len(keywords))
-			for i, k := range keywords {
-				list[i] = k.Keyword
-			}
-			chatHub.SetBlockedKeywords(list)
-		} else if !errors.Is(err, db.ErrNoDatabase) {
-			slog.Warn("failed to load chat blocked keywords", "error", err)
-		}
-		cancelWarm()
+	warmCtx, cancelWarm := context.WithTimeout(context.Background(), 10*time.Second)
+	chatHub.WarmHistory(warmCtx)
+	if enabled, err := db.GetChatRuntimeEnabled(warmCtx); err == nil {
+		chatHub.SetEnabled(enabled)
+	} else if !errors.Is(err, db.ErrNoDatabase) {
+		slog.Warn("failed to load chat runtime enabled state", "error", err)
 	}
+	if keywords, err := db.ListChatBlockedKeywords(warmCtx); err == nil {
+		list := make([]string, len(keywords))
+		for i, k := range keywords {
+			list[i] = k.Keyword
+		}
+		chatHub.SetBlockedKeywords(list)
+	} else if !errors.Is(err, db.ErrNoDatabase) {
+		slog.Warn("failed to load chat blocked keywords", "error", err)
+	}
+	cancelWarm()
 	chatSessionResolver := func(r *http.Request) *ws.ChatIdentity {
 		if customerOIDCHandler == nil {
 			return nil
