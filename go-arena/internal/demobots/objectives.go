@@ -148,7 +148,6 @@ func enemyClusterCenter(enemies []entity, clusterRadius float64) ([2]float64, in
 	bestCount := 1
 
 	for i := range enemies {
-		cx, cy := enemies[i].Position[0], enemies[i].Position[1]
 		count := 0
 		sx, sy := 0.0, 0.0
 		for j := range enemies {
@@ -161,8 +160,6 @@ func enemyClusterCenter(enemies []entity, clusterRadius float64) ([2]float64, in
 		if count > bestCount {
 			bestCount = count
 			bestCenter = [2]float64{sx / float64(count), sy / float64(count)}
-			_ = cx
-			_ = cy
 		}
 	}
 	return bestCenter, bestCount

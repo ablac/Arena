@@ -148,33 +148,6 @@ func trySmartPickup(ts tickState, strategy string, weapon string) *actionResult 
 	return nil
 }
 
-// === Mine Placement Logic ===
-
-// tryPlaceMine checks if the bot should place a mine this tick.
-// Returns an action if a mine should be placed, nil otherwise.
-func tryPlaceMine(ts tickState, botID string, near *entity, nearD float64) *actionResult {
-	if ts.MineCount >= 3 {
-		return nil
-	}
-
-	pos := ts.Position
-
-	// Being chased: enemy within 3 tiles behind me → place mine
-	if near != nil && nearD <= 3 && near.TargetID == botID {
-		a := placeMine()
-		return &a
-	}
-
-	// Near zone center with no enemies close → mine high-traffic area
-	distToCenter := chebyshev(pos, ts.ZoneTargetCenter)
-	if distToCenter <= 5 && (near == nil || nearD > 3) && rand.Float64() < 0.15 {
-		a := placeMine()
-		return &a
-	}
-
-	return nil
-}
-
 // === Gravity Well Logic ===
 
 // tryGravityWell checks if the bot should deploy a gravity well.

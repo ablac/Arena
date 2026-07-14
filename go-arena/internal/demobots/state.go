@@ -483,26 +483,25 @@ func (d *dangerSet) addRect(center [2]float64, width, height int) {
 // buildDangerSet populates the danger set for this tick from the parsed state.
 func buildDangerSet(d *dangerSet, ts *tickState, botID string) {
 	d.reset()
-	for i := range ts.HazardZones {
-		// Hazard key grants immunity to both hazard zones and burn fields.
-		if ts.HasHazardKey {
-			break
+	// Hazard key grants immunity to both hazard zones and burn fields.
+	if !ts.HasHazardKey {
+		for i := range ts.HazardZones {
+			h := &ts.HazardZones[i]
+			if !h.Active {
+				continue
+			}
+			if h.Width > 0 || h.Height > 0 {
+				// Rectangular pulsing hazard zone.
+				d.addRect(h.Position, h.Width, h.Height)
+				continue
+			}
+			// Radial burn field.
+			r := int(h.Radius)
+			if r <= 0 {
+				r = 2
+			}
+			d.addSquare(h.Position, r)
 		}
-		h := &ts.HazardZones[i]
-		if !h.Active {
-			continue
-		}
-		if h.Width > 0 || h.Height > 0 {
-			// Rectangular pulsing hazard zone.
-			d.addRect(h.Position, h.Width, h.Height)
-			continue
-		}
-		// Radial burn field.
-		r := int(h.Radius)
-		if r <= 0 {
-			r = 2
-		}
-		d.addSquare(h.Position, r)
 	}
 	for i := range ts.GravityWells {
 		w := &ts.GravityWells[i]
