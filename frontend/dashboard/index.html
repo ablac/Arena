@@ -675,13 +675,21 @@ if (window.self !== window.top) {
 }
 </script>
 
-<a href="https://angel-serv.com/" class="arena-brand dashboard-arena-brand" target="_blank" rel="noopener" aria-label="Angel Software Solutions home">
-  <img class="arena-brand-mark" src="../img/ethereal-wings-dark-icon.svg" alt="" width="118" height="46">
-  <span class="arena-brand-copy">
-    <span class="arena-brand-name">Angel Software Solutions</span>
-    <span class="arena-brand-product">THE ARENA</span>
-  </span>
-</a>
+<div class="explore-item dashboard-arena-brand" id="arenaExploreItem">
+  <a href="https://angel-serv.com/" id="arenaExploreToggle" class="arena-brand" target="_blank" rel="noopener" aria-label="Angel Software Solutions home" aria-haspopup="true" aria-expanded="false" aria-controls="arenaExploreMenu">
+    <img class="arena-brand-mark" src="../img/ethereal-wings-dark-icon.svg" alt="" width="118" height="46">
+    <span class="arena-brand-copy">
+      <span class="arena-brand-name">Angel Software Solutions</span>
+      <span class="arena-brand-product">THE ARENA</span>
+    </span>
+  </a>
+  <div class="explore-menu" id="arenaExploreMenu">
+    <a href="https://angel-serv.com/" target="_blank" rel="noopener">Angel-Serv.com <span>Technology consulting</span></a>
+    <a href="https://angel-serv.com/aquarium/" target="_blank" rel="noopener">The Aquarium <span>High-density browser world</span></a>
+    <a href="https://agentreef.net" target="_blank" rel="noopener">AgentReef <span>Agent federation platform</span></a>
+    <a href="https://kynetik.dev" target="_blank" rel="noopener">Kynetik <span>Design websites that move</span></a>
+  </div>
+</div>
 
 <div id="login">
   <h1>// BOT DASHBOARD</h1>
@@ -2637,6 +2645,36 @@ function initDashboardMode() {
   activateTab('overview');
 }
 
+// Mirrors setupExploreBrand in js/site-shell.js and m/mobile.js: the brand
+// lockup doubles as the Explore dropdown trigger everywhere it appears.
+// Modifier/non-left clicks fall through to the real href instead of opening
+// the menu. Independent of startDashboard() below so it still works even if
+// that async bootstrap fails partway through.
+function setupExploreBrand() {
+  const item = document.getElementById('arenaExploreItem');
+  const toggle = document.getElementById('arenaExploreToggle');
+  if (!item || !toggle) return;
+
+  const setOpen = (open) => {
+    toggle.setAttribute('aria-expanded', String(open));
+    item.classList.toggle('is-open', open);
+  };
+
+  toggle.addEventListener('click', (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    setOpen(!item.classList.contains('is-open'));
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!item.contains(event.target)) setOpen(false);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') setOpen(false);
+  });
+}
+
 async function startDashboard() {
   try {
     window.ArenaPaths = await import('../js/paths.js?v=20260710a');
@@ -2653,6 +2691,7 @@ async function startDashboard() {
 }
 
 startDashboard();
+setupExploreBrand();
 
 function getActivePublicTab() {
   return document.querySelector('.tbtn.active[data-view="public"]')?.dataset.tab || 'simulator';
