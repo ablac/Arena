@@ -58,10 +58,12 @@ assert.match(shopHTML, /data-shop-subscription-action[^>]*\shidden(?:\s|>)/,
   'All Access action must not be operable before checkout availability is confirmed');
 assert.match(shopCSS, /\.shop-all-access-offer \[hidden\]\s*\{[^}]*display:\s*none\s*!important/s,
   'author button styles must not override the unavailable offer hidden state');
-assert.match(mainHTML, /href="shop\/"[^>]*>[\s\S]*?<span>Shop<\/span>/,
-  'the main command dock must link to the dedicated Shop');
-assert.match(mainHTML, /class="mobile-command-actions"[\s\S]*?href="shop\/"[^>]*>Shop<\/a>/,
-  'mobile quick actions must expose the dedicated Shop directly');
+assert.match(mainHTML, /data-overlay-open="shop-overlay"[^>]*>[\s\S]*?<span>Shop<\/span>/,
+  'the main command dock must open the Shop as a slide-out drawer');
+assert.match(mainHTML, /class="mobile-command-actions"[\s\S]*?data-overlay-open="shop-overlay"[^>]*>Shop<\/button>/,
+  'mobile quick actions must open the dedicated Shop drawer directly');
+assert.match(mainHTML, /id="shop-overlay"[\s\S]*?data-src="\/shop\/[^"]*"/,
+  'the Shop drawer must lazy-load the dedicated Shop document');
 
 let source = readFileSync(shopModuleURL, 'utf8');
 assert.match(source, /dataset\.shopPackId\s*=/, 'pack hooks must serialize as data-shop-pack-id in real DOM');

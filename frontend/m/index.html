@@ -82,7 +82,7 @@
     <button id="fab-chat" class="fab fab-chat" type="button" aria-label="Open chat" aria-haspopup="dialog" aria-controls="chat-overlay" aria-expanded="false">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
     </button>
-    <a class="fab fab-shop" data-mobile-cosmetic-shop href="../shop/" aria-label="Open the Arena Cosmetic Shop">SHOP</a>
+    <button id="fab-shop" class="fab fab-shop" type="button" aria-label="Open the Arena Cosmetic Shop" aria-haspopup="dialog" aria-controls="shop-overlay" aria-expanded="false">SHOP</button>
   </div>
 
   <!-- Bottom sheet -->
@@ -144,6 +144,28 @@
           class="mobile-dashboard-frame"
           data-src="/dashboard/?view=private"
           title="Arena Bot Dashboard"
+          loading="lazy"
+          referrerpolicy="same-origin"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shop overlay: lazy iframe, same pattern as the Dashboard overlay above.
+       shop/index.html detects window.self !== window.top and adjusts its own
+       chrome accordingly (see the inline script at the top of its <body>). -->
+  <div id="shop-overlay" class="mobile-overlay mobile-overlay-shop" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="shop-overlay-title">
+    <div class="mobile-overlay-backdrop" data-mobile-overlay-close></div>
+    <div class="mobile-overlay-panel">
+      <div class="mobile-overlay-header">
+        <span class="mobile-overlay-title" id="shop-overlay-title">Shop</span>
+        <button type="button" class="mobile-overlay-close" data-mobile-overlay-close aria-label="Close shop">&times;</button>
+      </div>
+      <div class="mobile-overlay-body mobile-overlay-body-frame">
+        <iframe
+          id="mobile-shop-frame"
+          class="mobile-dashboard-frame"
+          data-src="/shop/"
+          title="Arena Cosmetic Shop"
           loading="lazy"
           referrerpolicy="same-origin"></iframe>
       </div>

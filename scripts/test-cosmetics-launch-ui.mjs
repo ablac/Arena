@@ -16,8 +16,10 @@ assert.ok(desktopHTML.indexOf('js/cosmetic-themes.js') < desktopHTML.indexOf('js
   'desktop must load procedural themes before the live renderer module chain');
 assert.ok(mobileHTML.indexOf('../js/cosmetic-themes.js') < mobileHTML.indexOf('mobile.js'),
   'mobile must load procedural themes before its shared renderer');
-assert.match(mobileHTML, /data-mobile-cosmetic-shop[^>]+href="\.\.\/shop\/"/,
-  'mobile spectator must open the dedicated Shop');
+assert.match(mobileHTML, /id="fab-shop"[^>]+aria-controls="shop-overlay"/,
+  'mobile spectator must open the Shop as a slide-out overlay');
+assert.match(mobileHTML, /id="shop-overlay"[\s\S]*?data-src="\/shop\/"/,
+  'mobile shop overlay must lazy-load the dedicated Shop document');
 assert.doesNotMatch(appSource, /initCosmeticsPanel|cosmetics-panel\.js/,
   'the live Arena must not retain the replaced embedded catalog');
 

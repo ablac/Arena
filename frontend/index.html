@@ -73,7 +73,7 @@
     <nav class="mobile-command-actions" aria-label="Quick actions">
       <button type="button" data-overlay-open="onboarding-overlay">Join</button>
       <button type="button" data-overlay-open="standings-overlay">Scores</button>
-      <a href="shop/">Shop</a>
+      <button type="button" data-overlay-open="shop-overlay">Shop</button>
       <button type="button" data-site-menu-toggle aria-controls="site-command-dock" aria-expanded="false">Menu</button>
     </nav>
   </header>
@@ -1351,10 +1351,10 @@ wss://arena.angel-serv.com/ws/spectator
       <svg class="rail-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="6"></circle><polyline points="8.21 12.89 7 22 12 19 17 22 15.79 12.88"></polyline></svg>
       <span>Standings</span>
     </button>
-    <a class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" href="shop/">
+    <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="shop-overlay">
       <svg class="rail-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8h12l-1 13H7L6 8Z"></path><path d="M9 8V6a3 3 0 0 1 6 0v2"></path></svg>
       <span>Shop</span>
-    </a>
+    </button>
     <button type="button" class="onboarding-rail onboarding-rail-mid onboarding-rail-secondary" data-overlay-open="toolkit-overlay">
       <svg class="rail-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>
       <span>Toolkit</span>
@@ -1404,6 +1404,23 @@ wss://arena.angel-serv.com/ws/spectator
           class="dashboard-frame"
           data-src="/dashboard/?view=public&v=20260706d"
           title="Arena Toolkit"
+          loading="lazy"
+          referrerpolicy="same-origin"></iframe>
+      </div>
+    </aside>
+  </div>
+
+  <div class="onboarding-overlay dashboard-overlay shop-overlay" id="shop-overlay" aria-hidden="true" data-overlay-side="left">
+    <div class="onboarding-scrim" data-close-overlay="shop-overlay"></div>
+    <aside class="onboarding-drawer dashboard-drawer" aria-labelledby="shop-title" role="dialog" aria-modal="true">
+      <button type="button" class="drawer-close" data-close-overlay="shop-overlay" aria-label="Close Shop">&times;</button>
+      <div class="drawer-shell-label" id="shop-title">//Shop</div>
+      <div class="dashboard-frame-shell">
+        <iframe
+          id="shop-frame"
+          class="dashboard-frame"
+          data-src="/shop/?v=20260714a"
+          title="Arena Cosmetic Shop"
           loading="lazy"
           referrerpolicy="same-origin"></iframe>
       </div>

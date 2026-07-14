@@ -116,22 +116,27 @@ function setupMobileOverlay(overlayEl, fabEl, { onOpen, onClose } = {}) {
   return { open, close };
 }
 
-// Chat FAB opens #chat-overlay, whose markup/ids match ../js/chat-panel.js
-// exactly (that module is unmodified and self-wires on DOMContentLoaded).
-// Dashboard FAB opens a lazy iframe overlay, only setting the iframe's src
-// the first time it's opened so idle mobile visitors never load it.
-function setupChatAndDashboard() {
-  setupMobileOverlay(document.getElementById('chat-overlay'), document.getElementById('fab-chat'));
-
-  const dashboardOverlay = document.getElementById('dashboard-overlay');
-  const dashboardFrame = dashboardOverlay?.querySelector('iframe[data-src]');
-  setupMobileOverlay(dashboardOverlay, document.getElementById('fab-dashboard'), {
+// Sets the iframe's src from data-src the first time its overlay opens, so
+// an idle mobile visitor never loads it. Shared by the Dashboard and Shop
+// overlays, which are otherwise identical lazy-iframe drawers.
+function setupLazyFrameOverlay(overlayId, fabId) {
+  const overlay = document.getElementById(overlayId);
+  const frame = overlay?.querySelector('iframe[data-src]');
+  setupMobileOverlay(overlay, document.getElementById(fabId), {
     onOpen: () => {
-      if (dashboardFrame && !dashboardFrame.getAttribute('src')) {
-        dashboardFrame.setAttribute('src', appPath(dashboardFrame.dataset.src));
+      if (frame && !frame.getAttribute('src')) {
+        frame.setAttribute('src', appPath(frame.dataset.src));
       }
     },
   });
+}
+
+// Chat FAB opens #chat-overlay, whose markup/ids match ../js/chat-panel.js
+// exactly (that module is unmodified and self-wires on DOMContentLoaded).
+function setupChatAndDashboard() {
+  setupMobileOverlay(document.getElementById('chat-overlay'), document.getElementById('fab-chat'));
+  setupLazyFrameOverlay('dashboard-overlay', 'fab-dashboard');
+  setupLazyFrameOverlay('shop-overlay', 'fab-shop');
 
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;

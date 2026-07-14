@@ -17,6 +17,26 @@
   <script type="module" src="../js/cosmetics-shop.js?v=20260714e"></script>
 </head>
 <body class="shop-page">
+  <script>
+  if (window.self !== window.top) {
+    document.body.classList.add('shop-embedded');
+  }
+  // Every relative link on this page ultimately points back at the main
+  // site (the shop has no sub-pages of its own). When embedded in the
+  // Shop drawer, hand those off to the top-level window instead of
+  // navigating this iframe to them -- otherwise "Live Arena" or "My
+  // Dashboard" would replace the shop's own content with the whole site,
+  // nested inside its own drawer.
+  document.addEventListener('click', function (event) {
+    if (window.self === window.top) return;
+    var link = event.target.closest('a[href]');
+    if (!link || link.target === '_blank') return;
+    var href = link.getAttribute('href') || '';
+    if (!href || href.charAt(0) === '#' || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;
+    event.preventDefault();
+    window.top.location.assign(new URL(href, window.location.href).href);
+  });
+  </script>
   <a class="shop-skip-link" href="#cosmetic-shop">Skip to the cosmetic shop</a>
 
   <div class="page-backdrop" aria-hidden="true">
@@ -37,6 +57,7 @@
     <nav class="shop-site-nav" aria-label="Shop navigation">
       <a href="../">Live Arena</a>
       <a href="../?dash_open=1">My Dashboard</a>
+      <button type="button" class="shop-open-new-tab" id="shopOpenNewTab" onclick="window.open(window.location.href, '_blank', 'noopener')">Open in new tab &#8599;</button>
     </nav>
   </header>
 
