@@ -8,15 +8,12 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
 	"arena-server/internal/api"
 	"arena-server/internal/config"
 	"arena-server/internal/db"
-	"arena-server/internal/demobots"
 	"arena-server/internal/game"
 	"arena-server/internal/security"
 	"arena-server/internal/ws"
@@ -250,20 +247,9 @@ func main() {
 			slog.Info("seeded bounty board from recent winners", "bot", seed.Name, "streak", seed.WinStreak)
 		}
 	}
-	// Demo bots: create manager before router so admin endpoints can reference it.
-	var demoManager *demobots.Manager
-	if demoBotEnabled() {
-		count := demoBotCount()
-		localURL := fmt.Sprintf("http://localhost:%d", config.C.ServerPort)
-		demoManager = demobots.NewManager(localURL, count)
-		slog.Info("demo bots enabled", "count", count)
-	}
-
-	// Build the HTTP router with optional demo manager.
+	// Build the HTTP router. Demo bots run as an external process (private
+	// repo) speaking the public bot protocol; the server has no embedded fleet.
 	var routerOpts []api.RouterOption
-	if demoManager != nil {
-		routerOpts = append(routerOpts, api.WithDemoManager(demoManager))
-	}
 	routerOpts = append(routerOpts, api.WithShutdown(cancel))
 	router := api.NewRouter(engine, routerOpts...)
 
@@ -300,9 +286,6 @@ func main() {
 	}
 
 	// Start demo bots after server setup.
-	if demoManager != nil {
-		go demoManager.Start(ctx)
-	}
 
 	// Graceful shutdown on SIGINT / SIGTERM or the authenticated admin restart
 	// endpoint. WebSockets are hijacked from net/http, so explicitly notify and
@@ -316,9 +299,6 @@ func main() {
 		time.Sleep(350 * time.Millisecond)
 
 		// Stop demo bots first so they disconnect cleanly.
-		if demoManager != nil {
-			demoManager.Stop()
-		}
 		engine.CloseAllWebSockets("service restart; retry in about 60 seconds")
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer shutdownCancel()
@@ -462,28 +442,4 @@ func grantRuntimeDatabasePrivileges(ctx context.Context, runtimeUser string) err
 		return fmt.Errorf("commit runtime database privileges: %w", err)
 	}
 	return nil
-}
-
-// demoBotEnabled returns true if the ARENA_DEMO_BOTS env var enables demo
-// bots. Defaults to "true".
-func demoBotEnabled() bool {
-	v := strings.ToLower(os.Getenv("ARENA_DEMO_BOTS"))
-	if v == "" {
-		return true // default: enabled
-	}
-	return v == "true" || v == "1" || v == "yes"
-}
-
-// demoBotCount returns the number of demo bots to spawn from the
-// ARENA_DEMO_BOT_COUNT env var. Defaults to the built-in roster size.
-func demoBotCount() int {
-	v := os.Getenv("ARENA_DEMO_BOT_COUNT")
-	if v == "" {
-		return len(demobots.DemoConfigs)
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
-		return len(demobots.DemoConfigs)
-	}
-	return n
 }
