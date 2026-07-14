@@ -11,11 +11,11 @@
  */
 
 import {parseColor, makeMat} from './utils.js';
-import {getCharacterProfile} from './character-roster.js?v=20260714c';
-import {ForgeAnimState} from './character-anims.js?v=20260714c';
-import {createForgeWeapon, disposeForgeWeapon} from './forge-weapons.js?v=20260714c';
-import {bodyFormForAsset} from './body-form-roster.js?v=20260714c';
-import {buildBodyFormGeometry, createBodyFormFarProxy} from './body-form-geometry.js?v=20260714c';
+import {getCharacterProfile} from './character-roster.js?v=20260714d';
+import {ForgeAnimState} from './character-anims.js?v=20260714d';
+import {createForgeWeapon, disposeForgeWeapon} from './forge-weapons.js?v=20260714d';
+import {bodyFormForAsset} from './body-form-roster.js?v=20260714d';
+import {buildBodyFormGeometry, createBodyFormFarProxy} from './body-form-geometry.js?v=20260714d';
 
 const _sceneResources = new WeakMap();
 
@@ -302,44 +302,44 @@ const ARMOR_STYLE = Object.freeze({
 const CHASSIS_STYLE = Object.freeze({
   sword: Object.freeze({
     // Duelist: hex face forward, tall head crest, banded visor.
-    headYaw: Math.PI / 6, gauntlet: 1.18, flair: 'crest',
+    headYaw: Math.PI / 6, gauntlet: 1.18, flair: 'crest', crownY: 1.15,
     visor: Object.freeze({w: 0.70, h: 0.58, y: 0.18}),
     chest: Object.freeze({w: 0.78, h: 0.44, y: 0.60, pitch: -0.12}),
   }),
   bow: Object.freeze({
     // Scout: hooded dome over a wide visor, light plating.
-    gauntlet: 1.04, flair: 'hood',
+    gauntlet: 1.04, flair: 'hood', crownY: 1.05,
     visor: Object.freeze({w: 0.84, h: 0.44, y: 0.16}),
     chest: Object.freeze({w: 0.56, h: 0.30, y: 0.62, pitch: 0.04}),
   }),
   spear: Object.freeze({
     // Lancer: swept-back crest, steeply raked chest wedge.
-    headYaw: Math.PI / 6, gauntlet: 1.14, flair: 'sweptCrest',
+    headYaw: Math.PI / 6, gauntlet: 1.14, flair: 'sweptCrest', crownY: 1.2,
     visor: Object.freeze({w: 0.64, h: 0.50, y: 0.20}),
     chest: Object.freeze({w: 0.66, h: 0.42, y: 0.62, pitch: -0.24}),
   }),
   daggers: Object.freeze({
     // Skirmisher: small head, slit visor, diagonal bandolier plate.
-    headScale: 0.88, gauntlet: 0.94,
+    headScale: 0.88, gauntlet: 0.94, crownY: 0.5,
     visor: Object.freeze({w: 0.56, h: 0.28, y: 0.26}),
     chest: Object.freeze({w: 0.46, h: 0.60, y: 0.52, pitch: -0.04, roll: 0.45}),
   }),
   staff: Object.freeze({
     // Arcanist: tall visor, robe skirt, floating halo ring.
-    gauntlet: 1.0, flair: 'halo', skirt: true,
+    gauntlet: 1.0, flair: 'halo', skirt: true, crownY: 0.75,
     visor: Object.freeze({w: 0.60, h: 0.72, y: 0.10}),
     chest: Object.freeze({w: 0.48, h: 0.64, y: 0.56, pitch: 0}),
   }),
   shield: Object.freeze({
     // Bulwark: neckless head sunk between the shoulders, sloped plating
     // front and back, heavy gauntlets.
-    headScaleY: 0.78, headDrop: 1.15, gauntlet: 1.30, flair: 'backplate',
+    headScaleY: 0.78, headDrop: 1.15, gauntlet: 1.30, flair: 'backplate', crownY: 0.08,
     visor: Object.freeze({w: 0.58, h: 0.32, y: 0.24}),
     chest: Object.freeze({w: 0.92, h: 0.52, y: 0.55, pitch: -0.30}),
   }),
   grapple: Object.freeze({
     // Rigger: off-center mono-optic, chest plate relocated to a back winch.
-    gauntlet: 1.24,
+    gauntlet: 1.24, crownY: 0.6,
     visor: Object.freeze({w: 0.30, h: 0.44, y: 0.20, x: 0.24}),
     chest: Object.freeze({back: true, w: 0.62, h: 0.50}),
   }),
@@ -536,6 +536,14 @@ export function createForgeCharacter(bot, scene, options = {}) {
       break;
   }
 
+  // Cosmetic attachment anchor: where head-mounted cosmetics (halos, crowns,
+  // antennas) sit for THIS silhouette. Body-form builders reposition it so a
+  // halo hovers over a rabbit's ears, a wizard's hat, or a slime's crown
+  // rather than at the humanoid default.
+  const headTop = new B.TransformNode(`forge-head-top-${id}`, scene);
+  headTop.parent = headJoint;
+  headTop.position.y = headHeight * (style.crownY ?? 0.55);
+
   const core = B.MeshBuilder.CreateCylinder(`forge-core-mesh-${id}`, {
     height: 0.48, diameter: Math.max(1.6, torsoWidth * 0.25), tessellation: 8,
   }, scene);
@@ -610,6 +618,7 @@ export function createForgeCharacter(bot, scene, options = {}) {
     weapon: null,
     core,
     cosmeticRoot,
+    headTop,
   };
   const weapon = createForgeWeapon(profile, id, scene, mounts, headMat, {
     handSpan: shoulderX,
@@ -729,6 +738,7 @@ export function createForgeCharacter(bot, scene, options = {}) {
 
   let renderedBody = torso;
   let renderedHead = head;
+  let formShoulderY = null;
   let renderedBodyMat = bodyMat;
   let renderedHeadMat = headMat;
   let bodyFormMaterials = [];
@@ -744,6 +754,12 @@ export function createForgeCharacter(bot, scene, options = {}) {
     renderedBodyMat = geometry.materials[0];
     renderedHeadMat = geometry.materials[1];
     joints.torso = renderedBody;
+    // Snap the cosmetic anchors onto the form's actual silhouette so every
+    // attachment slot fits every skin.
+    const anchors = geometry.anchors || {};
+    if (Number.isFinite(anchors.headTopY)) headTop.position.y = anchors.headTopY;
+    if (Array.isArray(anchors.backPos)) backMount.position.set(...anchors.backPos);
+    if (Number.isFinite(anchors.shoulderY)) formShoulderY = anchors.shoulderY;
     // The skeleton, semantic mounts, Arena core, and weapon stay shared, but
     // the robot shell itself is removed so a full-body skin never overlays or
     // reveals an invisible second character.
@@ -798,6 +814,9 @@ export function createForgeCharacter(bot, scene, options = {}) {
     joints,
     mounts,
     mountMetrics,
+    cosmeticAnchors: Object.freeze({
+      shoulderY: Number.isFinite(formShoulderY) ? formShoulderY : -torsoHeight * 0.08,
+    }),
     basePose,
     weaponBase,
     weaponPoseNodes,
