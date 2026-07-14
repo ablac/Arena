@@ -9,7 +9,7 @@
 
 import { isEnabled } from '../settings.js';
 
-const MAX_HISTORY = 18;
+const MAX_HISTORY = 24;
 // Spectator positions arrive at 10 Hz. Sampling three times faster rebuilt the
 // same ribbon geometry from interpolated points without adding useful truth.
 const SAMPLE_INTERVAL = 0.1;
@@ -17,8 +17,11 @@ const MAX_RENDERED_TRAILS = 48;
 const MAX_PARTICLE_SYSTEMS = 24;
 const MAX_PARTICLES_PER_TRAIL = 28;
 const TRAIL_SELECTION_HYSTERESIS_SQ = 40 * 40;
-const TRAIL_WIDTH = 6;
-const TRAIL_Y = 0.4;
+const TRAIL_WIDTH = 7.2;
+const TRAIL_Y = 0.5;
+// Paid ribbons draw a second narrow white-hot core over the wide glow layer.
+const CORE_WIDTH_FRACTION = 0.3;
+const CORE_WHITE_MIX = 0.6;
 
 const STANDARD_STYLE = Object.freeze({
   key: 'standard',
@@ -42,20 +45,26 @@ function particleStyle(emitRate, gravityY, options = {}) {
   });
 }
 
-function trailStyle(key, primary, secondary, width, alpha, particles) {
+function trailStyle(key, primary, secondary, width, alpha, particles, shape = {}) {
   // Paid trails must remain identifiable from spectator zoom, not merely tint
   // the free wake. Scale each authored signature while retaining its relative
   // width/opacity/emission character and the renderer's existing hard caps.
+  // `shape` adds a per-style motion signature: `pulse` waves the ribbon's
+  // edges, `jitter` staggers the samples into a zigzag arc.
   const emphasizedParticles = particles && Object.freeze({
     ...particles,
-    emitRate: Math.max(24, particles.emitRate * 1.5),
+    emitRate: Math.max(26, particles.emitRate * 2.2),
+    minSize: particles.minSize * 1.25,
+    maxSize: particles.maxSize * 1.25,
   });
   return Object.freeze({
     key,
     primary,
     secondary,
-    width: Math.max(1.2, width * 1.35),
-    alpha: Math.max(0.58, alpha * 1.55),
+    width: Math.max(1.35, width * 1.5),
+    alpha: Math.max(0.62, alpha * 1.7),
+    pulse: shape.pulse === true,
+    jitter: shape.jitter === true,
     particles: emphasizedParticles,
   });
 }
@@ -67,26 +76,26 @@ const TRAIL_STYLES = Object.freeze({
   ember_sparks: trailStyle('ember_sparks', '#ff5b2e', '#ffd166', 0.86, 0.34, particleStyle(20, 2.8, {minLife: 0.18, maxLife: 0.52})),
   frost_shards: trailStyle('frost_shards', '#7be7ff', '#e5fbff', 0.92, 0.32, particleStyle(14, -1.8, {minSize: 0.35, maxSize: 0.95})),
   ion_stream: trailStyle('ion_stream', '#39f5ff', '#4b7cff', 0.72, 0.4, particleStyle(18, 0.4, {spread: 0.75, minLife: 0.3, maxLife: 0.82})),
-  plasma_ribbon: trailStyle('plasma_ribbon', '#ff3fd1', '#7957ff', 1.12, 0.4, particleStyle(12, 0.8, {minSize: 0.7, maxSize: 1.5})),
-  void_motes: trailStyle('void_motes', '#6d43c5', '#cc8cff', 1.02, 0.28, particleStyle(10, 1.6, {spread: 2.2, minLife: 0.45, maxLife: 1.05})),
-  solar_wake: trailStyle('solar_wake', '#ff9e2c', '#fff4a8', 1.18, 0.4, particleStyle(19, 2.1, {minSize: 0.6, maxSize: 1.55})),
+  plasma_ribbon: trailStyle('plasma_ribbon', '#ff3fd1', '#7957ff', 1.12, 0.4, particleStyle(12, 0.8, {minSize: 0.7, maxSize: 1.5}), {pulse: true}),
+  void_motes: trailStyle('void_motes', '#6d43c5', '#cc8cff', 1.02, 0.28, particleStyle(10, 1.6, {spread: 2.2, minLife: 0.45, maxLife: 1.05}), {pulse: true}),
+  solar_wake: trailStyle('solar_wake', '#ff9e2c', '#fff4a8', 1.18, 0.4, particleStyle(19, 2.1, {minSize: 0.6, maxSize: 1.55}), {pulse: true}),
   lunar_dust: trailStyle('lunar_dust', '#aeb9da', '#ffffff', 0.96, 0.3, particleStyle(12, -0.7, {spread: 2.4, minLife: 0.5, maxLife: 1.1})),
   comet_tail: trailStyle('comet_tail', '#6ee7ff', '#ffffff', 1.3, 0.42, particleStyle(22, -0.35, {spread: 0.7, minLife: 0.24, maxLife: 0.68})),
-  nebula_pulse: trailStyle('nebula_pulse', '#8f63ff', '#ff77cc', 1.18, 0.36, particleStyle(13, 0.9, {spread: 2.1, minSize: 0.75, maxSize: 1.65})),
-  storm_arcs: trailStyle('storm_arcs', '#56b7ff', '#e8fbff', 0.84, 0.44, particleStyle(23, -2.4, {minSize: 0.25, maxSize: 0.78, minLife: 0.12, maxLife: 0.34})),
-  static_glitch: trailStyle('static_glitch', '#00f0b5', '#f638dc', 0.76, 0.4, particleStyle(21, 0, {spread: 2.8, minSize: 0.25, maxSize: 0.82, minLife: 0.1, maxLife: 0.3})),
-  pixel_scatter: trailStyle('pixel_scatter', '#57f287', '#78a7ff', 0.74, 0.34, particleStyle(17, -2.6, {minSize: 0.28, maxSize: 0.72, minLife: 0.28, maxLife: 0.7})),
-  data_stream: trailStyle('data_stream', '#39ffb6', '#83f7ff', 0.68, 0.42, particleStyle(20, -1.2, {spread: 0.55, minSize: 0.22, maxSize: 0.58})),
-  holo_prism: trailStyle('holo_prism', '#64e6ff', '#ff72d2', 1.02, 0.38, particleStyle(14, 0.5, {minSize: 0.6, maxSize: 1.35})),
-  toxic_spores: trailStyle('toxic_spores', '#9bea37', '#e3ff75', 0.98, 0.34, particleStyle(15, 2.3, {spread: 2.7, minLife: 0.55, maxLife: 1.2})),
+  nebula_pulse: trailStyle('nebula_pulse', '#8f63ff', '#ff77cc', 1.18, 0.36, particleStyle(13, 0.9, {spread: 2.1, minSize: 0.75, maxSize: 1.65}), {pulse: true}),
+  storm_arcs: trailStyle('storm_arcs', '#56b7ff', '#e8fbff', 0.84, 0.44, particleStyle(23, -2.4, {minSize: 0.25, maxSize: 0.78, minLife: 0.12, maxLife: 0.34}), {jitter: true}),
+  static_glitch: trailStyle('static_glitch', '#00f0b5', '#f638dc', 0.76, 0.4, particleStyle(21, 0, {spread: 2.8, minSize: 0.25, maxSize: 0.82, minLife: 0.1, maxLife: 0.3}), {jitter: true}),
+  pixel_scatter: trailStyle('pixel_scatter', '#57f287', '#78a7ff', 0.74, 0.34, particleStyle(17, -2.6, {minSize: 0.28, maxSize: 0.72, minLife: 0.28, maxLife: 0.7}), {jitter: true}),
+  data_stream: trailStyle('data_stream', '#39ffb6', '#83f7ff', 0.68, 0.42, particleStyle(20, -1.2, {spread: 0.55, minSize: 0.22, maxSize: 0.58}), {jitter: true}),
+  holo_prism: trailStyle('holo_prism', '#64e6ff', '#ff72d2', 1.02, 0.38, particleStyle(14, 0.5, {minSize: 0.6, maxSize: 1.35}), {pulse: true}),
+  toxic_spores: trailStyle('toxic_spores', '#9bea37', '#e3ff75', 0.98, 0.34, particleStyle(15, 2.3, {spread: 2.7, minLife: 0.55, maxLife: 1.2}), {pulse: true}),
   verdant_leaves: trailStyle('verdant_leaves', '#35c96f', '#b8f26d', 0.9, 0.32, particleStyle(12, -3.2, {spread: 2.5, minSize: 0.45, maxSize: 1.05, minLife: 0.5, maxLife: 1.15})),
   sand_wake: trailStyle('sand_wake', '#c99a55', '#f0d58d', 1.14, 0.3, particleStyle(18, -3.6, {spread: 2.9, minLife: 0.38, maxLife: 0.95})),
   magma_cinders: trailStyle('magma_cinders', '#ff3d20', '#ffbf3f', 1.08, 0.4, particleStyle(19, 3.4, {minSize: 0.3, maxSize: 0.92, minLife: 0.35, maxLife: 0.88})),
-  ocean_spray: trailStyle('ocean_spray', '#23aef3', '#b9fbff', 1.08, 0.36, particleStyle(18, -3, {spread: 2.25, minSize: 0.38, maxSize: 1.08})),
+  ocean_spray: trailStyle('ocean_spray', '#23aef3', '#b9fbff', 1.08, 0.36, particleStyle(18, -3, {spread: 2.25, minSize: 0.38, maxSize: 1.08}), {pulse: true}),
   gilded_dust: trailStyle('gilded_dust', '#dcae36', '#fff0a1', 0.92, 0.4, particleStyle(16, -0.8, {spread: 2.1, minLife: 0.48, maxLife: 1.05})),
-  rune_sparks: trailStyle('rune_sparks', '#9a6cff', '#60e9ff', 0.96, 0.42, particleStyle(13, 1.8, {spread: 1.9, minSize: 0.5, maxSize: 1.1})),
-  phantom_smoke: trailStyle('phantom_smoke', '#766b99', '#c8bce8', 1.24, 0.25, particleStyle(10, 2.5, {spread: 2.5, minSize: 0.9, maxSize: 1.85, minLife: 0.7, maxLife: 1.3})),
-  gear_sparks: trailStyle('gear_sparks', '#d67b31', '#f7df92', 0.82, 0.38, particleStyle(20, -3.1, {minSize: 0.28, maxSize: 0.82, minLife: 0.2, maxLife: 0.55})),
+  rune_sparks: trailStyle('rune_sparks', '#9a6cff', '#60e9ff', 0.96, 0.42, particleStyle(13, 1.8, {spread: 1.9, minSize: 0.5, maxSize: 1.1}), {jitter: true}),
+  phantom_smoke: trailStyle('phantom_smoke', '#766b99', '#c8bce8', 1.24, 0.25, particleStyle(10, 2.5, {spread: 2.5, minSize: 0.9, maxSize: 1.85, minLife: 0.7, maxLife: 1.3}), {pulse: true}),
+  gear_sparks: trailStyle('gear_sparks', '#d67b31', '#f7df92', 0.82, 0.38, particleStyle(20, -3.1, {minSize: 0.28, maxSize: 0.82, minLife: 0.2, maxLife: 0.55}), {jitter: true}),
   bounty_flare: trailStyle('bounty_flare', '#ffca3a', '#ff5a36', 1.16, 0.44, particleStyle(18, 2.7, {spread: 1.4, minSize: 0.6, maxSize: 1.4})),
 });
 
@@ -137,6 +146,7 @@ export class TrailRenderer {
     this._motionQuery = typeof window.matchMedia === 'function'
       ? window.matchMedia('(prefers-reduced-motion: reduce)')
       : null;
+    this._time = 0;
   }
 
   _enabled() {
@@ -157,6 +167,9 @@ export class TrailRenderer {
     material.backFaceCulling = false;
     material.alpha = 1;
     material.useVertexAlpha = true;
+    // Additive blending makes every wake read as light on the near-black
+    // arena floor instead of a translucent decal.
+    material.alphaMode = 1;
     material.freeze();
     this.sharedRibbonMaterial = material;
     return material;
@@ -184,9 +197,16 @@ export class TrailRenderer {
     let colors = this._styleColors.get(style.key);
     if (colors) return colors;
     const B = window.BABYLON;
+    const primary = parseColor(B, style.primary, STANDARD_STYLE.primary);
+    const secondary = parseColor(B, style.secondary, STANDARD_STYLE.secondary);
     colors = Object.freeze({
-      primary: parseColor(B, style.primary, STANDARD_STYLE.primary),
-      secondary: parseColor(B, style.secondary, STANDARD_STYLE.secondary),
+      primary,
+      secondary,
+      core: Object.freeze({
+        r: secondary.r + (1 - secondary.r) * CORE_WHITE_MIX,
+        g: secondary.g + (1 - secondary.g) * CORE_WHITE_MIX,
+        b: secondary.b + (1 - secondary.b) * CORE_WHITE_MIX,
+      }),
     });
     this._styleColors.set(style.key, colors);
     return colors;
@@ -244,6 +264,7 @@ export class TrailRenderer {
 
   _hideTrail(trail) {
     if (trail.mesh) trail.mesh.setEnabled(false);
+    if (trail.coreMesh) trail.coreMesh.setEnabled(false);
     if (trail.particles) trail.particles.emitRate = 0;
   }
 
@@ -271,9 +292,13 @@ export class TrailRenderer {
     const B = window.BABYLON;
     const left = [];
     const right = [];
+    const coreLeft = [];
+    const coreRight = [];
     for (let i = 0; i < MAX_HISTORY; i++) {
       left.push(new B.Vector3(x, TRAIL_Y, z));
       right.push(new B.Vector3(x, TRAIL_Y, z));
+      coreLeft.push(new B.Vector3(x, TRAIL_Y, z));
+      coreRight.push(new B.Vector3(x, TRAIL_Y, z));
     }
     const seededPreview = this.options.staticPreview === true || this.options.previewPath === true;
     const history = seededPreview
@@ -282,12 +307,16 @@ export class TrailRenderer {
     return {
       history,
       mesh: null,
+      coreMesh: null,
       particles: null,
       style,
       timer: 0,
       left,
       right,
+      coreLeft,
+      coreRight,
       colors: null,
+      coreColors: null,
       dirty: seededPreview,
       moving: this.options.staticPreview === true,
       entry,
@@ -298,6 +327,11 @@ export class TrailRenderer {
   _updateStyle(trail, entry, style) {
     if (trail.style.key === style.key) return;
     this._disposeParticleSystem(trail);
+    if (trail.coreMesh) {
+      trail.coreMesh.dispose();
+      trail.coreMesh = null;
+      trail.coreColors = null;
+    }
     trail.style = style;
     trail.entry = entry;
     trail.dirty = true;
@@ -366,6 +400,7 @@ export class TrailRenderer {
 
     const B = window.BABYLON;
     const seen = new Set();
+    this._time += Number.isFinite(dt) ? Math.max(0, dt) : 0;
 
     for (const botId of this._buildRenderQueue(botEntries)) {
       const entry = botEntries.get(botId);
@@ -418,14 +453,22 @@ export class TrailRenderer {
           : 0;
       }
 
+      // Animated shape signatures re-evaluate geometry while the bot moves.
+      if ((style.pulse || style.jitter) && trail.moving && !reducedMotion) {
+        trail.dirty = true;
+      }
+
       if (trail.history.length < 2) {
         if (trail.mesh) trail.mesh.setEnabled(false);
+        if (trail.coreMesh) trail.coreMesh.setEnabled(false);
         continue;
       }
       if (trail.mesh && !trail.mesh.isEnabled()) trail.mesh.setEnabled(true);
+      if (trail.coreMesh && !trail.coreMesh.isEnabled()) trail.coreMesh.setEnabled(true);
       if (!trail.dirty && trail.mesh) continue;
       trail.dirty = false;
 
+      const paid = style.key !== 'standard';
       const hist = trail.history;
       const n = hist.length;
       for (let i = 0; i < n; i++) {
@@ -442,13 +485,26 @@ export class TrailRenderer {
         const px = -nz / len;
         const pz = nx / len;
         const alpha = i / (n - 1);
-        const width = TRAIL_WIDTH * style.width * alpha;
-        trail.left[i].set(hist[i].x + px * width, TRAIL_Y, hist[i].z + pz * width);
-        trail.right[i].set(hist[i].x - px * width, TRAIL_Y, hist[i].z - pz * width);
+        const wave = style.pulse ? 0.72 + 0.28 * Math.sin(i * 1.7 + this._time * 7) : 1;
+        const zig = style.jitter ? (i % 2 ? 1 : -1) * TRAIL_WIDTH * style.width * 0.22 * alpha : 0;
+        const width = TRAIL_WIDTH * style.width * alpha * wave;
+        const cx = hist[i].x + px * zig;
+        const cz = hist[i].z + pz * zig;
+        trail.left[i].set(cx + px * width, TRAIL_Y, cz + pz * width);
+        trail.right[i].set(cx - px * width, TRAIL_Y, cz - pz * width);
+        if (paid) {
+          const coreWidth = width * CORE_WIDTH_FRACTION;
+          trail.coreLeft[i].set(cx + px * coreWidth, TRAIL_Y + 0.05, cz + pz * coreWidth);
+          trail.coreRight[i].set(cx - px * coreWidth, TRAIL_Y + 0.05, cz - pz * coreWidth);
+        }
       }
       for (let i = n; i < MAX_HISTORY; i++) {
         trail.left[i].copyFrom(trail.left[n - 1]);
         trail.right[i].copyFrom(trail.right[n - 1]);
+        if (paid) {
+          trail.coreLeft[i].copyFrom(trail.coreLeft[n - 1]);
+          trail.coreRight[i].copyFrom(trail.coreRight[n - 1]);
+        }
       }
 
       try {
@@ -469,6 +525,23 @@ export class TrailRenderer {
             instance: trail.mesh,
           });
         }
+        if (paid && !trail.coreMesh) {
+          const core = B.MeshBuilder.CreateRibbon(`trail-core-${botId}`, {
+            pathArray: [trail.coreLeft, trail.coreRight],
+            updatable: true,
+            sideOrientation: B.Mesh.DOUBLESIDE,
+          }, this.scene);
+          core.material = this._getSharedRibbonMaterial();
+          core.isPickable = false;
+          core.hasVertexAlpha = true;
+          trail.coreMesh = core;
+          trail.coreColors = new Float32Array(core.getTotalVertices() * 4);
+        } else if (trail.coreMesh) {
+          B.MeshBuilder.CreateRibbon(null, {
+            pathArray: [trail.coreLeft, trail.coreRight],
+            instance: trail.coreMesh,
+          });
+        }
 
         const bright = isEnabled('movementTrails', 'trailBrightness');
         let primary;
@@ -479,11 +552,13 @@ export class TrailRenderer {
         } else {
           ({primary, secondary} = this._getStyleColors(style));
         }
-        const brightness = bright || this.options.forceEnabled === true ? 1 : 0.55;
+        // A purchased trail is an explicit visual entitlement: it never dims
+        // behind the optional free-wake brightness toggle.
+        const brightness = bright || paid || this.options.forceEnabled === true ? 1 : 0.55;
         const vertexCount = trail.mesh.getTotalVertices();
         for (let vertex = 0; vertex < vertexCount; vertex++) {
           const index = vertex % MAX_HISTORY;
-          const amount = index < n ? index / (n - 1) : 0;
+          const amount = index < n ? (index / (n - 1)) ** 0.8 : 0;
           const red = primary.r + (secondary.r - primary.r) * amount;
           const green = primary.g + (secondary.g - primary.g) * amount;
           const blue = primary.b + (secondary.b - primary.b) * amount;
@@ -493,6 +568,19 @@ export class TrailRenderer {
           trail.colors[vertex * 4 + 3] = index < n ? amount * style.alpha : 0;
         }
         trail.mesh.setVerticesData(B.VertexBuffer.ColorKind, trail.colors, true);
+        if (trail.coreMesh && trail.coreColors) {
+          const core = this._getStyleColors(style).core;
+          const coreCount = trail.coreMesh.getTotalVertices();
+          for (let vertex = 0; vertex < coreCount; vertex++) {
+            const index = vertex % MAX_HISTORY;
+            const amount = index < n ? (index / (n - 1)) ** 0.8 : 0;
+            trail.coreColors[vertex * 4] = core.r;
+            trail.coreColors[vertex * 4 + 1] = core.g;
+            trail.coreColors[vertex * 4 + 2] = core.b;
+            trail.coreColors[vertex * 4 + 3] = index < n ? amount * 0.95 : 0;
+          }
+          trail.coreMesh.setVerticesData(B.VertexBuffer.ColorKind, trail.coreColors, true);
+        }
       } catch {
         // A transient degenerate path is safe to skip; the next sample reuses
         // the same buffers and retries without allocating another mesh.
@@ -502,6 +590,7 @@ export class TrailRenderer {
     for (const [botId, trail] of this.trails) {
       if (!seen.has(botId)) {
         if (trail.mesh) trail.mesh.dispose();
+        if (trail.coreMesh) trail.coreMesh.dispose();
         this._disposeParticleSystem(trail);
         this.trails.delete(botId);
       }
@@ -511,6 +600,7 @@ export class TrailRenderer {
   dispose() {
     for (const [, trail] of this.trails) {
       if (trail.mesh) trail.mesh.dispose();
+      if (trail.coreMesh) trail.coreMesh.dispose();
       this._disposeParticleSystem(trail);
     }
     this.trails.clear();
