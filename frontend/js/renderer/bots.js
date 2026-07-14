@@ -6,7 +6,7 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260714d';
+import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260714e';
 import {
   forgeContactDelay,
   updateForgeCharacter,
@@ -14,10 +14,10 @@ import {
   triggerForgeDodge,
   triggerForgeHit,
   triggerForgeShove,
-} from './character-anims.js?v=20260714d';
-import {updateForgeCharacterLOD} from './character-rig.js?v=20260714d';
-import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260714d';
-import {bodyFormKeyForBot} from './body-form-roster.js?v=20260714d';
+} from './character-anims.js?v=20260714e';
+import {updateForgeCharacterLOD} from './character-rig.js?v=20260714e';
+import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260714e';
+import {bodyFormKeyForBot} from './body-form-roster.js?v=20260714e';
 import { isEnabled } from '../settings.js';
 
 export const BODY_FORM_NEAR_CHARACTER_LIMIT = 64;
@@ -650,15 +650,30 @@ export class BotRenderer {
       this.scene.beginDirectAnimation(material, [animation], 0, 10, false);
     });
 
-    const scaleAnim = new B.Animation('bowHitScale', 'scaling', 100,
-      B.Animation.ANIMATIONTYPE_VECTOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
-    scaleAnim.setKeys([
-      { frame: 0, value: new B.Vector3(1.08, 0.92, 1.08) },
-      { frame: 10, value: new B.Vector3(1, 1, 1) }
-    ]);
-
-    this.scene.beginDirectAnimation(entry.body, [scaleAnim], 0, 10, false);
-    this.scene.beginDirectAnimation(entry.head, [scaleAnim], 0, 10, false);
+    // The Forge rig authors part dimensions in `scaling` (torso ~7x8x4), so
+    // the legacy absolute 1.08 -> 1,1,1 squash keys collapsed the torso and
+    // head to unit-sized specks on the FIRST ranged hit and left them that
+    // way for the rest of the session (bots looked half-missing once the
+    // zone forced fights). Squash relative to each part's authored scale,
+    // captured once so overlapping impacts cannot compound the shrink.
+    if (!entry._impactScaleBase) {
+      entry._impactScaleBase = {
+        body: entry.body.scaling.clone(),
+        head: entry.head.scaling.clone(),
+      };
+    }
+    for (const [mesh, base] of [
+      [entry.body, entry._impactScaleBase.body],
+      [entry.head, entry._impactScaleBase.head],
+    ]) {
+      const squash = new B.Animation('impactSquash', 'scaling', 100,
+        B.Animation.ANIMATIONTYPE_VECTOR3, B.Animation.ANIMATIONLOOPMODE_CONSTANT);
+      squash.setKeys([
+        { frame: 0, value: new B.Vector3(base.x * 1.08, base.y * 0.92, base.z * 1.08) },
+        { frame: 10, value: base.clone() }
+      ]);
+      this.scene.beginDirectAnimation(mesh, [squash], 0, 10, false);
+    }
   }
 
   handlePick(mesh) {

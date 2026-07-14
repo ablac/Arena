@@ -25,13 +25,13 @@ assert.match(cosmeticsSource, /forceEnabled/,
   'cosmetic application must expose an explicit shop-preview override');
 assert.doesNotMatch(botBodySource, /swordsman-body\.js|weapons\.js|animations\.js/,
   'the Shop entry path must not load retired character systems');
-assert.match(previewSource, /bot-body\.js\?v=20260714d/);
-assert.match(previewSource, /cosmetics\.js\?v=20260714d/);
+assert.match(previewSource, /bot-body\.js\?v=20260714e/);
+assert.match(previewSource, /cosmetics\.js\?v=20260714e/);
 assert.doesNotMatch(previewSource, /swordsman-anims\.js|updateSwordsmanAnim|isSwordsman/,
   'preview must execute only the Forge presentation path');
-assert.match(previewSource, /character-anims\.js\?v=20260714d/,
+assert.match(previewSource, /character-anims\.js\?v=20260714e/,
   'preview must use the allocation-stable Forge animation module');
-assert.match(previewSource, /trails\.js\?v=20260714d/,
+assert.match(previewSource, /trails\.js\?v=20260714e/,
   'preview must use the same bounded cosmetic trail renderer as the live arena');
 assert.match(previewSource, /const DEFAULT_RADIUS = 46;/,
   'the shared Shop/Dashboard camera must leave headroom for the tallest body forms');
