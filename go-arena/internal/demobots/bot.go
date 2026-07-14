@@ -34,6 +34,7 @@ type demoBot struct {
 	botID                 string  // bot ID from authenticated config, refreshed by connected messages
 	strategy              string  // stable configured archetype for comparable balance samples
 	navigation            navigationState
+	router                movementRouter
 	credentialProvisioner demoBotCredentialProvisioner
 	cosmeticProvisioner   demoBotCosmeticProvisioner
 }
@@ -388,6 +389,7 @@ func (b *demoBot) session(ctx context.Context) demoBotSessionOutcome {
 	b.logger.Info("entered arena", "weapon", b.config.Weapon, "strategy", b.strategy,
 		"attack_range", b.attackRange, "max_hp", b.maxHP)
 	b.navigation.reset()
+	b.router.reset()
 	if err := b.fetchMap(ctx); err != nil {
 		b.logger.Debug("map prefetch failed", "error", err)
 	}
@@ -418,6 +420,7 @@ func (b *demoBot) session(ctx context.Context) demoBotSessionOutcome {
 				continue
 			}
 			action := PickAction(b.strategy, msg, b.config.Weapon, b.attackRange, b.botID)
+			action = b.router.route(msg, action, b.botID)
 			action = b.navigation.stabilize(msg, action, b.botID)
 			payload := buildActionPayload(msg["tick"], action)
 			if err := conn.WriteJSON(payload); err != nil {
@@ -428,9 +431,11 @@ func (b *demoBot) session(ctx context.Context) demoBotSessionOutcome {
 			resetMineCount(b.botID)
 			resetGravWell(b.botID)
 			b.navigation.reset()
+			b.router.reset()
 
 		case "respawn":
 			b.navigation.reset()
+			b.router.reset()
 
 		case "round_end":
 			if err := b.refreshStats(ctx); err != nil {
@@ -440,14 +445,11 @@ func (b *demoBot) session(ctx context.Context) demoBotSessionOutcome {
 				b.logger.Debug("map refresh failed", "error", err)
 			}
 
-		case "map_init":
-			parseTerrain(msg)
-			b.navigation.reset()
-
 		case "round_start":
 			resetMineCount(b.botID)
 			resetGravWell(b.botID)
 			b.navigation.reset()
+			b.router.reset()
 			b.applyConfiguredStrategy("round_start")
 			if err := b.fetchMap(ctx); err != nil {
 				b.logger.Debug("map refresh failed", "error", err)

@@ -31,27 +31,6 @@ func SendToBot(bot *BotState, msg interface{}) {
 	safeSend(bot.SendChan, data)
 }
 
-// SendMapInit sends the static terrain grid to a bot at the start of a round.
-// DEPRECATED: No longer called — bots should use GET /api/v1/arena/map instead.
-// The next round's terrain is pre-generated during intermission.
-// Kept for reference / potential future use.
-func SendMapInit(bot *BotState, terrain *TerrainGrid) {
-	msg := map[string]interface{}{
-		"type":      "map_init",
-		"width":     terrain.Width,
-		"height":    terrain.Height,
-		"cell_size": terrain.CellSize,
-		"terrain":   terrain.ToCompactJSON(),
-		"legend": map[string]string{
-			"V": "void",
-			".": "ground",
-			"#": "wall",
-			"~": "water",
-		},
-	}
-	SendToBot(bot, msg)
-}
-
 // SendTickUpdate sends the per-tick game state update to a bot.
 // hints is optional — when non-nil it provides directional hints to far-away
 // bots and pickups (only sent when no bots are within view radius).
