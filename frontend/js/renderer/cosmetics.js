@@ -9,7 +9,7 @@
 
 import { isEnabled } from '../settings.js';
 import { makeMat, parseColor } from './utils.js';
-import {bodyFormForAsset} from './body-form-roster.js?v=20260714b';
+import {bodyFormForAsset} from './body-form-roster.js?v=20260714c';
 
 const ALLOWED = {
   bot_skin: new Set(['standard', 'neon_grid', 'carbon_armor']),
