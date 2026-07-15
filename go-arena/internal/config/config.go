@@ -937,11 +937,14 @@ func Load() {
 // running with default/weak credentials. It never blocks startup — operators
 // should be nudged to fix these, not locked out by a config validation bug.
 func warnInsecureDefaults() {
-	if C.DBPassword == "arena" {
+	if C.DBPassword == "arena" || C.DBPassword == "changeme_arena_2026" {
 		slog.Warn("SECURITY: ARENA_DB_PASSWORD is set to the insecure default " +
 			"value — set a strong, unique password before exposing this server")
 	}
-	if C.AdminToken == "" {
+	if C.AdminToken == "changeme_admin_token" {
+		slog.Warn("SECURITY: ARENA_ADMIN_TOKEN is set to the insecure example " +
+			"value — set a strong, unique token before exposing this server")
+	} else if C.AdminToken == "" {
 		if C.AdminLocalhostBypass {
 			slog.Warn("SECURITY: ARENA_ADMIN_TOKEN is not set; admin API is only " +
 				"reachable via the ARENA_ADMIN_LOCALHOST_BYPASS loopback path (no " +

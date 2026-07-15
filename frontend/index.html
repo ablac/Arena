@@ -543,7 +543,7 @@
     """Check if moving from pos=[col,row] in direction=[dx,dy] is walkable."""
     new_col = pos[0] + direction[0]
     new_row = pos[1] + direction[1]
-    if 0 <= new_row < len(terrain) and 0 <= new_col < len(terrain[0]):
+    if 0 &lt;= new_row &lt; len(terrain) and 0 &lt;= new_col &lt; len(terrain[0]):
         return terrain[new_row][new_col] in (".", "~")
     return False</pre>
         </div>

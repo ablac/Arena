@@ -438,8 +438,12 @@ func addCosmeticCheckoutResponseFields(response map[string]interface{}, checkout
 }
 
 func writeCosmeticOrderCheckoutResponse(w http.ResponseWriter, status int, order *db.CosmeticOrder, checkout *CosmeticCheckoutSession, resumed bool) {
+	if order == nil || checkout == nil {
+		writeError(w, http.StatusInternalServerError, "failed to render cosmetic checkout")
+		return
+	}
 	response := map[string]interface{}{"order_id": order.ID}
-	if order != nil && order.Status != "" {
+	if order.Status != "" {
 		response["order_status"] = order.Status
 	}
 	if resumed {

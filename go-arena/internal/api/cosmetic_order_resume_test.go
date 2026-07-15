@@ -24,6 +24,27 @@ func invokeCosmeticOrderResume(t *testing.T, handler *CosmeticCommerceHandler, o
 	return recorder
 }
 
+func TestWriteCosmeticOrderCheckoutResponseRejectsMissingState(t *testing.T) {
+	tests := []struct {
+		name     string
+		order    *db.CosmeticOrder
+		checkout *CosmeticCheckoutSession
+	}{
+		{name: "missing order", checkout: &CosmeticCheckoutSession{ID: "cs_missing_order"}},
+		{name: "missing checkout", order: &db.CosmeticOrder{ID: "order_missing_checkout"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writeCosmeticOrderCheckoutResponse(recorder, http.StatusOK, tt.order, tt.checkout, false)
+			if recorder.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+			}
+		})
+	}
+}
+
 func TestCosmeticOrderResumeReturnsSameOpenEmbeddedSessionToOwner(t *testing.T) {
 	order := commerceTestOrder()
 	order.Status = db.CosmeticOrderStatusCheckout
