@@ -119,6 +119,7 @@ jobs:
           node scripts/test-arena-brand-lockup.mjs
           node scripts/test-teleporter-readiness.mjs
           node scripts/test-service-status-ui.mjs
+          node scripts/test-chat-disabled-ui.mjs
           node scripts/test-sdk-service-status.mjs
           node --check updater/server.mjs
           node --test updater/*.test.mjs
