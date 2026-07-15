@@ -205,6 +205,7 @@ function ensureChatDOM() {
   if (existing) {
     return {
       overlay: existing,
+      launcherEl: document.getElementById('fab-chat'),
       listEl: document.getElementById('chat-messages'),
       formEl: document.getElementById('chat-form'),
       inputEl: document.getElementById('chat-input'),
@@ -260,12 +261,30 @@ function ensureChatDOM() {
 
   return {
     overlay,
+    launcherEl: bubble,
     listEl: overlay.querySelector('#chat-messages'),
     formEl: overlay.querySelector('#chat-form'),
     inputEl: overlay.querySelector('#chat-input'),
     sendBtn: overlay.querySelector('#chat-send'),
     statusEl: overlay.querySelector('#chat-status-line'),
   };
+}
+
+export function setChatAvailability({ enabled, overlay, launcherEl, watermark }) {
+  if (!enabled) {
+    overlay._mobileOverlayClose?.();
+    overlay.classList.remove('open');
+    overlay.setAttribute('aria-hidden', 'true');
+    watermark.hidden = true;
+    launcherEl?.classList.remove('is-active', 'active');
+    launcherEl?.setAttribute('aria-expanded', 'false');
+  }
+
+  if (!launcherEl) return;
+  launcherEl.disabled = !enabled;
+  launcherEl.classList.toggle('is-disabled', !enabled);
+  launcherEl.setAttribute('aria-label', enabled ? 'Open chat' : 'Chat disabled');
+  launcherEl.title = enabled ? 'Open chat' : 'Chat disabled';
 }
 
 /** Wraps listEl in a positioning shell and adds the read-only watermark over it. */
@@ -287,12 +306,13 @@ function buildWatermark(listEl) {
 
 function initChatPanel(cfg) {
   const dom = ensureChatDOM();
-  const { overlay, listEl, formEl, inputEl, sendBtn, statusEl } = dom;
+  const { overlay, launcherEl, listEl, formEl, inputEl, sendBtn, statusEl } = dom;
   if (!overlay || !listEl || !formEl || !inputEl || !sendBtn || !statusEl) return;
 
   const watermark = buildWatermark(listEl);
 
   document.body.classList.add('chat-enabled');
+  setChatAvailability({ enabled: !!cfg.enabled, overlay, launcherEl, watermark });
   const bodyLimit = cfg.max_body_len > 0 ? cfg.max_body_len : 280;
   // maxlength counts UTF-16 code units, but the server counts code points, so
   // an emoji-heavy message could be truncated below the real limit. Use a
@@ -305,7 +325,8 @@ function initChatPanel(cfg) {
   let canPost = false;
   let connected = false;
   let started = false;
-  let runtimeEnabled = true;
+  let runtimeEnabled = !!cfg.enabled;
+  let requiresSignIn = false;
   const lineIndex = new Map(); // message id -> its .chat-body element
   let lastGroup = null; // { key, el, ts }
 
@@ -429,10 +450,12 @@ function initChatPanel(cfg) {
           // clears any earlier chat_settings-disabled state on (re)connect.
           canPost = !!msg.can_post;
           runtimeEnabled = true;
+          requiresSignIn = !canPost && msg.reason === 'sign_in_required';
+          setChatAvailability({ enabled: true, overlay, launcherEl, watermark });
           if (canPost) {
             setStatus('Chatting as ' + shortHandle(msg.handle), 'ok');
             watermark.hidden = true;
-          } else if (msg.reason === 'sign_in_required') {
+          } else if (requiresSignIn) {
             setStatus('Read-only', 'info');
             watermark.hidden = false;
           } else {
@@ -444,9 +467,8 @@ function initChatPanel(cfg) {
         case 'chat_settings':
           runtimeEnabled = !!msg.enabled;
           setStatus(runtimeEnabled ? 'Chat re-enabled' : 'Chat disabled by an admin', runtimeEnabled ? 'ok' : 'warn');
-          // A "sign in to chat" prompt is pointless (and reads as
-          // contradictory) while there is nothing to sign in to post to.
-          if (!runtimeEnabled) watermark.hidden = true;
+          setChatAvailability({ enabled: runtimeEnabled, overlay, launcherEl, watermark });
+          if (runtimeEnabled) watermark.hidden = !requiresSignIn;
           updateComposer();
           break;
         case 'chat_history':
@@ -536,6 +558,6 @@ function initChatPanel(cfg) {
 
 document.addEventListener('DOMContentLoaded', async () => {
   const cfg = await fetchChatConfig();
-  if (!cfg || !cfg.enabled) return;
+  if (!cfg) return;
   initChatPanel(cfg);
 });

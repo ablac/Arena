@@ -23,7 +23,7 @@
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
   transition: border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
 }
-.chat-bubble:hover {
+.chat-bubble:not(:disabled):hover {
   border-color: var(--accent-blue);
   transform: translateY(-2px);
 }
@@ -34,6 +34,28 @@
 .chat-bubble svg {
   width: 22px;
   height: 22px;
+}
+.chat-bubble.is-disabled,
+.fab-chat.is-disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+.fab-chat.is-disabled {
+  position: relative;
+  overflow: hidden;
+}
+.chat-bubble.is-disabled::after,
+.fab-chat.is-disabled::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 50%;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  transform: rotate(-45deg);
 }
 
 .chat-floating-panel {
