@@ -432,6 +432,8 @@ func TestManualWeaponChangeDiscardsPartialEvidence(t *testing.T) {
 	if !ok {
 		t.Fatal("missing sword config")
 	}
+	original := wc
+	t.Cleanup(func() { UpdateBaseWeaponConfig("sword", original) })
 	wc.Damage++
 	if !UpdateBaseWeaponConfig("sword", wc) {
 		t.Fatal("manual sword update failed")

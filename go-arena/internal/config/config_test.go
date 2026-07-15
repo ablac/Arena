@@ -1,11 +1,38 @@
 package config
 
 import (
+	"bytes"
+	"log/slog"
 	"math"
 	"os"
 	"strings"
 	"testing"
 )
+
+func TestWarnInsecureDefaultsRecognizesExampleCredentials(t *testing.T) {
+	previousConfig := C
+	previousLogger := slog.Default()
+	t.Cleanup(func() {
+		C = previousConfig
+		slog.SetDefault(previousLogger)
+	})
+
+	var logs bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	C = Config{
+		DBPassword:           "changeme_arena_2026",
+		AdminToken:           "changeme_admin_token",
+		AdminLocalhostBypass: false,
+	}
+
+	warnInsecureDefaults()
+	output := logs.String()
+	for _, credential := range []string{"ARENA_DB_PASSWORD", "ARENA_ADMIN_TOKEN"} {
+		if !strings.Contains(output, credential) {
+			t.Fatalf("startup warnings = %q, want warning for %s example credential", output, credential)
+		}
+	}
+}
 
 func TestValidateMovementConfigRejectsUnsafeTerrainCadence(t *testing.T) {
 	for _, value := range []float64{0, -0.1, math.NaN(), math.Inf(1), math.Inf(-1), 2.01} {
