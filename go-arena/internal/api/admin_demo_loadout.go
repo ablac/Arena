@@ -14,9 +14,10 @@ import (
 // fleet can showcase shop items without shipping purchase entitlements.
 
 type demoLoadoutRequest struct {
-	BotID   string `json:"bot_id"`
-	PackID  string `json:"pack_id"`
-	TrailID string `json:"trail_id"`
+	BotID     string `json:"bot_id"`
+	PackID    string `json:"pack_id"`
+	BotSkinID string `json:"bot_skin_id"`
+	TrailID   string `json:"trail_id"`
 }
 
 type cosmeticSelection struct {
@@ -32,8 +33,8 @@ func (h *AdminHandler) applyDemoLoadout(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bot_id is required")
 		return
 	}
-	if req.PackID == "" && req.TrailID == "" {
-		writeError(w, http.StatusBadRequest, "pack_id or trail_id is required")
+	if req.PackID == "" && req.BotSkinID == "" && req.TrailID == "" {
+		writeError(w, http.StatusBadRequest, "pack_id, bot_skin_id, or trail_id is required")
 		return
 	}
 
@@ -43,22 +44,10 @@ func (h *AdminHandler) applyDemoLoadout(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	selections := make([]cosmeticSelection, 0, 4)
-	if req.PackID != "" {
-		packSelections, err := cosmeticSelectionsForPack(*catalog, req.PackID)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		selections = append(selections, packSelections...)
-	}
-	if req.TrailID != "" {
-		trailSelection, err := cosmeticSelectionForTrail(*catalog, req.TrailID)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		selections = append(selections, trailSelection)
+	selections, err := cosmeticSelectionsForDemoLoadout(*catalog, req.PackID, req.BotSkinID, req.TrailID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	for _, selection := range selections {
@@ -78,6 +67,55 @@ func (h *AdminHandler) applyDemoLoadout(w http.ResponseWriter, r *http.Request) 
 		"bot_id":     req.BotID,
 		"selections": selections,
 	})
+}
+
+func cosmeticSelectionsForDemoLoadout(catalog db.CosmeticCatalog, packID, botSkinID, trailID string) ([]cosmeticSelection, error) {
+	selections := make([]cosmeticSelection, 0, 4)
+	if packID != "" {
+		packSelections, err := cosmeticSelectionsForPack(catalog, packID)
+		if err != nil {
+			return nil, err
+		}
+		selections = append(selections, packSelections...)
+	}
+	if botSkinID != "" {
+		botSkinSelection, err := cosmeticSelectionForBotSkin(catalog, botSkinID)
+		if err != nil {
+			return nil, err
+		}
+		replaced := false
+		for index := range selections {
+			if selections[index].Slot == db.CosmeticSlotBotSkin {
+				selections[index] = botSkinSelection
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			selections = append(selections, botSkinSelection)
+		}
+	}
+	if trailID != "" {
+		trailSelection, err := cosmeticSelectionForTrail(catalog, trailID)
+		if err != nil {
+			return nil, err
+		}
+		selections = append(selections, trailSelection)
+	}
+	return selections, nil
+}
+
+func cosmeticSelectionForBotSkin(catalog db.CosmeticCatalog, cosmeticID string) (cosmeticSelection, error) {
+	for _, item := range catalog.Items {
+		if item.ID != cosmeticID {
+			continue
+		}
+		if item.Slot != db.CosmeticSlotBotSkin || item.AssetKey == "standard" || item.IsFree || !item.IsActive {
+			return cosmeticSelection{}, fmt.Errorf("cosmetic bot skin %q is not an active paid bot skin", cosmeticID)
+		}
+		return cosmeticSelection{Slot: db.CosmeticSlotBotSkin, CosmeticID: item.ID}, nil
+	}
+	return cosmeticSelection{}, fmt.Errorf("cosmetic bot skin %q was not found", cosmeticID)
 }
 
 func cosmeticSelectionForTrail(catalog db.CosmeticCatalog, cosmeticID string) (cosmeticSelection, error) {
