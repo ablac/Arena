@@ -22,14 +22,6 @@ for this repository. Repository-specific details are linked from there.
 
 Do not duplicate or override the shared rules in this file.
 """
-POLICY_PATHS = {
-    "AGENTS.md",
-    "CLAUDE.md",
-    ".github/PULL_REQUEST_TEMPLATE.md",
-    ".github/workflows/agent-contract.yml",
-    ".github/agent-contract/check.py",
-    ".github/agent-policy/project-rules.md",
-}
 TRACKING_RE = re.compile(
     r"(?im)^\s*Tracking\s*:\s*(#\d+|TASK-\d+|[A-Z][A-Z0-9]+-\d+)\s*$"
 )
@@ -99,9 +91,13 @@ def paged(url: str, token: str) -> list[dict]:
     return rows
 
 
+def tracking_tokens(body: str) -> list[str]:
+    return [match.group(1).upper() for match in TRACKING_RE.finditer(body or "")]
+
+
 def tracking_token(body: str) -> str | None:
-    match = TRACKING_RE.search(body or "")
-    return match.group(1).upper() if match else None
+    matches = tracking_tokens(body)
+    return matches[0] if len(matches) == 1 else None
 
 
 def pr_check(event_path: Path) -> list[str]:
@@ -123,9 +119,9 @@ def pr_check(event_path: Path) -> list[str]:
             row["filename"]
             for row in paged(f"{api_url}/repos/{repo}/pulls/{number}/files", token)
         }
-        policy_only = bool(current_files) and current_files <= POLICY_PATHS
-        current_tracking = tracking_token(body)
-        if not policy_only and not current_tracking:
+        current_matches = tracking_tokens(body)
+        current_tracking = current_matches[0] if len(current_matches) == 1 else None
+        if len(current_matches) != 1:
             fail(
                 "PR body must contain exactly one `Tracking: #123`, "
                 "`Tracking: TASK-123`, or tracker-key line",
@@ -156,7 +152,7 @@ def pr_check(event_path: Path) -> list[str]:
             if not overlap:
                 continue
             preview = ", ".join(overlap[:8])
-            if len(overlap) >= 2 and other_number not in approved_overlaps:
+            if other_number not in approved_overlaps:
                 fail(
                     f"PR #{other_number} overlaps in {len(overlap)} files ({preview}). "
                     "Consolidate the work or obtain explicit human approval and add "
