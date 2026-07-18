@@ -119,10 +119,41 @@ func NewArenaMap() *ArenaMap {
 	}
 }
 
+// pickZoneTargetCenter rolls a zone drift target: a random point that keeps
+// the minimum-radius circle inside the arena rectangle, preferring passable
+// terrain (up to 20 attempts against the ACTIVE terrain grid; the last roll
+// stands if none is passable). Shared by ArenaMap.Reset and the endRound
+// pre-pick that previews the next round's placement in the spectator
+// round_end broadcast (issue #192) — both must roll identically so the
+// preview and the round's real opening state agree.
+func pickZoneTargetCenter(width, height, minRadius float64) Vec2 {
+	margin := minRadius
+	var target Vec2
+	for attempt := 0; attempt < 20; attempt++ {
+		tx := margin + rand.Float64()*(width-2*margin)
+		ty := margin + rand.Float64()*(height-2*margin)
+		target = NewVec2(tx, ty)
+		if !terrainBlockedAt(target) {
+			break
+		}
+	}
+	return target
+}
+
 // Reset prepares the map for a new round: restores the zone to its initial
 // state, assigns the given obstacle slice, and picks a random drift target for
 // the zone centre.
 func (m *ArenaMap) Reset(obstacles []Obstacle) {
+	m.ResetWithZoneTarget(obstacles, nil)
+}
+
+// ResetWithZoneTarget is Reset with an optional pre-picked zone drift target.
+// endRound pre-picks the target on the next round's terrain so the round_end
+// spectator broadcast can announce the exact safe-zone placement; passing that
+// same value here at startRound keeps the preview and the round's first
+// keyframe identical (issue #192 parity). A nil target rolls fresh, exactly
+// as Reset always did.
+func (m *ArenaMap) ResetWithZoneTarget(obstacles []Obstacle, target *Vec2) {
 	c := &config.C
 
 	m.Obstacles = obstacles
@@ -138,17 +169,13 @@ func (m *ArenaMap) Reset(obstacles []Obstacle) {
 	m.ShrinkStarted = false
 	m.ZoneLerpT = 0.0
 
-	// Random target centre; zone must still fit inside the arena. Prefer a
-	// centre on passable terrain so the final circle isn't parked on a wall
-	// or outside a non-square map shape.
-	margin := m.MinRadius
-	for attempt := 0; attempt < 20; attempt++ {
-		tx := margin + rand.Float64()*(m.Width-2*margin)
-		ty := margin + rand.Float64()*(m.Height-2*margin)
-		m.ZoneTargetCenter = NewVec2(tx, ty)
-		if !terrainBlockedAt(m.ZoneTargetCenter) {
-			break
-		}
+	// Target centre; zone must still fit inside the arena. Prefer a centre on
+	// passable terrain so the final circle isn't parked on a wall or outside
+	// a non-square map shape.
+	if target != nil {
+		m.ZoneTargetCenter = *target
+	} else {
+		m.ZoneTargetCenter = pickZoneTargetCenter(m.Width, m.Height, m.MinRadius)
 	}
 	m.ZoneTargetRadius = m.MinRadius
 }

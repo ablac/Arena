@@ -248,6 +248,15 @@ type NextMapView struct {
 	ArenaSize [2]float64 `json:"arena_size"`
 	Obstacles []Obstacle `json:"obstacles"`
 	MaskRects []Obstacle `json:"mask_rects,omitempty"`
+	// SafeZone previews the next round's OPENING safe-zone placement in the
+	// exact SafeZoneSpectatorView encoding the round's first arena_state
+	// keyframe will carry: center + initial radius follow deterministically
+	// from the post-resize config, and the drift target is pre-picked at
+	// endRound and reused verbatim by startRound (issue #192). The client's
+	// intermission show glides the target ring to this placement so the
+	// keyframe swap is a visual no-op. Pointer so pre-#192 payload shape is
+	// preserved should staging ever lack it.
+	SafeZone *SafeZoneSpectatorView `json:"safe_zone,omitempty"`
 }
 
 // RoundEndSpectatorMessage is the typed spectator broadcast staged by
