@@ -597,6 +597,7 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 		Pickups:       pickupViews,
 		KillFeed:      killFeedViews,
 		Obstacles:     visObstacles,
+		MaskRects:     arena.MaskRects,
 		WaitingBots:   waitingViews,
 	}
 }

@@ -549,15 +549,23 @@ type ArenaEvent struct {
 
 // SpectatorState is the serialized arena state for spectators.
 type SpectatorState struct {
-	Type         string                    `json:"type"`
-	Tick         int                       `json:"tick"`
-	RoundTick    int                       `json:"round_tick"`
-	RoundNumber  int                       `json:"round_number,omitempty"`
-	Bots         []BotSpectatorView        `json:"bots"`
-	SafeZone     SafeZoneSpectatorView     `json:"safe_zone"`
-	Pickups      []PickupSpectatorView     `json:"pickups"`
-	KillFeed     []KillFeedEntry           `json:"kill_feed"`
-	Obstacles    []Obstacle                `json:"obstacles,omitempty"`
+	Type        string                `json:"type"`
+	Tick        int                   `json:"tick"`
+	RoundTick   int                   `json:"round_tick"`
+	RoundNumber int                   `json:"round_number,omitempty"`
+	Bots        []BotSpectatorView    `json:"bots"`
+	SafeZone    SafeZoneSpectatorView `json:"safe_zone"`
+	Pickups     []PickupSpectatorView `json:"pickups"`
+	KillFeed    []KillFeedEntry       `json:"kill_feed"`
+	Obstacles   []Obstacle            `json:"obstacles,omitempty"`
+	// MaskRects are the carved boundary rectangles of a non-square map shape.
+	// They are ALSO still concatenated into Obstacles (back-compat: old clients
+	// and the minimap render them as plain rects); this field re-sends them
+	// separately so renderers can draw the boundary as one smooth contour wall
+	// instead of per-cell boxes (issue #186). Keyframe-gated exactly like
+	// Obstacles: populated on keyframes, nil in between — clients cache the
+	// last copy. omitempty keeps square-map keyframes byte-identical.
+	MaskRects    []Obstacle                `json:"mask_rects,omitempty"`
 	WaitingBots  []WaitingBotSpectatorView `json:"waiting_bots,omitempty"`
 	TeleportPads []TeleportPadView         `json:"teleport_pads,omitempty"`
 	CapturePads  []CapturePadView          `json:"capture_pads,omitempty"`

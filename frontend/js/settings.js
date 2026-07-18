@@ -142,6 +142,7 @@ export const SETTINGS_SCHEMA = {
       mapPalettes: { label: 'Per-map color palettes' },
       contactShadows: { label: 'Obstacle contact shadows (floor)' },
       obstacleDetailing: { label: 'Obstacle rooftop detailing' },
+      smoothMapWalls: { label: 'Smooth map boundary walls' },
       depthFog: { label: 'Depth fog (far-edge falloff)' },
       lightShafts: { label: 'Light shafts' },
       edgeWaterfalls: { label: 'Edge energy waterfalls' },

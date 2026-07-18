@@ -2572,6 +2572,7 @@ func (e *GameEngine) sendSpectatorUpdate() {
 		state.VoidTiles = e.SuddenDeath.GetAllVoidTiles()
 	} else {
 		state.Obstacles = nil
+		state.MaskRects = nil
 	}
 
 	// Add new gameplay entities to spectator state.
