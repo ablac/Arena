@@ -26,7 +26,106 @@ import { isEnabled } from '../settings.js';
 import { MapWallsRenderer, buildWallGeometry, resolveEarcut } from './map-walls.js?v=20260718g';
 import { clusterObstacles, computeClusterOutline, buildClusterTrimGeometry } from './obstacle-clusters.js?v=20260718g';
 
-const PILLAR_HEIGHT = 30;
+export const PILLAR_HEIGHT = 30;
+
+/**
+ * Split obstacle rects into isolated boxes and multi-rect cluster unions
+ * (issue #190), exactly as the round build renders them. Without an earcut
+ * triangulator everything degrades to isolated boxes (prism caps need it).
+ * Exported so the intermission construction pre-build (issue #192) composes
+ * the IDENTICAL layout — same clustering, same isolated ordering (the
+ * rooftop-detail hash indexes depend on it).
+ * @param {Array<{x:number,y:number,width:number,height:number}>} buildObstacles
+ * @param {Function|null} earcutFn
+ * @returns {{isolated:Array, unions:Array<{groups:Array,rects:Array}>}}
+ */
+export function composeObstacleLayout(buildObstacles, earcutFn) {
+  const isolated = [];
+  const unions = [];
+  if (earcutFn) {
+    for (const memberIdxs of clusterObstacles(buildObstacles)) {
+      if (memberIdxs.length === 1) {
+        isolated.push(buildObstacles[memberIdxs[0]]);
+        continue;
+      }
+      const rects = memberIdxs.map((i) => buildObstacles[i]);
+      const outline = computeClusterOutline(rects);
+      if (outline) unions.push({ groups: outline.groups, rects });
+      else isolated.push(...rects);
+    }
+  } else {
+    isolated.push(...buildObstacles);
+  }
+  return { isolated, unions };
+}
+
+/**
+ * Append the box-path meshes for one isolated obstacle — stone pillar body
+ * plus the oversized top-edge and base glow trims — positioned exactly as
+ * the merged round build places them. Shared with the intermission
+ * construction pre-build (issue #192) so the transient rise is
+ * geometry-identical to the real handoff build.
+ */
+export function appendObstacleBoxes(scene, obs, i, bodyBoxes, trimBoxes) {
+  const B = window.BABYLON;
+  // Stone pillar
+  const mesh = B.MeshBuilder.CreateBox(`obs-${i}`, {
+    width: obs.width, height: PILLAR_HEIGHT, depth: obs.height
+  }, scene);
+  mesh.position.set(obs.x + obs.width / 2, PILLAR_HEIGHT / 2, obs.y + obs.height / 2);
+  bodyBoxes.push(mesh);
+
+  // Glowing edge wireframe on top
+  const edge = B.MeshBuilder.CreateBox(`obsEdge-${i}`, {
+    width: obs.width + 1.5, height: 2, depth: obs.height + 1.5
+  }, scene);
+  edge.position.set(obs.x + obs.width / 2, PILLAR_HEIGHT + 0.8, obs.y + obs.height / 2);
+  trimBoxes.push(edge);
+
+  // Bottom glow ring
+  const base = B.MeshBuilder.CreateBox(`obsBase-${i}`, {
+    width: obs.width + 1.5, height: 1.5, depth: obs.height + 1.5
+  }, scene);
+  base.position.set(obs.x + obs.width / 2, 0.75, obs.y + obs.height / 2);
+  trimBoxes.push(base);
+}
+
+/**
+ * Rooftop detailing (issue #182c): a raised inset panel, with a small
+ * glowing stud on every third detail index, so structures read as
+ * architecture instead of extruded rectangles. Variation is derived purely
+ * from the detail index (golden-ratio hash) — rebuilding the same layout
+ * always produces the same roofs, no Math.random drift. Panels share the
+ * body material and studs the trim material, so both merge into the
+ * existing box draw calls. Shared with the intermission pre-build (#192).
+ */
+export function appendRoofDetail(scene, obs, i, bodyBoxes, trimBoxes) {
+  const B = window.BABYLON;
+  const hash = (i * 0.61803398875) % 1;
+  const inset = 0.52 + hash * 0.3;
+  const raise = 0.9 + (i % 3) * 0.5;
+  const panel = B.MeshBuilder.CreateBox(`obsTop-${i}`, {
+    width: Math.max(2, obs.width * inset),
+    height: raise,
+    depth: Math.max(2, obs.height * inset),
+  }, scene);
+  panel.position.set(obs.x + obs.width / 2, PILLAR_HEIGHT + raise / 2, obs.y + obs.height / 2);
+  bodyBoxes.push(panel);
+
+  if (i % 3 === 0) {
+    const stud = B.MeshBuilder.CreateBox(`obsStud-${i}`, {
+      width: Math.max(1.2, obs.width * 0.18),
+      height: 0.9,
+      depth: Math.max(1.2, obs.height * 0.18),
+    }, scene);
+    stud.position.set(
+      obs.x + obs.width / 2 + ((i % 4) < 2 ? -1 : 1) * obs.width * inset * 0.22,
+      PILLAR_HEIGHT + raise + 0.45,
+      obs.y + obs.height / 2 + (i % 2 ? -1 : 1) * obs.height * inset * 0.22,
+    );
+    trimBoxes.push(stud);
+  }
+}
 
 export class ObstacleRenderer {
   /** @param {BABYLON.Scene} scene @param {EnvironmentRenderer} [envRenderer] */
@@ -159,22 +258,7 @@ export class ObstacleRenderer {
     // prism each; everything else stays on the box path. A cluster whose
     // rects are not grid-aligned (or absurdly large) degrades to boxes too.
     const earcutFn = resolveEarcut();
-    const isolated = [];
-    const unions = [];
-    if (earcutFn) {
-      for (const memberIdxs of clusterObstacles(buildObstacles)) {
-        if (memberIdxs.length === 1) {
-          isolated.push(buildObstacles[memberIdxs[0]]);
-          continue;
-        }
-        const rects = memberIdxs.map((i) => buildObstacles[i]);
-        const outline = computeClusterOutline(rects);
-        if (outline) unions.push({ groups: outline.groups, rects });
-        else isolated.push(...rects);
-      }
-    } else {
-      isolated.push(...buildObstacles);
-    }
+    const { isolated, unions } = composeObstacleLayout(buildObstacles, earcutFn);
 
     // Contact shadows follow the clusters: isolated rects bake as rects,
     // each union as one polygon along its exact outline (issue #190).
@@ -200,28 +284,8 @@ export class ObstacleRenderer {
     const bodyBoxes = [];
     const trimBoxes = [];
     isolated.forEach((obs, i) => {
-      // Stone pillar
-      const mesh = B.MeshBuilder.CreateBox(`obs-${i}`, {
-        width: obs.width, height: PILLAR_HEIGHT, depth: obs.height
-      }, this.scene);
-      mesh.position.set(obs.x + obs.width / 2, PILLAR_HEIGHT / 2, obs.y + obs.height / 2);
-      bodyBoxes.push(mesh);
-
-      // Glowing edge wireframe on top
-      const edge = B.MeshBuilder.CreateBox(`obsEdge-${i}`, {
-        width: obs.width + 1.5, height: 2, depth: obs.height + 1.5
-      }, this.scene);
-      edge.position.set(obs.x + obs.width / 2, PILLAR_HEIGHT + 0.8, obs.y + obs.height / 2);
-      trimBoxes.push(edge);
-
-      // Bottom glow ring
-      const base = B.MeshBuilder.CreateBox(`obsBase-${i}`, {
-        width: obs.width + 1.5, height: 1.5, depth: obs.height + 1.5
-      }, this.scene);
-      base.position.set(obs.x + obs.width / 2, 0.75, obs.y + obs.height / 2);
-      trimBoxes.push(base);
-
-      if (detailing) this._appendRoofDetail(obs, i, bodyBoxes, trimBoxes);
+      appendObstacleBoxes(this.scene, obs, i, bodyBoxes, trimBoxes);
+      if (detailing) appendRoofDetail(this.scene, obs, i, bodyBoxes, trimBoxes);
     });
 
     // Rooftop detailing follows the clusters (issue #190): ONE feature per
@@ -232,7 +296,7 @@ export class ObstacleRenderer {
       unions.forEach((u, ci) => {
         const seat = u.rects.reduce((best, r) =>
           r.width * r.height > best.width * best.height ? r : best);
-        this._appendRoofDetail(seat, isolated.length + ci, bodyBoxes, trimBoxes);
+        appendRoofDetail(this.scene, seat, isolated.length + ci, bodyBoxes, trimBoxes);
       });
     }
 
@@ -264,41 +328,6 @@ export class ObstacleRenderer {
     // The environment's shadow map is frozen (RENDER_ONCE) — re-bake it now
     // that the casters changed.
     if (this._env && this._env.refreshShadows) this._env.refreshShadows();
-  }
-
-  /** @private Rooftop detailing (issue #182c): a raised inset panel, with a
-   *  small glowing stud on every third detail index, so structures read as
-   *  architecture instead of extruded rectangles. Variation is derived
-   *  purely from the detail index (golden-ratio hash) — rebuilding the same
-   *  layout always produces the same roofs, no Math.random drift. Panels
-   *  share the body material and studs the trim material, so both merge
-   *  into the existing box draw calls. */
-  _appendRoofDetail(obs, i, bodyBoxes, trimBoxes) {
-    const B = window.BABYLON;
-    const hash = (i * 0.61803398875) % 1;
-    const inset = 0.52 + hash * 0.3;
-    const raise = 0.9 + (i % 3) * 0.5;
-    const panel = B.MeshBuilder.CreateBox(`obsTop-${i}`, {
-      width: Math.max(2, obs.width * inset),
-      height: raise,
-      depth: Math.max(2, obs.height * inset),
-    }, this.scene);
-    panel.position.set(obs.x + obs.width / 2, PILLAR_HEIGHT + raise / 2, obs.y + obs.height / 2);
-    bodyBoxes.push(panel);
-
-    if (i % 3 === 0) {
-      const stud = B.MeshBuilder.CreateBox(`obsStud-${i}`, {
-        width: Math.max(1.2, obs.width * 0.18),
-        height: 0.9,
-        depth: Math.max(1.2, obs.height * 0.18),
-      }, this.scene);
-      stud.position.set(
-        obs.x + obs.width / 2 + ((i % 4) < 2 ? -1 : 1) * obs.width * inset * 0.22,
-        PILLAR_HEIGHT + raise + 0.45,
-        obs.y + obs.height / 2 + (i % 2 ? -1 : 1) * obs.height * inset * 0.22,
-      );
-      trimBoxes.push(stud);
-    }
   }
 
   /** @private One merged mesh for every cluster union prism (sides + earcut
