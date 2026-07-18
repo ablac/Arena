@@ -1521,11 +1521,23 @@ export class EnvironmentRenderer {
    * against bloom — feeding them to the glow pass hazes the whole arena. The
    * translucent wall bodies are excluded too so only their trim strips glow.
    */
+  /** Store the glow layer so lazily-created meshes (zone rings) can exclude
+   *  themselves at creation time — the setup-time exclusion list below only
+   *  covers meshes that already exist. */
+  setGlowLayer(glow) {
+    this._glowLayer = glow;
+  }
+
   getGlowExcludedMeshes() {
     const meshes = [this._skybox, this._ground, this._floorGlow];
     if (this._walls) meshes.push(...this._walls);
     // Light shafts are already additive haze — glowing them doubles it.
     if (this._lightShafts) meshes.push(...this._lightShafts.map((s) => s.plane));
+    // Zone rings are clipped to the arena rect via material clip planes, but
+    // the glow pass renders its own copy of glowing meshes WITHOUT those clip
+    // planes — the ring's halo drew far outside the arena edge (user-reported
+    // 2026-07-18). Excluded until the glow pass respects clipping.
+    meshes.push(this._zoneRing, this._targetRing);
     return meshes.filter(Boolean);
   }
 
@@ -1645,6 +1657,9 @@ export class EnvironmentRenderer {
       }, this.scene);
       this._zoneRing.material = this._zoneMat;
       this._clipToArena(this._zoneRing);
+      // The glow pass ignores material clip planes; an unexcluded ring
+      // halos far outside the arena edge (see getGlowExcludedMeshes).
+      if (this._glowLayer) this._glowLayer.addExcludedMesh(this._zoneRing);
     }
   }
 
@@ -1657,6 +1672,7 @@ export class EnvironmentRenderer {
       }, this.scene);
       this._targetRing.material = this._targetMat;
       this._clipToArena(this._targetRing);
+      if (this._glowLayer) this._glowLayer.addExcludedMesh(this._targetRing);
     }
     this._targetRing.scaling.set(r * 2, r * 2, r * 2);
     this._targetRing.position.set(cx, 1, cy);

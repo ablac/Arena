@@ -7,7 +7,7 @@
 
 import { CameraController } from './camera.js?v=20260710d';
 import { BotRenderer } from './bots.js?v=20260718c';
-import { EnvironmentRenderer } from './environment.js?v=20260718c';
+import { EnvironmentRenderer } from './environment.js?v=20260718e';
 import { ObstacleRenderer } from './obstacles.js?v=20260718d';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
@@ -394,6 +394,10 @@ export class ArenaEngine {
       // hand the layer over so their body mesh can be excluded on build
       // (only the wall trim should glow, like the perimeter walls above).
       this.obstacleRenderer.setGlowLayer(glow);
+      // Zone rings are created lazily on the first zone update — the
+      // environment excludes them at creation time (clip planes don't apply
+      // in the glow pass).
+      this.envRenderer.setGlowLayer(glow);
       this.glowLayer = glow;
     }
 

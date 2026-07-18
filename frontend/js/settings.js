@@ -12,8 +12,9 @@ const STORAGE_KEY = 'arenaSettings';
 // A section's master toggle ANDs with each effect's own toggle - turning
 // the master off silences everything in the section without touching the
 // individual effect states, so switching it back on restores whatever was
-// set before. All defaults are ON: shipping this feature must not change
-// the site's current look for anyone who never opens Settings.
+// set before. Defaults are ON unless an effect is marked `defaultOff` —
+// shipping a new effect dormant lets it be tuned live via the panel
+// before it changes the site's look for everyone.
 export const SETTINGS_SCHEMA = {
   killFlash: {
     label: 'Kill Flash',
@@ -117,13 +118,13 @@ export const SETTINGS_SCHEMA = {
     description: 'Post-processing (also affects GPU cost).',
     effects: {
       bloom: { label: 'Bloom' },
-      glowLayer: { label: 'Neon glow halos' },
+      glowLayer: { label: 'Neon glow halos', defaultOff: true },
       vignette: { label: 'Vignette' },
       fxaa: { label: 'Anti-aliasing (FXAA)' },
       sharpen: { label: 'Sharpen' },
       shadows: { label: 'Obstacle shadows' },
-      characterLighting: { label: 'Character lighting & shading' },
-      dynamicGrading: { label: 'Dynamic mode grading (sudden death, round win)' },
+      characterLighting: { label: 'Character lighting & shading', defaultOff: true },
+      dynamicGrading: { label: 'Dynamic mode grading (sudden death, round win)', defaultOff: true },
       // Default-on keeps the current 1x render resolution; unchecking lets
       // HiDPI displays render at native resolution (sharper, more GPU).
       resolutionCap: { label: 'Cap resolution at 1x (performance)' },
@@ -139,12 +140,12 @@ export const SETTINGS_SCHEMA = {
       thrusters: { label: 'Underside thruster jets' },
       spaceObjects: { label: 'Space objects (satellites, comets, UFO)' },
       floorEnergyGlow: { label: 'Floor energy glow motion' },
-      mapPalettes: { label: 'Per-map color palettes' },
-      contactShadows: { label: 'Obstacle contact shadows (floor)' },
-      obstacleDetailing: { label: 'Obstacle rooftop detailing' },
+      mapPalettes: { label: 'Per-map color palettes', defaultOff: true },
+      contactShadows: { label: 'Obstacle contact shadows (floor)', defaultOff: true },
+      obstacleDetailing: { label: 'Obstacle rooftop detailing', defaultOff: true },
       smoothMapWalls: { label: 'Smooth map boundary walls' },
-      depthFog: { label: 'Depth fog (far-edge falloff)' },
-      lightShafts: { label: 'Light shafts' },
+      depthFog: { label: 'Depth fog (far-edge falloff)', defaultOff: true },
+      lightShafts: { label: 'Light shafts', defaultOff: true },
       edgeWaterfalls: { label: 'Edge energy waterfalls' },
       holoTitle: { label: 'Holographic arena title' },
       idleWeaponAnims: { label: 'Idle weapon animations' },
@@ -165,11 +166,22 @@ export const SETTINGS_SCHEMA = {
   },
 };
 
+/** [section, effect] pairs whose schema entry carries defaultOff. */
+const DEFAULT_OFF_KEYS = [];
+
 function buildDefaults() {
   const defaults = {};
   for (const [sectionKey, section] of Object.entries(SETTINGS_SCHEMA)) {
     const effects = {};
-    for (const effectKey of Object.keys(section.effects)) effects[effectKey] = true;
+    for (const [effectKey, effect] of Object.entries(section.effects)) {
+      if (effect.defaultOff) DEFAULT_OFF_KEYS.push([sectionKey, effectKey]);
+      // Most effects default ON (shipping the panel must not change the
+      // site's look). `defaultOff` marks effects that ship dormant — used
+      // for the 2026-07-18 visual packages after they compounded badly in
+      // production: each stays available in the panel for opt-in tuning
+      // and can be flipped default-on once the look is signed off live.
+      effects[effectKey] = !effect.defaultOff;
+    }
     defaults[sectionKey] = { master: true, effects };
   }
   return defaults;
@@ -204,6 +216,16 @@ function loadFromStorage() {
       effects,
     };
   }
+  // Migration: saves snapshot the FULL state, so a blob written while the
+  // 2026-07-18 visual packages were default-on has them stored true even
+  // though the viewer never chose them. Pre-v2 blobs therefore get every
+  // defaultOff effect forced back off; any later explicit re-enable is
+  // saved with the v2 marker and honored.
+  if (!stored || stored.__v !== 2) {
+    for (const [sectionKey, effectKey] of DEFAULT_OFF_KEYS) {
+      if (merged[sectionKey]) merged[sectionKey].effects[effectKey] = false;
+    }
+  }
   return merged;
 }
 
@@ -212,7 +234,7 @@ const listeners = new Set();
 
 function persist() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state, __v: 2 }));
   } catch {
     // Storage can be unavailable (private browsing, quota) - settings just
     // won't persist across reloads; the in-memory state still works.

@@ -89,6 +89,13 @@ globalThis.window = {
   },
 };
 
+// This suite pins the LIT-mode material contract (shading depth + emissive
+// floor). rendering.characterLighting ships default-OFF while the look is
+// tuned live, so enable it explicitly — the assertions verify the mechanism,
+// not the shipping default.
+const {setEffect} = await import(new URL('../frontend/js/settings.js', import.meta.url));
+setEffect('rendering', 'characterLighting', true);
+
 const {createForgeCharacter, setForgeCharacterLOD} = await import(
   new URL('../frontend/js/renderer/character-rig.js?visibility-regression', import.meta.url)
 );
