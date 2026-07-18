@@ -1,6 +1,7 @@
 package game
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -183,6 +184,10 @@ type GameEngine struct {
 	// static round data regardless of the keyframe interval (set on join).
 	// Guarded by spectatorsMu.
 	forceKeyframe bool
+
+	// Last lobby broadcast frame (engine lock). Kept so byte-identical lobby
+	// frames share one slice identity and per-bot dedup can skip re-sends.
+	lastLobbyPayload []byte
 	// Persistence tracking
 	lastPersistTick      int
 	skipLeaderboardRound int // active round that straddled a leaderboard reset
@@ -381,8 +386,22 @@ func (e *GameEngine) tickLobby(c *config.Config) {
 		if err != nil {
 			slog.Error("failed to marshal lobby update", "error", err)
 		} else {
+			// Re-send only when the frame changed for this bot+connection.
+			// Content changes at most at 1 Hz (countdown) or on
+			// join/leave/loadout, so with a full lobby this drops ~80-90% of
+			// lobby-phase outbound bytes. Identity comparison is per-bot: a
+			// fresh or resumed connection always gets the current frame.
+			if !bytes.Equal(payload, e.lastLobbyPayload) {
+				e.lastLobbyPayload = payload
+			}
+			payload = e.lastLobbyPayload
 			for _, bot := range e.Bots {
+				if bot.lastLobbyConn == bot.Conn && sameByteSlice(bot.lastLobbyPayload, payload) {
+					continue
+				}
 				sendLobbyPayload(bot, payload)
+				bot.lastLobbyPayload = payload
+				bot.lastLobbyConn = bot.Conn
 			}
 		}
 	}
@@ -2364,6 +2383,18 @@ func (e *GameEngine) sendBotTickUpdates() {
 func (e *GameEngine) sendLobbyStateUpdate() {
 	c := &config.C
 
+	// With nobody to receive it — no spectators AND no waiting bots — skip
+	// building and marshaling the lobby state entirely. (An idle server
+	// previously paid this at 10 Hz forever. Both recipient groups must be
+	// empty: the tail of this function serves waiting bots independently of
+	// spectators.)
+	e.spectatorsMu.RLock()
+	lobbySpectatorCount := len(e.Spectators)
+	e.spectatorsMu.RUnlock()
+	if lobbySpectatorCount == 0 && len(e.WaitingBots) == 0 {
+		return
+	}
+
 	// During lobby phase, all bots are in e.Bots. During active/intermission,
 	// mid-round joiners sit in e.WaitingBots.
 	lobbyBots := e.Bots
@@ -2446,6 +2477,11 @@ func (e *GameEngine) sendSpectatorUpdate() {
 	e.spectatorsMu.Unlock()
 	if keyframe {
 		state.ArenaSize = []float64{e.Arena.Width, e.Arena.Height}
+		// Void tiles ride keyframes only (see SpectatorState.VoidTiles).
+		// forceKeyframe already guarantees a late-joining spectator gets the
+		// current set; new tiles reach spectators within a keyframe interval,
+		// which is visually acceptable for a slow-accumulating hazard.
+		state.VoidTiles = e.SuddenDeath.GetAllVoidTiles()
 	} else {
 		state.Obstacles = nil
 	}
@@ -2472,7 +2508,6 @@ func (e *GameEngine) sendSpectatorUpdate() {
 	for _, field := range e.BurnFields {
 		state.BurnFields = append(state.BurnFields, BuildBurnFieldView(field, false))
 	}
-	state.VoidTiles = e.SuddenDeath.GetAllVoidTiles()
 	state.SuddenDeath = e.SuddenDeath.Active
 	state.SuddenDeathStall = e.SuddenDeath.StallActive
 	if e.SuddenDeath.Active {

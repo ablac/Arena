@@ -211,6 +211,12 @@ func marshalLobbyUpdatePayload(connectedCount, minBots int, countdown *int, play
 	return marshalJSON(msg)
 }
 
+// sameByteSlice reports whether a and b are the identical slice (same backing
+// array and length) — an O(1) identity check, not a content comparison.
+func sameByteSlice(a, b []byte) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
+}
+
 func sendLobbyPayload(bot *BotState, data []byte) {
 	if bot.SendChan == nil {
 		return

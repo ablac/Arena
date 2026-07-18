@@ -76,7 +76,10 @@ export class GameplayRenderer {
     this._updateStaffImpacts(state.staff_impacts || []);
     this._updateLandmines(state.landmines || []);
     this._updateGravityWells(state.gravity_wells || []);
-    this._updateVoidTiles(state.void_tiles || []);
+    // void_tiles arrives only on keyframes now: null/undefined means "no
+    // update this frame" (keep the current set); an actual array — including
+    // [] after a round reset — is authoritative.
+    if (Array.isArray(state.void_tiles)) this._updateVoidTiles(state.void_tiles);
     this._updateFlags(state.flags || []);
     this.bountyBots = state.bots || [];
     // Issue #13: only adopt the server's explicit target when it sends one.
