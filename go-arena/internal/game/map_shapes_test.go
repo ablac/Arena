@@ -51,7 +51,11 @@ func TestShapeMasksConnectedAndSized(t *testing.T) {
 	loadTestConfig(t)
 	const cols, rows = 100, 100
 
-	for _, shape := range []MapShape{ShapeCircle, ShapeHexagon, ShapeDiamond, ShapeCross, ShapeCaves, ShapeDonut, ShapeIslands, ShapeRooms, ShapeSpiral} {
+	for _, shape := range []MapShape{
+		ShapeCircle, ShapeHexagon, ShapeDiamond, ShapeCross, ShapeCaves,
+		ShapeDonut, ShapeIslands, ShapeRooms, ShapeSpiral,
+		ShapeStar, ShapeHourglass, ShapeClover,
+	} {
 		mask := GenerateShapeMask(shape, cols, rows)
 		if mask == nil {
 			t.Fatalf("%s: expected a mask", shape)
@@ -103,6 +107,106 @@ func TestShapeMasksConnectedAndSized(t *testing.T) {
 		if len(visited) != total {
 			t.Errorf("%s: playable area not connected: reached %d of %d cells", shape, len(visited), total)
 		}
+	}
+}
+
+func TestAdditionalMapShapesAreBuiltInAndDistinct(t *testing.T) {
+	const cols, rows = 100, 100
+	seen := make(map[string]MapShape)
+	for _, shape := range []MapShape{ShapeCircle, ShapeStar, ShapeHourglass, ShapeClover} {
+		if !IsBuiltInMapShape(string(shape)) {
+			t.Fatalf("%s is not registered as a built-in map shape", shape)
+		}
+		mask := GenerateShapeMask(shape, cols, rows)
+		var fingerprint strings.Builder
+		fingerprint.Grow(cols * rows)
+		for y := 0; y < rows; y++ {
+			for x := 0; x < cols; x++ {
+				if mask[x][y] {
+					fingerprint.WriteByte('.')
+				} else {
+					fingerprint.WriteByte('#')
+				}
+			}
+		}
+		key := fingerprint.String()
+		if duplicate, ok := seen[key]; ok {
+			t.Fatalf("%s generated the same terrain as %s", shape, duplicate)
+		}
+		seen[key] = shape
+	}
+}
+
+func TestSpiralPreservesFightingSpaceAndShape(t *testing.T) {
+	loadTestConfig(t)
+	const cols, rows = 100, 100
+	mask := GenerateShapeMask(ShapeSpiral, cols, rows)
+	frac := playableFraction(mask, cols, rows)
+	if frac < 0.45 {
+		t.Fatalf("spiral playable fraction = %.3f, want at least 0.45", frac)
+	}
+
+	// A widened spiral must still alternate between corridor and wall along
+	// every cardinal ray. A circle or over-widened spiral would only cross the
+	// outer boundary once.
+	for _, ray := range []struct {
+		name   string
+		dx, dy int
+	}{
+		{name: "east", dx: 1},
+		{name: "south", dy: 1},
+		{name: "west", dx: -1},
+		{name: "north", dy: -1},
+	} {
+		transitions := 0
+		previous := mask[cols/2][rows/2]
+		for step := 1; step < cols/2; step++ {
+			x := cols/2 + ray.dx*step
+			y := rows/2 + ray.dy*step
+			if mask[x][y] != previous {
+				transitions++
+				previous = mask[x][y]
+			}
+		}
+		if transitions < 3 {
+			t.Errorf("spiral %s ray has %d terrain transitions, want at least 3", ray.name, transitions)
+		}
+	}
+
+	totalOpen := 0.0
+	for round := 0; round < 20; round++ {
+		obstacles := GenerateObstaclesInMask(
+			float64(cols)*config.C.PathfindingCellSize,
+			float64(rows)*config.C.PathfindingCellSize,
+			config.C.ObstacleCountMin,
+			config.C.ObstacleCountMax,
+			mask,
+			config.C.PathfindingCellSize,
+			config.C.BotRadius,
+		)
+		terrain := NewTerrainGrid(
+			float64(cols)*config.C.PathfindingCellSize,
+			float64(rows)*config.C.PathfindingCellSize,
+			obstacles,
+			config.C.PathfindingCellSize,
+			config.C.BotRadius,
+		)
+		terrain.ApplyMask(mask)
+
+		open := 0
+		for x := 0; x < terrain.Width; x++ {
+			for y := 0; y < terrain.Height; y++ {
+				if terrain.Cells[x][y] != '#' {
+					open++
+				}
+			}
+		}
+		totalOpen += float64(open) / float64(terrain.Width*terrain.Height)
+	}
+	average := totalOpen / 20
+	t.Logf("spiral playable fraction %.3f; post-obstacle average %.3f", frac, average)
+	if average < 0.40 {
+		t.Fatalf("spiral post-obstacle playable fraction = %.3f, want at least 0.40", average)
 	}
 }
 
