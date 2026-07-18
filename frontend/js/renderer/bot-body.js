@@ -27,13 +27,14 @@ export function getGuiTexture() {
   if (!_guiTexture || !guiScene || guiScene.isDisposed) {
     const GUI = window.BABYLON.GUI;
     _guiTexture = GUI.AdvancedDynamicTexture.CreateFullscreenUI('botUI');
-    // The per-bot name labels/HP bars are linked to meshes that move every
-    // rendered frame, so this fullscreen ADT re-rasterizes and re-uploads
-    // its whole canvas per frame (~8 MB/frame at 1080p). Half render scale
-    // quarters that raster+upload cost at the price of slightly softer
-    // overlay text. Mitigation, not the fix — the real fix (migrating
-    // labels/HP/taunts to world-space billboards) is tracked in issue #166.
-    _guiTexture.renderScale = 0.5;
+    // Do NOT set renderScale here as an upload-cost mitigation: without
+    // idealWidth/idealHeight the ADT maps control pixel sizes (fontSize,
+    // "60px" bars, linkOffsetY) onto the scaled-down texture and stretches
+    // it fullscreen, so renderScale 0.5 doubled every label and HP bar on
+    // screen (shipped and reverted, 2026-07-18). The per-frame re-upload
+    // cost is tracked in issue #166; the fix is the world-space billboard
+    // migration (or renderScale paired with ideal dimensions, verified on a
+    // live render).
   }
   return _guiTexture;
 }
