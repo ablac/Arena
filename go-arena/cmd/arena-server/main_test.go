@@ -88,6 +88,14 @@ func TestManagedSchemaPreflightRequiresCosmeticCatalogAdministration(t *testing.
 	}
 }
 
+func TestManagedSchemaPreflightOmitsExternalDemoBotPersistence(t *testing.T) {
+	for _, removed := range []string{"demo_bot_keys", "demo_bot_templates"} {
+		if strings.Contains(managedSchemaPreflightQuery, removed) {
+			t.Errorf("managed schema preflight still requires removed external-fleet table %s", removed)
+		}
+	}
+}
+
 func TestManagedSchemaPreflightRequiresCosmeticCommerceLedger(t *testing.T) {
 	for _, required := range []string{
 		"('cosmetic_orders', 'account_id')",

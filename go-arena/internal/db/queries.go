@@ -788,27 +788,6 @@ func GetTimeBasedLeaderboard(ctx context.Context, since time.Time, sortBy string
 	return results, rows.Err()
 }
 
-// GetAllDemoBotKeys returns all demo bot name→key mappings.
-func GetAllDemoBotKeys(ctx context.Context) (map[string]string, error) {
-	if Pool == nil {
-		return nil, ErrNoDatabase
-	}
-	rows, err := Pool.Query(ctx, `SELECT name, api_key FROM demo_bot_keys`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	result := make(map[string]string)
-	for rows.Next() {
-		var name, key string
-		if err := rows.Scan(&name, &key); err != nil {
-			return nil, err
-		}
-		result[name] = key
-	}
-	return result, rows.Err()
-}
-
 // ---------- admin_tokens ----------
 
 // EnsureAdminTokensTable creates the admin_tokens table if it doesn't exist.

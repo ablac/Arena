@@ -70,3 +70,9 @@ func TestConnectWithRetry_StopsOnContextCancel(t *testing.T) {
 		t.Fatalf("expected the retry loop to stop after cancel, got %d attempts", calls)
 	}
 }
+
+func TestRuntimeAndChatSchemaAdvisoryLocksUseDistinctNamespaces(t *testing.T) {
+	if arenaRuntimeAdvisoryLockID == chatSchemaAdvisoryLockID {
+		t.Fatalf("runtime and chat schema advisory locks both use %d; startup will deadlock", arenaRuntimeAdvisoryLockID)
+	}
+}
