@@ -54,9 +54,9 @@ func TestBuildSpectatorStateIncludesCosmeticsWithoutChangingMechanics(t *testing
 		t.Fatalf("spectator bots = %d, want 1", len(state.Bots))
 	}
 	view := state.Bots[0]
-	got, ok := view["cosmetics"].(map[string]string)
-	if !ok {
-		t.Fatalf("cosmetics type = %T, want map[string]string", view["cosmetics"])
+	got := view.Cosmetics
+	if got == nil {
+		t.Fatal("cosmetics missing from spectator view")
 	}
 	if got["attachment"] != "signal_antenna" {
 		t.Fatalf("attachment = %q, want signal_antenna", got["attachment"])
@@ -64,8 +64,8 @@ func TestBuildSpectatorStateIncludesCosmeticsWithoutChangingMechanics(t *testing
 	if got["trail"] != "ember_sparks" {
 		t.Fatalf("trail = %q, want ember_sparks", got["trail"])
 	}
-	if view["weapon"] != "sword" || view["hp"] != float64(100) {
-		t.Fatalf("cosmetics changed gameplay view: weapon=%v hp=%v", view["weapon"], view["hp"])
+	if view.Weapon != "sword" || view.HP != float64(100) {
+		t.Fatalf("cosmetics changed gameplay view: weapon=%v hp=%v", view.Weapon, view.HP)
 	}
 }
 
@@ -80,7 +80,7 @@ func TestBuildSpectatorStateIncludesLastActionTickForAnimationEdges(t *testing.T
 		map[string]*BotState{bot.BotID: bot}, arena, nil, NewKillFeed(10), 50, 0, nil, RoundModifierNone,
 	)
 
-	if got := state.Bots[0]["last_action_tick"]; got != 42 {
+	if got := state.Bots[0].LastActionTick; got != 42 {
 		t.Fatalf("last_action_tick = %v, want 42 so persistent action strings do not retrigger visuals", got)
 	}
 }

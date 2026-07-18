@@ -6,11 +6,11 @@
  */
 
 import { CameraController } from './camera.js?v=20260710d';
-import { BotRenderer } from './bots.js?v=20260714e';
-import { EnvironmentRenderer } from './environment.js?v=20260712a';
-import { ObstacleRenderer } from './obstacles.js?v=20260710f';
+import { BotRenderer } from './bots.js?v=20260718c';
+import { EnvironmentRenderer } from './environment.js?v=20260718c';
+import { ObstacleRenderer } from './obstacles.js?v=20260718c';
 import { PickupRenderer } from './pickups.js?v=20260714f';
-import { EffectRenderer } from './effects.js?v=20260710f';
+import { EffectRenderer } from './effects.js?v=20260718c';
 import { TrailRenderer } from './trails.js?v=20260714e';
 import { ProjectileRenderer } from './projectiles.js?v=20260711a';
 import { GameplayRenderer } from './gameplay.js?v=20260710g';
@@ -20,6 +20,90 @@ import { getState, isEnabled, onSettingsChange } from '../settings.js';
 // so no tick-interval-based alpha is needed.
 
 const WEBGPU_PROBE_TIMEOUT_MS = 1500;
+
+/**
+ * Dynamic mode grading (issue #183c): eases the existing pipeline's
+ * imageProcessing values with game state — sudden death pulls the frame
+ * toward a red-vignetted, higher-contrast look, a round win pulses warm
+ * exposure, the lobby rests slightly softer, and the followed-bot damage
+ * vignette (issue #184b) composes additively on top. No new post passes,
+ * no per-frame settings reads: `enabled` is cached by the engine's
+ * onSettingsChange subscription (rendering.dynamicGrading), and update()
+ * writes the pipeline only while some grade is actually active, restoring
+ * the authored base values exactly once when everything has decayed.
+ */
+class GradingController {
+  constructor() {
+    this.enabled = true;      // cached from settings by applyPipelineFlags
+    this.suddenDeath = false;
+    this.phase = 'round';
+    this._sd = 0;             // sudden-death blend 0..1 (dt-eased, ~1.5s)
+    this._lobby = 0;          // lobby blend 0..1
+    this._winBoost = 0;       // round-win exposure impulse (decays ~2s)
+    this._damageT = 0;        // damage-pulse clock, counts down from 0.4s
+    this._active = false;     // whether we currently own the pipeline values
+  }
+
+  setSuddenDeath(on) { this.suddenDeath = !!on; }
+
+  setPhase(phase) {
+    if (phase === this.phase) return;
+    // round -> lobby is the round-resolution moment: pulse warm.
+    if (this.phase === 'round' && phase === 'lobby') this._winBoost = 0.1;
+    this.phase = phase;
+    if (phase === 'round') this.suddenDeath = false; // fresh round resets
+  }
+
+  /** Followed-bot hp drop: brief vignette squeeze (issue #184b). */
+  damagePulse() { this._damageT = 0.4; }
+
+  _reset(ip) {
+    ip.exposure = 1.0;
+    ip.contrast = 1.1;
+    ip.vignetteWeight = 1.6;
+    if (ip.vignetteColor) {
+      ip.vignetteColor.r = 0;
+      ip.vignetteColor.g = 0;
+      ip.vignetteColor.b = 0.05;
+    }
+    this._active = false;
+  }
+
+  /** Per-frame from the render loop. Cheap: a few lerps, writes only while active. */
+  update(pipeline, dt) {
+    if (!pipeline || !pipeline.isSupported || !pipeline.imageProcessing) return;
+    const ip = pipeline.imageProcessing;
+    if (!this.enabled) {
+      if (this._active) this._reset(ip);
+      return;
+    }
+
+    const ease = 1 - Math.exp(-2 * dt); // ~95% converged in ~1.5s
+    const sdTarget = this.suddenDeath && this.phase === 'round' ? 1 : 0;
+    this._sd += (sdTarget - this._sd) * ease;
+    this._lobby += ((this.phase === 'lobby' ? 1 : 0) - this._lobby) * ease;
+    this._winBoost *= Math.exp(-2.3 * dt); // ~99% decayed in ~2s
+    if (this._damageT > 0) this._damageT = Math.max(0, this._damageT - dt);
+    const damage = this._damageT > 0 ? Math.sin(Math.PI * (this._damageT / 0.4)) : 0;
+
+    if (this._sd < 0.002 && this._lobby < 0.002 && this._winBoost < 0.002 && damage === 0) {
+      if (this._active) this._reset(ip);
+      return;
+    }
+    this._active = true;
+    ip.exposure = 1.0 - 0.05 * this._sd - 0.04 * this._lobby + this._winBoost;
+    ip.contrast = 1.1 + 0.08 * this._sd - 0.05 * this._lobby;
+    ip.vignetteWeight = 1.6 + 0.4 * this._sd + 0.5 * damage;
+    if (ip.vignetteColor) {
+      // Base (0,0,0.05) -> sudden-death red (0.25,0.02,0.04); the damage
+      // pulse borrows the same red so both reads stay coherent.
+      const red = Math.min(1, this._sd + damage * 0.8);
+      ip.vignetteColor.r = 0.25 * red;
+      ip.vignetteColor.g = 0.02 * red;
+      ip.vignetteColor.b = 0.05 + (0.04 - 0.05) * red;
+    }
+  }
+}
 
 /**
  * Babylon's capability promise can remain pending on some GPU/driver paths.
@@ -101,16 +185,72 @@ export class ArenaEngine {
       }
     };
     applyResolution();
+    // Post-process toggles (bloom/vignette/fxaa/sharpen) are applied here on
+    // settings change — and once right after the pipeline is created below —
+    // instead of re-reading isEnabled() every frame in the render loop.
+    const applyPipelineFlags = () => {
+      if (this.glowLayer) {
+        this.glowLayer.isEnabled = isEnabled('rendering', 'glowLayer');
+      }
+      if (this._grading) {
+        // Cached here so the grading tick in the render loop never reads
+        // settings itself.
+        this._grading.enabled = isEnabled('rendering', 'dynamicGrading');
+      }
+      if (!this.pipeline || !this.pipeline.isSupported) return;
+      this.pipeline.bloomEnabled = isEnabled('rendering', 'bloom');
+      this.pipeline.imageProcessing.vignetteEnabled = isEnabled('rendering', 'vignette');
+      this.pipeline.fxaaEnabled = isEnabled('rendering', 'fxaa');
+      this.pipeline.sharpenEnabled = isEnabled('rendering', 'sharpen');
+    };
+    // Depth fog (issue #183a): a denser navy EXP2 fog gives the far arena
+    // edge a soft falloff while the default zoom stays nearly untouched
+    // (visibility ~0.95 at radius 800, ~0.66 at the far corner from max
+    // zoom-out). The skybox shader has no fog branch and the sky-distance
+    // billboards + light shafts set applyFog=false, so only real arena
+    // geometry participates. GUI overlays are a separate 2D layer.
+    const applyDepthFog = () => {
+      if (!this.scene) return;
+      if (isEnabled('arenaAmbience', 'depthFog')) {
+        this.scene.fogDensity = 0.00025;
+        this.scene.fogColor.set(0.02, 0.04, 0.08);
+      } else {
+        this.scene.fogDensity = 0.00008;
+        this.scene.fogColor.set(0.03, 0.03, 0.03);
+      }
+    };
+    // World-identity toggles (issue #182) change round-built assets — floor
+    // bake, obstacle merge, palette tints. Re-run those builds only when one
+    // of the three flags actually flips; every other settings change is a
+    // no-op here.
+    const worldThemeSig = () =>
+      `${isEnabled('arenaAmbience', 'mapPalettes')}|` +
+      `${isEnabled('arenaAmbience', 'contactShadows')}|` +
+      `${isEnabled('arenaAmbience', 'obstacleDetailing')}`;
+    this._worldThemeSig = worldThemeSig();
+    const applyWorldTheme = () => {
+      const sig = worldThemeSig();
+      if (sig === this._worldThemeSig) return;
+      this._worldThemeSig = sig;
+      if (this.envRenderer) this.envRenderer.applyMapTheme();
+      if (this.obstacleRenderer) this.obstacleRenderer.refresh();
+    };
     // init() re-runs on between-round arena resizes; without unsubscribing in
     // dispose(), listeners would pile up holding disposed engines.
-    this._unsubSettings = onSettingsChange(applyResolution);
+    this._unsubSettings = onSettingsChange(() => {
+      applyResolution();
+      applyPipelineFlags();
+      applyDepthFog();
+      applyWorldTheme();
+    });
     this.engine = engine;
+    this._grading = new GradingController();
     const scene = new B.Scene(engine);
     this.scene = scene;
     scene.clearColor = new B.Color4(0, 0, 0.02, 1); // near-black to match starfield skybox
     scene.fogMode = B.Scene.FOGMODE_EXP2;
-    scene.fogDensity = 0.00008;
     scene.fogColor = new B.Color3(0.03, 0.03, 0.03);
+    applyDepthFog(); // density + color come from the arenaAmbience.depthFog setting
     scene.skipPointerMovePicking = true;
     scene.autoClear = false;
     scene.autoClearDepthAndStencil = true;
@@ -234,6 +374,28 @@ export class ArenaEngine {
     }
     this.pipeline = pipeline;
 
+    // GlowLayer (issue #181): real halos around the scene's emissive neon —
+    // wall/obstacle trims, zone rings, weapon accents, trail cores. Half-res
+    // main texture and a modest kernel keep it inside the projector-laptop
+    // budget; intensity is tuned against the existing bloom (threshold 0.75,
+    // weight 0.3, unchanged) so the two passes never stack into a blowout.
+    this.glowLayer = null;
+    if (typeof B.GlowLayer === 'function') {
+      const glow = new B.GlowLayer('arenaGlow', scene, {
+        mainTextureRatio: 0.5,
+        blurKernelSize: 32,
+      });
+      glow.intensity = 0.75;
+      for (const mesh of this.envRenderer.getGlowExcludedMeshes()) {
+        glow.addExcludedMesh(mesh);
+      }
+      this.glowLayer = glow;
+    }
+
+    // Apply persisted settings over the hardcoded creation defaults above so
+    // a spectator who turned an effect off never sees a one-frame flash of it.
+    applyPipelineFlags();
+
     const self = this;
     let _lastFrame = performance.now();
     let frameSuspended = false;
@@ -274,15 +436,12 @@ export class ArenaEngine {
       if (self.gameplayRenderer) {
         self.gameplayRenderer.animate(self.botRenderer ? self.botRenderer.entries : null, dt);
       }
-      // Cheap boolean assignments so bloom/vignette/fxaa/sharpen toggles
-      // apply live, without needing a page reload (the setters early-return
-      // when unchanged).
-      if (self.pipeline && self.pipeline.isSupported) {
-        self.pipeline.bloomEnabled = isEnabled('rendering', 'bloom');
-        self.pipeline.imageProcessing.vignetteEnabled = isEnabled('rendering', 'vignette');
-        self.pipeline.fxaaEnabled = isEnabled('rendering', 'fxaa');
-        self.pipeline.sharpenEnabled = isEnabled('rendering', 'sharpen');
+      if (self._grading) {
+        // Enabled flag is cached by applyPipelineFlags; no settings reads here.
+        self._grading.update(self.pipeline, dt);
       }
+      // Pipeline toggles are event-driven (applyPipelineFlags via
+      // onSettingsChange) — the per-frame loop stays free of settings reads.
       scene.render();
     });
     // IntersectionObserver drives the off-screen frame suspension. threshold
@@ -325,7 +484,18 @@ export class ArenaEngine {
    * @param {Object} state
    */
   setState(state) {
-    if (!this.ready || state.type !== 'arena_state') return;
+    if (!this.ready) return;
+    // Both spectator shells (app.js and m/mobile.js) feed every broadcast
+    // through here, so the grading controller learns the round phase without
+    // extra app-layer wiring; setGamePhase/setSuddenDeath below stay public
+    // for anything that wants to drive it directly.
+    if (state.type === 'lobby_state') {
+      this.setGamePhase('lobby');
+      return;
+    }
+    if (state.type !== 'arena_state') return;
+    this.setGamePhase('round');
+    this.setSuddenDeath(!!state.sudden_death);
 
     // Dynamic arena sizing: the map can change dimensions between rounds
     // (it grows with bot count). Keyframe states carry arena_size; when it
@@ -345,6 +515,30 @@ export class ArenaEngine {
     // arriving at 10Hz either way, and every effect's cleanup runs in the
     // render loop, so spawning here would grow the scene without bound.
     // _seenArenaEvents dedup means skipped events never replay.
+    // Map shape first (issue #182): a round-boundary keyframe carries the new
+    // shape and the new obstacle layout together, so theming the environment
+    // before the obstacle rebuild lets the merged meshes pick up the round's
+    // palette in one pass.
+    this.envRenderer.setMapShape(state.map_shape);
+    // Followed-bot damage pulse (issue #184b): when the spectator is locked
+    // onto a bot and its hp drops, squeeze the vignette briefly via the
+    // grading controller (composes additively with sudden-death grading).
+    // One-shot trigger, so the isEnabled gate sits here at the spawn point.
+    const followId = this.camera ? this.camera.followId : null;
+    if (followId) {
+      const followed = (state.bots || []).find((b) => b.bot_id === followId);
+      const hp = followed ? followed.hp : null;
+      if (this._grading && followId === this._followedBotId &&
+          hp != null && this._followedBotHp != null && hp < this._followedBotHp &&
+          isEnabled('hitReactions', 'damageVignette')) {
+        this._grading.damagePulse();
+      }
+      this._followedBotId = followId;
+      this._followedBotHp = hp;
+    } else {
+      this._followedBotId = null;
+      this._followedBotHp = null;
+    }
     this.obstacleRenderer.update(state.obstacles);
     this.envRenderer.update(state.safe_zone, !!state.sudden_death);
     this.botRenderer.update(state.bots);
@@ -522,6 +716,10 @@ export class ArenaEngine {
    * form keeps behavior identical when IntersectionObserver is unavailable.
    */
   shouldSpawnEffects() { return !document.hidden && this._canvasVisible !== false; }
+
+  /** Dynamic-grading entry points (issue #183c). Phases: 'round' | 'lobby'. */
+  setGamePhase(phase) { if (this._grading) this._grading.setPhase(phase); }
+  setSuddenDeath(on) { if (this._grading) this._grading.setSuddenDeath(on); }
 
   setZoom(z) { if (this.camera) this.camera.setZoom(z); }
   followBot(id) { if (this.camera) this.camera.followBot(id); }

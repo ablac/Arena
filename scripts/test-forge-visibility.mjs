@@ -137,8 +137,14 @@ if (focus === 'all' || focus === 'body') {
       assert.ok(mesh, `${entry.profile.weapon} ${part} must remain part of the high-detail body`);
       assert.ok(guaranteedLuminance(mesh) >= 0.15,
         `${mesh.name} needs enough shared emissive contrast to remain visible in the dark arena`);
-      assert.equal(mesh.material.disableLighting, true,
-        `${mesh.name} must not depend on arena lights for its minimum silhouette`);
+      // Issue #181: chassis materials are sun/hemi-lit for depth, but the
+      // emissive floor above still guarantees the minimum silhouette, and the
+      // legacy self-lit look must remain restorable for the
+      // rendering.characterLighting toggle.
+      assert.equal(mesh.material.disableLighting, false,
+        `${mesh.name} must take arena lighting for shading depth (emissive floor covers the dark sectors)`);
+      assert.ok(mesh.material._forgeUnlitEmissive,
+        `${mesh.name} must retain its self-lit emissive fallback for the characterLighting toggle`);
     }
   }
   const torsoMaterials = entries.map(entry => entry.joints.torso.material);
@@ -220,8 +226,12 @@ if (focus === 'all' || focus === 'weapon') {
         assert.ok(guaranteedLuminance(mesh) >= 0.12,
           `${mesh.name} must not disappear and leave detached weapon pieces`);
         if (mesh.material.name.startsWith('forge-weapon-')) {
-          assert.equal(mesh.material.disableLighting, true,
-            `${mesh.name} must retain its shared silhouette without arena lighting`);
+          // Issue #181: weapon silhouettes are lit like the chassis; the
+          // emissive floor asserted above keeps the dark-sector guarantee.
+          assert.equal(mesh.material.disableLighting, false,
+            `${mesh.name} must take arena lighting for shading depth (emissive floor covers the dark sectors)`);
+          assert.ok(mesh.material._forgeUnlitEmissive,
+            `${mesh.name} must retain its self-lit emissive fallback for the characterLighting toggle`);
         }
       }
     }

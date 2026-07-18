@@ -7,6 +7,8 @@ const end = source.indexOf("    if (typeof IntersectionObserver === 'function'",
 assert.ok(start >= 0 && end > start, 'render-loop source must remain discoverable');
 
 const renderLoopSource = source.slice(start, end);
+assert.ok(!/isEnabled\(/.test(renderLoopSource),
+  'the per-frame render loop must stay free of settings reads — pipeline flags apply via onSettingsChange (issue #180)');
 const engine = {
   loop: null,
   runRenderLoop(callback) { this.loop = callback; },

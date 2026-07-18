@@ -12,6 +12,12 @@ import { isEnabled } from '../settings.js';
 /** Max concurrent damage numbers to prevent buildup. */
 const MAX_DMG_NUMBERS = 12;
 
+/** Hard cap on live ground scorch decals — the oldest recycles (issue #184a). */
+const MAX_SCORCH_DECALS = 16;
+
+/** Ground scorch lifetime: brief hold, then fade to nothing. */
+const SCORCH_LIFE_MS = 10000;
+
 /**
  * Capacity of every pooled transient particle system — the max any combat
  * burst in this file requests (staff explosion, 38). Pooling one shared size
@@ -27,6 +33,13 @@ const POOLED_PS_CAPACITY = 38;
  * which this mid-range value approximates fine at spectator distance.
  */
 const RING_UNIT_THICKNESS = 0.085;
+
+/**
+ * World-space radius of the sword-strike wake disc. The pooled wake mesh is
+ * unit-radius, so both the spawn scaling and the per-frame sweep multiply by
+ * this to reproduce the old radius-5.8 geometry exactly.
+ */
+const STRIKE_WAKE_RADIUS = 5.8;
 
 /** Per-weapon hit effect configs — distinct particle colors, counts, and spread. */
 const HIT_EFFECTS = {
@@ -52,6 +65,15 @@ export class EffectRenderer {
     this.active = [];
     this._dmgCount = 0;
     this._glowTex = null;
+    this._scorchTex = null;
+    this._scorchPool = [];
+    this._scorchLive = [];
+    this._scorchSeq = 0;
+    // Kill camera nudge honors the OS reduced-motion preference, same
+    // matchMedia convention as BotRenderer.
+    this._motionQuery = typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)')
+      : null;
     // Per-instance (NOT module-level) free list of transient particle
     // systems: the scene is disposed and rebuilt between rounds, so pooled
     // systems must die with their EffectRenderer.
@@ -193,6 +215,257 @@ export class EffectRenderer {
     this._discPool.push(entry);
   }
 
+  /**
+   * @private Acquire a mesh+material pair from the keyed effect pool (the
+   * generalization of _acquireRing/_acquireDisc for the remaining per-event
+   * shapes: strike planes, wake arc, blast rings, spheres, scorch discs).
+   * `build()` constructs the unit mesh on first use; a per-effect key keeps
+   * exact geometry (tessellation/arc/taper ratios), so pooling never changes
+   * visuals. Same contract as the ring pool: pop-or-create, neutral
+   * transform/visibility/alpha reset here, every call site fully reassigns
+   * position/rotation/scaling/emissive, and finished effects hand entries
+   * back through _releaseFxMesh() instead of dispose(). The material is part
+   * of the entry (per-instance, NOT shared per weapon/color): every one of
+   * these effects animates material alpha per instance, so a shared material
+   * would bleed one strike's fade into a concurrent one.
+   */
+  _acquireFxMesh(key, build) {
+    const B = window.BABYLON;
+    if (!this._fxPools) this._fxPools = new Map();
+    let pool = this._fxPools.get(key);
+    if (!pool) { pool = []; this._fxPools.set(key, pool); }
+    let entry = pool.pop();
+    if (!entry || entry.mesh.isDisposed()) {
+      const mesh = build();
+      const mat = new B.StandardMaterial(`fx-${key}-mat-${++_psCounter}`, this.scene);
+      mat.diffuseColor = B.Color3.Black();
+      mat.disableLighting = true;
+      mesh.material = mat;
+      entry = { key, mesh, mat };
+    }
+    entry.mesh.parent = null;
+    entry.mesh.position.set(0, 0, 0);
+    entry.mesh.rotation.set(0, 0, 0);
+    entry.mesh.scaling.set(1, 1, 1);
+    entry.mesh.visibility = 1;
+    entry.mesh.setEnabled(true);
+    entry.mat.alpha = 1;
+    return entry;
+  }
+
+  /** @private Return a keyed effect mesh for reuse instead of disposing it. */
+  _releaseFxMesh(entry) {
+    entry.mesh.setEnabled(false);
+    this._fxPools.get(entry.key).push(entry);
+  }
+
+  /**
+   * @private Acquire the pooled grapple rig — root + line/core/hook/flare
+   * and their three materials — as one bundle: the four meshes always live
+   * and die together, and hook+flare share a material, so they don't fit the
+   * keyed mesh pool. Materials are per-instance because chain/core alpha
+   * fades per grapple. Call sites reassign colors, alphas, and transforms;
+   * release goes through _releaseGrapple().
+   */
+  _acquireGrapple() {
+    const B = window.BABYLON;
+    if (!this._grapplePool) this._grapplePool = [];
+    let rig = this._grapplePool.pop();
+    if (!rig || rig.line.isDisposed()) {
+      const root = new B.TransformNode(`grapple-root-${++_psCounter}`, this.scene);
+      const chainMat = new B.StandardMaterial(`grapple-chain-mat-${_psCounter}`, this.scene);
+      chainMat.disableLighting = true;
+      const line = B.MeshBuilder.CreateCylinder(`gline-${_psCounter}`, {
+        height: 1,
+        diameter: 1.16,
+        tessellation: 10,
+      }, this.scene);
+      line.material = chainMat;
+      line.parent = root;
+
+      const coreMat = new B.StandardMaterial(`grapple-core-mat-${_psCounter}`, this.scene);
+      coreMat.diffuseColor = B.Color3.Black();
+      coreMat.disableLighting = true;
+      const core = B.MeshBuilder.CreateCylinder(`gcore-${_psCounter}`, {
+        height: 1,
+        diameter: 0.36,
+        tessellation: 8,
+      }, this.scene);
+      core.material = coreMat;
+      core.parent = root;
+
+      const hookMat = new B.StandardMaterial(`ghook-mat-${_psCounter}`, this.scene);
+      hookMat.diffuseColor = B.Color3.Black();
+      hookMat.disableLighting = true;
+      const hook = B.MeshBuilder.CreateCylinder(`ghook-head-${_psCounter}`, {
+        height: 6.4, diameterTop: 0.35, diameterBottom: 2.6, tessellation: 6,
+      }, this.scene);
+      hook.material = hookMat;
+      hook.parent = root;
+
+      const flare = B.MeshBuilder.CreateTorus(`ghook-flare-${_psCounter}`, {
+        diameter: 4.6, thickness: 0.35, tessellation: 18,
+      }, this.scene);
+      flare.material = hookMat;
+      flare.parent = root;
+
+      rig = { root, line, core, hook, flare, chainMat, coreMat, hookMat };
+    }
+    for (const mesh of [rig.line, rig.core, rig.hook, rig.flare]) {
+      mesh.position.set(0, 0, 0);
+      mesh.rotation.set(0, 0, 0);
+      mesh.scaling.set(1, 1, 1);
+      mesh.visibility = 1;
+      mesh.setEnabled(true);
+    }
+    return rig;
+  }
+
+  /** @private Return the grapple rig for reuse instead of disposing it. */
+  _releaseGrapple(rig) {
+    rig.line.setEnabled(false);
+    rig.core.setEnabled(false);
+    rig.hook.setEnabled(false);
+    rig.flare.setEnabled(false);
+    this._grapplePool.push(rig);
+  }
+
+  /**
+   * @private Shared procedural burn texture, built once per scene (issue
+   * #184a). Dark charred core with irregular blotches and a faint ember rim;
+   * the RGB doubles as the emissive map (near-black chars, softly glowing
+   * rim) and the alpha as the decal cutout. Math.random is fine here — the
+   * texture is baked exactly once, never per event.
+   */
+  _getScorchTexture() {
+    if (this._scorchTex) return this._scorchTex;
+    const B = window.BABYLON;
+    const tex = new B.DynamicTexture('scorchTex', 128, this.scene, false);
+    const ctx = tex.getContext();
+    ctx.clearRect(0, 0, 128, 128);
+    const core = ctx.createRadialGradient(64, 64, 4, 64, 64, 60);
+    core.addColorStop(0, 'rgba(5,4,3,0.9)');
+    core.addColorStop(0.55, 'rgba(9,6,4,0.62)');
+    core.addColorStop(0.85, 'rgba(11,8,5,0.22)');
+    core.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = core;
+    ctx.fillRect(0, 0, 128, 128);
+    for (let i = 0; i < 26; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 16 + Math.random() * 40;
+      const r = 4 + Math.random() * 10;
+      ctx.beginPath();
+      ctx.arc(64 + Math.cos(angle) * dist, 64 + Math.sin(angle) * dist, r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(6,4,3,${(0.14 + Math.random() * 0.22).toFixed(3)})`;
+      ctx.fill();
+    }
+    const rim = ctx.createRadialGradient(64, 64, 30, 64, 64, 58);
+    rim.addColorStop(0, 'rgba(0,0,0,0)');
+    rim.addColorStop(0.72, 'rgba(255,110,40,0.10)');
+    rim.addColorStop(0.92, 'rgba(255,70,20,0.05)');
+    rim.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = rim;
+    ctx.fillRect(0, 0, 128, 128);
+    tex.update();
+    tex.hasAlpha = true;
+    this._scorchTex = tex;
+    return tex;
+  }
+
+  /** @private Pooled scorch decal (unit disc + per-instance fading material). */
+  _acquireScorch() {
+    const B = window.BABYLON;
+    let entry = this._scorchPool.pop();
+    if (!entry || entry.mesh.isDisposed()) {
+      const mesh = B.MeshBuilder.CreateDisc(`scorch-${++_psCounter}`, {
+        radius: 1,
+        tessellation: 24,
+      }, this.scene);
+      const mat = new B.StandardMaterial(`scorch-mat-${_psCounter}`, this.scene);
+      const tex = this._getScorchTexture();
+      mat.diffuseColor = B.Color3.Black();
+      mat.specularColor = B.Color3.Black();
+      mat.emissiveColor = new B.Color3(1, 1, 1); // texture-driven char + ember rim
+      mat.diffuseTexture = tex;
+      mat.emissiveTexture = tex;
+      mat.useAlphaFromDiffuseTexture = true;
+      mat.disableLighting = true;
+      mesh.material = mat;
+      // Tiny per-slot height bias keeps overlapping decals from z-fighting.
+      entry = { mesh, mat, yBias: 0.3 + (this._scorchSeq++ % 8) * 0.013, obs: null, start: 0 };
+    }
+    entry.mesh.parent = null;
+    entry.mesh.setEnabled(true);
+    return entry;
+  }
+
+  /** @private Retire a scorch decal into the pool (natural end or cap recycle). */
+  _finishScorch(entry) {
+    if (entry.obs) {
+      this.scene.onBeforeRenderObservable.remove(entry.obs);
+      entry.obs = null;
+    }
+    const index = this._scorchLive.indexOf(entry);
+    if (index >= 0) this._scorchLive.splice(index, 1);
+    entry.mesh.setEnabled(false);
+    this._scorchPool.push(entry);
+  }
+
+  /**
+   * Ground scorch decal (issue #184a): a charred disc left behind by
+   * mine/staff detonations and deaths, fading out over ~10s. Pooled, one
+   * shared burn texture, hard cap of MAX_SCORCH_DECALS live (oldest
+   * recycles first).
+   * @param {number} x @param {number} z @param {number} [radius=14]
+   */
+  spawnGroundScorch(x, z, radius = 14) {
+    if (!isEnabled('weaponImpactVfx', 'groundScorch')) return;
+    if (this._scorchLive.length >= MAX_SCORCH_DECALS) {
+      this._finishScorch(this._scorchLive[0]);
+    }
+    const entry = this._acquireScorch();
+    const r = Math.max(8, radius);
+    entry.mesh.position.set(x, entry.yBias, z);
+    // rotation.z spins the decal around its own flat normal for variety.
+    entry.mesh.rotation.set(Math.PI / 2, 0, Math.random() * Math.PI * 2);
+    entry.mesh.scaling.set(r, r, 1);
+    entry.mat.alpha = 0.85;
+    entry.start = performance.now();
+    entry.obs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - entry.start) / SCORCH_LIFE_MS;
+      if (t >= 1) {
+        this._finishScorch(entry);
+        return;
+      }
+      // Hold for the first 40%, then fade out.
+      entry.mat.alpha = 0.85 * (t < 0.4 ? 1 : 1 - (t - 0.4) / 0.6);
+    });
+    this._scorchLive.push(entry);
+  }
+
+  /**
+   * @private Kill camera nudge (issue #184c): a ~2% radius kick easing back
+   * over 0.3s. Applied as a delta so concurrent nudges compose and zoom
+   * changes mid-nudge only ever see a bounded transient. Skipped under the
+   * OS reduced-motion preference.
+   */
+  _killCameraNudge() {
+    if (!isEnabled('deathEffects', 'killCameraNudge')) return;
+    if (this._motionQuery && this._motionQuery.matches) return;
+    const cam = this.camera && this.camera.camera;
+    if (!cam) return;
+    const kick = cam.radius * 0.02;
+    const start = performance.now();
+    let applied = 0;
+    const obs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - start) / 300;
+      const offset = t >= 1 ? 0 : -kick * (1 - t) * (1 - t);
+      cam.radius += offset - applied;
+      applied = offset;
+      if (t >= 1) this.scene.onBeforeRenderObservable.remove(obs);
+    });
+  }
+
   update(bots) {
     const now = Date.now();
     const alive = new Set();
@@ -214,6 +487,8 @@ export class EffectRenderer {
       } else {
         if (this.prevAlive.has(bot.bot_id) && spawnOk) {
           this._deathBurst(bot.position[0], bot.position[1], bot.avatar_color);
+          this.spawnGroundScorch(bot.position[0], bot.position[1], 13);
+          this._killCameraNudge();
         }
         // Reset on death so a respawn back to full hp is not read as a hit.
         this.prevHp.delete(bot.bot_id);
@@ -411,48 +686,49 @@ export class EffectRenderer {
       grapple: { width: 1.4, height: 16, alpha: 0.34, lift: 10, scale: 1.4, hue: [0.5, 0.95, 1.0] },
     }[weapon] || { width: 2.2, height: 14, alpha: 0.34, lift: 10, scale: 1.2, hue: [1.0, 0.82, 0.38] };
 
-    const slash = B.MeshBuilder.CreatePlane(`strike-${++_psCounter}`, {
-      width: strikeCfg.width,
-      height: strikeCfg.height,
+    // Pooled unit plane scaled to the per-weapon dimensions. This fires on
+    // every melee/shove swing, so the mesh+material pair comes from the keyed
+    // pool and is fully reassigned instead of constructed per event.
+    const slashEntry = this._acquireFxMesh('fx-plane', () => B.MeshBuilder.CreatePlane(`strike-${++_psCounter}`, {
+      width: 1,
+      height: 1,
       sideOrientation: B.Mesh.DOUBLESIDE,
-    }, this.scene);
+    }, this.scene));
+    const slash = slashEntry.mesh;
+    const slashMat = slashEntry.mat;
     slash.position.set(mx + nx * 3.5, strikeCfg.lift, mz + nz * 3.5);
     slash.rotation.y = rotY;
     slash.rotation.x = weapon === 'shield' ? Math.PI / 2 : Math.PI / 2.4;
     slash.rotation.z = weapon === 'shield' ? 0 : Math.PI / 2;
-    const slashMat = new B.StandardMaterial(`strike-mat-${_psCounter}`, this.scene);
-    slashMat.diffuseColor = B.Color3.Black();
-    slashMat.emissiveColor = new B.Color3(
+    slash.scaling.set(strikeCfg.width, strikeCfg.height, 1);
+    slashMat.emissiveColor.set(
       Math.min(1, strikeCfg.hue[0] * 0.65 + c.r * 0.55),
       Math.min(1, strikeCfg.hue[1] * 0.65 + c.g * 0.55),
       Math.min(1, strikeCfg.hue[2] * 0.65 + c.b * 0.55),
     );
     slashMat.alpha = strikeCfg.alpha;
-    slashMat.disableLighting = true;
-    slash.material = slashMat;
 
+    let wakeEntry = null;
     let wake = null;
     let wakeMat = null;
     if (strikeCfg.trail) {
-      wake = B.MeshBuilder.CreateDisc(`strike-wake-${++_psCounter}`, {
-        radius: 5.8,
+      wakeEntry = this._acquireFxMesh('strike-wake', () => B.MeshBuilder.CreateDisc(`strike-wake-${++_psCounter}`, {
+        radius: 1,
         tessellation: 26,
         arc: 0.68,
-      }, this.scene);
+      }, this.scene));
+      wake = wakeEntry.mesh;
+      wakeMat = wakeEntry.mat;
       wake.position.copyFrom(slash.position);
       wake.rotation.x = Math.PI / 2;
       wake.rotation.y = rotY - strikeCfg.arc;
-      wake.scaling.set(1.05, 1.05, 1);
-      wakeMat = new B.StandardMaterial(`strike-wake-mat-${_psCounter}`, this.scene);
-      wakeMat.diffuseColor = B.Color3.Black();
-      wakeMat.emissiveColor = new B.Color3(
+      wake.scaling.set(STRIKE_WAKE_RADIUS * 1.05, STRIKE_WAKE_RADIUS * 1.05, 1);
+      wakeMat.emissiveColor.set(
         Math.min(1, c.r * 0.62 + 0.42),
         Math.min(1, c.g * 0.58 + 0.28),
         Math.min(1, c.b * 0.38 + 0.12),
       );
-      wakeMat.disableLighting = true;
       wakeMat.alpha = 0.24;
-      wake.material = wakeMat;
     }
 
     const start = performance.now();
@@ -460,14 +736,12 @@ export class EffectRenderer {
       const t = (performance.now() - start) / (weapon === 'daggers' ? 110 : 150);
       if (t >= 1) {
         this.scene.onBeforeRenderObservable.remove(obs);
-        slash.dispose();
-        slashMat.dispose();
-        if (wake) wake.dispose();
-        if (wakeMat) wakeMat.dispose();
+        this._releaseFxMesh(slashEntry);
+        if (wakeEntry) this._releaseFxMesh(wakeEntry);
         return;
       }
       const pulse = 1 + Math.sin(t * Math.PI) * (strikeCfg.scale - 1);
-      slash.scaling.set(pulse, pulse, pulse);
+      slash.scaling.set(strikeCfg.width * pulse, strikeCfg.height * pulse, 1);
       slash.position.x = mx + nx * (3.5 + t * 3.2);
       slash.position.z = mz + nz * (3.5 + t * 3.2);
       slash.position.y = strikeCfg.lift + Math.sin(t * Math.PI) * 1.4;
@@ -477,7 +751,7 @@ export class EffectRenderer {
         wake.position.y = 1.25 + Math.sin(t * Math.PI) * 0.35;
         wake.rotation.y = rotY - strikeCfg.arc + t * 0.55;
         const sweep = 1 + t * 0.65;
-        wake.scaling.set(sweep, sweep, 1);
+        wake.scaling.set(STRIKE_WAKE_RADIUS * sweep, STRIKE_WAKE_RADIUS * sweep, 1);
         wakeMat.alpha = Math.max(0, 0.24 * (1 - t));
       }
     });
@@ -544,31 +818,31 @@ export class EffectRenderer {
     this.spawnWeaponStrike(ax, az, tx, tz, hexColor, 'daggers');
     this.spawnHitSparks(tx, tz, hexColor, 'daggers');
 
-    const mark = B.MeshBuilder.CreatePlane(`backstab-mark-${++_psCounter}`, {
-      width: 8,
-      height: 16,
+    // Pooled unit plane (same pool as the strike slash) scaled to the 8x16
+    // mark; alpha animates per instance, so the material stays per-entry.
+    const markEntry = this._acquireFxMesh('fx-plane', () => B.MeshBuilder.CreatePlane(`backstab-mark-${++_psCounter}`, {
+      width: 1,
+      height: 1,
       sideOrientation: B.Mesh.DOUBLESIDE,
-    }, this.scene);
+    }, this.scene));
+    const mark = markEntry.mesh;
+    const markMat = markEntry.mat;
     mark.position.set(tx, 12, tz);
     mark.rotation.x = Math.PI / 2.6;
     mark.rotation.y = Math.atan2(tx - ax, tz - az);
-    const markMat = new B.StandardMaterial(`backstab-mark-mat-${_psCounter}`, this.scene);
-    markMat.diffuseColor = B.Color3.Black();
-    markMat.emissiveColor = new B.Color3(Math.min(1, c.r + 0.12), Math.min(1, c.g * 0.5 + 0.18), Math.min(1, c.b * 0.35 + 0.08));
-    markMat.disableLighting = true;
+    mark.scaling.set(8, 16, 1);
+    markMat.emissiveColor.set(Math.min(1, c.r + 0.12), Math.min(1, c.g * 0.5 + 0.18), Math.min(1, c.b * 0.35 + 0.08));
     markMat.alpha = 0.58;
-    mark.material = markMat;
 
     const start = performance.now();
     const obs = this.scene.onBeforeRenderObservable.add(() => {
       const t = (performance.now() - start) / 140;
       if (t >= 1) {
         this.scene.onBeforeRenderObservable.remove(obs);
-        mark.dispose();
-        markMat.dispose();
+        this._releaseFxMesh(markEntry);
         return;
       }
-      mark.scaling.set(1 + t * 0.45, 1 + t * 0.45, 1);
+      mark.scaling.set(8 * (1 + t * 0.45), 16 * (1 + t * 0.45), 1);
       mark.position.y = 12 + Math.sin(t * Math.PI) * 1.8;
       markMat.alpha = Math.max(0, 0.58 * (1 - t));
     });
@@ -773,7 +1047,6 @@ export class EffectRenderer {
     const B = window.BABYLON;
     const scene = this.scene;
     const color = parseColor(opts.color || '#59f1ff');
-    const CHAIN_COLOR = new B.Color3(color.r, color.g, color.b);
     const CHAIN_Y = 12;
     const mode = opts.mode || 'pull';
     const endX = typeof opts.endX === 'number' ? opts.endX : tx;
@@ -782,58 +1055,25 @@ export class EffectRenderer {
     const dz = tz - az;
     const travelYaw = Math.atan2(dx, dz);
 
-    const chainMat = new B.StandardMaterial(`grapple-chain-mat-${++_psCounter}`, scene);
-    chainMat.diffuseColor = CHAIN_COLOR.scale(0.15);
-    chainMat.emissiveColor = CHAIN_COLOR.scale(1.05);
-    chainMat.disableLighting = true;
+    // Pooled rig: line/core/hook/flare meshes and their materials are reused
+    // across grapples; every color/alpha/transform is reassigned here.
+    const rig = this._acquireGrapple();
+    const { line, core, hook, flare, chainMat, coreMat, hookMat } = rig;
+    chainMat.diffuseColor.set(color.r * 0.15, color.g * 0.15, color.b * 0.15);
+    chainMat.emissiveColor.set(color.r * 1.05, color.g * 1.05, color.b * 1.05);
     chainMat.alpha = 0.92;
-
-    const root = new B.TransformNode(`grapple-root-${_psCounter}`, scene);
-    const line = B.MeshBuilder.CreateCylinder(`gline-${_psCounter}`, {
-      height: 1,
-      diameter: 1.16,
-      tessellation: 10,
-    }, scene);
-    line.material = chainMat;
-    line.parent = root;
-
-    const coreMat = new B.StandardMaterial(`grapple-core-mat-${++_psCounter}`, scene);
-    coreMat.diffuseColor = B.Color3.Black();
-    coreMat.emissiveColor = CHAIN_COLOR.scale(1.4);
-    coreMat.disableLighting = true;
+    coreMat.emissiveColor.set(color.r * 1.4, color.g * 1.4, color.b * 1.4);
     coreMat.alpha = 0.78;
-    const core = B.MeshBuilder.CreateCylinder(`gcore-${_psCounter}`, {
-      height: 1,
-      diameter: 0.36,
-      tessellation: 8,
-    }, scene);
-    core.material = coreMat;
-    core.parent = root;
-
-    const hookMat = new B.StandardMaterial(`ghook-mat-${++_psCounter}`, scene);
-    hookMat.diffuseColor = B.Color3.Black();
-    hookMat.emissiveColor = new B.Color3(
+    hookMat.emissiveColor.set(
       Math.min(1, color.r + 0.28),
       Math.min(1, color.g + 0.22),
       Math.min(1, color.b + 0.18),
     );
-    hookMat.disableLighting = true;
-    const hook = B.MeshBuilder.CreateCylinder(`ghook-head-${_psCounter}`, {
-      height: 6.4, diameterTop: 0.35, diameterBottom: 2.6, tessellation: 6
-    }, scene);
-    hook.material = hookMat;
     hook.position.set(tx, CHAIN_Y, tz);
     hook.rotation.z = Math.PI / 2;
     hook.rotation.y = travelYaw;
-    hook.parent = root;
-
-    const flare = B.MeshBuilder.CreateTorus(`ghook-flare-${++_psCounter}`, {
-      diameter: 4.6, thickness: 0.35, tessellation: 18,
-    }, scene);
     flare.position.copyFrom(hook.position);
     flare.rotation.x = Math.PI / 2;
-    flare.material = hookMat;
-    flare.parent = root;
 
     // Spark particles at both ends
     const spawnSparks = (x, z) => {
@@ -918,14 +1158,7 @@ export class EffectRenderer {
         flare.visibility = 1 - fadeT;
       } else {
         scene.onBeforeRenderObservable.remove(observer);
-        line.dispose();
-        core.dispose();
-        hook.dispose();
-        flare.dispose();
-        root.dispose();
-        chainMat.dispose();
-        coreMat.dispose();
-        hookMat.dispose();
+        this._releaseGrapple(rig);
       }
     });
 
@@ -943,43 +1176,50 @@ export class EffectRenderer {
     if (!isEnabled('weaponImpactVfx', 'mineExplosion')) return;
     const B = window.BABYLON;
     const blastRadius = Math.max(12, radius);
+    this.spawnGroundScorch(x, z, blastRadius * 0.6);
 
-    const ring = B.MeshBuilder.CreateTorus(`mine-ring-${++_psCounter}`, {
-      diameter: blastRadius * 1.4,
-      thickness: Math.max(1.2, blastRadius * 0.08),
+    // Pooled unit meshes scaled to this blast radius. The mine ring keeps
+    // its own unit torus (thickness/diameter 0.08/1.4, tessellation 32) so
+    // the scaled tube matches the old per-event geometry exactly whenever
+    // blastRadius >= 15 (i.e. the 1.2 thickness floor doesn't apply — the
+    // default event radius is 20); below that the tube runs up to ~0.25
+    // world units thinner, invisible at spectator distance.
+    const ringD = blastRadius * 1.4;
+    const ringEntry = this._acquireFxMesh('mine-ring', () => B.MeshBuilder.CreateTorus(`mine-ring-${++_psCounter}`, {
+      diameter: 1,
+      thickness: 0.08 / 1.4,
       tessellation: 32,
-    }, this.scene);
-    const ringMat = new B.StandardMaterial(`mine-ring-mat-${_psCounter}`, this.scene);
-    ringMat.emissiveColor = new B.Color3(1.0, 0.45, 0.1);
-    ringMat.diffuseColor = B.Color3.Black();
-    ringMat.disableLighting = true;
-    ring.material = ringMat;
+    }, this.scene));
+    const ring = ringEntry.mesh;
+    const ringMat = ringEntry.mat;
+    ringMat.emissiveColor.set(1.0, 0.45, 0.1);
     ring.position.set(x, 2, z);
     ring.rotation.x = Math.PI / 2;
+    ring.scaling.set(ringD, ringD, ringD);
 
-    const core = B.MeshBuilder.CreateSphere(`mine-core-${++_psCounter}`, {
-      diameter: blastRadius * 0.35,
+    const coreD = blastRadius * 0.35;
+    const coreEntry = this._acquireFxMesh('fx-sphere', () => B.MeshBuilder.CreateSphere(`mine-core-${++_psCounter}`, {
+      diameter: 1,
       segments: 10,
-    }, this.scene);
-    const coreMat = new B.StandardMaterial(`mine-core-mat-${_psCounter}`, this.scene);
-    coreMat.emissiveColor = new B.Color3(1.0, 0.8, 0.2);
-    coreMat.diffuseColor = B.Color3.Black();
-    coreMat.disableLighting = true;
-    core.material = coreMat;
+    }, this.scene));
+    const core = coreEntry.mesh;
+    const coreMat = coreEntry.mat;
+    coreMat.emissiveColor.set(1.0, 0.8, 0.2);
     core.position.set(x, 4, z);
+    core.scaling.set(coreD, coreD, coreD);
 
-    const scorch = B.MeshBuilder.CreateDisc(`mine-scorch-${++_psCounter}`, {
-      radius: blastRadius * 0.55,
+    const scorchR = blastRadius * 0.55;
+    const scorchEntry = this._acquireFxMesh('mine-scorch', () => B.MeshBuilder.CreateDisc(`mine-scorch-${++_psCounter}`, {
+      radius: 1,
       tessellation: 28,
-    }, this.scene);
+    }, this.scene));
+    const scorch = scorchEntry.mesh;
+    const scorchMat = scorchEntry.mat;
     scorch.rotation.x = Math.PI / 2;
     scorch.position.set(x, 0.25, z);
-    const scorchMat = new B.StandardMaterial(`mine-scorch-mat-${_psCounter}`, this.scene);
-    scorchMat.diffuseColor = B.Color3.Black();
-    scorchMat.emissiveColor = new B.Color3(0.18, 0.08, 0.02);
-    scorchMat.disableLighting = true;
+    scorch.scaling.set(scorchR, scorchR, 1);
+    scorchMat.emissiveColor.set(0.18, 0.08, 0.02);
     scorchMat.alpha = 0.42;
-    scorch.material = scorchMat;
 
     const ps = this._acquirePS();
     ps.emitter.set(x, 2, z);
@@ -1002,17 +1242,16 @@ export class EffectRenderer {
       const t = (performance.now() - start) / 260;
       if (t >= 1) {
         this.scene.onBeforeRenderObservable.remove(obs);
-        ring.dispose();
-        ringMat.dispose();
-        core.dispose();
-        coreMat.dispose();
-        scorch.dispose();
-        scorchMat.dispose();
+        this._releaseFxMesh(ringEntry);
+        this._releaseFxMesh(coreEntry);
+        this._releaseFxMesh(scorchEntry);
         return;
       }
-      ring.scaling.set(1 + t * 1.6, 1 + t * 1.6, 1);
+      const rs = ringD * (1 + t * 1.6);
+      ring.scaling.set(rs, rs, ringD);
       ringMat.alpha = 1 - t;
-      core.scaling.set(1 + t * 1.1, 1 + t * 1.1, 1 + t * 1.1);
+      const cs = coreD * (1 + t * 1.1);
+      core.scaling.set(cs, cs, cs);
       coreMat.alpha = 1 - t;
       scorchMat.alpha = Math.max(0, 0.42 - t * 0.12);
     });
@@ -1032,47 +1271,53 @@ export class EffectRenderer {
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     const blastRadius = Math.max(16, radius);
+    this.spawnGroundScorch(x, z, blastRadius * 0.6);
 
-    const ring = B.MeshBuilder.CreateTorus(`staff-ring-${++_psCounter}`, {
-      diameter: blastRadius * 1.6,
-      thickness: Math.max(1.4, blastRadius * 0.08),
+    // Pooled unit meshes, same scheme as the mine blast. The staff ring's
+    // unit torus bakes this effect's own thickness/diameter ratio (0.08/1.6)
+    // and tessellation 40, exact for blastRadius >= 17.5 (default is 20);
+    // the 1.4 thickness floor below that is unreachable via uniform scaling
+    // and rounds the tube slightly thinner.
+    const ringD = blastRadius * 1.6;
+    const ringEntry = this._acquireFxMesh('staff-ring', () => B.MeshBuilder.CreateTorus(`staff-ring-${++_psCounter}`, {
+      diameter: 1,
+      thickness: 0.08 / 1.6,
       tessellation: 40,
-    }, this.scene);
+    }, this.scene));
+    const ring = ringEntry.mesh;
+    const ringMat = ringEntry.mat;
     ring.position.set(x, 1.4, z);
     ring.rotation.x = Math.PI / 2;
-    const ringMat = new B.StandardMaterial(`staff-ring-mat-${_psCounter}`, this.scene);
-    ringMat.diffuseColor = B.Color3.Black();
-    ringMat.emissiveColor = new B.Color3(
+    ring.scaling.set(ringD, ringD, ringD);
+    ringMat.emissiveColor.set(
       Math.min(1, c.r + 0.2),
       Math.min(1, c.g + 0.08),
       Math.min(1, c.b + 0.28),
     );
-    ringMat.disableLighting = true;
-    ring.material = ringMat;
 
-    const disc = B.MeshBuilder.CreateDisc(`staff-disc-${++_psCounter}`, {
-      radius: blastRadius * 0.65,
+    const discR = blastRadius * 0.65;
+    const discEntry = this._acquireFxMesh('staff-disc', () => B.MeshBuilder.CreateDisc(`staff-disc-${++_psCounter}`, {
+      radius: 1,
       tessellation: 34,
-    }, this.scene);
+    }, this.scene));
+    const disc = discEntry.mesh;
+    const discMat = discEntry.mat;
     disc.rotation.x = Math.PI / 2;
     disc.position.set(x, 0.25, z);
-    const discMat = new B.StandardMaterial(`staff-disc-mat-${_psCounter}`, this.scene);
-    discMat.diffuseColor = B.Color3.Black();
-    discMat.emissiveColor = new B.Color3(c.r * 0.9, c.g * 0.55, c.b);
-    discMat.disableLighting = true;
+    disc.scaling.set(discR, discR, 1);
+    discMat.emissiveColor.set(c.r * 0.9, c.g * 0.55, c.b);
     discMat.alpha = 0.28;
-    disc.material = discMat;
 
-    const flash = B.MeshBuilder.CreateSphere(`staff-flash-${++_psCounter}`, {
-      diameter: blastRadius * 0.4,
+    const flashD = blastRadius * 0.4;
+    const flashEntry = this._acquireFxMesh('fx-sphere', () => B.MeshBuilder.CreateSphere(`staff-flash-${++_psCounter}`, {
+      diameter: 1,
       segments: 10,
-    }, this.scene);
+    }, this.scene));
+    const flash = flashEntry.mesh;
+    const flashMat = flashEntry.mat;
     flash.position.set(x, 6, z);
-    const flashMat = new B.StandardMaterial(`staff-flash-mat-${_psCounter}`, this.scene);
-    flashMat.diffuseColor = B.Color3.Black();
-    flashMat.emissiveColor = new B.Color3(1.0, 0.8, 1.0);
-    flashMat.disableLighting = true;
-    flash.material = flashMat;
+    flash.scaling.set(flashD, flashD, flashD);
+    flashMat.emissiveColor.set(1.0, 0.8, 1.0);
 
     const ps = this._acquirePS();
     ps.emitter.set(x, 3, z);
@@ -1095,18 +1340,17 @@ export class EffectRenderer {
       const t = (performance.now() - start) / 260;
       if (t >= 1) {
         this.scene.onBeforeRenderObservable.remove(obs);
-        ring.dispose();
-        ringMat.dispose();
-        disc.dispose();
-        discMat.dispose();
-        flash.dispose();
-        flashMat.dispose();
+        this._releaseFxMesh(ringEntry);
+        this._releaseFxMesh(discEntry);
+        this._releaseFxMesh(flashEntry);
         return;
       }
-      const ringScale = 1 + t * 1.5;
-      ring.scaling.set(ringScale, ringScale, 1);
-      disc.scaling.set(1 + t * 0.85, 1 + t * 0.85, 1);
-      flash.scaling.set(1 + t * 1.2, 1 + t * 1.2, 1 + t * 1.2);
+      const ringScale = ringD * (1 + t * 1.5);
+      ring.scaling.set(ringScale, ringScale, ringD);
+      const ds = discR * (1 + t * 0.85);
+      disc.scaling.set(ds, ds, 1);
+      const fs = flashD * (1 + t * 1.2);
+      flash.scaling.set(fs, fs, fs);
       ringMat.alpha = 1 - t;
       discMat.alpha = Math.max(0, 0.28 - t * 0.2);
       flashMat.alpha = Math.max(0, 0.95 - t * 1.3);
@@ -1322,9 +1566,9 @@ export class EffectRenderer {
 
   /**
    * Dispose pooled meshes/materials, any still-active transient particle
-   * systems, and the shared glow texture. In-flight ring/disc animations
-   * (<= ~400ms) release into the emptied pools afterward; their meshes are
-   * reclaimed by scene.dispose() at teardown.
+   * systems, and the shared glow texture. In-flight ring/disc/fx-mesh/
+   * grapple animations (<= ~700ms) release into the emptied pools
+   * afterward; their meshes are reclaimed by scene.dispose() at teardown.
    */
   dispose() {
     for (const e of this.active) e.dispose();
@@ -1337,9 +1581,38 @@ export class EffectRenderer {
       for (const { mesh, mat } of this._discPool) { mesh.dispose(); mat.dispose(); }
       this._discPool.length = 0;
     }
+    if (this._fxPools) {
+      for (const pool of this._fxPools.values()) {
+        for (const { mesh, mat } of pool) { mesh.dispose(); mat.dispose(); }
+      }
+      this._fxPools.clear();
+    }
+    if (this._grapplePool) {
+      for (const rig of this._grapplePool) {
+        rig.line.dispose();
+        rig.core.dispose();
+        rig.hook.dispose();
+        rig.flare.dispose();
+        rig.root.dispose();
+        rig.chainMat.dispose();
+        rig.coreMat.dispose();
+        rig.hookMat.dispose();
+      }
+      this._grapplePool.length = 0;
+    }
     if (this._dmgPool) {
       for (const { plane, tex, mat } of this._dmgPool) { plane.dispose(); tex.dispose(); mat.dispose(); }
       this._dmgPool.length = 0;
+    }
+    // Retire live scorch decals into the pool first (removes their
+    // observers), then release the pooled meshes/materials and the one
+    // shared burn texture.
+    while (this._scorchLive.length) this._finishScorch(this._scorchLive[0]);
+    for (const { mesh, mat } of this._scorchPool) { mesh.dispose(); mat.dispose(); }
+    this._scorchPool.length = 0;
+    if (this._scorchTex) {
+      this._scorchTex.dispose();
+      this._scorchTex = null;
     }
     // Active-entry dispose() pushed every in-flight system back into the
     // pool above, so draining the pool here is the single place pooled

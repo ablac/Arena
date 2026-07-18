@@ -396,81 +396,173 @@ func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCoun
 	}
 }
 
+// BotSpectatorView is the typed spectator-lane view of a bot, mirroring the
+// bot-tick lane conversion (BotNearbyView). Spectators get float world
+// positions for smooth canvas rendering, not grid coordinates.
+//
+// Wire-parity notes (vs the previous map payload):
+//   - LastAction/Action are pointers so an idle bot still serializes
+//     "last_action":null and "action":null; both keys carry the same value,
+//     as before.
+//   - TargetPosition is null when the pending action has no target position.
+//   - Cosmetics has no omitempty: a bot without cosmetics serializes
+//     "cosmetics":null exactly like the old map payload did.
+type BotSpectatorView struct {
+	Type                   string            `json:"type"`
+	ID                     string            `json:"id"`
+	BotID                  string            `json:"bot_id"`
+	Name                   string            `json:"name"`
+	Position               Vec2              `json:"position"`
+	HP                     float64           `json:"hp"`
+	MaxHP                  float64           `json:"max_hp"`
+	Weapon                 string            `json:"weapon"`
+	IsAlive                bool              `json:"is_alive"`
+	AvatarColor            string            `json:"avatar_color"`
+	Cosmetics              map[string]string `json:"cosmetics"`
+	LastAction             *string           `json:"last_action"`
+	LastActionTick         int               `json:"last_action_tick"`
+	Action                 *string           `json:"action"`
+	TargetID               string            `json:"target_id"`
+	TargetPosition         *Vec2             `json:"target_position"`
+	IsDodging              bool              `json:"is_dodging"`
+	IsStunned              bool              `json:"is_stunned"`
+	CooldownRemaining      float64           `json:"cooldown_remaining"`
+	Facing                 Vec2              `json:"facing"`
+	RecentlyDisruptedTicks int               `json:"recently_disrupted_ticks"`
+	BraceReady             bool              `json:"brace_ready"`
+	BowChargeTicks         int               `json:"bow_charge_ticks"`
+	BowChargeLevel         float64           `json:"bow_charge_level"`
+	ChargedShotReady       bool              `json:"charged_shot_ready"`
+	KillStreak             int               `json:"kill_streak"`
+	RoundKills             int               `json:"round_kills"`
+	ShieldAbsorb           float64           `json:"shield_absorb"`
+	HazardKeyActive        bool              `json:"hazard_key_active"`
+	HazardKeyTicks         int               `json:"hazard_key_ticks"`
+	RelayBatteryActive     bool              `json:"relay_battery_active"`
+	RelayBatteryTicks      int               `json:"relay_battery_ticks"`
+	MineCount              int               `json:"mine_count"`
+	GrappleCharges         int               `json:"grapple_charges"`
+	GrappleCooldown        float64           `json:"grapple_cooldown"`
+	GravityWellCharge      int               `json:"gravity_well_charge"`
+	IsBountyTarget         bool              `json:"is_bounty_target"`
+	BountyTokenBonus       int               `json:"bounty_token_bonus"`
+	Team                   int               `json:"team"`
+}
+
+// BuildBotSpectatorView builds the spectator view of one bot.
+func BuildBotSpectatorView(bot *BotState) BotSpectatorView {
+	var lastAction *string
+	if bot.LastActionResult != nil {
+		action := bot.LastActionResult.Action
+		lastAction = &action
+	}
+	return BotSpectatorView{
+		Type:                   "bot",
+		ID:                     bot.BotID,
+		BotID:                  bot.BotID,
+		Name:                   bot.Name,
+		Position:               Vec2{round1(bot.Position[0]), round1(bot.Position[1])},
+		HP:                     math.Round(bot.HP),
+		MaxHP:                  math.Round(bot.MaxHP),
+		Weapon:                 bot.Weapon,
+		IsAlive:                bot.IsAlive,
+		AvatarColor:            bot.AvatarColor,
+		Cosmetics:              bot.Cosmetics,
+		LastAction:             lastAction,
+		LastActionTick:         bot.LastActionTick,
+		Action:                 lastAction,
+		TargetID:               botTargetID(bot),
+		TargetPosition:         botTargetPosition(bot),
+		IsDodging:              bot.InvulnTicks > 0,
+		IsStunned:              bot.StunTicks > 0,
+		CooldownRemaining:      round1(bot.CooldownRemaining),
+		Facing:                 bot.Facing,
+		RecentlyDisruptedTicks: bot.RecentlyDisruptedTicks,
+		BraceReady:             bot.Weapon == "spear" && isBraceReady(bot),
+		BowChargeTicks:         bot.BowChargeTicks,
+		BowChargeLevel:         bowChargeLevel(bot),
+		ChargedShotReady:       chargedShotReady(bot),
+		KillStreak:             bot.KillStreak,
+		RoundKills:             bot.RoundKills,
+		ShieldAbsorb:           round1(bot.ShieldAbsorb),
+		HazardKeyActive:        hasEffectByName(bot.ActiveEffects, "hazard_key"),
+		HazardKeyTicks:         effectRemainingTicks(bot.ActiveEffects, "hazard_key"),
+		RelayBatteryActive:     hasEffectByName(bot.ActiveEffects, "relay_battery"),
+		RelayBatteryTicks:      effectRemainingTicks(bot.ActiveEffects, "relay_battery"),
+		MineCount:              bot.MineCount,
+		GrappleCharges:         bot.GrappleCharges,
+		GrappleCooldown:        round1(bot.GrappleCooldown),
+		GravityWellCharge:      bot.GravityWellCharge,
+		IsBountyTarget:         bot.IsBountyTarget,
+		BountyTokenBonus:       bot.BountyTokenBonus,
+		Team:                   bot.Team,
+	}
+}
+
+// PickupSpectatorView is the typed spectator-lane view of a pickup, with a
+// float world position (the bot-tick lane's PickupNearbyView uses grid cells).
+type PickupSpectatorView struct {
+	Type       string `json:"type"`
+	ID         string `json:"id"`
+	PickupID   string `json:"pickup_id"`
+	PickupType string `json:"pickup_type"`
+	Position   Vec2   `json:"position"`
+}
+
+// SafeZoneSpectatorView is the typed safe_zone submap of the spectator state,
+// in float world coordinates (the bot lane's SafeZoneGridView uses tiles).
+type SafeZoneSpectatorView struct {
+	Center       Vec2    `json:"center"`
+	Radius       float64 `json:"radius"`
+	TargetCenter Vec2    `json:"target_center"`
+	TargetRadius float64 `json:"target_radius"`
+}
+
+// WaitingBotSpectatorView is the typed lobby-tab entry for a bot waiting to
+// join the next round. Cosmetics has no omitempty (null when unset, matching
+// the previous map payload).
+type WaitingBotSpectatorView struct {
+	Name        string            `json:"name"`
+	AvatarColor string            `json:"avatar_color"`
+	Weapon      string            `json:"weapon"`
+	Cosmetics   map[string]string `json:"cosmetics"`
+}
+
 // BuildSpectatorState builds the full arena snapshot for spectator clients.
 // Spectators still receive float positions for smooth rendering.
 func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []Pickup, killFeed *KillFeed, tickCount int, roundStartTick int, waitingBots map[string]*BotState, roundModifier RoundModifier) SpectatorState {
-	botViews := make([]map[string]interface{}, 0, len(bots))
+	botViews := make([]BotSpectatorView, 0, len(bots))
 	for _, bot := range bots {
-		// Spectators get float positions for smooth canvas rendering.
-		var lastAction interface{}
-		if bot.LastActionResult != nil {
-			lastAction = bot.LastActionResult.Action
-		}
-		botViews = append(botViews, map[string]interface{}{
-			"type":                     "bot",
-			"id":                       bot.BotID,
-			"bot_id":                   bot.BotID,
-			"name":                     bot.Name,
-			"position":                 Vec2{round1(bot.Position[0]), round1(bot.Position[1])},
-			"hp":                       math.Round(bot.HP),
-			"max_hp":                   math.Round(bot.MaxHP),
-			"weapon":                   bot.Weapon,
-			"is_alive":                 bot.IsAlive,
-			"avatar_color":             bot.AvatarColor,
-			"cosmetics":                bot.Cosmetics,
-			"last_action":              lastAction,
-			"last_action_tick":         bot.LastActionTick,
-			"action":                   lastAction,
-			"target_id":                botTargetID(bot),
-			"target_position":          botTargetPosition(bot),
-			"is_dodging":               bot.InvulnTicks > 0,
-			"is_stunned":               bot.StunTicks > 0,
-			"cooldown_remaining":       round1(bot.CooldownRemaining),
-			"facing":                   bot.Facing,
-			"recently_disrupted_ticks": bot.RecentlyDisruptedTicks,
-			"brace_ready":              bot.Weapon == "spear" && isBraceReady(bot),
-			"bow_charge_ticks":         bot.BowChargeTicks,
-			"bow_charge_level":         bowChargeLevel(bot),
-			"charged_shot_ready":       chargedShotReady(bot),
-			"kill_streak":              bot.KillStreak,
-			"round_kills":              bot.RoundKills,
-			"shield_absorb":            round1(bot.ShieldAbsorb),
-			"hazard_key_active":        hasEffectByName(bot.ActiveEffects, "hazard_key"),
-			"hazard_key_ticks":         effectRemainingTicks(bot.ActiveEffects, "hazard_key"),
-			"relay_battery_active":     hasEffectByName(bot.ActiveEffects, "relay_battery"),
-			"relay_battery_ticks":      effectRemainingTicks(bot.ActiveEffects, "relay_battery"),
-			"mine_count":               bot.MineCount,
-			"grapple_charges":          bot.GrappleCharges,
-			"grapple_cooldown":         round1(bot.GrappleCooldown),
-			"gravity_well_charge":      bot.GravityWellCharge,
-			"is_bounty_target":         bot.IsBountyTarget,
-			"bounty_token_bonus":       bot.BountyTokenBonus,
-			"team":                     bot.Team,
-		})
+		botViews = append(botViews, BuildBotSpectatorView(bot))
 	}
+	// Deterministic ordering is still required: the spectator HUD roster and
+	// lobby tab render in received order and diff against the previous frame,
+	// so raw map iteration order would reshuffle the DOM at 10 Hz. Sorting by
+	// struct field is cheap (no map lookups or interface assertions); Name
+	// keeps the wire order identical to the previous payloads.
 	sort.Slice(botViews, func(i, j int) bool {
-		return botViews[i]["name"].(string) < botViews[j]["name"].(string)
+		return botViews[i].Name < botViews[j].Name
 	})
 
-	pickupViews := make([]map[string]interface{}, 0, len(pickups))
+	pickupViews := make([]PickupSpectatorView, 0, len(pickups))
 	for _, p := range pickups {
-		pickupViews = append(pickupViews, map[string]interface{}{
-			"type":        "pickup",
-			"id":          p.ID,
-			"pickup_id":   p.ID,
-			"pickup_type": string(p.Type),
-			"position":    Vec2{round1(p.Position[0]), round1(p.Position[1])},
+		pickupViews = append(pickupViews, PickupSpectatorView{
+			Type:       "pickup",
+			ID:         p.ID,
+			PickupID:   p.ID,
+			PickupType: string(p.Type),
+			Position:   Vec2{round1(p.Position[0]), round1(p.Position[1])},
 		})
 	}
 
 	// Cached until the feed changes — rebuilt on kills, not every tick.
 	killFeedViews := killFeed.AllViews()
 
-	safeZone := map[string]interface{}{
-		"center":        arena.ZoneCenter,
-		"radius":        round1(arena.ZoneRadius),
-		"target_center": arena.ZoneTargetCenter,
-		"target_radius": round1(arena.ZoneTargetRadius),
+	safeZone := SafeZoneSpectatorView{
+		Center:       arena.ZoneCenter,
+		Radius:       round1(arena.ZoneRadius),
+		TargetCenter: arena.ZoneTargetCenter,
+		TargetRadius: round1(arena.ZoneTargetRadius),
 	}
 
 	// Send collision-accurate obstacles (expanded + grid-snapped). These are
@@ -478,19 +570,20 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 	visObstacles := arena.VisualObstacles()
 
 	// Build waiting bots list for the lobby tab during active rounds.
-	var waitingViews []map[string]interface{}
+	var waitingViews []WaitingBotSpectatorView
 	if len(waitingBots) > 0 {
-		waitingViews = make([]map[string]interface{}, 0, len(waitingBots))
+		waitingViews = make([]WaitingBotSpectatorView, 0, len(waitingBots))
 		for _, bot := range waitingBots {
-			waitingViews = append(waitingViews, map[string]interface{}{
-				"name":         bot.Name,
-				"avatar_color": bot.AvatarColor,
-				"weapon":       bot.Weapon,
-				"cosmetics":    bot.Cosmetics,
+			waitingViews = append(waitingViews, WaitingBotSpectatorView{
+				Name:        bot.Name,
+				AvatarColor: bot.AvatarColor,
+				Weapon:      bot.Weapon,
+				Cosmetics:   bot.Cosmetics,
 			})
 		}
+		// Same DOM-stability requirement as the bots list above.
 		sort.Slice(waitingViews, func(i, j int) bool {
-			return waitingViews[i]["name"].(string) < waitingViews[j]["name"].(string)
+			return waitingViews[i].Name < waitingViews[j].Name
 		})
 	}
 

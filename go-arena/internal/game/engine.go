@@ -2252,6 +2252,64 @@ func (e *GameEngine) sendBotTickUpdates() {
 	// rebuild per observer-target pair.
 	baseViews := make(map[string]*BotNearbyView, len(e.Bots))
 
+	// Static-entity grid cells, in the same spirit as baseViews: WorldToGrid
+	// is observer-independent, so each entity list's cells are computed once
+	// per tick here and the per-bot fog scans below only pay the GridDistance
+	// compare (previously every bot re-converted every entity).
+	var (
+		pickupCells      [][2]int
+		teleportPadCells [][2]int
+		capturePadCells  [][2]int
+		hazardZoneCells  [][2]int
+		burnFieldCells   [][2]int
+		gravityWellCells [][2]int
+	)
+	if ActiveTerrain != nil {
+		pickupCells = make([][2]int, len(e.Pickups))
+		for i := range e.Pickups {
+			pickupCells[i] = ActiveTerrain.WorldToGrid(e.Pickups[i].Position)
+		}
+		teleportPadCells = make([][2]int, len(e.TeleportPads))
+		for i := range e.TeleportPads {
+			teleportPadCells[i] = ActiveTerrain.WorldToGrid(e.TeleportPads[i].Position)
+		}
+		capturePadCells = make([][2]int, len(e.CapturePads))
+		for i := range e.CapturePads {
+			capturePadCells[i] = ActiveTerrain.WorldToGrid(e.CapturePads[i].Position)
+		}
+		hazardZoneCells = make([][2]int, len(e.HazardZones))
+		for i := range e.HazardZones {
+			hazardZoneCells[i] = ActiveTerrain.WorldToGrid(e.HazardZones[i].Position)
+		}
+		burnFieldCells = make([][2]int, len(e.BurnFields))
+		for i := range e.BurnFields {
+			burnFieldCells[i] = ActiveTerrain.WorldToGrid(e.BurnFields[i].Position)
+		}
+		gravityWellCells = make([][2]int, len(e.GravityWells))
+		for i := range e.GravityWells {
+			gravityWellCells[i] = ActiveTerrain.WorldToGrid(e.GravityWells[i].Position)
+		}
+	}
+
+	// Armed-mine cells for the per-bot proximity count. Only armed mines can
+	// count, and only while a terrain grid is active (the previous per-bot
+	// loop never counted without one), so both filters apply once here.
+	type armedMineCell struct {
+		ownerID string
+		cell    [2]int
+	}
+	var armedMineCells []armedMineCell
+	if ActiveTerrain != nil {
+		for _, mine := range e.Landmines {
+			if mine.Armed {
+				armedMineCells = append(armedMineCells, armedMineCell{
+					ownerID: mine.OwnerID,
+					cell:    ActiveTerrain.WorldToGrid(mine.Position),
+				})
+			}
+		}
+	}
+
 	var nearbyIDs []string
 	for _, bot := range e.Bots {
 		if bot.SendChan == nil {
@@ -2292,74 +2350,68 @@ func (e *GameEngine) sendBotTickUpdates() {
 		}
 
 		// Include pickups within fog radius.
-		for _, p := range e.Pickups {
+		for i := range e.Pickups {
 			if ActiveTerrain != nil {
-				pickupCell := ActiveTerrain.WorldToGrid(p.Position)
-				if GridDistance(botCell, pickupCell) <= fogRadius {
-					nearby = append(nearby, BuildPickupNearbyView(p))
+				if GridDistance(botCell, pickupCells[i]) <= fogRadius {
+					nearby = append(nearby, BuildPickupNearbyView(e.Pickups[i]))
 				}
-			} else if bot.Position.DistanceTo(p.Position) <= viewRadius {
-				nearby = append(nearby, BuildPickupNearbyView(p))
+			} else if bot.Position.DistanceTo(e.Pickups[i].Position) <= viewRadius {
+				nearby = append(nearby, BuildPickupNearbyView(e.Pickups[i]))
 			}
 		}
 
 		// Include teleport pads within fog radius.
-		for _, pad := range e.TeleportPads {
+		for i := range e.TeleportPads {
 			if ActiveTerrain != nil {
-				padCell := ActiveTerrain.WorldToGrid(pad.Position)
-				if GridDistance(botCell, padCell) <= fogRadius {
-					nearby = append(nearby, BuildTeleportPadViewForBot(pad, e.TickCount, true, bot))
+				if GridDistance(botCell, teleportPadCells[i]) <= fogRadius {
+					nearby = append(nearby, BuildTeleportPadViewForBot(e.TeleportPads[i], e.TickCount, true, bot))
 				}
-			} else if bot.Position.DistanceTo(pad.Position) <= viewRadius {
-				nearby = append(nearby, BuildTeleportPadViewForBot(pad, e.TickCount, true, bot))
+			} else if bot.Position.DistanceTo(e.TeleportPads[i].Position) <= viewRadius {
+				nearby = append(nearby, BuildTeleportPadViewForBot(e.TeleportPads[i], e.TickCount, true, bot))
 			}
 		}
 
 		// Include capture pads within fog radius.
-		for _, pad := range e.CapturePads {
+		for i := range e.CapturePads {
 			if ActiveTerrain != nil {
-				padCell := ActiveTerrain.WorldToGrid(pad.Position)
-				if GridDistance(botCell, padCell) <= fogRadius+3 {
-					nearby = append(nearby, BuildCapturePadView(pad, e.TickCount, true))
+				if GridDistance(botCell, capturePadCells[i]) <= fogRadius+3 {
+					nearby = append(nearby, BuildCapturePadView(e.CapturePads[i], e.TickCount, true))
 				}
-			} else if bot.Position.DistanceTo(pad.Position) <= viewRadius {
-				nearby = append(nearby, BuildCapturePadView(pad, e.TickCount, true))
+			} else if bot.Position.DistanceTo(e.CapturePads[i].Position) <= viewRadius {
+				nearby = append(nearby, BuildCapturePadView(e.CapturePads[i], e.TickCount, true))
 			}
 		}
 
 		// Include hazard zones within fog radius.
-		for _, zone := range e.HazardZones {
+		for i := range e.HazardZones {
 			if ActiveTerrain != nil {
-				zoneCell := ActiveTerrain.WorldToGrid(zone.Position)
-				if GridDistance(botCell, zoneCell) <= fogRadius+4 {
-					nearby = append(nearby, BuildHazardZoneView(zone, true, e.Round.Modifier))
+				if GridDistance(botCell, hazardZoneCells[i]) <= fogRadius+4 {
+					nearby = append(nearby, BuildHazardZoneView(e.HazardZones[i], true, e.Round.Modifier))
 				}
-			} else if bot.Position.DistanceTo(zone.Position) <= viewRadius {
-				nearby = append(nearby, BuildHazardZoneView(zone, true, e.Round.Modifier))
+			} else if bot.Position.DistanceTo(e.HazardZones[i].Position) <= viewRadius {
+				nearby = append(nearby, BuildHazardZoneView(e.HazardZones[i], true, e.Round.Modifier))
 			}
 		}
 
 		// Include staff burn fields within fog radius.
-		for _, field := range e.BurnFields {
+		for i := range e.BurnFields {
 			if ActiveTerrain != nil {
-				fieldCell := ActiveTerrain.WorldToGrid(field.Position)
-				if GridDistance(botCell, fieldCell) <= fogRadius+2 {
-					nearby = append(nearby, BuildBurnFieldView(field, true))
+				if GridDistance(botCell, burnFieldCells[i]) <= fogRadius+2 {
+					nearby = append(nearby, BuildBurnFieldView(e.BurnFields[i], true))
 				}
-			} else if bot.Position.DistanceTo(field.Position) <= viewRadius {
-				nearby = append(nearby, BuildBurnFieldView(field, true))
+			} else if bot.Position.DistanceTo(e.BurnFields[i].Position) <= viewRadius {
+				nearby = append(nearby, BuildBurnFieldView(e.BurnFields[i], true))
 			}
 		}
 
 		// Include gravity wells within fog radius.
-		for _, well := range e.GravityWells {
+		for i := range e.GravityWells {
 			if ActiveTerrain != nil {
-				wellCell := ActiveTerrain.WorldToGrid(well.Position)
-				if GridDistance(botCell, wellCell) <= fogRadius {
-					nearby = append(nearby, BuildGravityWellView(well, true))
+				if GridDistance(botCell, gravityWellCells[i]) <= fogRadius {
+					nearby = append(nearby, BuildGravityWellView(e.GravityWells[i], true))
 				}
-			} else if bot.Position.DistanceTo(well.Position) <= viewRadius {
-				nearby = append(nearby, BuildGravityWellView(well, true))
+			} else if bot.Position.DistanceTo(e.GravityWells[i].Position) <= viewRadius {
+				nearby = append(nearby, BuildGravityWellView(e.GravityWells[i], true))
 			}
 		}
 
@@ -2389,16 +2441,12 @@ func (e *GameEngine) sendBotTickUpdates() {
 			hints = buildHints(bot, e.Bots, e.Pickups)
 		}
 
-		// Count armed mines within 3 grid cells of the bot.
+		// Count armed mines within 3 grid cells of the bot (cells precomputed
+		// above; armedMineCells is empty when no terrain grid is active).
 		nearbyMineCount := 0
-		for _, mine := range e.Landmines {
-			if mine.Armed && mine.OwnerID != bot.BotID {
-				if ActiveTerrain != nil {
-					mineCell := ActiveTerrain.WorldToGrid(mine.Position)
-					if GridDistance(botCell, mineCell) <= 3 {
-						nearbyMineCount++
-					}
-				}
+		for _, mine := range armedMineCells {
+			if mine.ownerID != bot.BotID && GridDistance(botCell, mine.cell) <= 3 {
+				nearbyMineCount++
 			}
 		}
 

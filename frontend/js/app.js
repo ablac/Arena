@@ -5,9 +5,9 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260714e';
+import { ArenaEngine } from './renderer/engine.js?v=20260718c';
 import { HudRenderer } from './renderer/hud.js?v=20260711b';
-import { Minimap } from './renderer/minimap.js?v=20260710d';
+import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';
 import { initLeaderboardWidget } from './leaderboard.js?v=20260710f';
 import { initKeyGenerator } from './key-generator.js?v=20260714i';

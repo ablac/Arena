@@ -31,6 +31,7 @@ export const SETTINGS_SCHEMA = {
       deathBurst: { label: 'Death burst (particles, ring, light pillar)' },
       corpseFade: { label: 'Corpse fade (translucent after death)' },
       directionalDeath: { label: 'Directional death fall' },
+      killCameraNudge: { label: 'Kill camera nudge' },
     },
   },
   taunts: {
@@ -48,6 +49,7 @@ export const SETTINGS_SCHEMA = {
       damageFlinch: { label: 'Damage flinch recoil' },
       floatingDamageNumbers: { label: 'Floating damage numbers' },
       woundedTint: { label: 'Wounded / low-HP red tint' },
+      damageVignette: { label: 'Followed-bot damage vignette' },
     },
   },
   weaponImpactVfx: {
@@ -68,6 +70,7 @@ export const SETTINGS_SCHEMA = {
       mineExplosion: { label: 'Mine explosion' },
       staffExplosion: { label: 'Staff explosion' },
       teleportBurst: { label: 'Teleport burst' },
+      groundScorch: { label: 'Ground scorch decals' },
     },
   },
   objectiveIndicators: {
@@ -77,6 +80,7 @@ export const SETTINGS_SCHEMA = {
       bountyCrown: { label: 'Bounty crown' },
       flagComet: { label: 'Flag comet trail (CTF)' },
       capturePadPulse: { label: 'Capture pad pulse' },
+      minimapPings: { label: 'Minimap bounty & flag pings' },
     },
   },
   gameplayZoneIndicators: {
@@ -84,6 +88,7 @@ export const SETTINGS_SCHEMA = {
     description: 'Danger and pickup zone visuals (functional, not just decorative).',
     effects: {
       safeZoneRing: { label: 'Safe zone ring' },
+      minimapZonePulse: { label: 'Minimap zone pulse' },
       hazardZoneEffects: { label: 'Hazard zone electrical effects' },
       burnFieldPulse: { label: 'Burn field pulsing' },
       staffImpactRings: { label: 'Staff impact reveal rings' },
@@ -112,10 +117,13 @@ export const SETTINGS_SCHEMA = {
     description: 'Post-processing (also affects GPU cost).',
     effects: {
       bloom: { label: 'Bloom' },
+      glowLayer: { label: 'Neon glow halos' },
       vignette: { label: 'Vignette' },
       fxaa: { label: 'Anti-aliasing (FXAA)' },
       sharpen: { label: 'Sharpen' },
       shadows: { label: 'Obstacle shadows' },
+      characterLighting: { label: 'Character lighting & shading' },
+      dynamicGrading: { label: 'Dynamic mode grading (sudden death, round win)' },
       // Default-on keeps the current 1x render resolution; unchecking lets
       // HiDPI displays render at native resolution (sharper, more GPU).
       resolutionCap: { label: 'Cap resolution at 1x (performance)' },
@@ -131,6 +139,11 @@ export const SETTINGS_SCHEMA = {
       thrusters: { label: 'Underside thruster jets' },
       spaceObjects: { label: 'Space objects (satellites, comets, UFO)' },
       floorEnergyGlow: { label: 'Floor energy glow motion' },
+      mapPalettes: { label: 'Per-map color palettes' },
+      contactShadows: { label: 'Obstacle contact shadows (floor)' },
+      obstacleDetailing: { label: 'Obstacle rooftop detailing' },
+      depthFog: { label: 'Depth fog (far-edge falloff)' },
+      lightShafts: { label: 'Light shafts' },
       edgeWaterfalls: { label: 'Edge energy waterfalls' },
       holoTitle: { label: 'Holographic arena title' },
       idleWeaponAnims: { label: 'Idle weapon animations' },

@@ -467,9 +467,10 @@ body.arena-fullscreen {
 
 .arena-tab.active {
   color: var(--text-primary);
-  border-color: rgba(71, 215, 255, 0.22);
+  border-color: rgba(71, 215, 255, 0.34);
   background: linear-gradient(135deg, rgba(71, 215, 255, 0.14), rgba(255, 206, 84, 0.1));
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.14);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.14), inset 0 0 14px rgba(71, 215, 255, 0.08);
+  text-shadow: 0 0 10px rgba(71, 215, 255, 0.35);
 }
 
 .arena-tab-content {
@@ -477,7 +478,7 @@ body.arena-fullscreen {
   position: relative;
   overflow: hidden;
   border-radius: 22px;
-  border: 1px solid rgba(126, 166, 207, 0.08);
+  border: 1px solid rgba(71, 215, 255, 0.1);
   background: rgba(4, 10, 18, 0.46);
 }
 
@@ -677,9 +678,9 @@ body.arena-fullscreen {
   font-family: var(--font-mono);
   font-size: 0.74rem;
   z-index: 10;
-  border: 1px solid rgba(126, 166, 207, 0.16);
+  border: 1px solid rgba(71, 215, 255, 0.26);
   backdrop-filter: blur(12px);
-  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.28), 0 0 18px rgba(71, 215, 255, 0.1);
   overflow: hidden;
   transition: width 0.18s ease, padding 0.18s ease, border-radius 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
 }
@@ -720,6 +721,7 @@ body.arena-fullscreen {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   margin-bottom: 6px;
+  text-shadow: 0 0 10px rgba(71, 215, 255, 0.45);
 }
 
 .hud-topline .hud-overline,
@@ -783,6 +785,7 @@ body.arena-fullscreen {
   font-size: 0.98rem;
   line-height: 0.94;
   letter-spacing: -0.04em;
+  text-shadow: 0 0 12px rgba(71, 215, 255, 0.22);
 }
 
 .hud-phase {
@@ -846,8 +849,8 @@ body.arena-fullscreen {
 .hud-metric {
   padding: 8px 9px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(126, 166, 207, 0.08);
+  background: linear-gradient(180deg, rgba(71, 215, 255, 0.05), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(71, 215, 255, 0.1);
 }
 
 .hud-metric-label {
