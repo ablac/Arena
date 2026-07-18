@@ -21,10 +21,10 @@ for (const match of shopHTML.matchAll(/aria-labelledby="([^"]+)"/g)) {
 
 assert.match(shopHTML, /<main[^>]*id="cosmetic-shop"[^>]*tabindex="-1"/,
   'the skip-link target must accept programmatic focus without joining the normal tab order');
-assert.match(shopHTML, /<script defer src="https:\/\/cdn\.babylonjs\.com\/v9\.14\.0\/babylon\.js"><\/script>/,
+assert.match(shopHTML, /<script defer src="https:\/\/cdn\.jsdelivr\.net\/npm\/babylonjs@9\.14\.0\/babylon\.min\.js"><\/script>/,
   'Babylon core must not block parsing the Shop body');
 assert.doesNotMatch(shopHTML, /materialsLibrary/, 'Shop must not load the unused Babylon materials add-on');
-assert.ok(shopHTML.indexOf('babylon.js') < shopHTML.indexOf('cosmetic-themes.js')
+assert.ok(shopHTML.indexOf('babylon.min.js') < shopHTML.indexOf('cosmetic-themes.js')
   && shopHTML.indexOf('cosmetic-themes.js') < shopHTML.indexOf('cosmetics-shop.js'),
   'Shop scripts must preserve renderer dependency order');
 assert.equal((shopHTML.match(/<canvas\b/g) || []).length, 1, 'Shop must use one shared bot preview canvas');

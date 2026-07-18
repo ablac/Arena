@@ -85,7 +85,7 @@ const CURRENT = {
 
 assert.equal(
   BABYLON_SCRIPT_URL,
-  'https://cdn.babylonjs.com/v9.14.0/babylon.js',
+  'https://cdn.jsdelivr.net/npm/babylonjs@9.14.0/babylon.min.js',
   'Dashboard must pin the same Babylon version as the Arena instead of loading latest',
 );
 
