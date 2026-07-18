@@ -1,19 +1,40 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
+	"time"
 
 	"arena-server/internal/config"
 	"arena-server/internal/game"
 )
+
+// The bot-setup reference depends only on config (immutable after startup)
+// and weapon balance scales (change at most once per round via auto-balance
+// plus live admin edits), yet it was rebuilt — hundreds of nested map
+// literals plus a full JSON encode — on every request of a publicly
+// advertised endpoint. 60s matches the established weapon-stats staleness
+// budget; llms.txt promises "current effective values", so avoid longer TTLs.
+const botSetupCacheTTL = time.Minute
+
+var botSetupCache = newResponseCache(botSetupCacheTTL, 10*time.Second, time.Now)
 
 // BotSetup returns a handler for GET /api/v1/bot-setup.
 // This is a public endpoint (no auth required) that returns everything an AI
 // agent needs to build and connect a bot.
 func BotSetup() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		botSetupCache.Serve(w, r, "bot-setup", func(context.Context) ([]byte, error) {
+			return json.Marshal(buildBotSetupResponse())
+		}, "failed to build bot setup reference", http.StatusInternalServerError)
+	}
+}
+
+func buildBotSetupResponse() map[string]interface{} {
+	{
 		c := &config.C
 
 		// ── Weapons (dynamic from game.WeaponConfigs) ──────────────
@@ -408,7 +429,7 @@ asyncio.run(main())
 `,
 		}
 
-		writeJSON(w, http.StatusOK, resp)
+		return resp
 	}
 }
 

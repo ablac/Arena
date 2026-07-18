@@ -123,26 +123,13 @@ func (h *AdminHandler) demobotsVersion(w http.ResponseWriter, r *http.Request) {
 		"updaterConfigured": config.C.UpdaterURL != "" && config.C.UpdaterSharedSecret != "",
 	}
 
-	if target, err := fleetControlURL("/control/status"); err == nil {
-		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-		req.Header.Set("X-Admin-Token", config.C.AdminToken)
-		if resp, err := fleetHTTPClient.Do(req); err == nil {
-			var status map[string]interface{}
-			if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&status) == nil {
-				payload["running"] = map[string]interface{}{
-					"commit":    status["commit"],
-					"buildTime": status["buildTime"],
-					"count":     status["count"],
-				}
-			}
-			resp.Body.Close()
-		} else {
-			payload["runningError"] = err.Error()
-		}
-		cancel()
-	}
-
+	// The running-commit half used to be re-fetched here from the fleet's
+	// /control/status, sequentially before the updater call (worst case the
+	// two upstream timeouts summed to ~20s). Its only consumer — the admin
+	// panel's version card — already holds the running commit from the
+	// /demobots/status call it makes first and never read this payload's
+	// "running" key, so the redundant upstream fetch is gone; this endpoint
+	// now answers within the single 12s updater bound.
 	if latest, err := fetchUpdaterDemobotsLatest(r.Context()); err == nil {
 		payload["latest"] = latest
 	} else {

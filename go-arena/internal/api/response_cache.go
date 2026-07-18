@@ -51,11 +51,11 @@ func newResponseCache(ttl, loadTimeout time.Duration, now func() time.Time) *res
 // TTL expiry regardless of concurrent callers. load must return the fully
 // encoded response body. Load errors are never cached; the requester that
 // observes one gets errorStatus with publicError.
-func (c *responseCache) Serve(w http.ResponseWriter, r *http.Request, key string, load func(context.Context) ([]byte, error), publicError string) {
+func (c *responseCache) Serve(w http.ResponseWriter, r *http.Request, key string, load func(context.Context) ([]byte, error), publicError string, errorStatus int) {
 	body, etag, err := c.get(r.Context(), key, load)
 	if err != nil {
 		w.Header().Set("Cache-Control", "no-store")
-		writeError(w, http.StatusInternalServerError, publicError)
+		writeError(w, errorStatus, publicError)
 		return
 	}
 

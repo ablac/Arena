@@ -80,7 +80,7 @@ func GetLeaderboard(w http.ResponseWriter, r *http.Request) {
 		key := sortBy + "|" + period + "|" + strconv.Itoa(limit)
 		leaderboardCache.Serve(w, r, key, func(ctx context.Context) ([]byte, error) {
 			return buildLeaderboardBody(ctx, sortBy, period, limit, 0)
-		}, "failed to get leaderboard")
+		}, "failed to get leaderboard", http.StatusInternalServerError)
 		return
 	}
 

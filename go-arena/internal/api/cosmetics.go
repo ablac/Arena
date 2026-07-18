@@ -128,7 +128,15 @@ type CosmeticsHandler struct {
 	verifyAPIKey               func(context.Context, string) (*db.Bot, error)
 	consumeAccountKeyQuota     func(context.Context, string, db.AccountAPIKeyQuotaAction, int) (bool, int, error)
 	checkAccountInventoryQuota func(context.Context, string, int) (bool, error)
+	// catalogCache serves the public catalog (4 DB queries + a 100-250 KB
+	// encode of ~340 items, many embedded twice) from memory with ETag/304s.
+	// Per-instance so test handlers with different stores stay isolated.
+	// Admin catalog mutations show up within the TTL; AdminCatalog itself is
+	// deliberately uncached.
+	catalogCache *responseCache
 }
+
+const cosmeticCatalogCacheTTL = time.Minute
 
 func NewCosmeticsHandler(engine *game.GameEngine) *CosmeticsHandler {
 	return &CosmeticsHandler{
@@ -138,6 +146,7 @@ func NewCosmeticsHandler(engine *game.GameEngine) *CosmeticsHandler {
 			allowed, _, _, err := security.CheckRateLimit(ctx, "cosmetics-inventory-account:"+accountID, limit, 60)
 			return allowed, err
 		},
+		catalogCache: newResponseCache(cosmeticCatalogCacheTTL, 10*time.Second, time.Now),
 	}
 }
 
@@ -148,26 +157,33 @@ func newCosmeticsHandlerWithStore(store cosmeticsStore, engine *game.GameEngine)
 			return true, 0, nil
 		},
 		checkAccountInventoryQuota: func(context.Context, string, int) (bool, error) { return true, nil },
+		// Zero TTL: this constructor is the test seam, and the catalog tests
+		// mutate the fake store between requests. Every request reloads (the
+		// single-flight still coalesces concurrent ones).
+		catalogCache: newResponseCache(0, 10*time.Second, time.Now),
 	}
 }
 
 func (h *CosmeticsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
-	catalog, err := h.store.PublicCatalog(r.Context())
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "cosmetics catalog is unavailable")
-		return
-	}
-	checkoutEnabled := h.checkoutEnabled && cosmeticCatalogHasPurchasablePack(catalog)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"categories": catalog.Categories,
-		"packs":      catalog.Packs,
-		"items":      catalog.Items,
-		// A catalog sale flag is not enough to make payments safe. This remains
-		// false until a verified checkout/webhook provider is wired into the
-		// handler, even if an operator stages purchasable catalog entries.
-		"checkout_enabled":   checkoutEnabled,
-		"subscription_offer": db.DefaultCosmeticSubscriptionOffer(checkoutEnabled),
-	})
+	h.catalogCache.Serve(w, r, "catalog", func(ctx context.Context) ([]byte, error) {
+		catalog, err := h.store.PublicCatalog(ctx)
+		if err != nil {
+			return nil, err
+		}
+		// h.checkoutEnabled is set once at construction, so baking it into the
+		// cached body is safe.
+		checkoutEnabled := h.checkoutEnabled && cosmeticCatalogHasPurchasablePack(catalog)
+		return json.Marshal(map[string]interface{}{
+			"categories": catalog.Categories,
+			"packs":      catalog.Packs,
+			"items":      catalog.Items,
+			// A catalog sale flag is not enough to make payments safe. This remains
+			// false until a verified checkout/webhook provider is wired into the
+			// handler, even if an operator stages purchasable catalog entries.
+			"checkout_enabled":   checkoutEnabled,
+			"subscription_offer": db.DefaultCosmeticSubscriptionOffer(checkoutEnabled),
+		})
+	}, "cosmetics catalog is unavailable", http.StatusServiceUnavailable)
 }
 
 // cosmeticCatalogHasPurchasablePack mirrors the launch checkout contract: only
