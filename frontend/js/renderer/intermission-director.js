@@ -697,6 +697,7 @@ export class IntermissionDirector {
       if (mesh.isDisposed && mesh.isDisposed()) continue;
       mesh.scaling.y = Math.max(0.02, 1 - 0.98 * e);
       mesh.position.y = -1.4 * e;
+      if (t >= 1 && mesh.setEnabled) mesh.setEnabled(false);
     }
     while (td.dustMarks.length && t >= td.dustMarks[0]) {
       td.dustMarks.shift();
@@ -713,6 +714,7 @@ export class IntermissionDirector {
     if (!td) return;
     for (const mesh of td.meshes) {
       if (mesh.isDisposed && mesh.isDisposed()) continue;
+      if (mesh.setEnabled) mesh.setEnabled(true);
       mesh.scaling.y = 1;
       mesh.position.y = 0;
       if (mesh.freezeWorldMatrix) mesh.freezeWorldMatrix();

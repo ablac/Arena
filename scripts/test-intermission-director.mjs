@@ -563,6 +563,7 @@ const ROUND_END_MSG = {
   // there must be NO construction (strict gating).
   for (const mesh of engine.teardownMeshes) {
     assertClose(mesh.scaling.y, 0.02, 'old map fully sunk before any construction');
+    assert.equal(mesh.isEnabled(), false, 'old map must be hidden when the 2s teardown completes');
   }
   assert.equal(director._show.construction, null,
     'construction must not start before the lobby countdown');
@@ -633,6 +634,7 @@ const ROUND_END_MSG = {
   assert.ok(construction.wallMesh === null || construction.wallMesh.isDisposed());
   for (const mesh of engine.teardownMeshes) {
     assert.equal(mesh.scaling.y, 1, 'teardown meshes restore before the real rebuild');
+    assert.equal(mesh.isEnabled(), true, 'handoff restores teardown meshes before replacing them');
     assert.equal(mesh._frozen, true, 'restored meshes re-freeze');
   }
   // The hold: title card stays up until the round actually starts.
