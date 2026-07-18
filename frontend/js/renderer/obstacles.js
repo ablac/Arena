@@ -4,10 +4,15 @@
  * Obstacle rendering — stone pillars/walls with emissive edges.
  * Per-map palettes and rooftop detailing (issue #182) are applied at the
  * round-boundary rebuild; the merged result stays at two draw calls.
+ * Carved map-boundary rects (issue #186) are split out of the box build and
+ * rendered by MapWallsRenderer as one smoothed contour wall (two more draw
+ * calls: wall body + glow trim) when the server sends `mask_rects` and the
+ * arenaAmbience.smoothMapWalls setting is on.
  * @module renderer/obstacles
  */
 
 import { isEnabled } from '../settings.js';
+import { MapWallsRenderer } from './map-walls.js?v=20260718d';
 
 const PILLAR_HEIGHT = 30;
 
@@ -23,7 +28,18 @@ export class ObstacleRenderer {
     this._mat = null;
     this._edgeMat = null;
     this._lastObstacles = null;
+    /** @type {Array|null} carved map-boundary rects from the last keyframe */
+    this._lastMaskRects = null;
+    // Smooth boundary walls (issue #186) ride the same round-boundary
+    // rebuild as the merged pillars, sharing this renderer's materials.
+    this._mapWalls = new MapWallsRenderer(scene, envRenderer);
     this._initMaterials();
+  }
+
+  /** Wire the engine's GlowLayer through to the boundary-wall builder so
+   *  the wall body can be excluded from glow (only its trim glows, #181). */
+  setGlowLayer(glow) {
+    this._mapWalls.setGlowLayer(glow);
   }
 
   /** @private Create shared materials (default-palette hues; retinted per map). */
@@ -63,15 +79,29 @@ export class ObstacleRenderer {
   /**
    * Update obstacles from state.
    * @param {Array} obstacles - [{ x, y, width, height }]
+   * @param {Array} [maskRects] - carved boundary rects (subset of obstacles),
+   *   present only on keyframes from servers that itemize them (issue #186)
    */
-  update(obstacles) {
+  update(obstacles, maskRects) {
     if (!obstacles) return;
     const B = window.BABYLON;
     this._lastObstacles = obstacles;
+    // Obstacles only arrive on keyframes and mask_rects rides the same
+    // keyframes, so whenever obstacles are present the field is
+    // authoritative — absent means square map or a pre-#186 server.
+    this._lastMaskRects = maskRects && maskRects.length ? maskRects : null;
+
+    // Smooth boundary walls (issue #186): when the server itemizes the
+    // carved boundary rects, render them as one smoothed contour wall and
+    // keep the per-cell pillar/trim build for the real obstacles only.
+    // Setting off or no mask_rects → everything renders as boxes as before.
+    const smoothWalls = !!this._lastMaskRects && isEnabled('arenaAmbience', 'smoothMapWalls');
 
     // Detect if obstacles changed (new round). Build a fingerprint from
-    // the obstacle data to compare against last update.
-    const fp = obstacles.map(o => `${o.x},${o.y},${o.width},${o.height}`).join('|');
+    // the obstacle data to compare against last update. (Mask rects are a
+    // verbatim subset of the obstacle list, so they can't change alone.)
+    const fp = obstacles.map(o => `${o.x},${o.y},${o.width},${o.height}`).join('|') +
+      (smoothWalls ? `#walls${this._lastMaskRects.length}` : '');
     if (fp === this._lastFingerprint) return; // same layout — merged meshes stand
 
     // Obstacles changed — dispose the old merged meshes and rebuild from
@@ -81,8 +111,20 @@ export class ObstacleRenderer {
     this.clear();
     this._lastFingerprint = fp;
     this._applyPalette();
-    if (this._env && this._env.setRoundObstacles) this._env.setRoundObstacles(obstacles);
-    if (!obstacles.length) {
+
+    // Boundary rects leave the pillar build, the rooftop detailing, and the
+    // contact-shadow floor bake — they're map boundary, not architecture.
+    // Matched by exact x/y/width/height key against the mask_rects list.
+    let buildObstacles = obstacles;
+    if (smoothWalls) {
+      const maskKeys = new Set(this._lastMaskRects.map(o => `${o.x},${o.y},${o.width},${o.height}`));
+      buildObstacles = obstacles.filter(o => !maskKeys.has(`${o.x},${o.y},${o.width},${o.height}`));
+    }
+    if (this._env && this._env.setRoundObstacles) this._env.setRoundObstacles(buildObstacles);
+    // Built before the shadow re-bake below so the wall body is registered
+    // as a caster in time; materials were just palette-tinted above.
+    this._mapWalls.build(smoothWalls ? this._lastMaskRects : null, this._mat, this._edgeMat);
+    if (!buildObstacles.length) {
       // Casters were just removed — the frozen shadow map still needs the
       // re-bake or it would keep showing the previous round's shadows.
       if (this._env && this._env.refreshShadows) this._env.refreshShadows();
@@ -97,7 +139,7 @@ export class ObstacleRenderer {
     const detailing = isEnabled('arenaAmbience', 'obstacleDetailing');
     const bodyBoxes = [];
     const trimBoxes = [];
-    obstacles.forEach((obs, i) => {
+    buildObstacles.forEach((obs, i) => {
       // Stone pillar
       const mesh = B.MeshBuilder.CreateBox(`obs-${i}`, {
         width: obs.width, height: PILLAR_HEIGHT, depth: obs.height
@@ -187,12 +229,13 @@ export class ObstacleRenderer {
   refresh() {
     if (!this._lastObstacles) return;
     this._lastFingerprint = null;
-    this.update(this._lastObstacles);
+    this.update(this._lastObstacles, this._lastMaskRects);
   }
 
   /** Clear all obstacles (round reset). */
   clear() {
     if (this._bodyMesh) { this._bodyMesh.dispose(); this._bodyMesh = null; }
     if (this._trimMesh) { this._trimMesh.dispose(); this._trimMesh = null; }
+    this._mapWalls.clear();
   }
 }

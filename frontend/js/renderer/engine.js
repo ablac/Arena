@@ -8,7 +8,7 @@
 import { CameraController } from './camera.js?v=20260710d';
 import { BotRenderer } from './bots.js?v=20260718c';
 import { EnvironmentRenderer } from './environment.js?v=20260718c';
-import { ObstacleRenderer } from './obstacles.js?v=20260718c';
+import { ObstacleRenderer } from './obstacles.js?v=20260718d';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
 import { TrailRenderer } from './trails.js?v=20260714e';
@@ -226,7 +226,8 @@ export class ArenaEngine {
     const worldThemeSig = () =>
       `${isEnabled('arenaAmbience', 'mapPalettes')}|` +
       `${isEnabled('arenaAmbience', 'contactShadows')}|` +
-      `${isEnabled('arenaAmbience', 'obstacleDetailing')}`;
+      `${isEnabled('arenaAmbience', 'obstacleDetailing')}|` +
+      `${isEnabled('arenaAmbience', 'smoothMapWalls')}`;
     this._worldThemeSig = worldThemeSig();
     const applyWorldTheme = () => {
       const sig = worldThemeSig();
@@ -389,6 +390,10 @@ export class ArenaEngine {
       for (const mesh of this.envRenderer.getGlowExcludedMeshes()) {
         glow.addExcludedMesh(mesh);
       }
+      // Boundary walls (issue #186) are built later, at the first keyframe —
+      // hand the layer over so their body mesh can be excluded on build
+      // (only the wall trim should glow, like the perimeter walls above).
+      this.obstacleRenderer.setGlowLayer(glow);
       this.glowLayer = glow;
     }
 
@@ -539,7 +544,7 @@ export class ArenaEngine {
       this._followedBotId = null;
       this._followedBotHp = null;
     }
-    this.obstacleRenderer.update(state.obstacles);
+    this.obstacleRenderer.update(state.obstacles, state.mask_rects);
     this.envRenderer.update(state.safe_zone, !!state.sudden_death);
     this.botRenderer.update(state.bots);
     // Events play after the entity updates so a taunt arriving in the same
