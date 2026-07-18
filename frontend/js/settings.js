@@ -118,6 +118,7 @@ export const SETTINGS_SCHEMA = {
       sharpen: { label: 'Sharpen' },
       shadows: { label: 'Obstacle shadows' },
       characterLighting: { label: 'Character lighting & shading' },
+      dynamicGrading: { label: 'Dynamic mode grading (sudden death, round win)' },
       // Default-on keeps the current 1x render resolution; unchecking lets
       // HiDPI displays render at native resolution (sharper, more GPU).
       resolutionCap: { label: 'Cap resolution at 1x (performance)' },
@@ -136,6 +137,8 @@ export const SETTINGS_SCHEMA = {
       mapPalettes: { label: 'Per-map color palettes' },
       contactShadows: { label: 'Obstacle contact shadows (floor)' },
       obstacleDetailing: { label: 'Obstacle rooftop detailing' },
+      depthFog: { label: 'Depth fog (far-edge falloff)' },
+      lightShafts: { label: 'Light shafts' },
       edgeWaterfalls: { label: 'Edge energy waterfalls' },
       holoTitle: { label: 'Holographic arena title' },
       idleWeaponAnims: { label: 'Idle weapon animations' },

@@ -139,6 +139,7 @@ export class EnvironmentRenderer {
     this._createSkybox();
     this._createSpaceObjects();
     this._createFloor();
+    this._createLightShafts();
     this._createWalls();
     this._createCornerPylons();
     this._createPylonRings();
@@ -311,6 +312,9 @@ export class EnvironmentRenderer {
 
     skybox.material = skyMat;
     skybox.isPickable = false;
+    // The custom shader has no fog branch, so the sky can never be fogged by
+    // the depth-fog setting; applyFog=false documents that contract.
+    skybox.applyFog = false;
 
     // Animate twinkling + live settings check (setEnabled is cheap enough
     // to call every frame; avoids needing a separate settings-change hook).
@@ -554,6 +558,9 @@ export class EnvironmentRenderer {
       plane.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
       plane.position = start.clone();
       plane.isPickable = false;
+      // Space objects live 1.5-3.5 arena-widths out — the depth fog tuned
+      // for the arena floor would erase them entirely at that distance.
+      plane.applyFog = false;
 
       // Add a comet particle trail
       let trail = null;
@@ -868,6 +875,89 @@ export class EnvironmentRenderer {
 
     this._ground = ground;
     this._floorGlow = glow;
+  }
+
+  /**
+   * @private Light shafts (issue #183b): three big additive gradient planes
+   * aligned with the sun direction (engine's directional light points
+   * (-0.4,-1,0.3), so the shafts lean up toward (0.358,0.894,-0.268) —
+   * pitch ~0.466 rad, yaw ~2.214 rad). Very low alpha, frozen material, one
+   * shared opacity texture; the only per-frame work is a slow position
+   * drift inside the settings-gated ambient hook.
+   */
+  _createLightShafts() {
+    const B = window.BABYLON;
+
+    const tex = new B.DynamicTexture('lightShaftTex', { width: 64, height: 128 }, this.scene, false);
+    const ctx = tex.getContext();
+    ctx.clearRect(0, 0, 64, 128);
+    const vGrad = ctx.createLinearGradient(0, 0, 0, 128);
+    vGrad.addColorStop(0, 'rgba(255,255,255,0.9)');
+    vGrad.addColorStop(0.75, 'rgba(255,255,255,0.35)');
+    vGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = vGrad;
+    ctx.fillRect(0, 0, 64, 128);
+    const hGrad = ctx.createLinearGradient(0, 0, 64, 0);
+    hGrad.addColorStop(0, 'rgba(255,255,255,0)');
+    hGrad.addColorStop(0.25, 'rgba(255,255,255,1)');
+    hGrad.addColorStop(0.75, 'rgba(255,255,255,1)');
+    hGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.fillStyle = hGrad;
+    ctx.fillRect(0, 0, 64, 128);
+    ctx.globalCompositeOperation = 'source-over';
+    tex.update();
+    tex.hasAlpha = true;
+    tex.getAlphaFromRGB = true;
+    this._shaftTex = tex;
+
+    const mat = new B.StandardMaterial('lightShaftMat', this.scene);
+    mat.diffuseColor = B.Color3.Black();
+    mat.emissiveColor = new B.Color3(0.62, 0.58, 0.50); // sun-warm white
+    mat.opacityTexture = tex;
+    mat.disableLighting = true;
+    mat.backFaceCulling = false;
+    mat.alpha = 0.06;
+    mat.alphaMode = B.Engine.ALPHA_ADD;
+    mat.freeze();
+    this._shaftMat = mat;
+
+    const SHAFT_PITCH = 0.466;
+    const SHAFT_YAW = 2.214;
+    const defs = [
+      { fx: 0.30, fz: 0.36, w: 130, h: 640, yawJitter: -0.12, phase: 0 },
+      { fx: 0.58, fz: 0.55, w: 170, h: 700, yawJitter: 0.0, phase: 2.1 },
+      { fx: 0.44, fz: 0.74, w: 110, h: 600, yawJitter: 0.14, phase: 4.2 },
+    ];
+    this._lightShafts = [];
+    for (let i = 0; i < defs.length; i++) {
+      const def = defs[i];
+      const plane = B.MeshBuilder.CreatePlane(`lightShaft-${i}`, {
+        width: def.w, height: def.h
+      }, this.scene);
+      const baseX = this.w * def.fx;
+      const baseZ = this.h * def.fz;
+      plane.position.set(baseX, 250, baseZ);
+      plane.rotation.x = SHAFT_PITCH;
+      plane.rotation.y = SHAFT_YAW + def.yawJitter;
+      plane.material = mat;
+      plane.isPickable = false;
+      plane.applyFog = false; // additive haze must not be dimmed by depth fog
+      this._lightShafts.push({ plane, baseX, baseZ, phase: def.phase });
+    }
+
+    // Slow drift + live settings check, same pattern as the other ambience
+    // hooks in this file.
+    this.scene.registerBeforeRender(() => {
+      const on = isEnabled('arenaAmbience', 'lightShafts');
+      for (const shaft of this._lightShafts) {
+        shaft.plane.setEnabled(on);
+        if (!on) continue;
+        const t = performance.now() / 1000;
+        shaft.plane.position.x = shaft.baseX + Math.sin(t * 0.05 + shaft.phase) * 26;
+        shaft.plane.position.z = shaft.baseZ + Math.cos(t * 0.04 + shaft.phase) * 22;
+      }
+    });
   }
 
   /** @private Perimeter walls — thick energy barriers. */
@@ -1284,6 +1374,7 @@ export class EnvironmentRenderer {
     plane.position.set(this.w / 2, 200, this.h / 2);
     plane.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
     plane.isPickable = false;
+    plane.applyFog = false; // floating signage reads at any zoom, unfogged
 
     const mat = new B.StandardMaterial('holoTitleMat', this.scene);
     mat.diffuseTexture = tex;
@@ -1433,6 +1524,8 @@ export class EnvironmentRenderer {
   getGlowExcludedMeshes() {
     const meshes = [this._skybox, this._ground, this._floorGlow];
     if (this._walls) meshes.push(...this._walls);
+    // Light shafts are already additive haze — glowing them doubles it.
+    if (this._lightShafts) meshes.push(...this._lightShafts.map((s) => s.plane));
     return meshes.filter(Boolean);
   }
 
@@ -1598,6 +1691,13 @@ export class EnvironmentRenderer {
       for (const pr of this._pylonRings) { pr.ring1.dispose(); pr.ring2.dispose(); }
       this._pylonRings = null;
     }
+
+    if (this._lightShafts) {
+      for (const shaft of this._lightShafts) shaft.plane.dispose();
+      this._lightShafts = null;
+    }
+    if (this._shaftMat) { this._shaftMat.dispose(); this._shaftMat = null; }
+    if (this._shaftTex) { this._shaftTex.dispose(); this._shaftTex = null; }
 
     if (this._floorGlow) { this._floorGlow.dispose(); this._floorGlow = null; }
     if (this._ambientParticles) { this._ambientParticles.dispose(); this._ambientParticles = null; }
