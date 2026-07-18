@@ -6,8 +6,8 @@
  */
 
 import { CameraController } from './camera.js?v=20260710d';
-import { BotRenderer } from './bots.js?v=20260714e';
-import { EnvironmentRenderer } from './environment.js?v=20260712a';
+import { BotRenderer } from './bots.js?v=20260718c';
+import { EnvironmentRenderer } from './environment.js?v=20260718c';
 import { ObstacleRenderer } from './obstacles.js?v=20260710f';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718b';
@@ -105,6 +105,9 @@ export class ArenaEngine {
     // settings change — and once right after the pipeline is created below —
     // instead of re-reading isEnabled() every frame in the render loop.
     const applyPipelineFlags = () => {
+      if (this.glowLayer) {
+        this.glowLayer.isEnabled = isEnabled('rendering', 'glowLayer');
+      }
       if (!this.pipeline || !this.pipeline.isSupported) return;
       this.pipeline.bloomEnabled = isEnabled('rendering', 'bloom');
       this.pipeline.imageProcessing.vignetteEnabled = isEnabled('rendering', 'vignette');
@@ -246,6 +249,25 @@ export class ArenaEngine {
       pipeline.imageProcessing.vignetteColor = new B.Color4(0, 0, 0.05, 0);
     }
     this.pipeline = pipeline;
+
+    // GlowLayer (issue #181): real halos around the scene's emissive neon —
+    // wall/obstacle trims, zone rings, weapon accents, trail cores. Half-res
+    // main texture and a modest kernel keep it inside the projector-laptop
+    // budget; intensity is tuned against the existing bloom (threshold 0.75,
+    // weight 0.3, unchanged) so the two passes never stack into a blowout.
+    this.glowLayer = null;
+    if (typeof B.GlowLayer === 'function') {
+      const glow = new B.GlowLayer('arenaGlow', scene, {
+        mainTextureRatio: 0.5,
+        blurKernelSize: 32,
+      });
+      glow.intensity = 0.75;
+      for (const mesh of this.envRenderer.getGlowExcludedMeshes()) {
+        glow.addExcludedMesh(mesh);
+      }
+      this.glowLayer = glow;
+    }
+
     // Apply persisted settings over the hardcoded creation defaults above so
     // a spectator who turned an effect off never sees a one-frame flash of it.
     applyPipelineFlags();

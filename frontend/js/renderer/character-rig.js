@@ -13,11 +13,20 @@
 import {parseColor, makeMat} from './utils.js';
 import {getCharacterProfile} from './character-roster.js?v=20260714e';
 import {ForgeAnimState} from './character-anims.js?v=20260714e';
-import {createForgeWeapon, disposeForgeWeapon} from './forge-weapons.js?v=20260714e';
+import {
+  applyForgeLightingMode,
+  createForgeWeapon,
+  disposeForgeWeapon,
+  setForgeWeaponLighting,
+} from './forge-weapons.js?v=20260718c';
 import {bodyFormForAsset} from './body-form-roster.js?v=20260714e';
 import {buildBodyFormGeometry, createBodyFormFarProxy} from './body-form-geometry.js?v=20260714e';
+import {isEnabled} from '../settings.js';
 
 const _sceneResources = new WeakMap();
+
+/** Lit-mode emissive floor (fraction of diffuse) — see forge-weapons.js. */
+const LIT_EMISSIVE_FLOOR = 0.45;
 
 // Separate enter/exit distances prevent rapid camera movement near the
 // boundary from flipping an entire crowd between detail levels each frame.
@@ -44,13 +53,56 @@ function sharedMaterial(scene, name, diffuse, emissive, specular) {
   material.emissiveColor = emissive;
   material.specularColor = specular;
   material.backFaceCulling = true;
-  // Shared chassis pieces must keep a readable floor in the arena's near-black
-  // sectors. Accent/core materials still react to status and cosmetics, while
-  // these scene-owned structural materials deliberately do not depend on a
-  // light reaching every articulated limb.
+  // Far-LOD silhouettes and the pick selector stay deliberately unlit: the
+  // proxy's whole job is a guaranteed-readable identity blob at overview
+  // zoom, so it must not depend on a light reaching it.
   material.disableLighting = true;
   material.freeze();
   return material;
+}
+
+/**
+ * Structural chassis material (issue #181): sun/hemi-lit with an emissive
+ * floor so team silhouettes keep a readable minimum in the arena's near-black
+ * sectors while directional shading adds depth. The pre-lighting flat
+ * emissive stays on the material so rendering.characterLighting can flip the
+ * legacy self-lit look back live (setForgeChassisLighting below); accent/core
+ * materials are per-bot, already lit, and unaffected.
+ */
+function litChassisMaterial(scene, name, diffuse, unlitEmissive, specular) {
+  const B = window.BABYLON;
+  const material = new B.StandardMaterial(name, scene);
+  material.diffuseColor = diffuse;
+  material.specularColor = specular;
+  material.backFaceCulling = true;
+  material.emissiveColor = unlitEmissive.clone();
+  material._forgeLitEmissive = new B.Color3(
+    diffuse.r * LIT_EMISSIVE_FLOOR,
+    diffuse.g * LIT_EMISSIVE_FLOOR,
+    diffuse.b * LIT_EMISSIVE_FLOOR,
+  );
+  material._forgeUnlitEmissive = unlitEmissive;
+  applyForgeLightingMode(material, isEnabled('rendering', 'characterLighting'));
+  material.freeze();
+  return material;
+}
+
+/**
+ * Flip this scene's shared chassis + weapon materials between lit-with-floor
+ * and the legacy self-lit look. Called from the per-frame settings check in
+ * bots.js when rendering.characterLighting changes; a no-op until the scene
+ * has built its shared resources (creation reads the setting directly).
+ */
+export function setForgeChassisLighting(scene, lit) {
+  const resources = _sceneResources.get(scene);
+  if (resources) {
+    for (const material of [resources.graphite, resources.gunmetal]) {
+      material.unfreeze();
+      applyForgeLightingMode(material, lit);
+      material.freeze();
+    }
+  }
+  setForgeWeaponLighting(scene, lit);
 }
 
 function createFarSilhouetteTemplate(B, scene, material) {
@@ -105,14 +157,14 @@ function getResources(scene) {
   if (resources) return resources;
 
   const B = window.BABYLON;
-  const graphite = sharedMaterial(
+  const graphite = litChassisMaterial(
     scene,
     'forge-graphite-shared',
     new B.Color3(0.28, 0.36, 0.50),
     new B.Color3(0.18, 0.24, 0.36),
     new B.Color3(0.40, 0.46, 0.54),
   );
-  const gunmetal = sharedMaterial(
+  const gunmetal = litChassisMaterial(
     scene,
     'forge-gunmetal-shared',
     new B.Color3(0.34, 0.44, 0.60),

@@ -15,7 +15,7 @@ import {
   triggerForgeHit,
   triggerForgeShove,
 } from './character-anims.js?v=20260714e';
-import {updateForgeCharacterLOD} from './character-rig.js?v=20260714e';
+import {setForgeChassisLighting, updateForgeCharacterLOD} from './character-rig.js?v=20260718c';
 import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260714e';
 import {bodyFormKeyForBot} from './body-form-roster.js?v=20260714e';
 import { isEnabled } from '../settings.js';
@@ -447,6 +447,16 @@ export class BotRenderer {
     const now = performance.now();
     const dt = Math.min((now - this._lastFrame) / 1000, 0.1);
     this._lastFrame = now;
+
+    // Live rendering.characterLighting flip (issue #181): the shared chassis
+    // and weapon materials carry both emissive variants, so flipping is a
+    // handful of material writes that only run on an actual toggle edge —
+    // the steady-state per-frame cost is this one isEnabled() comparison.
+    const chassisLit = isEnabled('rendering', 'characterLighting');
+    if (chassisLit !== this._chassisLit) {
+      this._chassisLit = chassisLit;
+      setForgeChassisLighting(this.scene, chassisLit);
+    }
 
     if (now >= this._bodyFormLODRefreshAt || this._bodyFormLODSelectedBotId !== this.selectedBotId) {
       this._bodyFormNearIDs = selectNearBodyFormIDs(

@@ -9,20 +9,60 @@
  * @module renderer/forge-weapons
  */
 
+import { isEnabled } from '../settings.js';
+
 const _sceneResources = new WeakMap();
 
-function sharedMaterial(scene, name, diffuse, emissive, specular) {
+/**
+ * Lit-mode emissive floor as a fraction of the material's diffuse. Weapon
+ * silhouettes keep the same dark-sector visibility guarantee as the shared
+ * chassis: even a face no light reaches renders at floor brightness, while
+ * sun/hemi shading models the lit faces on top of it.
+ */
+const LIT_EMISSIVE_FLOOR = 0.45;
+
+/**
+ * Apply lit or legacy self-lit mode to a shared Forge material. Both emissive
+ * variants ride on the material so the rendering.characterLighting toggle can
+ * flip live without rebuilding any rig. Callers own unfreeze()/freeze().
+ */
+export function applyForgeLightingMode(material, lit) {
+  material.disableLighting = !lit;
+  material.emissiveColor.copyFrom(
+    lit ? material._forgeLitEmissive : material._forgeUnlitEmissive);
+}
+
+function sharedMaterial(scene, name, diffuse, unlitEmissive, specular) {
   const B = window.BABYLON;
   const material = new B.StandardMaterial(name, scene);
   material.diffuseColor = diffuse;
-  material.emissiveColor = emissive;
   material.specularColor = specular;
   material.backFaceCulling = true;
-  // Weapon silhouettes need the same dark-sector visibility guarantee as the
-  // shared chassis. Bot-owned accent pieces remain independently animated.
-  material.disableLighting = true;
+  // Sun/hemi-lit with an emissive floor (issue #181): the floor keeps the
+  // silhouette readable in the arena's near-black sectors, while directional
+  // shading adds depth. The pre-lighting flat emissive stays on the material
+  // so the characterLighting toggle can restore the legacy self-lit look.
+  material.emissiveColor = unlitEmissive.clone();
+  material._forgeLitEmissive = new B.Color3(
+    diffuse.r * LIT_EMISSIVE_FLOOR,
+    diffuse.g * LIT_EMISSIVE_FLOOR,
+    diffuse.b * LIT_EMISSIVE_FLOOR,
+  );
+  material._forgeUnlitEmissive = unlitEmissive;
+  applyForgeLightingMode(material, isEnabled('rendering', 'characterLighting'));
   material.freeze();
   return material;
+}
+
+/** Flip this scene's shared weapon materials between lit and self-lit. */
+export function setForgeWeaponLighting(scene, lit) {
+  const resources = _sceneResources.get(scene);
+  if (!resources) return;
+  for (const material of [resources.steel, resources.dark, resources.cable]) {
+    material.unfreeze();
+    applyForgeLightingMode(material, lit);
+    material.freeze();
+  }
 }
 
 function getResources(scene) {

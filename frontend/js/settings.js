@@ -112,10 +112,12 @@ export const SETTINGS_SCHEMA = {
     description: 'Post-processing (also affects GPU cost).',
     effects: {
       bloom: { label: 'Bloom' },
+      glowLayer: { label: 'Neon glow halos' },
       vignette: { label: 'Vignette' },
       fxaa: { label: 'Anti-aliasing (FXAA)' },
       sharpen: { label: 'Sharpen' },
       shadows: { label: 'Obstacle shadows' },
+      characterLighting: { label: 'Character lighting & shading' },
       // Default-on keeps the current 1x render resolution; unchecking lets
       // HiDPI displays render at native resolution (sharper, more GPU).
       resolutionCap: { label: 'Cap resolution at 1x (performance)' },

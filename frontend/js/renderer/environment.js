@@ -1224,6 +1224,18 @@ export class EnvironmentRenderer {
     });
   }
 
+  /**
+   * Meshes the engine's GlowLayer must skip (issue #181). The skybox, ground
+   * deck, and energy-floor swirl are frame-filling emissive art already tuned
+   * against bloom — feeding them to the glow pass hazes the whole arena. The
+   * translucent wall bodies are excluded too so only their trim strips glow.
+   */
+  getGlowExcludedMeshes() {
+    const meshes = [this._skybox, this._ground, this._floorGlow];
+    if (this._walls) meshes.push(...this._walls);
+    return meshes.filter(Boolean);
+  }
+
   /** Set up shadow generator on the directional light. */
   setupShadows(light) {
     const B = window.BABYLON;
