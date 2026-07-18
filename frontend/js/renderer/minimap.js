@@ -31,6 +31,17 @@ export class Minimap {
     container.appendChild(this.canvas);
     this.canvas.style.display = 'none';
     this.ctx = this.canvas.getContext('2d');
+
+    // Static layer: obstacle rects pre-rasterized to an offscreen canvas and
+    // blitted per redraw, instead of re-filling every rect at 5 Hz. Rebuilt
+    // only when the obstacle set changes (new keyframe array reference) or
+    // the arena rescales.
+    this._staticCanvas = document.createElement('canvas');
+    this._staticCanvas.width = MINIMAP_SIZE;
+    this._staticCanvas.height = MINIMAP_SIZE;
+    this._staticCtx = this._staticCanvas.getContext('2d');
+    this._staticDirty = true;
+    this._lastObstacles = null;
   }
 
   /**
@@ -48,9 +59,15 @@ export class Minimap {
       this.arenaHeight = size[1];
       this.scale = MINIMAP_SIZE / Math.max(this.arenaWidth, this.arenaHeight);
       this._lastObstacles = null;
+      this._staticDirty = true;
     }
-    // Obstacles arrive only on keyframe broadcasts — keep the last copy.
-    if (state.obstacles) this._lastObstacles = state.obstacles;
+    // Obstacles arrive only on keyframe broadcasts — keep the last copy and
+    // re-rasterize the static layer when the set changes (each keyframe
+    // delivers a freshly parsed array, so a reference check catches it).
+    if (state.obstacles && state.obstacles !== this._lastObstacles) {
+      this._lastObstacles = state.obstacles;
+      this._staticDirty = true;
+    }
 
     const hasBots = state.bots && state.bots.some(b => b.is_alive);
     this.canvas.style.display = hasBots ? '' : 'none';
@@ -109,13 +126,12 @@ export class Minimap {
       ctx.restore();
     }
 
-    // Obstacles (cached between keyframes)
-    ctx.fillStyle = 'rgba(40, 40, 55, 0.8)';
-    if (this._lastObstacles) {
-      for (const obs of this._lastObstacles) {
-        ctx.fillRect(obs.x * s, obs.y * s, obs.width * s, obs.height * s);
-      }
+    // Obstacles (pre-rasterized static layer, cached between keyframes)
+    if (this._staticDirty) {
+      this._renderStaticLayer();
+      this._staticDirty = false;
     }
+    ctx.drawImage(this._staticCanvas, 0, 0);
 
     // Pickups
     if (state.pickups) {
@@ -151,6 +167,24 @@ export class Minimap {
     ctx.strokeStyle = '#1e293b';
     ctx.lineWidth = 1;
     ctx.strokeRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+  }
+
+  /**
+   * @private Rasterize the round-static content (obstacle rects) onto the
+   * offscreen static canvas. The rects use the same rgba fill on a
+   * transparent layer, so the per-redraw drawImage blit composites over the
+   * safe-zone tint exactly like the direct fillRect calls did. The border
+   * stroke stays in update() because it draws on top of the dynamic bots.
+   */
+  _renderStaticLayer() {
+    const ctx = this._staticCtx;
+    ctx.clearRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+    if (!this._lastObstacles) return;
+    const s = this.scale;
+    ctx.fillStyle = 'rgba(40, 40, 55, 0.8)';
+    for (const obs of this._lastObstacles) {
+      ctx.fillRect(obs.x * s, obs.y * s, obs.width * s, obs.height * s);
+    }
   }
 
   /** @private */

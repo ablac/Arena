@@ -10,7 +10,7 @@ import { BotRenderer } from './bots.js?v=20260714e';
 import { EnvironmentRenderer } from './environment.js?v=20260712a';
 import { ObstacleRenderer } from './obstacles.js?v=20260710f';
 import { PickupRenderer } from './pickups.js?v=20260714f';
-import { EffectRenderer } from './effects.js?v=20260710f';
+import { EffectRenderer } from './effects.js?v=20260718b';
 import { TrailRenderer } from './trails.js?v=20260714e';
 import { ProjectileRenderer } from './projectiles.js?v=20260711a';
 import { GameplayRenderer } from './gameplay.js?v=20260710g';
@@ -101,9 +101,22 @@ export class ArenaEngine {
       }
     };
     applyResolution();
+    // Post-process toggles (bloom/vignette/fxaa/sharpen) are applied here on
+    // settings change — and once right after the pipeline is created below —
+    // instead of re-reading isEnabled() every frame in the render loop.
+    const applyPipelineFlags = () => {
+      if (!this.pipeline || !this.pipeline.isSupported) return;
+      this.pipeline.bloomEnabled = isEnabled('rendering', 'bloom');
+      this.pipeline.imageProcessing.vignetteEnabled = isEnabled('rendering', 'vignette');
+      this.pipeline.fxaaEnabled = isEnabled('rendering', 'fxaa');
+      this.pipeline.sharpenEnabled = isEnabled('rendering', 'sharpen');
+    };
     // init() re-runs on between-round arena resizes; without unsubscribing in
     // dispose(), listeners would pile up holding disposed engines.
-    this._unsubSettings = onSettingsChange(applyResolution);
+    this._unsubSettings = onSettingsChange(() => {
+      applyResolution();
+      applyPipelineFlags();
+    });
     this.engine = engine;
     const scene = new B.Scene(engine);
     this.scene = scene;
@@ -233,6 +246,9 @@ export class ArenaEngine {
       pipeline.imageProcessing.vignetteColor = new B.Color4(0, 0, 0.05, 0);
     }
     this.pipeline = pipeline;
+    // Apply persisted settings over the hardcoded creation defaults above so
+    // a spectator who turned an effect off never sees a one-frame flash of it.
+    applyPipelineFlags();
 
     const self = this;
     let _lastFrame = performance.now();
@@ -274,15 +290,8 @@ export class ArenaEngine {
       if (self.gameplayRenderer) {
         self.gameplayRenderer.animate(self.botRenderer ? self.botRenderer.entries : null, dt);
       }
-      // Cheap boolean assignments so bloom/vignette/fxaa/sharpen toggles
-      // apply live, without needing a page reload (the setters early-return
-      // when unchanged).
-      if (self.pipeline && self.pipeline.isSupported) {
-        self.pipeline.bloomEnabled = isEnabled('rendering', 'bloom');
-        self.pipeline.imageProcessing.vignetteEnabled = isEnabled('rendering', 'vignette');
-        self.pipeline.fxaaEnabled = isEnabled('rendering', 'fxaa');
-        self.pipeline.sharpenEnabled = isEnabled('rendering', 'sharpen');
-      }
+      // Pipeline toggles are event-driven (applyPipelineFlags via
+      // onSettingsChange) — the per-frame loop stays free of settings reads.
       scene.render();
     });
     // IntersectionObserver drives the off-screen frame suspension. threshold

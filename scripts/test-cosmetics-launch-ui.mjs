@@ -26,8 +26,8 @@ assert.doesNotMatch(appSource, /initCosmeticsPanel|cosmetics-panel\.js/,
 assert.match(desktopHTML, /js\/app\.js\?v=20260714i/);
 assert.match(mobileHTML, /mobile\.js\?v=20260714i/);
 assert.match(shopHTML, /cosmetics-shop\.js\?v=20260714g/);
-assert.match(appSource, /renderer\/engine\.js\?v=20260714e/);
-assert.match(mobileSource, /renderer\/engine\.js\?v=20260714e/);
+assert.match(appSource, /renderer\/engine\.js\?v=20260718b/);
+assert.match(mobileSource, /renderer\/engine\.js\?v=20260718b/);
 assert.match(shopSource, /shop-preview\.js\?v=20260714e/);
 assert.match(engineSource, /bots\.js\?v=20260714e/);
 assert.match(engineSource, /trails\.js\?v=20260714e/);
