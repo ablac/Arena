@@ -739,11 +739,16 @@ func (h *AdminHandler) resetLeaderboard(w http.ResponseWriter, r *http.Request) 
 	if reset == nil {
 		reset = db.ResetLeaderboard
 	}
+	// Bound the TRUNCATE round trip like the sibling admin handlers do: a
+	// blocked table lock must not stall persistence (or, worst case, the
+	// admin request) indefinitely.
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 	var err error
 	if h.Engine != nil {
-		err = h.Engine.ResetLeaderboard(r.Context(), reset)
+		err = h.Engine.ResetLeaderboard(ctx, reset)
 	} else {
-		err = reset(r.Context())
+		err = reset(ctx)
 	}
 	if err != nil {
 		if errors.Is(err, db.ErrNoDatabase) {

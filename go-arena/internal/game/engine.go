@@ -2648,12 +2648,18 @@ func (e *GameEngine) ResetLeaderboard(ctx context.Context, reset func(context.Co
 		return fmt.Errorf("reset leaderboard: nil reset function")
 	}
 
+	// botStatsPersistenceMu is held for the whole operation so the epoch-gate
+	// semantics in PersistBotStatsFromSnapshot/PersistRoundBotStats are
+	// unchanged. e.mu, however, is released around the DB reset: reset() runs
+	// a TRUNCATE whose ACCESS EXCLUSIVE lock can wait behind any concurrent
+	// leaderboard SELECT (or a pg_dump), and holding the engine write lock
+	// across that round trip froze the entire game world — tick(), every bot
+	// action, and every REST read — for an unbounded time.
 	botStatsPersistenceMu.Lock()
 	defer botStatsPersistenceMu.Unlock()
-	e.mu.Lock()
-	defer e.mu.Unlock()
 
-	backups := make(map[*BotState]BotState, len(e.Bots)+len(e.WaitingBots))
+	e.mu.Lock()
+	backups := make(map[*BotState]leaderboardResetBackup, len(e.Bots)+len(e.WaitingBots))
 	previousSkippedRound := e.skipLeaderboardRound
 	if e.Round.Phase == PhaseActive {
 		e.skipLeaderboardRound = e.Round.RoundNumber
@@ -2665,7 +2671,7 @@ func (e *GameEngine) ResetLeaderboard(ctx context.Context, reset func(context.Co
 		if _, seen := backups[bot]; seen {
 			return
 		}
-		backups[bot] = *bot
+		backups[bot] = captureLeaderboardResetBackup(bot)
 		resetBotLeaderboardState(bot)
 	}
 	for _, bot := range e.Bots {
@@ -2674,18 +2680,73 @@ func (e *GameEngine) ResetLeaderboard(ctx context.Context, reset func(context.Co
 	for _, bot := range e.WaitingBots {
 		resetBot(bot)
 	}
+	e.mu.Unlock()
 
 	if err := reset(ctx); err != nil {
+		// Restore ONLY the fields resetBotLeaderboardState touched: ticks
+		// advanced live state (position, HP, round score, Grid placement)
+		// while the lock was released, so a full-struct restore would revert
+		// live gameplay and desync the spatial grid. Elo deltas earned during
+		// the failed-reset window are accepted as lost on this admin path.
+		e.mu.Lock()
 		for bot, previous := range backups {
-			*bot = previous
+			previous.restore(bot)
 		}
 		e.skipLeaderboardRound = previousSkippedRound
+		e.mu.Unlock()
 		return fmt.Errorf("reset leaderboard: %w", err)
 	}
 
+	// Only after a successful TRUNCATE: discarding pending deltas or bumping
+	// the epoch before knowing the outcome would throw away stat deltas the
+	// DB still holds.
 	pendingBotStatsDeltas = make(map[string]db.BotStatsDelta)
 	botStatsPersistenceEpoch.Add(1)
 	return nil
+}
+
+// leaderboardResetBackup holds exactly the fields resetBotLeaderboardState
+// mutates, so a failed DB reset can restore them without reverting live
+// gameplay state that advanced while the engine lock was released.
+type leaderboardResetBackup struct {
+	elo                  int
+	persistedKills       int
+	persistedDeaths      int
+	persistedDamageDealt float64
+	persistedDamageTaken float64
+	persistedDistance    float64
+	persistedPickups     int
+	rebased              bool
+	killBaseline         int
+	lifeBaseline         int
+}
+
+func captureLeaderboardResetBackup(bot *BotState) leaderboardResetBackup {
+	return leaderboardResetBackup{
+		elo:                  bot.Elo,
+		persistedKills:       bot.PersistedKills,
+		persistedDeaths:      bot.PersistedDeaths,
+		persistedDamageDealt: bot.PersistedDamageDealt,
+		persistedDamageTaken: bot.PersistedDamageTaken,
+		persistedDistance:    bot.PersistedDistance,
+		persistedPickups:     bot.PersistedPickups,
+		rebased:              bot.LeaderboardRebased,
+		killBaseline:         bot.LeaderboardKillBaseline,
+		lifeBaseline:         bot.LeaderboardLifeBaseline,
+	}
+}
+
+func (b leaderboardResetBackup) restore(bot *BotState) {
+	bot.Elo = b.elo
+	bot.PersistedKills = b.persistedKills
+	bot.PersistedDeaths = b.persistedDeaths
+	bot.PersistedDamageDealt = b.persistedDamageDealt
+	bot.PersistedDamageTaken = b.persistedDamageTaken
+	bot.PersistedDistance = b.persistedDistance
+	bot.PersistedPickups = b.persistedPickups
+	bot.LeaderboardRebased = b.rebased
+	bot.LeaderboardKillBaseline = b.killBaseline
+	bot.LeaderboardLifeBaseline = b.lifeBaseline
 }
 
 func resetBotLeaderboardState(bot *BotState) {
@@ -2843,7 +2904,7 @@ func (e *GameEngine) GetBotProfile(botID string) (map[string]interface{}, bool) 
 		"invuln_ticks":        bot.InvulnTicks,
 		"stun_ticks":          bot.StunTicks,
 		"shield_absorb":       round1(bot.ShieldAbsorb),
-		"active_effects":      bot.ActiveEffects,
+		"active_effects":      append([]Effect(nil), bot.ActiveEffects...),
 		"kill_streak":         bot.KillStreak,
 		"round_kills":         bot.RoundKills,
 		"round_deaths":        bot.RoundDeaths,
@@ -3031,9 +3092,12 @@ func (e *GameEngine) GetFullGameState() map[string]interface{} {
 			"deaths":      bot.RoundDeaths,
 			"elo":         bot.Elo,
 			"kill_streak": bot.KillStreak,
-			"effects":     bot.ActiveEffects,
-			"stats":       bot.Stats,
-			"speed":       round1(bot.Speed),
+			// Snapshot: the tick goroutine mutates ActiveEffects in place
+			// (TickEffects decrements/compacts) while HTTP handlers marshal
+			// this map after the RLock is released.
+			"effects": append([]Effect(nil), bot.ActiveEffects...),
+			"stats":   bot.Stats,
+			"speed":   round1(bot.Speed),
 		})
 	}
 
@@ -3062,11 +3126,13 @@ func (e *GameEngine) GetFullGameState() map[string]interface{} {
 		"bots":          bots,
 		// Dynamic arena sizing can change dimensions between rounds; admin
 		// minimaps should rescale from this instead of assuming a fixed size.
-		"arena_size":   [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
-		"game_mode":    string(e.Round.Mode),
-		"map_shape":    string(ActiveMapShape),
-		"pickups":      len(e.Pickups),
-		"pickups_list": e.Pickups,
+		"arena_size": [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
+		"game_mode":  string(e.Round.Mode),
+		"map_shape":  string(ActiveMapShape),
+		"pickups":    len(e.Pickups),
+		// Snapshot: pickup collection shifts e.Pickups elements in place on
+		// the tick goroutine; handlers marshal outside the lock.
+		"pickups_list": append([]Pickup(nil), e.Pickups...),
 		"projectiles":  len(e.Projectiles),
 		"zone": map[string]interface{}{
 			"center":        e.Arena.ZoneCenter,
@@ -3098,9 +3164,23 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 		connInfo["remote_addr"] = bot.Conn.RemoteAddr().String()
 	}
 
+	// Copy the reference-typed fields while the RLock is held: the caller
+	// json-marshals the returned map with no lock, racing the tick goroutine
+	// otherwise. ActionResult is a flat value struct; Action carries one
+	// pointer field that must be duplicated too.
 	var lastAction interface{}
 	if bot.LastActionResult != nil {
-		lastAction = bot.LastActionResult
+		la := *bot.LastActionResult
+		lastAction = &la
+	}
+	var pendingAction *Action
+	if bot.PendingAction != nil {
+		pa := *bot.PendingAction
+		if pa.TargetPosition != nil {
+			tp := *pa.TargetPosition
+			pa.TargetPosition = &tp
+		}
+		pendingAction = &pa
 	}
 
 	return map[string]interface{}{
@@ -3126,7 +3206,7 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 		"stun_ticks":         bot.StunTicks,
 		"frozen":             bot.Frozen,
 		"shield_absorb":      round1(bot.ShieldAbsorb),
-		"active_effects":     bot.ActiveEffects,
+		"active_effects":     append([]Effect(nil), bot.ActiveEffects...),
 		"round_kills":        bot.RoundKills,
 		"round_deaths":       bot.RoundDeaths,
 		"round_damage_dealt": round1(bot.RoundDamageDealt),
@@ -3137,7 +3217,7 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 		"round_pickups":      bot.RoundPickups,
 		"last_action_tick":   bot.LastActionTick,
 		"last_action_result": lastAction,
-		"current_action":     bot.PendingAction,
+		"current_action":     pendingAction,
 		"connected_at":       bot.ConnectedAt,
 		"action_counts":      botActionCounts(bot),
 		"connection":         connInfo,

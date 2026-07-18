@@ -1,5 +1,7 @@
 package game
 
+import "sync"
+
 // KillFeedEntry records a single kill event.
 type KillFeedEntry struct {
 	Killer string `json:"killer"`
@@ -17,6 +19,16 @@ type KillFeed struct {
 	// message embeds the same "last N kills" list and the spectator state
 	// embeds the full list, so each is built once per change instead of
 	// once per consumer per tick.
+	//
+	// viewMu guards viewCache only. entries are still protected by the
+	// engine lock (mutated exclusively under e.mu.Lock). The cache needs its
+	// own mutex because RecentViews lazily WRITES the map and is reachable
+	// from paths holding only e.mu.RLock (BuildSpectatorState via the
+	// exported GetState), where two concurrent readers would otherwise race
+	// on the map write — an unrecoverable runtime fatal. Held for the whole
+	// lookup+build+store; do not replace with a double-checked read, which
+	// still races the store.
+	viewMu    sync.Mutex
 	viewCache map[int][]map[string]interface{}
 }
 
@@ -40,13 +52,17 @@ func (kf *KillFeed) Add(killer, victim, weapon string, tick int) {
 	if len(kf.entries) > kf.maxSize {
 		kf.entries = kf.entries[len(kf.entries)-kf.maxSize:]
 	}
+	kf.viewMu.Lock()
 	kf.viewCache = nil
+	kf.viewMu.Unlock()
 }
 
 // RecentViews returns the last count entries serialised for tick messages.
 // The result is cached until the feed changes; callers must treat it as
 // read-only (it is shared across every bot's message in a tick).
 func (kf *KillFeed) RecentViews(count int) []map[string]interface{} {
+	kf.viewMu.Lock()
+	defer kf.viewMu.Unlock()
 	if views, ok := kf.viewCache[count]; ok {
 		return views
 	}
@@ -107,5 +123,7 @@ func (kf *KillFeed) GetSince(tick int) []KillFeedEntry {
 // Clear removes all entries from the kill feed.
 func (kf *KillFeed) Clear() {
 	kf.entries = kf.entries[:0]
+	kf.viewMu.Lock()
 	kf.viewCache = nil
+	kf.viewMu.Unlock()
 }
