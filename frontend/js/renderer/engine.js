@@ -7,9 +7,9 @@
 
 import { CameraController } from './camera.js?v=20260710d';
 import { BotRenderer } from './bots.js?v=20260718f';
-import { EnvironmentRenderer } from './environment.js?v=20260718g';
-import { ObstacleRenderer } from './obstacles.js?v=20260718g';
-import { IntermissionDirector } from './intermission-director.js?v=20260718g';
+import { EnvironmentRenderer } from './environment.js?v=20260718h';
+import { ObstacleRenderer } from './obstacles.js?v=20260718h';
+import { IntermissionDirector } from './intermission-director.js?v=20260718h';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
 import { TrailRenderer } from './trails.js?v=20260714e';
@@ -272,7 +272,12 @@ export class ArenaEngine {
     this.gameplayRenderer = new GameplayRenderer(scene);
     // Between-round spectator show (issue #189): driven by the server's
     // round_end broadcast through setState, per-frame from the render loop.
-    this.intermissionDirector = new IntermissionDirector(this);
+    // Created once and kept across mid-show stage resizes (issue #192):
+    // resizeStageForShow detaches it around dispose() so a live show
+    // survives the scene rebuild; the keyframe-driven _rebuildForArenaSize
+    // path still disposes it (dispose() nulls the field) and gets a fresh
+    // one here.
+    this.intermissionDirector = this.intermissionDirector || new IntermissionDirector(this);
     this.gameplayRenderer.onStaffImpactCreated = (impact) => {
       // Same guard as the other effect spawns: projectile cleanup is
       // Animatable/render-loop-driven, which freezes without rendered frames
@@ -625,6 +630,48 @@ export class ArenaEngine {
     // Apply the keyframe that triggered the rebuild so the new scene
     // populates immediately instead of waiting for the next broadcast.
     if (this.ready && state) this.setState(state);
+  }
+
+  /**
+   * Mid-show arena resize (issue #192): the intermission director calls this
+   * between teardown and construction when the next round changes the arena
+   * dimensions, so the stage rebuild happens INSIDE the show instead of the
+   * construction phase being skipped. Same dispose/init cycle as
+   * _rebuildForArenaSize, but the director is detached around dispose() so
+   * the live show survives (init() reuses an existing director), and no
+   * keyframe replay happens — the show still owns the world until its
+   * handoff or fast-forward.
+   * @returns {Promise<boolean>|boolean} resolves true when the stage is
+   *   rebuilt at the requested size.
+   */
+  async resizeStageForShow(w, h) {
+    if (!this.ready || this._resizing) return false;
+    if (w === this.arenaWidth && h === this.arenaHeight) return true;
+    this._resizing = true;
+    console.log(`[Arena] intermission stage resize to ${w}x${h}`);
+    const director = this.intermissionDirector;
+    const prevFollow = this.camera ? this.camera.followId : null;
+    const prevZoom = this.camera ? this.camera.zoom : null;
+    const prevOnZoomChange = this.camera ? this.camera.onZoomChange : null;
+    this.ready = false;
+    try {
+      this.intermissionDirector = null; // detach: the show must outlive the scene
+      this.dispose();
+      this.intermissionDirector = director;
+      this.arenaWidth = w;
+      this.arenaHeight = h;
+      this.state = null;
+      await this.init();
+      if (prevOnZoomChange && this.camera) this.camera.onZoomChange = prevOnZoomChange;
+      if (prevZoom) this.setZoom(prevZoom);
+      if (prevFollow) this.followBot(prevFollow);
+      return true;
+    } catch (err) {
+      console.error('[Arena] intermission stage resize failed:', err);
+      return false;
+    } finally {
+      this._resizing = false;
+    }
   }
 
   _playArenaEvents(events, state) {

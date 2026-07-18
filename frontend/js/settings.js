@@ -159,6 +159,7 @@ export const SETTINGS_SCHEMA = {
       botDespawn: { label: 'Bot despawn choreography' },
       mapTeardown: { label: 'Map teardown' },
       mapConstruction: { label: 'Next-map construction' },
+      ringChoreography: { label: 'Zone ring rewind & glide' },
     },
   },
   siteMotion: {

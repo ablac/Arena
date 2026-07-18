@@ -667,8 +667,16 @@ export class EnvironmentRenderer {
 
   /** Current effective palette — the map's own when the toggle is on. */
   getPalette() {
+    return this.getPaletteForShape(this._mapShape);
+  }
+
+  /** Effective palette for an arbitrary shape, honoring the mapPalettes
+   *  toggle. The intermission director uses this to tint the NEXT map's
+   *  construction clones before setMapShape flips the stage identity
+   *  (issue #192 color parity — must resolve exactly like getPalette). */
+  getPaletteForShape(shape) {
     if (!isEnabled('arenaAmbience', 'mapPalettes')) return DEFAULT_MAP_PALETTE;
-    return MAP_PALETTES[this._mapShape] || DEFAULT_MAP_PALETTE;
+    return MAP_PALETTES[shape] || DEFAULT_MAP_PALETTE;
   }
 
   /**
@@ -1642,17 +1650,29 @@ export class EnvironmentRenderer {
     const cy = safeZone.center[1];
     const r = safeZone.radius;
 
+    // A radius jump UP past the previous target is a new round (the zone
+    // only shrinks during a round) — snap the ring instead of lerping across
+    // the round boundary and record the round's OPENING state so the
+    // intermission show can play the shrink in reverse (issue #192).
+    const newRound = this._zoneCurR === undefined || r > this._zoneTargetR + 1;
+
     // Store target values for smooth lerping
     this._zoneTargetR = r;
     this._zoneTargetCx = cx;
     this._zoneTargetCy = cy;
 
-    // Initialize current values on first call
-    if (this._zoneCurR === undefined) {
+    if (newRound) {
       this._zoneCurR = r;
       this._zoneCurCx = cx;
       this._zoneCurCy = cy;
+      this._zoneRoundStartR = r;
+      this._zoneRoundStartCx = cx;
+      this._zoneRoundStartCy = cy;
     }
+    // Live zone state re-arms a ring the intermission choreography hid (no
+    // arena_state flows between rounds, so this can't fight the rewind).
+    this._zoneRewind = null;
+    this._zoneRingHidden = false;
 
     // Ensure ring meshes exist
     this._ensureZoneRing();
@@ -1663,26 +1683,175 @@ export class EnvironmentRenderer {
       );
     }
 
-    // Register lerp animation if not already running
-    if (!this._zoneLerpRegistered) {
-      this._zoneLerpRegistered = true;
-      this.scene.registerBeforeRender(() => {
-        if (this._zoneTargetR === undefined || !this._zoneRing) return;
-        // This ring is functionally informative (shows the shrinking safe
-        // zone), not pure decoration, but still user-toggleable. Gate via
-        // alpha rather than setEnabled so a spectator relying on it can
-        // toggle it back on mid-round without any state loss.
-        this._zoneMat.alpha = isEnabled('gameplayZoneIndicators', 'safeZoneRing') ? ZONE_RING_BASE_ALPHA : 0;
-        // dt-based smoothing so convergence speed is framerate-independent
-        // (a fixed per-frame factor converges 2.4x faster at 144Hz than 60Hz).
-        const dt = this.scene.getEngine().getDeltaTime() / 1000;
-        const lerpSpeed = 1 - Math.exp(-5 * Math.min(dt, 0.1));
-        this._zoneCurR += (this._zoneTargetR - this._zoneCurR) * lerpSpeed;
-        this._zoneCurCx += (this._zoneTargetCx - this._zoneCurCx) * lerpSpeed;
-        this._zoneCurCy += (this._zoneTargetCy - this._zoneCurCy) * lerpSpeed;
-        this._zoneRing.scaling.set(this._zoneCurR * 2, this._zoneCurR * 2, this._zoneCurR * 2);
-        this._zoneRing.position.set(this._zoneCurCx, 2, this._zoneCurCy);
-      });
+    this._ensureZoneObserver();
+  }
+
+  /** @private Register the per-frame zone-ring animation hook once. Drives
+   *  the normal shrink lerp plus the intermission choreography (rewind of
+   *  the blue ring, glide of the target ring). */
+  _ensureZoneObserver() {
+    if (this._zoneObserverRegistered) return;
+    this._zoneObserverRegistered = true;
+    this.scene.registerBeforeRender(() => {
+      // dt-based smoothing so convergence speed is framerate-independent
+      // (a fixed per-frame factor converges 2.4x faster at 144Hz than 60Hz).
+      const dt = Math.min(this.scene.getEngine().getDeltaTime() / 1000, 0.1);
+      this._tickZoneRing(dt);
+      this._tickTargetRingGlide(dt);
+    });
+  }
+
+  /** @private Per-frame blue safe-zone ring state: hidden > rewind > lerp. */
+  _tickZoneRing(dt) {
+    if (!this._zoneRing) return;
+    if (this._zoneRingHidden) {
+      // Hidden between the intermission rewind and the new round's first
+      // zone state (update() above re-arms it).
+      this._zoneRing.setEnabled(false);
+      return;
+    }
+    this._zoneRing.setEnabled(true);
+    // This ring is functionally informative (shows the shrinking safe
+    // zone), not pure decoration, but still user-toggleable. Gate via
+    // alpha rather than setEnabled so a spectator relying on it can
+    // toggle it back on mid-round without any state loss.
+    const baseAlpha = isEnabled('gameplayZoneIndicators', 'safeZoneRing') ? ZONE_RING_BASE_ALPHA : 0;
+    const rw = this._zoneRewind;
+    if (rw) {
+      // Intermission rewind (issue #192): play the round's shrink backwards
+      // to the recorded opening state, dissolving through the tail, then
+      // stay hidden until the new round's state re-arms the ring. When the
+      // zone never shrank the interpolation is a no-op and this is the
+      // documented clean fade-out fallback.
+      rw.t = Math.min(rw.dur, rw.t + dt);
+      const p = rw.t / rw.dur;
+      const e = 1 - (1 - p) * (1 - p); // easeOutQuad — expansion settles in
+      this._zoneCurR = rw.fromR + (rw.toR - rw.fromR) * e;
+      this._zoneCurCx = rw.fromCx + (rw.toCx - rw.fromCx) * e;
+      this._zoneCurCy = rw.fromCy + (rw.toCy - rw.fromCy) * e;
+      const FADE_START = 0.65;
+      const fade = p < FADE_START ? 1 : 1 - (p - FADE_START) / (1 - FADE_START);
+      this._zoneMat.alpha = baseAlpha * Math.max(0, fade);
+      this._zoneRing.scaling.set(this._zoneCurR * 2, this._zoneCurR * 2, this._zoneCurR * 2);
+      this._zoneRing.position.set(this._zoneCurCx, 2, this._zoneCurCy);
+      if (p >= 1) {
+        this._zoneRewind = null;
+        this._zoneRingHidden = true;
+        this._zoneMat.alpha = baseAlpha;
+      }
+      return;
+    }
+    if (this._zoneTargetR === undefined) return;
+    this._zoneMat.alpha = baseAlpha;
+    const lerpSpeed = 1 - Math.exp(-5 * dt);
+    this._zoneCurR += (this._zoneTargetR - this._zoneCurR) * lerpSpeed;
+    this._zoneCurCx += (this._zoneTargetCx - this._zoneCurCx) * lerpSpeed;
+    this._zoneCurCy += (this._zoneTargetCy - this._zoneCurCy) * lerpSpeed;
+    this._zoneRing.scaling.set(this._zoneCurR * 2, this._zoneCurR * 2, this._zoneCurR * 2);
+    this._zoneRing.position.set(this._zoneCurCx, 2, this._zoneCurCy);
+  }
+
+  /** @private Per-frame target-ring glide toward the announced next-round
+   *  placement (issue #192). Ends exactly on the destination, so the new
+   *  round's first _buildTargetRing is a visual no-op. */
+  _tickTargetRingGlide(dt) {
+    const g = this._targetGlide;
+    if (!g || !this._targetRing) return;
+    g.t = Math.min(g.dur, g.t + dt);
+    const p = g.t / g.dur;
+    const e = p * p * (3 - 2 * p); // smoothstep — eases out of rest, into rest
+    const r = g.fromR + (g.toR - g.fromR) * e;
+    this._targetRing.scaling.set(r * 2, r * 2, r * 2);
+    this._targetRing.position.set(
+      g.fromCx + (g.toCx - g.fromCx) * e,
+      1,
+      g.fromCy + (g.toCy - g.fromCy) * e,
+    );
+    if (p >= 1) this._targetGlide = null;
+  }
+
+  /**
+   * Intermission choreography (issue #192): animate the blue safe-zone ring
+   * back out to the radius/centre it started the round with — the shrink
+   * played in reverse — fading through the tail, then keep it hidden until
+   * the next round's zone state arrives. Returns false when there is no
+   * ring/state to rewind (the show simply skips the beat).
+   * @param {number} durationSecs
+   */
+  beginZoneRingRewind(durationSecs) {
+    if (!this._zoneRing || this._zoneCurR === undefined || this._zoneRingHidden) return false;
+    this._zoneRewind = {
+      t: 0,
+      dur: Math.max(0.5, Number(durationSecs) || 2),
+      fromR: this._zoneCurR,
+      fromCx: this._zoneCurCx,
+      fromCy: this._zoneCurCy,
+      toR: this._zoneRoundStartR !== undefined ? this._zoneRoundStartR : this._zoneCurR,
+      toCx: this._zoneRoundStartCx !== undefined ? this._zoneRoundStartCx : this._zoneCurCx,
+      toCy: this._zoneRoundStartCy !== undefined ? this._zoneRoundStartCy : this._zoneCurCy,
+    };
+    this._ensureZoneObserver();
+    return true;
+  }
+
+  /** Current target-ring placement, or null before its first build. The
+   *  intermission director snapshots this before a stage resize so the
+   *  glide can still start from the old round's spot on the fresh scene. */
+  getZoneTargetRingState() {
+    if (!this._targetRing) return null;
+    return {
+      cx: this._targetRing.position.x,
+      cy: this._targetRing.position.z,
+      r: this._targetRing.scaling.x / 2,
+    };
+  }
+
+  /**
+   * Intermission choreography (issue #192): glide the target ring from where
+   * the old round left it to the NEXT round's announced placement, timed to
+   * land before the round starts. `from` (optional {cx,cy,r}) seeds a ring
+   * that does not exist yet — e.g. right after a mid-show stage resize; with
+   * neither a ring nor a seed the ring is simply parked at the destination
+   * so the first keyframe is still a visual no-op.
+   * @param {{cx:number,cy:number,r:number}} to
+   * @param {number} durationSecs
+   * @param {{cx:number,cy:number,r:number}|null} [from]
+   */
+  glideZoneTargetRing(to, durationSecs, from = null) {
+    if (!to) return false;
+    if (!this._targetRing && from) this._buildTargetRing(from.cx, from.cy, from.r);
+    if (!this._targetRing) {
+      this._buildTargetRing(to.cx, to.cy, to.r);
+      return false;
+    }
+    this._targetGlide = {
+      t: 0,
+      dur: Math.max(0.5, Number(durationSecs) || 2),
+      fromCx: this._targetRing.position.x,
+      fromCy: this._targetRing.position.z,
+      fromR: this._targetRing.scaling.x / 2,
+      toCx: to.cx,
+      toCy: to.cy,
+      toR: Math.max(0.5, Number(to.r) || 0.5),
+    };
+    this._ensureZoneObserver();
+    return true;
+  }
+
+  /** Snap any live intermission ring choreography to its end state (show
+   *  fast-forward): a mid-rewind blue ring hides, a mid-glide target ring
+   *  lands on its destination. The next zone update restores everything. */
+  settleZoneChoreography() {
+    if (this._zoneRewind) {
+      this._zoneRewind = null;
+      this._zoneRingHidden = true;
+      if (this._zoneRing) this._zoneRing.setEnabled(false);
+    }
+    const g = this._targetGlide;
+    if (g && this._targetRing) {
+      this._targetGlide = null;
+      this._targetRing.scaling.set(g.toR * 2, g.toR * 2, g.toR * 2);
+      this._targetRing.position.set(g.toCx, 1, g.toCy);
     }
   }
 
@@ -1704,6 +1873,8 @@ export class EnvironmentRenderer {
   /** @private Build or reposition the target zone ring. */
   _buildTargetRing(cx, cy, r) {
     const B = window.BABYLON;
+    // Server state is authoritative — a live glide yields to it.
+    this._targetGlide = null;
     if (!this._targetRing) {
       this._targetRing = B.MeshBuilder.CreateTorus('targetRing', {
         diameter: 1, thickness: 0.003, tessellation: ZONE_RING_SEGMENTS
