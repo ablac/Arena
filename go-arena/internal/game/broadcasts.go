@@ -343,8 +343,8 @@ func BuildConnectedMessage(bot *BotState, lastLoadout map[string]interface{}) ma
 		loadout = lastLoadout
 	}
 
-	gridW := int(config.C.ArenaWidth / config.C.PathfindingCellSize)
-	gridH := int(config.C.ArenaHeight / config.C.PathfindingCellSize)
+	gridW := int(math.Ceil(config.C.ArenaWidth / config.C.PathfindingCellSize))
+	gridH := int(math.Ceil(config.C.ArenaHeight / config.C.PathfindingCellSize))
 
 	return map[string]interface{}{
 		"type":              "connected",

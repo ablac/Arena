@@ -4,7 +4,34 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"arena-server/internal/config"
 )
+
+func TestConnectedGridSizeUsesCeilForFractionalDynamicArena(t *testing.T) {
+	loadTestConfig(t)
+	originalWidth := config.C.ArenaWidth
+	originalHeight := config.C.ArenaHeight
+	originalCellSize := config.C.PathfindingCellSize
+	t.Cleanup(func() {
+		config.C.ArenaWidth = originalWidth
+		config.C.ArenaHeight = originalHeight
+		config.C.PathfindingCellSize = originalCellSize
+	})
+
+	config.C.ArenaWidth = 2111.111111111111
+	config.C.ArenaHeight = 2111.111111111111
+	config.C.PathfindingCellSize = 20
+
+	message := BuildConnectedMessage(&BotState{}, nil)
+	gridSize, ok := message["grid_size"].([2]int)
+	if !ok {
+		t.Fatalf("connected grid_size type = %T, want [2]int", message["grid_size"])
+	}
+	if gridSize != [2]int{106, 106} {
+		t.Fatalf("connected grid_size = %v, want ceil-aligned [106 106]", gridSize)
+	}
+}
 
 func TestSendRoundStartDoesNotRevealOpponentPositions(t *testing.T) {
 	bot := &BotState{
