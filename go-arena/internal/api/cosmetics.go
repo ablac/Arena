@@ -12,70 +12,26 @@ import (
 	"arena-server/internal/config"
 	"arena-server/internal/db"
 	"arena-server/internal/game"
+	"arena-server/internal/platform"
 	"arena-server/internal/security"
 
 	"github.com/go-chi/chi/v5"
 )
 
-type cosmeticsStore interface {
-	PublicCatalog(context.Context) (*db.CosmeticCatalog, error)
-	AdminCatalog(context.Context) (*db.CosmeticCatalog, error)
-	UpsertCategory(context.Context, db.CosmeticCategory, string) (*db.CosmeticCategory, error)
-	DeleteCategory(context.Context, string, string) (bool, error)
-	UpsertItem(context.Context, db.CosmeticItem, string) (*db.CosmeticItem, error)
-	DeleteItem(context.Context, string, string) (bool, error)
-	UpsertPack(context.Context, db.CosmeticPack, string) (*db.CosmeticPack, error)
-	DeletePack(context.Context, string, string) (bool, error)
-	ListAudit(context.Context, int) ([]db.CosmeticCatalogAudit, error)
+type arenaCosmeticsStore interface {
 	ListForBot(context.Context, string) ([]db.BotCosmeticItem, error)
 	Equipped(context.Context, string) (map[string]string, error)
 	Equip(context.Context, string, string, string) (*db.CosmeticItem, error)
-	AccountInventory(context.Context, string) (*db.CustomerCosmeticsInventory, error)
-	LinkBot(context.Context, string, string) (*db.AccountBot, error)
-	UnlinkBot(context.Context, string, string) (bool, error)
-	AssignLicense(context.Context, string, string, *string) (*db.CosmeticAssignmentChange, error)
 	EquipLicense(context.Context, string, string, string) (*db.CosmeticLicense, error)
-	GrantLicense(context.Context, string, string, string, string) (*db.CosmeticLicense, bool, error)
-	RevokeLicense(context.Context, string) (*db.CosmeticAssignmentChange, bool, error)
-	AdminAccess(context.Context, string) (*db.CosmeticAdminAccess, error)
-	CreateAdminMembership(context.Context, string, time.Time, string, string) (*db.CosmeticAdminMembership, int, error)
-	RevokeAdminMembership(context.Context, string, string, string) (*db.CosmeticAdminMembership, []string, bool, error)
-	ExpireAdminMembershipsForEmail(context.Context, string, time.Time) (int, []string, error)
+}
+
+type cosmeticsStore interface {
+	platform.CosmeticsAuthority
+	arenaCosmeticsStore
 }
 
 type databaseCosmeticsStore struct{}
 
-func (databaseCosmeticsStore) PublicCatalog(ctx context.Context) (*db.CosmeticCatalog, error) {
-	if db.Pool == nil {
-		catalog := db.DefaultCosmeticCatalogData()
-		return &catalog, nil
-	}
-	return db.GetPublicCosmeticCatalog(ctx)
-}
-func (databaseCosmeticsStore) AdminCatalog(ctx context.Context) (*db.CosmeticCatalog, error) {
-	return db.GetAdminCosmeticCatalog(ctx)
-}
-func (databaseCosmeticsStore) UpsertCategory(ctx context.Context, category db.CosmeticCategory, actor string) (*db.CosmeticCategory, error) {
-	return db.UpsertCosmeticCategory(ctx, category, actor)
-}
-func (databaseCosmeticsStore) DeleteCategory(ctx context.Context, categoryID, actor string) (bool, error) {
-	return db.DeleteCosmeticCategory(ctx, categoryID, actor)
-}
-func (databaseCosmeticsStore) UpsertItem(ctx context.Context, item db.CosmeticItem, actor string) (*db.CosmeticItem, error) {
-	return db.UpsertCosmeticCatalogItem(ctx, item, actor)
-}
-func (databaseCosmeticsStore) DeleteItem(ctx context.Context, itemID, actor string) (bool, error) {
-	return db.DeleteCosmeticCatalogItem(ctx, itemID, actor)
-}
-func (databaseCosmeticsStore) UpsertPack(ctx context.Context, pack db.CosmeticPack, actor string) (*db.CosmeticPack, error) {
-	return db.UpsertCosmeticPack(ctx, pack, actor)
-}
-func (databaseCosmeticsStore) DeletePack(ctx context.Context, packID, actor string) (bool, error) {
-	return db.DeleteCosmeticPack(ctx, packID, actor)
-}
-func (databaseCosmeticsStore) ListAudit(ctx context.Context, limit int) ([]db.CosmeticCatalogAudit, error) {
-	return db.ListCosmeticCatalogAudit(ctx, limit)
-}
 func (databaseCosmeticsStore) ListForBot(ctx context.Context, botID string) ([]db.BotCosmeticItem, error) {
 	return db.ListBotCosmetics(ctx, botID)
 }
@@ -85,44 +41,15 @@ func (databaseCosmeticsStore) Equipped(ctx context.Context, botID string) (map[s
 func (databaseCosmeticsStore) Equip(ctx context.Context, botID, slot, cosmeticID string) (*db.CosmeticItem, error) {
 	return db.EquipCosmetic(ctx, botID, slot, cosmeticID)
 }
-func (databaseCosmeticsStore) AccountInventory(ctx context.Context, accountID string) (*db.CustomerCosmeticsInventory, error) {
-	return db.GetCustomerCosmeticsInventory(ctx, accountID)
-}
-func (databaseCosmeticsStore) LinkBot(ctx context.Context, accountID, botID string) (*db.AccountBot, error) {
-	return db.LinkBotToCustomerAccount(ctx, accountID, botID)
-}
-func (databaseCosmeticsStore) UnlinkBot(ctx context.Context, accountID, botID string) (bool, error) {
-	return db.UnlinkBotFromCustomerAccount(ctx, accountID, botID)
-}
-func (databaseCosmeticsStore) AssignLicense(ctx context.Context, accountID, licenseID string, botID *string) (*db.CosmeticAssignmentChange, error) {
-	return db.AssignCosmeticLicense(ctx, accountID, licenseID, botID)
-}
 func (databaseCosmeticsStore) EquipLicense(ctx context.Context, accountID, botID, licenseID string) (*db.CosmeticLicense, error) {
 	return db.EquipCustomerCosmeticLicense(ctx, accountID, botID, licenseID)
-}
-func (databaseCosmeticsStore) GrantLicense(ctx context.Context, email, cosmeticID, source, externalReference string) (*db.CosmeticLicense, bool, error) {
-	return db.GrantCosmeticLicense(ctx, email, cosmeticID, source, externalReference)
-}
-func (databaseCosmeticsStore) RevokeLicense(ctx context.Context, licenseID string) (*db.CosmeticAssignmentChange, bool, error) {
-	return db.RevokeCosmeticLicense(ctx, licenseID)
-}
-func (databaseCosmeticsStore) AdminAccess(ctx context.Context, email string) (*db.CosmeticAdminAccess, error) {
-	return db.GetCosmeticAdminAccessByEmail(ctx, email)
-}
-func (databaseCosmeticsStore) CreateAdminMembership(ctx context.Context, email string, expiresAt time.Time, note, actor string) (*db.CosmeticAdminMembership, int, error) {
-	return db.CreateCosmeticAdminMembership(ctx, email, expiresAt, note, actor)
-}
-func (databaseCosmeticsStore) RevokeAdminMembership(ctx context.Context, membershipID, actor, reason string) (*db.CosmeticAdminMembership, []string, bool, error) {
-	return db.RevokeCosmeticAdminMembership(ctx, membershipID, actor, reason)
-}
-func (databaseCosmeticsStore) ExpireAdminMembershipsForEmail(ctx context.Context, email string, now time.Time) (int, []string, error) {
-	return db.ExpireCustomerCosmeticAdminMemberships(ctx, email, now)
 }
 
 // CosmeticsHandler owns catalog, entitlement, and equip HTTP behavior. The
 // store seam keeps payment fulfillment/provider work independent from routes.
 type CosmeticsHandler struct {
-	store                      cosmeticsStore
+	authority                  platform.CosmeticsAuthority
+	store                      arenaCosmeticsStore
 	engine                     *game.GameEngine
 	checkoutEnabled            bool
 	verifyAPIKey               func(context.Context, string) (*db.Bot, error)
@@ -138,9 +65,9 @@ type CosmeticsHandler struct {
 
 const cosmeticCatalogCacheTTL = time.Minute
 
-func NewCosmeticsHandler(engine *game.GameEngine) *CosmeticsHandler {
+func newCosmeticsHandlerWithStores(authority platform.CosmeticsAuthority, store arenaCosmeticsStore, engine *game.GameEngine) *CosmeticsHandler {
 	return &CosmeticsHandler{
-		store: databaseCosmeticsStore{}, engine: engine, verifyAPIKey: security.VerifyAPIKey,
+		authority: authority, store: store, engine: engine, verifyAPIKey: security.VerifyAPIKey,
 		consumeAccountKeyQuota: db.ConsumeAccountAPIKeyQuota,
 		checkAccountInventoryQuota: func(ctx context.Context, accountID string, limit int) (bool, error) {
 			allowed, _, _, err := security.CheckRateLimit(ctx, "cosmetics-inventory-account:"+accountID, limit, 60)
@@ -152,7 +79,7 @@ func NewCosmeticsHandler(engine *game.GameEngine) *CosmeticsHandler {
 
 func newCosmeticsHandlerWithStore(store cosmeticsStore, engine *game.GameEngine) *CosmeticsHandler {
 	return &CosmeticsHandler{
-		store: store, engine: engine, verifyAPIKey: security.VerifyAPIKey,
+		authority: store, store: store, engine: engine, verifyAPIKey: security.VerifyAPIKey,
 		consumeAccountKeyQuota: func(context.Context, string, db.AccountAPIKeyQuotaAction, int) (bool, int, error) {
 			return true, 0, nil
 		},
@@ -166,7 +93,7 @@ func newCosmeticsHandlerWithStore(store cosmeticsStore, engine *game.GameEngine)
 
 func (h *CosmeticsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 	h.catalogCache.Serve(w, r, "catalog", func(ctx context.Context) ([]byte, error) {
-		catalog, err := h.store.PublicCatalog(ctx)
+		catalog, err := h.authority.PublicCatalog(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -370,7 +297,7 @@ func (h *CosmeticsHandler) Grant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid cosmetic grant")
 		return
 	}
-	license, created, err := h.store.GrantLicense(r.Context(), req.Email, req.CosmeticID, req.Source, req.ExternalReference)
+	license, created, err := h.authority.GrantLicense(r.Context(), req.Email, req.CosmeticID, req.Source, req.ExternalReference)
 	if err != nil {
 		switch {
 		case errors.Is(err, db.ErrCosmeticNotFound):
@@ -417,7 +344,7 @@ func (h *CosmeticsHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid cosmetic revocation")
 		return
 	}
-	change, revoked, err := h.store.RevokeLicense(r.Context(), licenseID)
+	change, revoked, err := h.authority.RevokeLicense(r.Context(), licenseID)
 	if err != nil {
 		if errors.Is(err, db.ErrNoDatabase) {
 			writeError(w, http.StatusServiceUnavailable, "database not available")
@@ -498,7 +425,7 @@ func (h *CosmeticsHandler) AccountInventory(w http.ResponseWriter, r *http.Reque
 		writeAdminCosmeticMembershipError(w, err, "failed to reconcile expired cosmetic access")
 		return
 	}
-	inventory, err := h.store.AccountInventory(r.Context(), session.AccountID)
+	inventory, err := h.authority.AccountInventory(r.Context(), session.AccountID)
 	if err != nil {
 		if errors.Is(err, db.ErrNoDatabase) {
 			writeError(w, http.StatusServiceUnavailable, "database not available")
@@ -549,7 +476,7 @@ func (h *CosmeticsHandler) LinkAccountBot(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusUnauthorized, "invalid API key")
 		return
 	}
-	linkedBot, err := h.store.LinkBot(r.Context(), session.AccountID, bot.ID)
+	linkedBot, err := h.authority.LinkAgent(r.Context(), session.AccountID, bot.ID)
 	if err != nil {
 		switch {
 		case errors.Is(err, db.ErrCustomerBotAlreadyLinked):
@@ -575,7 +502,7 @@ func (h *CosmeticsHandler) LinkAccountBot(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
-	inventory, err := h.store.AccountInventory(r.Context(), session.AccountID)
+	inventory, err := h.authority.AccountInventory(r.Context(), session.AccountID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "bot linked but inventory refresh failed")
 		return
@@ -597,7 +524,7 @@ func (h *CosmeticsHandler) UnlinkAccountBot(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid bot_id")
 		return
 	}
-	unlinked, err := h.store.UnlinkBot(r.Context(), session.AccountID, botID)
+	unlinked, err := h.authority.UnlinkAgent(r.Context(), session.AccountID, botID)
 	if err != nil {
 		switch {
 		case errors.Is(err, db.ErrCustomerBotNotLinked):
@@ -610,7 +537,7 @@ func (h *CosmeticsHandler) UnlinkAccountBot(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	h.refreshBotVisuals(r.Context(), &botID)
-	inventory, err := h.store.AccountInventory(r.Context(), session.AccountID)
+	inventory, err := h.authority.AccountInventory(r.Context(), session.AccountID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "bot unlinked but inventory refresh failed")
 		return
@@ -653,7 +580,7 @@ func (h *CosmeticsHandler) AssignAccountLicense(w http.ResponseWriter, r *http.R
 		}
 		botID = &value
 	}
-	change, err := h.store.AssignLicense(r.Context(), session.AccountID, licenseID, botID)
+	change, err := h.authority.AssignLicense(r.Context(), session.AccountID, licenseID, botID)
 	if err != nil {
 		switch {
 		case errors.Is(err, db.ErrCosmeticLicenseNotFound), errors.Is(err, db.ErrCosmeticLicenseNotOwned):
@@ -672,7 +599,7 @@ func (h *CosmeticsHandler) AssignAccountLicense(w http.ResponseWriter, r *http.R
 		return
 	}
 	h.refreshBotVisuals(r.Context(), change.PreviousBotID)
-	inventory, err := h.store.AccountInventory(r.Context(), session.AccountID)
+	inventory, err := h.authority.AccountInventory(r.Context(), session.AccountID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "assignment updated but inventory refresh failed")
 		return
@@ -726,7 +653,7 @@ func (h *CosmeticsHandler) EquipAccountLicense(w http.ResponseWriter, r *http.Re
 	if h.engine != nil {
 		liveRefreshed = h.engine.UpdateBotCosmetics(botID, equipped)
 	}
-	inventory, err := h.store.AccountInventory(r.Context(), session.AccountID)
+	inventory, err := h.authority.AccountInventory(r.Context(), session.AccountID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "cosmetic equipped but inventory refresh failed")
 		return

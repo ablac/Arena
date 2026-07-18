@@ -32,6 +32,7 @@ The backend lives in `go-arena/`.
 | `internal/config` | environment-driven configuration |
 | `internal/db` | PostgreSQL connection, queries, and models |
 | `internal/game` | game state, combat, movement, pickups, map shape, scoring, rounds |
+| `internal/platform` | provider-neutral shared identity/catalog/license authority port and current same-database adapter |
 | `internal/demobots` | built-in demo bot behavior |
 | `internal/security` | API key generation/verification, validation, rate limiting |
 | `internal/ws` | bot and spectator WebSocket handlers |

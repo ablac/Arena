@@ -25,6 +25,7 @@ import (
 	"arena-server/internal/config"
 	"arena-server/internal/db"
 	"arena-server/internal/game"
+	"arena-server/internal/platform"
 	"arena-server/internal/security"
 	"arena-server/internal/ws"
 
@@ -33,9 +34,10 @@ import (
 
 // AdminHandler holds references needed by admin endpoints.
 type AdminHandler struct {
-	Engine        *game.GameEngine
-	ServiceStatus *ServiceStatusService
-	Shutdown      func()
+	Engine          *game.GameEngine
+	ServiceStatus   *ServiceStatusService
+	Shutdown        func()
+	platformCatalog demoCatalogAuthority
 	// ChatHub, when set, lets chat moderation purge hidden messages from
 	// the live ring and connected clients, not just the database.
 	ChatHub   *ws.ChatHub
@@ -78,6 +80,7 @@ func (h *AdminHandler) persistAdminOverrides(ctx context.Context, scope string, 
 func NewAdminHandler(engine *game.GameEngine) *AdminHandler {
 	h := &AdminHandler{
 		Engine:               engine,
+		platformCatalog:      platform.NewPostgresAuthority(),
 		startTime:            time.Now(),
 		resetLeaderboardData: db.ResetLeaderboard,
 		activeConfig:         config.C,

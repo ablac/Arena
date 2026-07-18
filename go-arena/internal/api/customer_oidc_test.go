@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"net/http"
@@ -11,10 +12,24 @@ import (
 	"time"
 
 	"arena-server/internal/config"
+	"arena-server/internal/db"
 	"arena-server/internal/game"
 
 	"golang.org/x/oauth2"
 )
+
+type fakeIdentityAuthority struct {
+	account     *db.CustomerAccount
+	email       string
+	issuer      string
+	subject     string
+	displayName string
+}
+
+func (f *fakeIdentityAuthority) UpsertVerifiedIdentity(_ context.Context, email, issuer, subject, displayName string) (*db.CustomerAccount, error) {
+	f.email, f.issuer, f.subject, f.displayName = email, issuer, subject, displayName
+	return f.account, nil
+}
 
 func newTestCustomerOIDCHandler() *CustomerOIDCHandler {
 	return &CustomerOIDCHandler{
@@ -104,6 +119,26 @@ func TestCustomerLoginUsesBrowserBindingNonceAndPKCE(t *testing.T) {
 	}
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestCustomerVerifiedIdentityUsesPlatformAuthority(t *testing.T) {
+	verifiedAt := time.Now().UTC()
+	authority := &fakeIdentityAuthority{account: &db.CustomerAccount{
+		ID:              "account-platform",
+		Email:           "owner@example.com",
+		EmailVerifiedAt: &verifiedAt,
+	}}
+	handler := newTestCustomerOIDCHandler()
+	handler.authority = authority
+
+	account, err := handler.bindVerifiedIdentity(t.Context(), "owner@example.com", "https://identity.example", "subject-1", "Owner")
+	if err != nil {
+		t.Fatalf("bind verified identity: %v", err)
+	}
+	if account.ID != "account-platform" || authority.email != "owner@example.com" ||
+		authority.issuer != "https://identity.example" || authority.subject != "subject-1" || authority.displayName != "Owner" {
+		t.Fatalf("authority result=%+v call=%q/%q/%q/%q", account, authority.email, authority.issuer, authority.subject, authority.displayName)
 	}
 }
 

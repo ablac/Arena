@@ -172,6 +172,41 @@ func TestAccountCosmeticsInventoryIncludesLinkedBotPreviewMetadata(t *testing.T)
 	}
 }
 
+func TestAccountCosmeticsInventoryUsesPlatformAuthority(t *testing.T) {
+	authority := &fakeCosmeticsStore{inventory: &db.CustomerCosmeticsInventory{
+		Account: db.CustomerAccount{ID: "platform-account"},
+	}}
+	arenaStore := &fakeCosmeticsStore{inventory: &db.CustomerCosmeticsInventory{
+		Account: db.CustomerAccount{ID: "arena-private-account"},
+	}}
+	handler := newCosmeticsHandlerWithStores(authority, arenaStore, nil)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/account/cosmetics", nil)
+	request = request.WithContext(withCustomerSession(request.Context(), &CustomerSession{
+		AccountID: "account-owner",
+		Email:     "owner@example.com",
+	}))
+
+	handler.AccountInventory(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response db.CustomerCosmeticsInventory
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode inventory: %v", err)
+	}
+	if response.Account.ID != "platform-account" {
+		t.Fatalf("inventory account = %q, want platform authority result", response.Account.ID)
+	}
+	if authority.lastAccount != "account-owner" {
+		t.Fatalf("platform authority account = %q, want account-owner", authority.lastAccount)
+	}
+	if arenaStore.lastAccount != "" {
+		t.Fatalf("Arena-private store handled platform inventory for %q", arenaStore.lastAccount)
+	}
+}
+
 func TestAccountCosmeticsInventoryIncludesActiveAdminMembership(t *testing.T) {
 	expires := time.Now().Add(30 * 24 * time.Hour).UTC()
 	store := &fakeCosmeticsStore{inventory: &db.CustomerCosmeticsInventory{
@@ -255,11 +290,11 @@ func TestAccountCosmeticsInventoryExpiryRefreshIsScopedAndNonBlocking(t *testing
 		t.Fatalf("visual refresh bots=%q, want only affected-bot", got)
 	}
 }
-func (f *fakeCosmeticsStore) LinkBot(_ context.Context, accountID, botID string) (*db.AccountBot, error) {
+func (f *fakeCosmeticsStore) LinkAgent(_ context.Context, accountID, botID string) (*db.AccountBot, error) {
 	f.lastAccount, f.lastBotID = accountID, botID
 	return f.linkBot, f.grantErr
 }
-func (f *fakeCosmeticsStore) UnlinkBot(_ context.Context, accountID, botID string) (bool, error) {
+func (f *fakeCosmeticsStore) UnlinkAgent(_ context.Context, accountID, botID string) (bool, error) {
 	f.lastAccount, f.lastBotID = accountID, botID
 	return f.revoked, f.revokeErr
 }

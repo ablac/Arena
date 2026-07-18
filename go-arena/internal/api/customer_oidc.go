@@ -14,6 +14,7 @@ import (
 
 	"arena-server/internal/config"
 	"arena-server/internal/db"
+	"arena-server/internal/platform"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -68,6 +69,7 @@ type CustomerOIDCHandler struct {
 	emailSignInURL    string
 	emailTokenTTL     time.Duration
 	emailSendCooldown time.Duration
+	authority         platform.IdentityAuthority
 
 	sessions map[string]*CustomerSession
 	states   map[string]customerOIDCTransaction
@@ -80,14 +82,15 @@ func customerAccountAuthEnabled(handler *CustomerOIDCHandler) bool {
 	return handler != nil && (handler.oauth2Config != nil || (handler.emailSender != nil && handler.emailStore != nil))
 }
 
-func NewCustomerOIDCHandler() *CustomerOIDCHandler {
+func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *CustomerOIDCHandler {
 	cfg := &config.C
 	if !cfg.CustomerOIDCEnabled && !cfg.CustomerEmailAuthEnabled {
 		return nil
 	}
 	h := &CustomerOIDCHandler{
-		sessions: make(map[string]*CustomerSession),
-		states:   make(map[string]customerOIDCTransaction),
+		sessions:  make(map[string]*CustomerSession),
+		states:    make(map[string]customerOIDCTransaction),
+		authority: authority,
 	}
 	if cfg.CustomerEmailAuthEnabled {
 		if err := configureCustomerEmailAuth(h, *cfg); err != nil {
@@ -285,7 +288,7 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	if verifiedIssuer == "" {
 		verifiedIssuer = h.issuer
 	}
-	account, err := db.UpsertVerifiedCustomerAccount(ctx, claims.Email, verifiedIssuer, idToken.Subject, claims.Name)
+	account, err := h.bindVerifiedIdentity(ctx, claims.Email, verifiedIssuer, idToken.Subject, claims.Name)
 	if err != nil {
 		slog.Warn("customer account binding failed", "error", err, "subject", idToken.Subject)
 		http.Error(w, "unable to bind customer account", http.StatusConflict)
@@ -299,6 +302,10 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	h.establishCustomerSession(w, r, account, idToken.Subject)
 	slog.Info("customer OIDC login", "account_id", account.ID, "email", account.Email)
 	http.Redirect(w, r, txn.ReturnTo, http.StatusFound)
+}
+
+func (h *CustomerOIDCHandler) bindVerifiedIdentity(ctx context.Context, email, issuer, subject, displayName string) (*db.CustomerAccount, error) {
+	return h.authority.UpsertVerifiedIdentity(ctx, email, issuer, subject, displayName)
 }
 
 func customerAccountAPIPath(r *http.Request, suffix string) string {
