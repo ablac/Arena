@@ -25,10 +25,6 @@ export class SpectatorSocket {
     this.shouldConnect = false;
     /** @type {number|null} */
     this._pingInterval = null;
-    /** @type {number|null} */
-    this._staleTimer = null;
-    /** Milliseconds of application-message silence before forcing reconnect. */
-    this._staleTimeout = 45000;
     /** @type {number|null} Pending reconnect timer handle. */
     this._reconnectTimer = null;
     /** @type {number|null} Timer that resets the backoff once a connection survives. */
@@ -45,7 +41,6 @@ export class SpectatorSocket {
   disconnect() {
     this.shouldConnect = false;
     this._stopPing();
-    this._clearStaleTimer();
     this._clearReconnectTimer();
     this._clearBackoffResetTimer();
     if (this.ws) {
@@ -79,11 +74,9 @@ export class SpectatorSocket {
         this.reconnectDelay = 1000;
       }, 5000);
       this._startPing();
-      this._resetStaleTimer();
     };
 
     this.ws.onmessage = (event) => {
-      this._resetStaleTimer();
       try {
         const data = JSON.parse(event.data);
         // WebSocket ping frames are not exposed to browser JavaScript. The
@@ -103,7 +96,6 @@ export class SpectatorSocket {
     this.ws.onclose = (event) => {
       console.log('[SpectatorWS] Disconnected:', event.code);
       this._stopPing();
-      this._clearStaleTimer();
       this._clearBackoffResetTimer();
       this.onStatus('disconnected');
       this._scheduleReconnect();
@@ -115,27 +107,9 @@ export class SpectatorSocket {
     };
   }
 
-  /** @private Reset the stale-connection timer. Forces reconnect if no messages arrive. */
-  _resetStaleTimer() {
-    this._clearStaleTimer();
-    this._staleTimer = setTimeout(() => {
-      console.warn('[SpectatorWS] No messages received, forcing reconnect');
-      if (this.ws) {
-        this.ws.close();
-        this.ws = null;
-      }
-    }, this._staleTimeout);
-  }
-
-  /** @private */
-  _clearStaleTimer() {
-    if (this._staleTimer) {
-      clearTimeout(this._staleTimer);
-      this._staleTimer = null;
-    }
-  }
-
-  /** @private Send periodic pings to keep the connection alive. */
+  /** @private Send periodic pings to keep the connection alive. Transport
+   * liveness remains server-owned: browser timer callbacks can be suspended
+   * even while the WebSocket itself is healthy. */
   _startPing() {
     this._stopPing();
     this._pingInterval = setInterval(() => {
