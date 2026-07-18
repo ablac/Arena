@@ -15,6 +15,7 @@ import (
 	"arena-server/internal/config"
 	"arena-server/internal/db"
 	"arena-server/internal/game"
+	"arena-server/internal/platform"
 	"arena-server/internal/security"
 	"arena-server/internal/version"
 	"arena-server/internal/ws"
@@ -90,7 +91,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 	// --- API v1 routes ---
 
+	platformAuthority := platform.NewPostgresAuthority()
 	adminHandler := NewAdminHandler(engine)
+	adminHandler.platformCatalog = platformAuthority
 	serviceStatus := NewServiceStatusService(engine, bus)
 	adminHandler.ServiceStatus = serviceStatus
 	adminHandler.Shutdown = ro.shutdown
@@ -100,13 +103,13 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 
 	// Create dashboard handler.
 	dashboardHandler := NewDashboardHandler(bus, adminHandler)
-	cosmeticsHandler := NewCosmeticsHandler(engine)
+	cosmeticsHandler := newCosmeticsHandlerWithStores(platformAuthority, databaseCosmeticsStore{}, engine)
 	commerceHandler := NewCosmeticCommerceHandler(engine)
 	accountKeysHandler := NewAccountKeysHandler(engine)
 
 	// Initialise OIDC handler (nil if disabled/misconfigured).
 	oidcHandler := NewOIDCHandler()
-	customerOIDCHandler := NewCustomerOIDCHandler()
+	customerOIDCHandler := newCustomerOIDCHandlerWithAuthority(platformAuthority)
 	checkoutReady := commerceHandler.Enabled() && customerAccountAuthEnabled(customerOIDCHandler) && security.RedisClient != nil
 	commerceHandler.checkoutEnabled = checkoutReady
 	cosmeticsHandler.checkoutEnabled = checkoutReady

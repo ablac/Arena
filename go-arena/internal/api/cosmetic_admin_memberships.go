@@ -33,7 +33,7 @@ func (h *CosmeticsHandler) AdminCosmeticAccess(w http.ResponseWriter, r *http.Re
 		writeAdminCosmeticMembershipError(w, err, "failed to reconcile expired cosmetic access")
 		return
 	}
-	access, err := h.store.AdminAccess(r.Context(), email)
+	access, err := h.authority.AdminAccess(r.Context(), email)
 	if err != nil {
 		writeAdminCosmeticMembershipError(w, err, "failed to load customer cosmetic access")
 		return
@@ -83,7 +83,7 @@ func (h *CosmeticsHandler) CreateAdminCosmeticMembership(w http.ResponseWriter, 
 		writeAdminCosmeticMembershipError(w, err, "failed to reconcile expired cosmetic access")
 		return
 	}
-	membership, licensesCreated, err := h.store.CreateAdminMembership(
+	membership, licensesCreated, err := h.authority.CreateAdminMembership(
 		r.Context(), email, expiresAt.UTC(), strings.TrimSpace(request.Note), cosmeticAdminActor(r),
 	)
 	if err != nil {
@@ -117,7 +117,7 @@ func (h *CosmeticsHandler) RevokeAdminCosmeticMembership(w http.ResponseWriter, 
 		writeError(w, http.StatusBadRequest, "invalid cosmetic membership revocation")
 		return
 	}
-	membership, affectedBotIDs, revoked, err := h.store.RevokeAdminMembership(
+	membership, affectedBotIDs, revoked, err := h.authority.RevokeAdminMembership(
 		r.Context(), membershipID, cosmeticAdminActor(r), strings.TrimSpace(request.Reason),
 	)
 	if err != nil {
@@ -136,7 +136,7 @@ func (h *CosmeticsHandler) RevokeAdminCosmeticMembership(w http.ResponseWriter, 
 }
 
 func (h *CosmeticsHandler) reconcileAdminMembershipExpiryForEmail(r *http.Request, email string) error {
-	expired, affectedBotIDs, err := h.store.ExpireAdminMembershipsForEmail(r.Context(), email, time.Now().UTC())
+	expired, affectedBotIDs, err := h.authority.ExpireAdminMembershipsForEmail(r.Context(), email, time.Now().UTC())
 	if err != nil {
 		return err
 	}

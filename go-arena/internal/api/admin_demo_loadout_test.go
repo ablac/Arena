@@ -1,10 +1,24 @@
 package api
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"arena-server/internal/db"
 )
+
+type fakeDemoCatalogAuthority struct {
+	catalog *db.CosmeticCatalog
+	called  bool
+}
+
+func (f *fakeDemoCatalogAuthority) PublicCatalog(context.Context) (*db.CosmeticCatalog, error) {
+	f.called = true
+	return f.catalog, nil
+}
 
 func TestDemoLoadoutBotSkinOverridesPackSkin(t *testing.T) {
 	selections, err := cosmeticSelectionsForDemoLoadout(
@@ -30,5 +44,25 @@ func TestDemoLoadoutBotSkinOverridesPackSkin(t *testing.T) {
 	}
 	if len(selections) != 4 {
 		t.Fatalf("selection count = %d, want pack slots plus trail with one bot skin", len(selections))
+	}
+}
+
+func TestDemoLoadoutReadsCatalogThroughPlatformAuthority(t *testing.T) {
+	authority := &fakeDemoCatalogAuthority{catalog: &db.CosmeticCatalog{}}
+	handler := NewAdminHandler(nil)
+	handler.platformCatalog = authority
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/bots/demo-loadout", strings.NewReader(`{
+		"bot_id":"demo-bot",
+		"pack_id":"missing-pack"
+	}`))
+
+	handler.applyDemoLoadout(recorder, request)
+
+	if !authority.called {
+		t.Fatal("platform authority was not asked for the catalog")
+	}
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

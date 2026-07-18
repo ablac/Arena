@@ -71,7 +71,7 @@ func registerCosmeticsAdminRoutes(router chi.Router, handler *CosmeticsHandler) 
 
 func (h *CosmeticsHandler) AdminCatalog(w http.ResponseWriter, r *http.Request) {
 	setAdminCatalogNoStore(w)
-	catalog, err := h.store.AdminCatalog(r.Context())
+	catalog, err := h.authority.AdminCatalog(r.Context())
 	if err != nil {
 		writeCosmeticCatalogError(w, err, "failed to load cosmetic catalog")
 		return
@@ -102,7 +102,7 @@ func (h *CosmeticsHandler) UpsertAdminCategory(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "invalid cosmetic category")
 		return
 	}
-	result, err := h.store.UpsertCategory(r.Context(), category, cosmeticAdminActor(r))
+	result, err := h.authority.UpsertCategory(r.Context(), category, cosmeticAdminActor(r))
 	if err != nil {
 		writeCosmeticCatalogError(w, err, "failed to save cosmetic category")
 		return
@@ -142,7 +142,7 @@ func (h *CosmeticsHandler) UpsertAdminItem(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid cosmetic item")
 		return
 	}
-	result, err := h.store.UpsertItem(r.Context(), item, cosmeticAdminActor(r))
+	result, err := h.authority.UpsertItem(r.Context(), item, cosmeticAdminActor(r))
 	if err != nil {
 		writeCosmeticCatalogError(w, err, "failed to save cosmetic item")
 		return
@@ -184,7 +184,7 @@ func (h *CosmeticsHandler) UpsertAdminPack(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid cosmetic pack")
 		return
 	}
-	result, err := h.store.UpsertPack(r.Context(), pack, cosmeticAdminActor(r))
+	result, err := h.authority.UpsertPack(r.Context(), pack, cosmeticAdminActor(r))
 	if err != nil {
 		writeCosmeticCatalogError(w, err, "failed to save cosmetic pack")
 		return
@@ -210,7 +210,7 @@ func (h *CosmeticsHandler) AdminAudit(w http.ResponseWriter, r *http.Request) {
 	if limit > 200 {
 		limit = 200
 	}
-	events, err := h.store.ListAudit(r.Context(), limit)
+	events, err := h.authority.ListAudit(r.Context(), limit)
 	if err != nil {
 		writeCosmeticCatalogError(w, err, "failed to load cosmetic catalog audit")
 		return
@@ -228,11 +228,11 @@ func (h *CosmeticsHandler) deleteAdminCatalogEntity(w http.ResponseWriter, r *ht
 	)
 	switch entityType {
 	case "category":
-		deleted, err = h.store.DeleteCategory(r.Context(), entityID, actor)
+		deleted, err = h.authority.DeleteCategory(r.Context(), entityID, actor)
 	case "item":
-		deleted, err = h.store.DeleteItem(r.Context(), entityID, actor)
+		deleted, err = h.authority.DeleteItem(r.Context(), entityID, actor)
 	case "pack":
-		deleted, err = h.store.DeletePack(r.Context(), entityID, actor)
+		deleted, err = h.authority.DeletePack(r.Context(), entityID, actor)
 	default:
 		err = db.ErrCosmeticCatalogInvalid
 	}

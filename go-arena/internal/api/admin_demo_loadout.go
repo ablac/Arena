@@ -1,12 +1,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 
 	"arena-server/internal/db"
 )
+
+type demoCatalogAuthority interface {
+	PublicCatalog(context.Context) (*db.CosmeticCatalog, error)
+}
 
 // The demo bot fleet runs as an external private process speaking the public
 // bot protocol. Identity (key + name + color) is fully self-service through
@@ -38,7 +43,7 @@ func (h *AdminHandler) applyDemoLoadout(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	catalog, err := db.GetPublicCosmeticCatalog(r.Context())
+	catalog, err := h.platformCatalog.PublicCatalog(r.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "cosmetic catalog unavailable")
 		return
