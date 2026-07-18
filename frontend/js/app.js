@@ -5,7 +5,7 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260718h';
+import { ArenaEngine } from './renderer/engine.js?v=20260718i';
 import { HudRenderer } from './renderer/hud.js?v=20260711b';
 import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';
@@ -186,9 +186,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (target) target.scrollIntoView({ behavior: 'smooth' });
     });
   });
-
-  // Fetch initial arena status
-  fetchArenaStatus();
 });
 
 /** @private Setup arena controls. */
@@ -268,26 +265,6 @@ function setupArenaTabs() {
       if (panel) panel.classList.add('active');
     });
   });
-}
-
-/** @private Fetch arena status for footer stats. */
-async function fetchArenaStatus() {
-  try {
-    const resp = await fetch(apiPath('/arena/status'));
-    if (!resp.ok) return;
-    const data = await resp.json();
-    const el = document.getElementById('footer-stats');
-    if (el) {
-      el.textContent = `${data.bots_connected} bots connected | Round ${data.round_number}`;
-    }
-    syncHeroSummary({
-      phase: data.status || 'connecting',
-      botsConnected: data.bots_connected,
-      botsAlive: data.bots_alive,
-    });
-  } catch {
-    // ignore
-  }
 }
 
 function updateHeroStatus(state) {

@@ -107,6 +107,7 @@ jobs:
           node scripts/test-map-walls-geometry.mjs
           node scripts/test-obstacle-clusters.mjs
           node scripts/test-intermission-director.mjs
+          node scripts/test-round-transition-rendering.mjs
           node scripts/test-renderer-suspension.mjs
           node scripts/test-engine-webgpu-fallback.mjs
           node scripts/test-trail-budget.mjs

@@ -33,6 +33,7 @@ export class GameplayRenderer {
     this.bountyGroup = null;
     this.bountyTargetId = null;
     this.bountyBots = [];
+    this._roundTransitionActive = false;
     this._tick = 0;
     this._glowTex = null;
     this.onStaffImpactCreated = null;
@@ -81,16 +82,36 @@ export class GameplayRenderer {
     // [] after a round reset — is authoritative.
     if (Array.isArray(state.void_tiles)) this._updateVoidTiles(state.void_tiles);
     this._updateFlags(state.flags || []);
-    this.bountyBots = state.bots || [];
-    // Issue #13: only adopt the server's explicit target when it sends one.
-    // When bounty_target is empty, keep the current holder so the kill-streak
-    // heuristic in _updateBounty retains its incumbent instead of re-deriving
-    // (and potentially flapping) every update. A dead incumbent is released
-    // by the alive check in _updateBounty.
-    if (state.bounty_target) {
-      this.bountyTargetId = state.bounty_target;
+    if (!this._roundTransitionActive) {
+      this.bountyBots = state.bots || [];
+      // Issue #13: only adopt the server's explicit target when it sends one.
+      // When bounty_target is empty, keep the current holder so the kill-streak
+      // heuristic in _updateBounty retains its incumbent instead of re-deriving
+      // (and potentially flapping) every update. A dead incumbent is released
+      // by the alive check in _updateBounty.
+      if (state.bounty_target) {
+        this.bountyTargetId = state.bounty_target;
+      }
+      this._updateBounty();
     }
-    this._updateBounty();
+  }
+
+  beginRoundTransition() {
+    this._roundTransitionActive = true;
+    this.bountyTargetId = null;
+    this.bountyBots = [];
+    this._hideBounty();
+  }
+
+  endRoundTransition() {
+    this._roundTransitionActive = false;
+  }
+
+  /** @private */
+  _hideBounty() {
+    if (!this.bountyGroup) return;
+    this.bountyGroup.ring.visibility = 0;
+    if (this.bountyGroup.sparkle) this.bountyGroup.sparkle.emitRate = 0;
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -994,6 +1015,10 @@ export class GameplayRenderer {
     this._tick += d * 10;
     this._animateAmbient(d);
 
+    if (this._roundTransitionActive) {
+      this._hideBounty();
+      return;
+    }
     if (!this.bountyGroup || !this.bountyTargetId) return;
     if (!isEnabled('objectiveIndicators', 'bountyCrown')) {
       // Hide the ring and stop the sparkle drip, but keep bountyTargetId/

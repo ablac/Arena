@@ -82,18 +82,9 @@ summary {
 .site-header-status {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: flex-end;
+  margin-inline-start: auto;
   min-width: 0;
-}
-
-.site-round-summary {
-  max-width: 34ch;
-  overflow: hidden;
-  color: var(--text-soft);
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .mobile-command-actions {
@@ -662,7 +653,6 @@ body.site-cinema-mode .arena-controls {
     --shell-dock-width: 64px;
   }
 
-  .site-round-summary,
   .arena-sidebar-intro {
     display: none;
   }

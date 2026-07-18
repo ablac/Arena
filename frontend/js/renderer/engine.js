@@ -14,7 +14,7 @@ import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
 import { TrailRenderer } from './trails.js?v=20260714e';
 import { ProjectileRenderer } from './projectiles.js?v=20260711a';
-import { GameplayRenderer } from './gameplay.js?v=20260710g';
+import { GameplayRenderer } from './gameplay.js?v=20260718i';
 import { getState, isEnabled, onSettingsChange } from '../settings.js';
 
 // Bot positions are smoothed via exponential lerp each frame,
@@ -148,6 +148,8 @@ export class ArenaEngine {
     this.state = null;
     this.ready = false;
     this._seenArenaEvents = new Set();
+    this._roundTransitionActive = false;
+    this._roundTransitionRound = null;
   }
 
   /** Initialize Babylon engine. */
@@ -270,6 +272,10 @@ export class ArenaEngine {
     this.trailRenderer = new TrailRenderer(scene);
     this.projectileRenderer = new ProjectileRenderer(scene);
     this.gameplayRenderer = new GameplayRenderer(scene);
+    // A stage resize can rebuild the scene during intermission. Preserve
+    // round-transition ownership so the recreated renderer cannot briefly
+    // revive the stale winner crown.
+    if (this._roundTransitionActive) this.gameplayRenderer.beginRoundTransition();
     // Between-round spectator show (issue #189): driven by the server's
     // round_end broadcast through setState, per-frame from the render loop.
     // Created once and kept across mid-show stage resizes (issue #192):
@@ -442,7 +448,7 @@ export class ArenaEngine {
       }
       const dt = Math.min((now - _lastFrame) / 1000, 0.1);
       _lastFrame = now;
-      if (self.botRenderer) {
+      if (self.botRenderer && !self._roundTransitionActive) {
         self.botRenderer.interpolate();
       }
       if (self.trailRenderer) {
@@ -522,6 +528,7 @@ export class ArenaEngine {
     if (state.type === 'round_end') {
       // Typed spectator round_end (issue #189): starts the intermission
       // show. Old servers never send it, so the feature stays inert there.
+      this._beginRoundTransition(state);
       if (this.intermissionDirector) this.intermissionDirector.handleRoundEnd(state);
       return;
     }
@@ -530,6 +537,7 @@ export class ArenaEngine {
     // intermission show — before the resize check below so a dynamic arena
     // rebuild never tears the scene down under live show artifacts.
     if (this.intermissionDirector) this.intermissionDirector.handleArenaState(state);
+    this._maybeEndRoundTransition(state);
     this.setGamePhase('round');
     this.setSuddenDeath(!!state.sudden_death);
 
@@ -595,6 +603,27 @@ export class ArenaEngine {
     this.effectRenderer.update(state.bots);
     this.gameplayRenderer.update(state);
     this.camera.updateBotPositions(state.bots);
+  }
+
+  /** @private Transfer bot/gameplay animation ownership to the round show. */
+  _beginRoundTransition(state) {
+    const round = Number(state && (state.round_number ?? state.round));
+    const currentRound = Number(this.state && this.state.round_number);
+    this._roundTransitionRound = Number.isFinite(round)
+      ? round
+      : (Number.isFinite(currentRound) ? currentRound : 0);
+    this._roundTransitionActive = true;
+    if (this.gameplayRenderer) this.gameplayRenderer.beginRoundTransition();
+  }
+
+  /** @private Resume normal rendering only for a newer authoritative round. */
+  _maybeEndRoundTransition(state) {
+    if (!this._roundTransitionActive) return;
+    const round = Number(state && state.round_number);
+    if (!Number.isFinite(round) || round <= this._roundTransitionRound) return;
+    this._roundTransitionActive = false;
+    this._roundTransitionRound = null;
+    if (this.gameplayRenderer) this.gameplayRenderer.endRoundTransition();
   }
 
   /**
