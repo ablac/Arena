@@ -115,23 +115,24 @@ type GameEngine struct {
 	mu sync.RWMutex
 
 	// State
-	Bots          map[string]*BotState
-	WaitingBots   map[string]*BotState
-	Pickups       []Pickup
-	Projectiles   []Projectile
-	StaffImpacts  []StaffImpact
-	BurnFields    []BurnField
-	Round         RoundState
-	Arena         *ArenaMap
-	Grid          *SpatialGrid
-	NavGrid       *NavGrid
-	Terrain       *TerrainGrid
-	NextTerrain   *TerrainGrid // Pre-generated terrain for next round (available during intermission)
-	NextObstacles []Obstacle   // Pre-generated obstacles for next round
-	NextNavGrid   *NavGrid     // Pre-generated nav grid for next round
-	NextMapShape  MapShape     // Pre-generated map shape for next round
-	NextMaskRects []Obstacle   // Pre-generated boundary rectangles for the next round's shape
-	KillFeed      *KillFeed
+	Bots           map[string]*BotState
+	WaitingBots    map[string]*BotState
+	Pickups        []Pickup
+	Projectiles    []Projectile
+	StaffImpacts   []StaffImpact
+	BurnFields     []BurnField
+	Round          RoundState
+	Arena          *ArenaMap
+	Grid           *SpatialGrid
+	NavGrid        *NavGrid
+	Terrain        *TerrainGrid
+	NextTerrain    *TerrainGrid // Pre-generated terrain for next round (available during intermission)
+	NextObstacles  []Obstacle   // Pre-generated obstacles for next round
+	NextNavGrid    *NavGrid     // Pre-generated nav grid for next round
+	NextMapShape   MapShape     // Pre-generated map shape for next round
+	NextMaskRects  []Obstacle   // Pre-generated boundary rectangles for the next round's shape
+	NextZoneTarget *Vec2        // Pre-picked zone drift target for next round (round_end preview parity, issue #192)
+	KillFeed       *KillFeed
 
 	// Anti-teaming
 	AntiTeam *AntiTeamTracker
@@ -683,7 +684,11 @@ func (e *GameEngine) startRound() {
 		ActiveTerrain = e.Terrain
 		ActiveMapShape = shape
 	}
-	e.Arena.Reset(obstacles)
+	// Use the zone drift target pre-picked at endRound (announced to
+	// spectators in round_end.next_map.safe_zone) so the round opens with
+	// exactly the placement the intermission show previewed.
+	e.Arena.ResetWithZoneTarget(obstacles, e.NextZoneTarget)
+	e.NextZoneTarget = nil
 	e.Arena.MaskRects = maskRects
 
 	// Clear transient state.
@@ -931,6 +936,16 @@ func (e *GameEngine) endRound() {
 	ActiveTerrain = e.NextTerrain
 	ActiveMapShape = e.NextMapShape
 
+	// Pre-pick the next round's zone drift target on the pre-generated
+	// terrain (ActiveTerrain above), so the round_end preview below can
+	// announce the exact safe-zone placement the round will open with.
+	// startRound passes the same value into ResetWithZoneTarget (issue #192
+	// parity — the show's gold-ring glide must land where the first keyframe
+	// puts the ring).
+	nextZoneTarget := pickZoneTargetCenter(config.C.ArenaWidth, config.C.ArenaHeight, e.Arena.MinRadius)
+	e.NextZoneTarget = &nextZoneTarget
+	nextZoneCenter := NewVec2(config.C.ZoneCenterX, config.C.ZoneCenterY)
+
 	// Stage the typed round_end spectator broadcast (issue #189): winner
 	// announcement plus a preview of the next round's pre-generated terrain,
 	// so clients can run the intermission show and pre-build the next map.
@@ -949,6 +964,17 @@ func (e *GameEngine) endRound() {
 			ArenaSize: [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
 			Obstacles: ExpandObstaclesForClient(e.NextObstacles, e.NextMaskRects, e.NextTerrain.CellSize),
 			MaskRects: e.NextMaskRects,
+			// Byte parity with the first keyframe's safe_zone: startRound's
+			// ResetWithZoneTarget copies these exact values (center/radius are
+			// deterministic from the post-resize config, the target is the
+			// pre-pick above), and BuildSpectatorState applies the same round1
+			// rounding to the radii.
+			SafeZone: &SafeZoneSpectatorView{
+				Center:       nextZoneCenter,
+				Radius:       round1(initialZoneRadius(&config.C, nextZoneCenter, config.C.ArenaWidth, config.C.ArenaHeight)),
+				TargetCenter: nextZoneTarget,
+				TargetRadius: round1(e.Arena.MinRadius),
+			},
 		},
 	}
 	if winnerID != "" {

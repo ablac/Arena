@@ -163,6 +163,56 @@ func TestEndRoundBroadcastsRoundEndWithWinnerAndNextMap(t *testing.T) {
 	if len(maskRects) != len(engine.NextMaskRects) {
 		t.Fatalf("next_map.mask_rects has %d rects, want %d from the pre-generated terrain", len(maskRects), len(engine.NextMaskRects))
 	}
+
+	// Safe-zone preview (issue #192): the announced placement must be
+	// byte-identical to the safe_zone the next round's first keyframe sends.
+	previewZone, ok := nextMap["safe_zone"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("next_map.safe_zone missing or malformed: %v", nextMap["safe_zone"])
+	}
+	if engine.NextZoneTarget == nil {
+		t.Fatal("endRound did not pre-pick the next round's zone target")
+	}
+
+	// Start the next round from the pre-generated state and rebuild the exact
+	// spectator encoding of its opening zone.
+	engine.Round.Phase = PhaseLobby
+	engine.startRound()
+	if engine.NextZoneTarget != nil {
+		t.Fatal("startRound left the pre-picked zone target behind")
+	}
+	firstKeyframeZone := SafeZoneSpectatorView{
+		Center:       engine.Arena.ZoneCenter,
+		Radius:       round1(engine.Arena.ZoneRadius),
+		TargetCenter: engine.Arena.ZoneTargetCenter,
+		TargetRadius: round1(engine.Arena.ZoneTargetRadius),
+	}
+	wantJSON, err := json.Marshal(firstKeyframeZone)
+	if err != nil {
+		t.Fatalf("marshal first-keyframe zone: %v", err)
+	}
+	gotJSON, err := json.Marshal(previewZone)
+	if err != nil {
+		t.Fatalf("marshal preview zone: %v", err)
+	}
+	var want, got map[string]interface{}
+	if err := json.Unmarshal(wantJSON, &want); err != nil {
+		t.Fatalf("unmarshal first-keyframe zone: %v", err)
+	}
+	if err := json.Unmarshal(gotJSON, &got); err != nil {
+		t.Fatalf("unmarshal preview zone: %v", err)
+	}
+	for _, key := range []string{"center", "radius", "target_center", "target_radius"} {
+		if fmtVal(got[key]) != fmtVal(want[key]) {
+			t.Fatalf("next_map.safe_zone.%s = %v, want first-keyframe value %v", key, got[key], want[key])
+		}
+	}
+}
+
+// fmtVal normalizes decoded JSON values for order-stable comparison.
+func fmtVal(v interface{}) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 func TestEndRoundBroadcastOmitsWinnerWhenNoneResolved(t *testing.T) {
