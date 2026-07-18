@@ -11,14 +11,21 @@
  * back onto the terrain cell grid, extracts the region outline with a
  * marching-squares boundary trace (outer contours AND holes — the blocked
  * apron around the playfield has the playfield outline as its inner hole),
- * merges collinear runs, rounds the staircase with two clamped Chaikin
- * passes, and extrudes one continuous wall ribbon with a single unbroken
- * glow trim along the top edge.
+ * merges collinear runs, smooths the staircase, and extrudes one continuous
+ * wall ribbon with a single unbroken glow trim along the top edge.
  *
- * The smoothed contour deviates from the collision staircase by at most
- * ~0.35 cell (~7 units on the default 20-unit grid), always cutting convex
- * staircase corners inward on the wall side — bots read as stopping just
- * shy of the wall, which is the visually correct direction.
+ * Smoothing (issue #190, replacing the #186 Chaikin passes whose 1-cell
+ * max-cut turned every staircase step into a periodic scallop): the contour
+ * is resampled at uniform ~0.5-cell arc-length spacing, corners are
+ * detected on a Gaussian-smoothed probe copy (windowed net-turn angle, so
+ * staircase zigzags read as straight/curved runs while diamond tips,
+ * rectilinear corners, and spiral arm tips read as genuinely sharp), the
+ * corner samples are pinned in place, and everything between them gets a
+ * windowed Gaussian blur of the vertex positions. Long staircase runs
+ * converge onto their midline — a rasterized circle comes out visually
+ * round — while pinned corners keep their exact staircase position. Every
+ * vertex stays within MAX_SMOOTH_DEVIATION (half a cell) of the collision
+ * staircase, so bots still read as stopping at the wall.
  *
  * Geometry conventions: world is y-up, the arena lies in the x/z plane, and
  * rect coords map to world directly (rect x → world x, rect y → world z),
@@ -184,38 +191,197 @@ export function mergeCollinear(points) {
   return out.length >= 3 ? out : points.slice();
 }
 
+/* --- smoothing contract constants (issue #190) — all in CELL units ------- */
+
+/** Arc-length spacing of the resampled contour. On integer lattice contours
+ *  the perimeter is an integer, so the effective spacing is EXACTLY 0.5 and
+ *  every lattice corner (and every cell-edge midpoint) lands on a sample —
+ *  detected corners pin at their true staircase position. */
+export const RESAMPLE_SPACING = 0.5;
+/** Gaussian sigma of the position blur. One cell kills the half-cell
+ *  staircase zigzag (arc period 2 cells → amplitude attenuated ~140x) while
+ *  a curve of radius R cells only shrinks by ~sigma^2/2R. */
+export const SMOOTH_SIGMA = 1.0;
+/** Blur window half-width, in sigmas. */
+export const SMOOTH_WINDOW_SIGMAS = 2.5;
+/** Corner probe: net turn is measured between the chords to the samples
+ *  this many cells of arc behind/ahead. */
+export const CORNER_PROBE_CELLS = 2;
+/** Net turn (degrees) at or above which a sample is pinned as a corner.
+ *  Sits between the sharpest curve that must STAY smooth (a 5-cell-radius
+ *  circle turns ~46 deg across the probe; spiral corridors are gentler)
+ *  and the shallowest genuine corner that must stay crisp (hexagon
+ *  vertices, 60 deg nominal, measure ~57 after the probe blur;
+ *  diamond/rectilinear corners measure ~86; spiral arm tips ~180). */
+export const CORNER_TURN_DEG = 55;
+/** Hard clamp on how far any smoothed vertex may move from its resampled
+ *  position on the collision staircase. */
+export const MAX_SMOOTH_DEVIATION = 0.5;
+
 /**
- * Chaikin corner-cutting on a CLOSED polygon, with the cut distance clamped
- * to `maxCut` (same units as the points). The clamp is what keeps this
- * conservative: on the unit staircase every cut is the classic 25%, but a
- * corner adjoining a long collinear-merged run is only ever rounded over
- * `maxCut` — long straight walls stay straight instead of growing huge
- * chamfers, and total inward deviation stays under ~0.35 cell after the
- * default two passes.
+ * Uniform arc-length resampling of a CLOSED polygon. Sample count is
+ * round(perimeter / spacing), so on lattice contours (integer perimeter)
+ * the spacing is exact and samples hit every lattice corner.
  * @param {Array<[number,number]>} points
- * @param {number} [iterations]
- * @param {number} [maxCut]
+ * @param {number} [spacing]
  * @returns {Array<[number,number]>}
  */
-export function chaikinSmooth(points, iterations = 2, maxCut = 1) {
-  let pts = points;
-  for (let it = 0; it < iterations; it++) {
-    const out = [];
-    const n = pts.length;
-    for (let i = 0; i < n; i++) {
-      const p = pts[i];
-      const q = pts[(i + 1) % n];
-      const dx = q[0] - p[0];
-      const dy = q[1] - p[1];
-      const len = Math.hypot(dx, dy);
-      if (len < 1e-9) continue;
-      const t = Math.min(0.25, maxCut / len);
-      out.push([p[0] + dx * t, p[1] + dy * t]);
-      out.push([p[0] + dx * (1 - t), p[1] + dy * (1 - t)]);
-    }
-    pts = out;
+export function resampleClosed(points, spacing = RESAMPLE_SPACING) {
+  const n = points.length;
+  const segLen = [];
+  let perimeter = 0;
+  for (let i = 0; i < n; i++) {
+    const [x0, y0] = points[i];
+    const [x1, y1] = points[(i + 1) % n];
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    segLen.push(len);
+    perimeter += len;
   }
-  return pts;
+  if (!(perimeter > spacing * 4)) return points.map((p) => p.slice());
+  const count = Math.max(8, Math.round(perimeter / spacing));
+  const step = perimeter / count;
+  const out = [];
+  let seg = 0;
+  let segStart = 0;
+  for (let k = 0; k < count; k++) {
+    const target = k * step;
+    while (seg < n - 1 && segStart + segLen[seg] <= target - 1e-9) {
+      segStart += segLen[seg];
+      seg++;
+    }
+    const t = segLen[seg] > 1e-12 ? (target - segStart) / segLen[seg] : 0;
+    const [x0, y0] = points[seg];
+    const [x1, y1] = points[(seg + 1) % n];
+    out.push([x0 + (x1 - x0) * t, y0 + (y1 - y0) * t]);
+  }
+  return out;
+}
+
+/**
+ * Windowed Gaussian blur of a CLOSED resampled polyline's vertex positions.
+ * Samples whose index is in `pinned` keep their exact position, and the
+ * averaging window truncates at pinned samples (inclusive), so smoothing
+ * never bleeds around a corner. Every output vertex is clamped to move at
+ * most `maxDev` from its input position.
+ * @param {Array<[number,number]>} samples uniformly spaced points
+ * @param {Iterable<number>} [pinnedIdx] corner sample indices to pin
+ * @returns {Array<[number,number]>}
+ */
+export function gaussianSmoothClosed(samples, pinnedIdx = [], {
+  spacing = RESAMPLE_SPACING,
+  sigma = SMOOTH_SIGMA,
+  windowSigmas = SMOOTH_WINDOW_SIGMAS,
+  maxDev = MAX_SMOOTH_DEVIATION,
+} = {}) {
+  const n = samples.length;
+  const K = Math.max(1, Math.round((windowSigmas * sigma) / spacing));
+  if (n < 2 * K + 2) return samples.map((p) => p.slice());
+  const pinned = new Set(pinnedIdx);
+  const weight = [];
+  for (let d = 0; d <= K; d++) {
+    weight.push(Math.exp(-((d * spacing) ** 2) / (2 * sigma * sigma)));
+  }
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    if (pinned.has(i)) {
+      out[i] = samples[i].slice();
+      continue;
+    }
+    let sx = samples[i][0] * weight[0];
+    let sy = samples[i][1] * weight[0];
+    let sw = weight[0];
+    for (const dir of [1, -1]) {
+      for (let d = 1; d <= K; d++) {
+        const j = (i + dir * d + n) % n;
+        sx += samples[j][0] * weight[d];
+        sy += samples[j][1] * weight[d];
+        sw += weight[d];
+        if (pinned.has(j)) break; // corner: include as endpoint, then stop
+      }
+    }
+    let nx = sx / sw;
+    let ny = sy / sw;
+    const dx = nx - samples[i][0];
+    const dy = ny - samples[i][1];
+    const dev = Math.hypot(dx, dy);
+    if (maxDev > 0 && dev > maxDev) {
+      nx = samples[i][0] + (dx * maxDev) / dev;
+      ny = samples[i][1] + (dy * maxDev) / dev;
+    }
+    out[i] = [nx, ny];
+  }
+  return out;
+}
+
+/**
+ * Corner detection on a CLOSED resampled polyline. The turn is measured on
+ * a fully Gaussian-smoothed probe copy (raw staircase zigzag would add
+ * ~±27 deg of direction noise; on the probe copy the residual is <1 deg)
+ * as the net change between the LOCAL tangent directions `probeCells` of
+ * arc behind and ahead — local tangents capture ~95% of a blurred corner's
+ * angle, where window chords would average it away. A staircase run has
+ * ~zero NET turn regardless of its zigzag; a circle of radius R cells
+ * turns 2*probe/R radians across the probe (R=5 → ~46 deg, stays smooth);
+ * a 90-deg lattice corner measures ~86 deg and a 60-deg hexagon vertex
+ * ~57 deg — above the 55-deg threshold, so they pin. Consecutive
+ * above-threshold samples collapse to the single peak-turn sample.
+ * @param {Array<[number,number]>} samples
+ * @returns {number[]} sorted corner sample indices
+ */
+export function detectCorners(samples, {
+  spacing = RESAMPLE_SPACING,
+  probeCells = CORNER_PROBE_CELLS,
+  thresholdDeg = CORNER_TURN_DEG,
+  sigma = SMOOTH_SIGMA,
+} = {}) {
+  const n = samples.length;
+  const w = Math.max(1, Math.round(probeCells / spacing));
+  if (n < 2 * (w + 1) + 2) return [];
+  const probe = gaussianSmoothClosed(samples, [], { spacing, sigma });
+  const turn = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const a0 = probe[(i - w - 1 + n) % n];
+    const a1 = probe[(i - w + 1 + n) % n];
+    const c0 = probe[(i + w - 1) % n];
+    const c1 = probe[(i + w + 1) % n];
+    const ux = a1[0] - a0[0];
+    const uy = a1[1] - a0[1];
+    const vx = c1[0] - c0[0];
+    const vy = c1[1] - c0[1];
+    turn[i] = Math.abs(Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy));
+  }
+  const threshold = (thresholdDeg * Math.PI) / 180;
+  let start = -1;
+  for (let i = 0; i < n; i++) {
+    if (turn[i] < threshold) { start = i; break; }
+  }
+  if (start < 0) return []; // everything "sharp" — a tiny blob, leave smooth
+  const corners = [];
+  let runPeak = -1;
+  for (let k = 1; k <= n; k++) {
+    const i = (start + k) % n;
+    if (turn[i] >= threshold) {
+      if (runPeak < 0 || turn[i] > turn[runPeak]) runPeak = i;
+    } else if (runPeak >= 0) {
+      corners.push(runPeak);
+      runPeak = -1;
+    }
+  }
+  return corners.sort((a, b) => a - b);
+}
+
+/**
+ * Full corner-preserving smoother for one closed lattice contour (issue
+ * #190): resample → detect corners → pin them → Gaussian-smooth between
+ * them. Replaces the Chaikin passes whose clamped cuts scalloped every
+ * staircase step.
+ * @param {Array<[number,number]>} points collinear-merged lattice contour
+ * @returns {Array<[number,number]>}
+ */
+export function smoothContour(points, opts = {}) {
+  const samples = resampleClosed(points, opts.spacing || RESAMPLE_SPACING);
+  const corners = detectCorners(samples, opts);
+  return gaussianSmoothClosed(samples, corners, opts);
 }
 
 /**
@@ -280,11 +446,12 @@ export function groupContours(contours) {
 }
 
 /**
- * Full pipeline: rects → cell grid → contours → collinear merge → clamped
- * Chaikin x2 → world coordinates → outer/hole grouping. Contours with fewer
- * than 8 corners (plain rectangles, single-cell features) skip smoothing so
- * they stay crisp and are never shaved smaller — this also keeps the
- * apron's outer rectangle hugging the arena edge exactly.
+ * Full pipeline: rects → cell grid → contours → collinear merge →
+ * corner-preserving resample + Gaussian smoothing → world coordinates →
+ * outer/hole grouping. Contours with fewer than 8 corners (plain
+ * rectangles, single-cell features) skip smoothing so they stay crisp and
+ * are never shaved smaller — this also keeps the apron's outer rectangle
+ * hugging the arena edge exactly.
  * @param {Array<{x:number,y:number,width:number,height:number}>} rects
  * @returns {{cellSize:number,groups:Array<{outer:Array<[number,number]>,holes:Array<Array<[number,number]>>}>}}
  */
@@ -295,7 +462,7 @@ export function buildBoundaryContours(rects) {
   const world = [];
   for (const contour of contours) {
     const merged = mergeCollinear(contour);
-    const pts = merged.length >= 8 ? chaikinSmooth(merged, 2, 1) : merged;
+    const pts = merged.length >= 8 ? smoothContour(merged) : merged;
     world.push(pts.map(([x, y]) => [x * cellSize + mask.originX, y * cellSize + mask.originY]));
   }
   return { cellSize, groups: groupContours(world) };
@@ -494,9 +661,9 @@ export function buildTrimGeometry(groups, { height = WALL_HEIGHT } = {}) {
  * Locate an earcut triangulator. Babylon's UMD bundle references a bare
  * `earcut` global for PolygonMeshBuilder but does NOT ship the
  * implementation (verified against babylonjs@9.14.0 — default-argument
- * references only), and the site loads no separate earcut script, so in
- * production this returns null and the ring-cap fallback is the live path.
- * The probe stays so a page that does load earcut gets full top caps.
+ * references only). Both site shells load earcut@2.2.4 via a CDN script
+ * tag, so in production this resolves the global and full top caps are the
+ * live path; the ring-cap fallback only covers a failed CDN fetch.
  * @returns {Function|null}
  */
 export function resolveEarcut() {

@@ -34,7 +34,7 @@
  * @module renderer/intermission-director
  */
 
-import { buildBoundaryContours, buildWallGeometry, contourNormals, resolveEarcut, WALL_HEIGHT } from './map-walls.js?v=20260718d';
+import { buildBoundaryContours, buildWallGeometry, contourNormals, resolveEarcut, WALL_HEIGHT } from './map-walls.js?v=20260718g';
 import { parseColor } from './utils.js';
 import { isEnabled, onSettingsChange } from '../settings.js';
 

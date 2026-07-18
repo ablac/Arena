@@ -11,7 +11,7 @@ const sectionsCss = readFileSync(new URL('../frontend/css/sections.css', import.
 const mobileCss = readFileSync(new URL('../frontend/m/mobile.css', import.meta.url), 'utf8');
 const ciYml = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
 
-assert.match(engineSource, /intermission-director\.js\?v=20260718f/,
+assert.match(engineSource, /intermission-director\.js\?v=20260718g/,
   'engine.js must import the stamped intermission director');
 assert.match(engineSource, /intermissionDirector\.update\(dt\)/,
   'the render loop must tick the director per frame');

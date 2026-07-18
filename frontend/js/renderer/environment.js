@@ -132,9 +132,12 @@ export class EnvironmentRenderer {
     this._lastZoneCy = -1;
     this._zoneSuddenDeath = false;
     // Per-map identity state (issue #182): current shape + the obstacles of
-    // the running round (for the baked floor contact shadows).
+    // the running round (for the baked floor contact shadows). Cluster
+    // outlines (issue #190) shadow unified multi-rect structures as one
+    // polygon instead of stacked per-rect fills.
     this._mapShape = 'square';
     this._roundObstacles = null;
+    this._roundClusterOutlines = null;
 
     this._createSkybox();
     this._createSpaceObjects();
@@ -681,9 +684,15 @@ export class EnvironmentRenderer {
   /**
    * Round-build hook from ObstacleRenderer: remember the layout and re-bake
    * the floor so the contact shadows sit under this round's obstacles.
+   * @param {Array} obstacles isolated rects, shadowed as rects
+   * @param {Array} [clusterOutlines] union outline groups
+   *   ({outer:[[x,z]...],holes:[...]}) for multi-rect clusters (issue #190),
+   *   each shadowed as one polygon along its exact outline
    */
-  setRoundObstacles(obstacles) {
+  setRoundObstacles(obstacles, clusterOutlines) {
     this._roundObstacles = Array.isArray(obstacles) ? obstacles : null;
+    this._roundClusterOutlines =
+      Array.isArray(clusterOutlines) && clusterOutlines.length ? clusterOutlines : null;
     this._paintFloor();
   }
 
@@ -757,11 +766,12 @@ export class EnvironmentRenderer {
     // +z, and DynamicTexture uploads invert Y, so canvas y = (1 - z/h)*1024.
     // Three nested fills approximate an ~8px feathered edge without relying
     // on ctx.filter (not universal); cumulative center darkening ~35%.
-    if (this._roundObstacles && isEnabled('arenaAmbience', 'contactShadows')) {
+    if ((this._roundObstacles || this._roundClusterOutlines) &&
+        isEnabled('arenaAmbience', 'contactShadows')) {
       const pxX = 1024 / this.w;
       const pxY = 1024 / this.h;
       const feather = 8;
-      for (const obs of this._roundObstacles) {
+      for (const obs of this._roundObstacles || []) {
         const cx = obs.x * pxX;
         const cy = (1 - (obs.y + obs.height) / this.h) * 1024;
         const cw = obs.width * pxX;
@@ -771,6 +781,34 @@ export class EnvironmentRenderer {
         ctx.fillRect(cx - feather / 2, cy - feather / 2, cw + feather, ch + feather);
         ctx.fillStyle = 'rgba(0,0,6,0.14)';
         ctx.fillRect(cx, cy, cw, ch);
+      }
+      // Cluster unions (issue #190): one polygon-shaped shadow per union,
+      // traced along the exact outline (holes carved via even-odd), with
+      // the feather approximated by two centered strokes — stacked per-rect
+      // fills used to double-darken wherever member rects abutted.
+      if (this._roundClusterOutlines) {
+        ctx.lineJoin = 'miter';
+        for (const group of this._roundClusterOutlines) {
+          ctx.beginPath();
+          for (const ring of [group.outer, ...(group.holes || [])]) {
+            if (!ring || ring.length < 3) continue;
+            ctx.moveTo(ring[0][0] * pxX, (1 - ring[0][1] / this.h) * 1024);
+            for (let i = 1; i < ring.length; i++) {
+              ctx.lineTo(ring[i][0] * pxX, (1 - ring[i][1] / this.h) * 1024);
+            }
+            ctx.closePath();
+          }
+          ctx.fillStyle = 'rgba(0,0,6,0.13)';
+          ctx.strokeStyle = 'rgba(0,0,6,0.13)';
+          ctx.lineWidth = feather * 2;
+          ctx.fill('evenodd');
+          ctx.stroke();
+          ctx.lineWidth = feather;
+          ctx.fill('evenodd');
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(0,0,6,0.14)';
+          ctx.fill('evenodd');
+        }
       }
     }
 
