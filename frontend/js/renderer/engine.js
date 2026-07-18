@@ -6,9 +6,10 @@
  */
 
 import { CameraController } from './camera.js?v=20260710d';
-import { BotRenderer } from './bots.js?v=20260718c';
+import { BotRenderer } from './bots.js?v=20260718f';
 import { EnvironmentRenderer } from './environment.js?v=20260718e';
-import { ObstacleRenderer } from './obstacles.js?v=20260718d';
+import { ObstacleRenderer } from './obstacles.js?v=20260718f';
+import { IntermissionDirector } from './intermission-director.js?v=20260718f';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
 import { TrailRenderer } from './trails.js?v=20260714e';
@@ -269,6 +270,9 @@ export class ArenaEngine {
     this.trailRenderer = new TrailRenderer(scene);
     this.projectileRenderer = new ProjectileRenderer(scene);
     this.gameplayRenderer = new GameplayRenderer(scene);
+    // Between-round spectator show (issue #189): driven by the server's
+    // round_end broadcast through setState, per-frame from the render loop.
+    this.intermissionDirector = new IntermissionDirector(this);
     this.gameplayRenderer.onStaffImpactCreated = (impact) => {
       // Same guard as the other effect spawns: projectile cleanup is
       // Animatable/render-loop-driven, which freezes without rendered frames
@@ -445,6 +449,11 @@ export class ArenaEngine {
       if (self.gameplayRenderer) {
         self.gameplayRenderer.animate(self.botRenderer ? self.botRenderer.entries : null, dt);
       }
+      if (self.intermissionDirector) {
+        // Reads only settings flags cached via onSettingsChange — the loop
+        // itself stays free of settings reads.
+        self.intermissionDirector.update(dt);
+      }
       if (self._grading) {
         // Enabled flag is cached by applyPipelineFlags; no settings reads here.
         self._grading.update(self.pipeline, dt);
@@ -500,9 +509,22 @@ export class ArenaEngine {
     // for anything that wants to drive it directly.
     if (state.type === 'lobby_state') {
       this.setGamePhase('lobby');
+      // The lobby countdown tells the intermission show when the next round
+      // actually starts, so the construction can pace itself to finish then.
+      if (this.intermissionDirector) this.intermissionDirector.handleLobbyState(state);
+      return;
+    }
+    if (state.type === 'round_end') {
+      // Typed spectator round_end (issue #189): starts the intermission
+      // show. Old servers never send it, so the feature stays inert there.
+      if (this.intermissionDirector) this.intermissionDirector.handleRoundEnd(state);
       return;
     }
     if (state.type !== 'arena_state') return;
+    // The first arena_state of the NEXT round snap-completes a running
+    // intermission show — before the resize check below so a dynamic arena
+    // rebuild never tears the scene down under live show artifacts.
+    if (this.intermissionDirector) this.intermissionDirector.handleArenaState(state);
     this.setGamePhase('round');
     this.setSuddenDeath(!!state.sudden_death);
 
@@ -548,9 +570,17 @@ export class ArenaEngine {
       this._followedBotId = null;
       this._followedBotHp = null;
     }
-    this.obstacleRenderer.update(state.obstacles, state.mask_rects);
+    // While the intermission show is live, stale intermission broadcasts
+    // still describe the ENDED round: keyframes would rebuild the map the
+    // teardown just sank, and bot snapshots would re-create the entries the
+    // despawn removed. The director releases both holds on fast-forward
+    // (handleArenaState above), so the new round's first state — including
+    // the one that triggers the fast-forward — always flows through.
+    const showHoldsWorld = this.intermissionDirector && this.intermissionDirector.holdsWorld();
+    const showHoldsBots = this.intermissionDirector && this.intermissionDirector.holdsBots();
+    if (!showHoldsWorld) this.obstacleRenderer.update(state.obstacles, state.mask_rects);
     this.envRenderer.update(state.safe_zone, !!state.sudden_death);
-    this.botRenderer.update(state.bots);
+    if (!showHoldsBots) this.botRenderer.update(state.bots);
     // Events play after the entity updates so a taunt arriving in the same
     // broadcast that introduces its bot can find the fresh entry.
     if (this.shouldSpawnEffects()) {
@@ -751,6 +781,10 @@ export class ArenaEngine {
     if (this._visObserver) {
       this._visObserver.disconnect();
       this._visObserver = null;
+    }
+    if (this.intermissionDirector) {
+      this.intermissionDirector.dispose();
+      this.intermissionDirector = null;
     }
     if (this.camera && this.camera.dispose) this.camera.dispose();
     if (this.projectileRenderer) this.projectileRenderer.dispose();

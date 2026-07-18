@@ -422,6 +422,22 @@ export class BotRenderer {
     this._refreshSelectionPanel();
   }
 
+  /**
+   * Remove one bot entry immediately (intermission despawn, issue #189).
+   * Uses the exact disposal path the snapshot sweep uses for departed bots,
+   * so the next update() rebuilds the entry from scratch — no lifted root,
+   * hidden label, or stale interpolation state can leak into the next round.
+   */
+  despawnEntry(botId) {
+    const entry = this.entries.get(botId);
+    if (!entry) return;
+    if (this.selectedBotId === botId) this.clearSelection();
+    this._disposeTaunt(entry);
+    disposeBotCosmetics(entry);
+    disposeBotEntry(entry);
+    this.entries.delete(botId);
+  }
+
   /** Snap to the newest authoritative positions after frame suspension. */
   resume() {
     const now = performance.now();

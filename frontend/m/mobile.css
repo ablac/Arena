@@ -582,3 +582,87 @@ body {
   font-size: 0.82rem;
   color: var(--accent-blue);
 }
+
+/* ---------- Intermission show overlays (issue #189) ---------- */
+/* Same class contract as the desktop shell (css/sections.css): the shared
+   renderer's intermission director mounts these inside #stage. The stage is
+   full-viewport here, so the banner sits below the floating top bar. */
+
+.intermission-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  pointer-events: none;
+  z-index: 4;
+  overflow: hidden;
+}
+
+.intermission-banner,
+.intermission-title {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 12px 22px;
+  background:
+    radial-gradient(circle at top, rgba(255, 206, 84, 0.1), transparent 42%),
+    linear-gradient(180deg, rgba(8, 15, 24, 0.9), rgba(6, 11, 18, 0.94));
+  border: 1px solid rgba(255, 206, 84, 0.28);
+  border-radius: 16px;
+  font-family: var(--font-mono);
+  text-align: center;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+.intermission-banner {
+  margin-top: calc(env(safe-area-inset-top, 0px) + 84px);
+}
+
+.intermission-banner.visible,
+.intermission-title.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.intermission-banner-kicker {
+  color: var(--accent-gold);
+  font-size: 0.66rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+
+.intermission-banner-name {
+  color: var(--text-primary);
+  font-size: clamp(1.1rem, 6vw, 1.7rem);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.intermission-title {
+  margin-top: auto;
+  margin-bottom: calc(env(safe-area-inset-bottom, 0px) + 132px);
+  border-color: rgba(71, 215, 255, 0.26);
+  background:
+    radial-gradient(circle at top, rgba(71, 215, 255, 0.1), transparent 42%),
+    linear-gradient(180deg, rgba(8, 15, 24, 0.9), rgba(6, 11, 18, 0.94));
+}
+
+.intermission-title-round {
+  color: var(--accent-blue);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+}
+
+.intermission-title-shape {
+  color: var(--text-soft);
+  font-size: 0.62rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}

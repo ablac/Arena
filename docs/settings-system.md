@@ -137,4 +137,5 @@ toggle.
 | Bot body state (death/impact/wounded/corpse) | `frontend/js/renderer/bots.js`, `animations.js` |
 | Ambient scene (skybox/particles/pylons/etc.) | `frontend/js/renderer/environment.js` |
 | Objective/zone indicators, movement trails, bloom/vignette | `frontend/js/renderer/gameplay.js`, `trails.js`, `engine.js` |
+| Intermission show (winner banner / despawn / teardown / construction) | `frontend/js/renderer/intermission-director.js` (flags cached via `onSettingsChange`) |
 | Idle weapon animations | `frontend/js/renderer/weapons.js` |

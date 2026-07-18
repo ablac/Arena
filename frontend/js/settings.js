@@ -151,6 +151,16 @@ export const SETTINGS_SCHEMA = {
       idleWeaponAnims: { label: 'Idle weapon animations' },
     },
   },
+  intermissionShow: {
+    label: 'Intermission Show',
+    description: 'Between-round winner celebration, map teardown, and next-map construction.',
+    effects: {
+      winnerBanner: { label: 'Winner banner' },
+      botDespawn: { label: 'Bot despawn choreography' },
+      mapTeardown: { label: 'Map teardown' },
+      mapConstruction: { label: 'Next-map construction' },
+    },
+  },
   siteMotion: {
     label: 'Site Motion',
     description: 'Page-level motion outside the 3D view. Overlaps with your OS reduced-motion setting.',
