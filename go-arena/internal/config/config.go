@@ -62,9 +62,9 @@ type Config struct {
 	CTFFlagReturnSecs   float64 `envconfig:"ARENA_CTF_FLAG_RETURN_SECS" default:"20"`
 
 	// Map generation. "square" (classic), "circle", "hexagon", "diamond",
-	// "cross", "caves", or "random" to roll a shape each round.
+	// "cross", "caves", "star", "hourglass", "clover", or "random" to roll a shape each round.
 	MapShape     string `envconfig:"ARENA_MAP_SHAPE" default:"random"`
-	MapShapePool string `envconfig:"ARENA_MAP_SHAPE_POOL" default:"square,circle,hexagon,diamond,cross,caves,donut,islands,rooms,spiral"`
+	MapShapePool string `envconfig:"ARENA_MAP_SHAPE_POOL" default:"square,circle,hexagon,diamond,cross,caves,donut,islands,rooms,spiral,star,hourglass,clover"`
 
 	// Dynamic arena size: the map grows with the number of bots joining the
 	// round, from the base ARENA_WIDTH/HEIGHT at <= ARENA_SIZE_BASE_BOTS up

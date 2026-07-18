@@ -99,7 +99,7 @@ cd sdk/nodejs && npm install
 - **Stats:** 20-point budget across HP/Speed/Attack/Defense (1-10 each)
 - **Pickups:** Health, Damage Boost, Speed Boost, Shield Bubble, Gravity Well, Cooldown Shard, Bounty Token, Hazard Key, Overdrive Core, Grapple Charge, Relay Battery
 - **Game modes:** `ARENA_GAME_MODE` = `ffa` (default) | `team_battle` | `ctf`; `ARENA_TEAM_COUNT` (2), `ARENA_FRIENDLY_FIRE` (false), CTF first to `ARENA_CTF_CAPTURES_TO_WIN` (3) captures
-- **Map shapes:** `ARENA_MAP_SHAPE` = `random` (default) | `square` | `circle` | `hexagon` | `diamond` | `cross` | `caves` | `donut` | `islands` | `rooms` | `spiral` — carved into the terrain grid as blocked cells; random obstacles are rejection-sampled against the carved mask (never inside walls) and the combined grid is connectivity-checked
+- **Map shapes:** `ARENA_MAP_SHAPE` = `random` (default) | `square` | `circle` | `hexagon` | `diamond` | `cross` | `caves` | `donut` | `islands` | `rooms` | `spiral` | `star` | `hourglass` | `clover` — carved into the terrain grid as blocked cells; random obstacles are rejection-sampled against the carved mask (never inside walls) and the combined grid is connectivity-checked
 - **Safe zone:** Starts covering the whole map (`ARENA_ZONE_COVER_MAP`, default true; `ARENA_ZONE_INITIAL_RADIUS` only applies when false), shrinks 15% every 20s after a 60s delay, 3 dmg/tick outside
 - **Tick rate:** 10 ticks/sec (configurable)
 - **Round:** 300s default, min 2 bots to start
