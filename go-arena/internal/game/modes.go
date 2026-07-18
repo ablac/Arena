@@ -71,12 +71,14 @@ func CurrentModeRules() ModeRules {
 	return ModeRulesFor(GameMode(config.C.GameModeName))
 }
 
-// AddModeTickExtra merges game-mode fields into a bot tick "extra" map:
-// always "game_mode", and for team modes "team_scores" (string-keyed, same
-// shape as the spectator payload) plus "flags" (one BuildFlagView per flag).
-// Flags are a global objective, so they are deliberately NOT fog-filtered.
-func AddModeTickExtra(extra map[string]interface{}, rules ModeRules, teamScores map[int]int, flags []*CTFFlag) {
-	extra["game_mode"] = string(rules.Mode)
+// AddModeTickExtra fills the game-mode fields of a bot tick envelope: always
+// GameMode ("game_mode"), and for team modes TeamScores (string-keyed, same
+// shape as the spectator payload) plus Flags (one BuildFlagView per flag —
+// [] in team modes without flags, absent in FFA). Flags are a global
+// objective, so they are deliberately NOT fog-filtered. The filled fields are
+// value snapshots, safe to share across every bot's envelope in a tick.
+func AddModeTickExtra(msg *TickMessage, rules ModeRules, teamScores map[int]int, flags []*CTFFlag) {
+	msg.GameMode = string(rules.Mode)
 	if !rules.HasTeams() {
 		return
 	}
@@ -84,12 +86,12 @@ func AddModeTickExtra(extra map[string]interface{}, rules ModeRules, teamScores 
 	for team := 1; team <= rules.TeamCount; team++ {
 		scores[strconv.Itoa(team)] = teamScores[team]
 	}
-	extra["team_scores"] = scores
-	flagViews := make([]map[string]interface{}, 0, len(flags))
+	msg.TeamScores = scores
+	flagViews := make([]FlagView, 0, len(flags))
 	for _, f := range flags {
 		flagViews = append(flagViews, BuildFlagView(f))
 	}
-	extra["flags"] = flagViews
+	msg.Flags = &flagViews
 }
 
 // HasTeams reports whether this ruleset plays with teams.

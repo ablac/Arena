@@ -556,16 +556,16 @@ type SpectatorState struct {
 	Bots         []map[string]interface{} `json:"bots"`
 	SafeZone     map[string]interface{}   `json:"safe_zone"`
 	Pickups      []map[string]interface{} `json:"pickups"`
-	KillFeed     []map[string]interface{} `json:"kill_feed"`
+	KillFeed     []KillFeedEntry          `json:"kill_feed"`
 	Obstacles    []Obstacle               `json:"obstacles,omitempty"`
 	WaitingBots  []map[string]interface{} `json:"waiting_bots,omitempty"`
-	TeleportPads []map[string]interface{} `json:"teleport_pads,omitempty"`
-	CapturePads  []map[string]interface{} `json:"capture_pads,omitempty"`
-	HazardZones  []map[string]interface{} `json:"hazard_zones,omitempty"`
-	BurnFields   []map[string]interface{} `json:"burn_fields,omitempty"`
-	Landmines    []map[string]interface{} `json:"landmines,omitempty"`
-	GravityWells []map[string]interface{} `json:"gravity_wells,omitempty"`
-	StaffImpacts []map[string]interface{} `json:"staff_impacts,omitempty"`
+	TeleportPads []TeleportPadView        `json:"teleport_pads,omitempty"`
+	CapturePads  []CapturePadView         `json:"capture_pads,omitempty"`
+	HazardZones  []HazardZoneView         `json:"hazard_zones,omitempty"`
+	BurnFields   []BurnFieldView          `json:"burn_fields,omitempty"`
+	Landmines    []MineView               `json:"landmines,omitempty"`
+	GravityWells []GravityWellView        `json:"gravity_wells,omitempty"`
+	StaffImpacts []StaffImpactView        `json:"staff_impacts,omitempty"`
 	// VoidTiles is populated only on spectator keyframes (~1 Hz): the set only
 	// accumulates during sudden death, so 10 Hz re-broadcast of the full list
 	// was pure duplication. No omitempty — clients must distinguish null
@@ -583,9 +583,9 @@ type SpectatorState struct {
 	Events          []ArenaEvent `json:"events,omitempty"`
 
 	// Game modes (groundwork)
-	GameMode   string                   `json:"game_mode,omitempty"`
-	TeamScores map[string]int           `json:"team_scores,omitempty"`
-	Flags      []map[string]interface{} `json:"flags,omitempty"`
+	GameMode   string         `json:"game_mode,omitempty"`
+	TeamScores map[string]int `json:"team_scores,omitempty"`
+	Flags      []FlagView     `json:"flags,omitempty"`
 
 	// Map shape metadata for non-square maps ("square" when absent).
 	MapShape string `json:"map_shape,omitempty"`

@@ -28,7 +28,7 @@ func BenchmarkTickLobby500Bots(b *testing.B) {
 	}
 }
 
-var benchmarkHintsSink []map[string]interface{}
+var benchmarkHintsSink []HintView
 
 func BenchmarkBuildHints500Bots(b *testing.B) {
 	originalTerrain := ActiveTerrain

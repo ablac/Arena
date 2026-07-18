@@ -95,17 +95,17 @@ func GetArenaMap(engine *game.GameEngine) http.HandlerFunc {
 		capturePads := mapSnapshot.CapturePads
 
 		// Also provide detailed metadata for bots that want extra info
-		padViews := make([]map[string]interface{}, 0, len(pads))
+		padViews := make([]game.TeleportPadView, 0, len(pads))
 		for _, pad := range pads {
 			padViews = append(padViews, game.BuildTeleportPadView(pad, mapSnapshot.Tick, true))
 		}
 
-		zoneViews := make([]map[string]interface{}, 0, len(zones))
+		zoneViews := make([]game.HazardZoneView, 0, len(zones))
 		for _, zone := range zones {
 			zoneViews = append(zoneViews, game.BuildHazardZoneView(zone, true, mapSnapshot.Modifier))
 		}
 
-		captureViews := make([]map[string]interface{}, 0, len(capturePads))
+		captureViews := make([]game.CapturePadView, 0, len(capturePads))
 		for _, pad := range capturePads {
 			captureViews = append(captureViews, game.BuildCapturePadView(pad, mapSnapshot.Tick, true))
 		}

@@ -144,9 +144,9 @@ func CombatLineBlocked(from, to Vec2, obstacles []Obstacle) bool {
 // SlideAlongObstacle attempts to move from (oldX,oldY) to (newX,newY),
 // using stepped collision to prevent tunnelling through thin obstacles.
 //
-//	1. Step along the path checking for collisions.
-//	2. If blocked, try X-only then Y-only sliding.
-//	3. Return the farthest valid position.
+//  1. Step along the path checking for collisions.
+//  2. If blocked, try X-only then Y-only sliding.
+//  3. Return the farthest valid position.
 func SlideAlongObstacle(oldX, oldY, newX, newY float64, obstacles []Obstacle, radius float64) (float64, float64) {
 	dx := newX - oldX
 	dy := newY - oldY

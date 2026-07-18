@@ -197,14 +197,25 @@ func CTFWinningTeam(teamScores map[int]int) int {
 	return 0
 }
 
+// FlagView is the typed protocol view of a CTF flag, shared by the spectator
+// state and the per-bot tick envelope.
+type FlagView struct {
+	ID           string `json:"id"`
+	Team         int    `json:"team"`
+	Position     Vec2   `json:"position"`
+	BasePosition Vec2   `json:"base_position"`
+	Status       string `json:"status"`
+	CarrierID    string `json:"carrier_id"`
+}
+
 // BuildFlagView serialises a flag for spectator clients.
-func BuildFlagView(f *CTFFlag) map[string]interface{} {
-	return map[string]interface{}{
-		"id":            f.ID,
-		"team":          f.Team,
-		"position":      Vec2{round1(f.Position[0]), round1(f.Position[1])},
-		"base_position": Vec2{round1(f.BasePosition[0]), round1(f.BasePosition[1])},
-		"status":        string(f.Status),
-		"carrier_id":    f.CarrierID,
+func BuildFlagView(f *CTFFlag) FlagView {
+	return FlagView{
+		ID:           f.ID,
+		Team:         f.Team,
+		Position:     Vec2{round1(f.Position[0]), round1(f.Position[1])},
+		BasePosition: Vec2{round1(f.BasePosition[0]), round1(f.BasePosition[1])},
+		Status:       string(f.Status),
+		CarrierID:    f.CarrierID,
 	}
 }

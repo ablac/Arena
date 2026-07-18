@@ -56,10 +56,11 @@ func TestTickDeliveryCoalescesWithoutDisplacingControlMessages(t *testing.T) {
 	control := []byte(`{"type":"round_start"}`)
 	bot.SendChan <- control
 	arena := NewArenaMap()
-	yourState := map[string]interface{}{"is_alive": true}
+	yourState := &YourStateView{IsAlive: true}
+	safeZone := BuildSafeZoneGridView(arena)
 
-	SendTickUpdate(bot, yourState, nil, 10, arena, nil, 8)
-	SendTickUpdate(bot, yourState, nil, 11, arena, nil, 8)
+	SendTickUpdate(bot, NewTickMessage(yourState, nil, 10, safeZone, nil, 8))
+	SendTickUpdate(bot, NewTickMessage(yourState, nil, 11, safeZone, nil, 8))
 
 	if got := <-bot.SendChan; string(got) != string(control) {
 		t.Fatalf("control queue was displaced by tick: %s", got)

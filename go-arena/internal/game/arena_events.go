@@ -87,13 +87,13 @@ func buildBowShotEvent(ownerID, color string, from, to Vec2, tick int, intensity
 
 func buildBowImpactEvent(projectileID, ownerID, color string, pos Vec2, tick int, targetID string, intensity float64) ArenaEvent {
 	return ArenaEvent{
-		ID:       fmt.Sprintf("bow-impact:%s:%d", projectileID, tick),
-		Type:     "bow_impact",
-		Tick:     tick,
-		Position: pos,
-		OwnerID:  ownerID,
-		TargetID: targetID,
-		Color:    color,
+		ID:        fmt.Sprintf("bow-impact:%s:%d", projectileID, tick),
+		Type:      "bow_impact",
+		Tick:      tick,
+		Position:  pos,
+		OwnerID:   ownerID,
+		TargetID:  targetID,
+		Color:     color,
 		Intensity: intensity,
 	}
 }

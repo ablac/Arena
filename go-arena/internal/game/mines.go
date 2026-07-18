@@ -120,20 +120,30 @@ func UpdateMines(mines *[]Landmine, bots map[string]*BotState, tickCount int) []
 	return events
 }
 
+// MineView is the typed protocol view of a landmine. Position is grid
+// coordinates ([2]int) for bots and world coordinates (Vec2) for spectators,
+// matching the useGridPos flag of BuildMineView.
+type MineView struct {
+	Type     string `json:"type"`
+	ID       string `json:"id"`
+	OwnerID  string `json:"owner_id"`
+	Armed    bool   `json:"armed"`
+	Position any    `json:"position"`
+}
+
 // BuildMineView creates a protocol-compatible view of a landmine.
 // For spectators, all mines are visible. For bots, only their own.
-func BuildMineView(mine Landmine, useGridPos bool) map[string]interface{} {
-	view := map[string]interface{}{
-		"type":     "landmine",
-		"id":       mine.ID,
-		"owner_id": mine.OwnerID,
-		"armed":    mine.Armed,
+func BuildMineView(mine Landmine, useGridPos bool) MineView {
+	view := MineView{
+		Type:    "landmine",
+		ID:      mine.ID,
+		OwnerID: mine.OwnerID,
+		Armed:   mine.Armed,
 	}
 	if useGridPos {
-		gridPos := posToGrid(mine.Position)
-		view["position"] = [2]int{gridPos[0], gridPos[1]}
+		view.Position = posToGrid(mine.Position)
 	} else {
-		view["position"] = mine.Position
+		view.Position = mine.Position
 	}
 	return view
 }

@@ -10,47 +10,47 @@ func TestAddModeTickExtraCTF(t *testing.T) {
 	}
 	scores := map[int]int{1: 2, 2: 1}
 
-	extra := map[string]interface{}{}
-	AddModeTickExtra(extra, rules, scores, flags)
+	msg := &TickMessage{}
+	AddModeTickExtra(msg, rules, scores, flags)
 
-	if got, _ := extra["game_mode"].(string); got != "ctf" {
-		t.Errorf("game_mode = %q, want ctf", got)
+	if msg.GameMode != "ctf" {
+		t.Errorf("game_mode = %q, want ctf", msg.GameMode)
 	}
 
-	ts, ok := extra["team_scores"].(map[string]int)
-	if !ok {
-		t.Fatalf("team_scores missing or wrong type: %T", extra["team_scores"])
+	ts := msg.TeamScores
+	if ts == nil {
+		t.Fatal("team_scores missing")
 	}
 	if ts["1"] != 2 || ts["2"] != 1 {
 		t.Errorf("team_scores = %v, want map[1:2 2:1]", ts)
 	}
 
-	fv, ok := extra["flags"].([]map[string]interface{})
-	if !ok {
-		t.Fatalf("flags missing or wrong type: %T", extra["flags"])
+	if msg.Flags == nil {
+		t.Fatal("flags missing")
 	}
+	fv := *msg.Flags
 	if len(fv) != 2 {
 		t.Fatalf("len(flags) = %d, want 2", len(fv))
 	}
-	if fv[0]["id"] != "flag_1" || fv[0]["status"] != "at_base" {
+	if fv[0].ID != "flag_1" || fv[0].Status != "at_base" {
 		t.Errorf("flags[0] = %v", fv[0])
 	}
-	if fv[1]["carrier_id"] != "bot-7" {
-		t.Errorf("flags[1] carrier_id = %v, want bot-7", fv[1]["carrier_id"])
+	if fv[1].CarrierID != "bot-7" {
+		t.Errorf("flags[1] carrier_id = %v, want bot-7", fv[1].CarrierID)
 	}
 }
 
 func TestAddModeTickExtraFFA(t *testing.T) {
-	extra := map[string]interface{}{}
-	AddModeTickExtra(extra, ModeRulesFor(ModeFFA), nil, nil)
+	msg := &TickMessage{}
+	AddModeTickExtra(msg, ModeRulesFor(ModeFFA), nil, nil)
 
-	if got, _ := extra["game_mode"].(string); got != "ffa" {
-		t.Errorf("game_mode = %q, want ffa", got)
+	if msg.GameMode != "ffa" {
+		t.Errorf("game_mode = %q, want ffa", msg.GameMode)
 	}
-	if _, ok := extra["team_scores"]; ok {
+	if msg.TeamScores != nil {
 		t.Error("team_scores must be omitted in FFA")
 	}
-	if _, ok := extra["flags"]; ok {
+	if msg.Flags != nil {
 		t.Error("flags must be omitted in FFA")
 	}
 }
