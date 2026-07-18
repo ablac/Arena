@@ -12,6 +12,12 @@ import { isEnabled } from '../settings.js';
 /** Max concurrent damage numbers to prevent buildup. */
 const MAX_DMG_NUMBERS = 12;
 
+/** Hard cap on live ground scorch decals — the oldest recycles (issue #184a). */
+const MAX_SCORCH_DECALS = 16;
+
+/** Ground scorch lifetime: brief hold, then fade to nothing. */
+const SCORCH_LIFE_MS = 10000;
+
 /**
  * Capacity of every pooled transient particle system — the max any combat
  * burst in this file requests (staff explosion, 38). Pooling one shared size
@@ -59,6 +65,15 @@ export class EffectRenderer {
     this.active = [];
     this._dmgCount = 0;
     this._glowTex = null;
+    this._scorchTex = null;
+    this._scorchPool = [];
+    this._scorchLive = [];
+    this._scorchSeq = 0;
+    // Kill camera nudge honors the OS reduced-motion preference, same
+    // matchMedia convention as BotRenderer.
+    this._motionQuery = typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)')
+      : null;
     // Per-instance (NOT module-level) free list of transient particle
     // systems: the scene is disposed and rebuilt between rounds, so pooled
     // systems must die with their EffectRenderer.
@@ -315,6 +330,142 @@ export class EffectRenderer {
     this._grapplePool.push(rig);
   }
 
+  /**
+   * @private Shared procedural burn texture, built once per scene (issue
+   * #184a). Dark charred core with irregular blotches and a faint ember rim;
+   * the RGB doubles as the emissive map (near-black chars, softly glowing
+   * rim) and the alpha as the decal cutout. Math.random is fine here — the
+   * texture is baked exactly once, never per event.
+   */
+  _getScorchTexture() {
+    if (this._scorchTex) return this._scorchTex;
+    const B = window.BABYLON;
+    const tex = new B.DynamicTexture('scorchTex', 128, this.scene, false);
+    const ctx = tex.getContext();
+    ctx.clearRect(0, 0, 128, 128);
+    const core = ctx.createRadialGradient(64, 64, 4, 64, 64, 60);
+    core.addColorStop(0, 'rgba(5,4,3,0.9)');
+    core.addColorStop(0.55, 'rgba(9,6,4,0.62)');
+    core.addColorStop(0.85, 'rgba(11,8,5,0.22)');
+    core.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = core;
+    ctx.fillRect(0, 0, 128, 128);
+    for (let i = 0; i < 26; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 16 + Math.random() * 40;
+      const r = 4 + Math.random() * 10;
+      ctx.beginPath();
+      ctx.arc(64 + Math.cos(angle) * dist, 64 + Math.sin(angle) * dist, r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(6,4,3,${(0.14 + Math.random() * 0.22).toFixed(3)})`;
+      ctx.fill();
+    }
+    const rim = ctx.createRadialGradient(64, 64, 30, 64, 64, 58);
+    rim.addColorStop(0, 'rgba(0,0,0,0)');
+    rim.addColorStop(0.72, 'rgba(255,110,40,0.10)');
+    rim.addColorStop(0.92, 'rgba(255,70,20,0.05)');
+    rim.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = rim;
+    ctx.fillRect(0, 0, 128, 128);
+    tex.update();
+    tex.hasAlpha = true;
+    this._scorchTex = tex;
+    return tex;
+  }
+
+  /** @private Pooled scorch decal (unit disc + per-instance fading material). */
+  _acquireScorch() {
+    const B = window.BABYLON;
+    let entry = this._scorchPool.pop();
+    if (!entry || entry.mesh.isDisposed()) {
+      const mesh = B.MeshBuilder.CreateDisc(`scorch-${++_psCounter}`, {
+        radius: 1,
+        tessellation: 24,
+      }, this.scene);
+      const mat = new B.StandardMaterial(`scorch-mat-${_psCounter}`, this.scene);
+      const tex = this._getScorchTexture();
+      mat.diffuseColor = B.Color3.Black();
+      mat.specularColor = B.Color3.Black();
+      mat.emissiveColor = new B.Color3(1, 1, 1); // texture-driven char + ember rim
+      mat.diffuseTexture = tex;
+      mat.emissiveTexture = tex;
+      mat.useAlphaFromDiffuseTexture = true;
+      mat.disableLighting = true;
+      mesh.material = mat;
+      // Tiny per-slot height bias keeps overlapping decals from z-fighting.
+      entry = { mesh, mat, yBias: 0.3 + (this._scorchSeq++ % 8) * 0.013, obs: null, start: 0 };
+    }
+    entry.mesh.parent = null;
+    entry.mesh.setEnabled(true);
+    return entry;
+  }
+
+  /** @private Retire a scorch decal into the pool (natural end or cap recycle). */
+  _finishScorch(entry) {
+    if (entry.obs) {
+      this.scene.onBeforeRenderObservable.remove(entry.obs);
+      entry.obs = null;
+    }
+    const index = this._scorchLive.indexOf(entry);
+    if (index >= 0) this._scorchLive.splice(index, 1);
+    entry.mesh.setEnabled(false);
+    this._scorchPool.push(entry);
+  }
+
+  /**
+   * Ground scorch decal (issue #184a): a charred disc left behind by
+   * mine/staff detonations and deaths, fading out over ~10s. Pooled, one
+   * shared burn texture, hard cap of MAX_SCORCH_DECALS live (oldest
+   * recycles first).
+   * @param {number} x @param {number} z @param {number} [radius=14]
+   */
+  spawnGroundScorch(x, z, radius = 14) {
+    if (!isEnabled('weaponImpactVfx', 'groundScorch')) return;
+    if (this._scorchLive.length >= MAX_SCORCH_DECALS) {
+      this._finishScorch(this._scorchLive[0]);
+    }
+    const entry = this._acquireScorch();
+    const r = Math.max(8, radius);
+    entry.mesh.position.set(x, entry.yBias, z);
+    // rotation.z spins the decal around its own flat normal for variety.
+    entry.mesh.rotation.set(Math.PI / 2, 0, Math.random() * Math.PI * 2);
+    entry.mesh.scaling.set(r, r, 1);
+    entry.mat.alpha = 0.85;
+    entry.start = performance.now();
+    entry.obs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - entry.start) / SCORCH_LIFE_MS;
+      if (t >= 1) {
+        this._finishScorch(entry);
+        return;
+      }
+      // Hold for the first 40%, then fade out.
+      entry.mat.alpha = 0.85 * (t < 0.4 ? 1 : 1 - (t - 0.4) / 0.6);
+    });
+    this._scorchLive.push(entry);
+  }
+
+  /**
+   * @private Kill camera nudge (issue #184c): a ~2% radius kick easing back
+   * over 0.3s. Applied as a delta so concurrent nudges compose and zoom
+   * changes mid-nudge only ever see a bounded transient. Skipped under the
+   * OS reduced-motion preference.
+   */
+  _killCameraNudge() {
+    if (!isEnabled('deathEffects', 'killCameraNudge')) return;
+    if (this._motionQuery && this._motionQuery.matches) return;
+    const cam = this.camera && this.camera.camera;
+    if (!cam) return;
+    const kick = cam.radius * 0.02;
+    const start = performance.now();
+    let applied = 0;
+    const obs = this.scene.onBeforeRenderObservable.add(() => {
+      const t = (performance.now() - start) / 300;
+      const offset = t >= 1 ? 0 : -kick * (1 - t) * (1 - t);
+      cam.radius += offset - applied;
+      applied = offset;
+      if (t >= 1) this.scene.onBeforeRenderObservable.remove(obs);
+    });
+  }
+
   update(bots) {
     const now = Date.now();
     const alive = new Set();
@@ -336,6 +487,8 @@ export class EffectRenderer {
       } else {
         if (this.prevAlive.has(bot.bot_id) && spawnOk) {
           this._deathBurst(bot.position[0], bot.position[1], bot.avatar_color);
+          this.spawnGroundScorch(bot.position[0], bot.position[1], 13);
+          this._killCameraNudge();
         }
         // Reset on death so a respawn back to full hp is not read as a hit.
         this.prevHp.delete(bot.bot_id);
@@ -1023,6 +1176,7 @@ export class EffectRenderer {
     if (!isEnabled('weaponImpactVfx', 'mineExplosion')) return;
     const B = window.BABYLON;
     const blastRadius = Math.max(12, radius);
+    this.spawnGroundScorch(x, z, blastRadius * 0.6);
 
     // Pooled unit meshes scaled to this blast radius. The mine ring keeps
     // its own unit torus (thickness/diameter 0.08/1.4, tessellation 32) so
@@ -1117,6 +1271,7 @@ export class EffectRenderer {
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     const blastRadius = Math.max(16, radius);
+    this.spawnGroundScorch(x, z, blastRadius * 0.6);
 
     // Pooled unit meshes, same scheme as the mine blast. The staff ring's
     // unit torus bakes this effect's own thickness/diameter ratio (0.08/1.6)
@@ -1448,6 +1603,16 @@ export class EffectRenderer {
     if (this._dmgPool) {
       for (const { plane, tex, mat } of this._dmgPool) { plane.dispose(); tex.dispose(); mat.dispose(); }
       this._dmgPool.length = 0;
+    }
+    // Retire live scorch decals into the pool first (removes their
+    // observers), then release the pooled meshes/materials and the one
+    // shared burn texture.
+    while (this._scorchLive.length) this._finishScorch(this._scorchLive[0]);
+    for (const { mesh, mat } of this._scorchPool) { mesh.dispose(); mat.dispose(); }
+    this._scorchPool.length = 0;
+    if (this._scorchTex) {
+      this._scorchTex.dispose();
+      this._scorchTex = null;
     }
     // Active-entry dispose() pushed every in-flight system back into the
     // pool above, so draining the pool here is the single place pooled

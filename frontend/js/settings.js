@@ -31,6 +31,7 @@ export const SETTINGS_SCHEMA = {
       deathBurst: { label: 'Death burst (particles, ring, light pillar)' },
       corpseFade: { label: 'Corpse fade (translucent after death)' },
       directionalDeath: { label: 'Directional death fall' },
+      killCameraNudge: { label: 'Kill camera nudge' },
     },
   },
   taunts: {
@@ -48,6 +49,7 @@ export const SETTINGS_SCHEMA = {
       damageFlinch: { label: 'Damage flinch recoil' },
       floatingDamageNumbers: { label: 'Floating damage numbers' },
       woundedTint: { label: 'Wounded / low-HP red tint' },
+      damageVignette: { label: 'Followed-bot damage vignette' },
     },
   },
   weaponImpactVfx: {
@@ -68,6 +70,7 @@ export const SETTINGS_SCHEMA = {
       mineExplosion: { label: 'Mine explosion' },
       staffExplosion: { label: 'Staff explosion' },
       teleportBurst: { label: 'Teleport burst' },
+      groundScorch: { label: 'Ground scorch decals' },
     },
   },
   objectiveIndicators: {
@@ -77,6 +80,7 @@ export const SETTINGS_SCHEMA = {
       bountyCrown: { label: 'Bounty crown' },
       flagComet: { label: 'Flag comet trail (CTF)' },
       capturePadPulse: { label: 'Capture pad pulse' },
+      minimapPings: { label: 'Minimap bounty & flag pings' },
     },
   },
   gameplayZoneIndicators: {
@@ -84,6 +88,7 @@ export const SETTINGS_SCHEMA = {
     description: 'Danger and pickup zone visuals (functional, not just decorative).',
     effects: {
       safeZoneRing: { label: 'Safe zone ring' },
+      minimapZonePulse: { label: 'Minimap zone pulse' },
       hazardZoneEffects: { label: 'Hazard zone electrical effects' },
       burnFieldPulse: { label: 'Burn field pulsing' },
       staffImpactRings: { label: 'Staff impact reveal rings' },

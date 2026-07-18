@@ -10,7 +10,7 @@ import { BotRenderer } from './bots.js?v=20260718c';
 import { EnvironmentRenderer } from './environment.js?v=20260718c';
 import { ObstacleRenderer } from './obstacles.js?v=20260718c';
 import { PickupRenderer } from './pickups.js?v=20260714f';
-import { EffectRenderer } from './effects.js?v=20260718b';
+import { EffectRenderer } from './effects.js?v=20260718c';
 import { TrailRenderer } from './trails.js?v=20260714e';
 import { ProjectileRenderer } from './projectiles.js?v=20260711a';
 import { GameplayRenderer } from './gameplay.js?v=20260710g';
@@ -520,6 +520,25 @@ export class ArenaEngine {
     // before the obstacle rebuild lets the merged meshes pick up the round's
     // palette in one pass.
     this.envRenderer.setMapShape(state.map_shape);
+    // Followed-bot damage pulse (issue #184b): when the spectator is locked
+    // onto a bot and its hp drops, squeeze the vignette briefly via the
+    // grading controller (composes additively with sudden-death grading).
+    // One-shot trigger, so the isEnabled gate sits here at the spawn point.
+    const followId = this.camera ? this.camera.followId : null;
+    if (followId) {
+      const followed = (state.bots || []).find((b) => b.bot_id === followId);
+      const hp = followed ? followed.hp : null;
+      if (this._grading && followId === this._followedBotId &&
+          hp != null && this._followedBotHp != null && hp < this._followedBotHp &&
+          isEnabled('hitReactions', 'damageVignette')) {
+        this._grading.damagePulse();
+      }
+      this._followedBotId = followId;
+      this._followedBotHp = hp;
+    } else {
+      this._followedBotId = null;
+      this._followedBotHp = null;
+    }
     this.obstacleRenderer.update(state.obstacles);
     this.envRenderer.update(state.safe_zone, !!state.sudden_death);
     this.botRenderer.update(state.bots);
