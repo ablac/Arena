@@ -4,7 +4,10 @@ import {existsSync, readFileSync} from 'node:fs';
 const mainHTML = readFileSync(new URL('../frontend/index.html', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../frontend/js/app.js', import.meta.url), 'utf8');
 const generatorURL = new URL('../frontend/js/key-generator.js', import.meta.url);
-const dashboardHTML = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8');
+const dashboardHTML = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8')
+  // The dashboard runtime was extracted from the inline <script> to
+  // dashboard.js; these probes span both, so read them as one source.
+  + readFileSync(new URL('../frontend/dashboard/dashboard.js', import.meta.url), 'utf8');
 const accountSource = readFileSync(new URL('../frontend/dashboard/account-cosmetics.js', import.meta.url), 'utf8');
 
 assert.match(mainHTML, /id="keygen-card"/,

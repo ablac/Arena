@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const html = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8');
-const inlineScripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
-assert.equal(inlineScripts.length, 2, 'dashboard should retain its two classic inline scripts');
+const htmlOnly = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8');
+const dashboardJS = readFileSync(new URL('../frontend/dashboard/dashboard.js', import.meta.url), 'utf8');
+// The dashboard runtime was extracted from the big inline <script> to
+// dashboard.js (cacheable, ~150 KB no longer re-sent with every no-store
+// HTML fetch). Only the small same-origin iframe handoff stays inline.
+const inlineScripts = [...htmlOnly.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+assert.equal(inlineScripts.length, 1, 'dashboard should retain only the iframe-handoff inline script');
 for (const script of inlineScripts) new Function(script[1]);
+new Function(dashboardJS);
+assert.match(htmlOnly, /<script src="\.\/dashboard\.js\?v=\d{8}[a-z]"><\/script>/,
+  'dashboard runtime must load as a versioned classic script in the same position');
+const html = htmlOnly + dashboardJS;
 
 function extractFunction(source, name) {
   const start = source.indexOf(`function ${name}(`);

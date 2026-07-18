@@ -206,7 +206,10 @@ assert.equal(
   assert.deepEqual(calls.at(-1), ['loadout', secondLoadout]);
 }
 
-const dashboardHTML = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8');
+const dashboardHTML = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8')
+  // The dashboard runtime was extracted from the inline <script> to
+  // dashboard.js; these probes span both, so read them as one source.
+  + readFileSync(new URL('../frontend/dashboard/dashboard.js', import.meta.url), 'utf8');
 const outfitterIndex = dashboardHTML.indexOf('id="accountCosmeticsOutfitter"');
 const inventoryIndex = dashboardHTML.indexOf('id="accountCosmeticsPanel"');
 assert.ok(outfitterIndex >= 0 && inventoryIndex > outfitterIndex,
