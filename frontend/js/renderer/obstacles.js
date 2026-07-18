@@ -232,6 +232,38 @@ export class ObstacleRenderer {
     this.update(this._lastObstacles, this._lastMaskRects);
   }
 
+  /**
+   * Every live round-built mesh (merged pillar bodies/trims + smooth
+   * boundary wall body/trim) for the intermission teardown sink (issue
+   * #189). The director unfreezes and animates their transforms; the next
+   * rebuild (or its fast-forward restore) disposes/normalizes them. The
+   * boundary meshes are reached through the owned MapWallsRenderer's
+   * private fields on purpose — this renderer drives its whole lifecycle.
+   * @returns {BABYLON.Mesh[]}
+   */
+  collectTeardownMeshes() {
+    return [
+      this._bodyMesh,
+      this._trimMesh,
+      this._mapWalls._bodyMesh,
+      this._mapWalls._trimMesh,
+    ].filter(Boolean);
+  }
+
+  /** Shared palette-tinted materials for the intermission construction
+   *  clones, so the transient rise matches the final build exactly. */
+  getConstructionMaterials() {
+    return { body: this._mat, trim: this._edgeMat };
+  }
+
+  /** Last keyframe layout (teardown dust needs somewhere to burst). */
+  getLastLayout() {
+    return {
+      obstacles: this._lastObstacles || [],
+      maskRects: this._lastMaskRects || [],
+    };
+  }
+
   /** Clear all obstacles (round reset). */
   clear() {
     if (this._bodyMesh) { this._bodyMesh.dispose(); this._bodyMesh = null; }

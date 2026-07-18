@@ -5,7 +5,7 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260718e';
+import { ArenaEngine } from './renderer/engine.js?v=20260718f';
 import { HudRenderer } from './renderer/hud.js?v=20260711b';
 import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';
@@ -137,7 +137,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (state.type === 'arena_state' || state.type === 'lobby_state') lastPhase = state.type;
       // Chrome parks rAF for hidden tabs but keeps delivering WS messages;
       // skip the DOM/canvas half while hidden (the engine still consumes
-      // state above for continuity) and snap fresh on return.
+      // state above for continuity) and snap fresh on return. Control
+      // messages like round_end (intermission show, handled entirely inside
+      // the engine) carry no HUD payload — keep them out of the DOM lane.
+      if (state.type !== 'arena_state' && state.type !== 'lobby_state') return;
       const now = performance.now();
       if (!document.hidden && now - lastUiUpdate >= UI_UPDATE_INTERVAL_MS) {
         lastUiUpdate = now;

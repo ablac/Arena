@@ -49,10 +49,24 @@ func (m *ArenaMap) VisualObstacles() []Obstacle {
 		return m.visObstacles
 	}
 
-	vis := make([]Obstacle, len(m.Obstacles), len(m.Obstacles)+len(m.MaskRects))
-	cs := ActiveTerrain.CellSize
+	m.visObstacles = ExpandObstaclesForClient(m.Obstacles, m.MaskRects, ActiveTerrain.CellSize)
+	m.visObsTerrain = ActiveTerrain
+	return m.visObstacles
+}
+
+// ExpandObstaclesForClient builds the client-facing obstacle list for a
+// (obstacles, maskRects, cell size) triple: every obstacle expanded by
+// BotRadius padding and snapped to grid cell boundaries, with the carved
+// boundary rectangles (already grid-aligned) appended so clients render the
+// map outline as solid walls. Shared by the per-round VisualObstacles cache
+// and the round_end spectator preview of the NEXT round's terrain — both
+// must produce byte-identical rects or the client's seamless construction
+// handoff (issue #189) would rebuild the merged meshes twice.
+func ExpandObstaclesForClient(obstacles, maskRects []Obstacle, cellSize float64) []Obstacle {
+	vis := make([]Obstacle, len(obstacles), len(obstacles)+len(maskRects))
+	cs := cellSize
 	pad := config.C.BotRadius
-	for i, obs := range m.Obstacles {
+	for i, obs := range obstacles {
 		ox := obs.X - pad
 		oy := obs.Y - pad
 		ow := obs.Width + 2*pad
@@ -69,11 +83,7 @@ func (m *ArenaMap) VisualObstacles() []Obstacle {
 			Height: (maxCY - minCY) * cs,
 		}
 	}
-	// Non-square map shapes: append the carved boundary rectangles (already
-	// grid-aligned) so clients render the map outline as solid walls.
-	vis = append(vis, m.MaskRects...)
-	m.visObstacles = vis
-	m.visObsTerrain = ActiveTerrain
+	vis = append(vis, maskRects...)
 	return vis
 }
 

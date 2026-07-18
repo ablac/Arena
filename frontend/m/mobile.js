@@ -9,7 +9,7 @@
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260718e';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260718f';
 import { Minimap } from '../js/renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, appPath, wsURL } from '../js/paths.js?v=20260710a';
@@ -723,6 +723,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (state.type === 'arena_state' && Array.isArray(state.events)) {
         queueTaunts(state.events);
       }
+      // round_end (intermission show) is consumed entirely by the shared
+      // engine above — its banner overlay renders over this shell's canvas
+      // too. Keep control messages out of the top bar / sheet DOM lanes.
+      if (state.type !== 'arena_state' && state.type !== 'lobby_state') return;
       const now = performance.now();
       if (now - lastUiUpdate < UI_UPDATE_INTERVAL_MS) return;
       lastUiUpdate = now;

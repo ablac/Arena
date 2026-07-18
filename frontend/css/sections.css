@@ -707,6 +707,95 @@ body.arena-fullscreen {
   display: none;
 }
 
+/* ---- Intermission show overlays (issue #189) --------------------------- */
+/* Full-canvas, pointer-transparent layer inside .arena-container hosting  */
+/* the winner banner (phase A) and the round title card (phase C). Both    */
+/* fade with opacity/transform only, so they read fine under               */
+/* prefers-reduced-motion (fades are kept by design).                      */
+
+.intermission-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  pointer-events: none;
+  z-index: 12;
+  overflow: hidden;
+}
+
+.intermission-banner,
+.intermission-title {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 30px;
+  background:
+    radial-gradient(circle at top, rgba(255, 206, 84, 0.1), transparent 42%),
+    linear-gradient(180deg, rgba(8, 15, 24, 0.9), rgba(6, 11, 18, 0.94));
+  border: 1px solid rgba(255, 206, 84, 0.28);
+  border-radius: 18px;
+  font-family: var(--font-mono);
+  text-align: center;
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.3), 0 0 18px rgba(255, 206, 84, 0.1);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+.intermission-banner {
+  margin-top: clamp(48px, 14%, 120px);
+}
+
+.intermission-banner.visible,
+.intermission-title.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.intermission-banner-kicker {
+  color: var(--accent-gold);
+  font-size: 0.72rem;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  text-shadow: 0 0 12px rgba(255, 206, 84, 0.4);
+}
+
+.intermission-banner-name {
+  color: var(--text-primary, #fff);
+  font-size: clamp(1.3rem, 3.4vw, 2.2rem);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 18px rgba(255, 255, 255, 0.22);
+}
+
+.intermission-title {
+  margin-top: auto;
+  margin-bottom: clamp(40px, 12%, 96px);
+  border-color: rgba(71, 215, 255, 0.26);
+  background:
+    radial-gradient(circle at top, rgba(71, 215, 255, 0.1), transparent 42%),
+    linear-gradient(180deg, rgba(8, 15, 24, 0.9), rgba(6, 11, 18, 0.94));
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.3), 0 0 18px rgba(71, 215, 255, 0.1);
+}
+
+.intermission-title-round {
+  color: var(--accent-blue);
+  font-size: clamp(1.05rem, 2.6vw, 1.6rem);
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-shadow: 0 0 12px rgba(71, 215, 255, 0.4);
+}
+
+.intermission-title-shape {
+  color: var(--text-soft, #b8c8dd);
+  font-size: 0.68rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+
 .hud-topline {
   display: flex;
   align-items: center;

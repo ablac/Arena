@@ -25,7 +25,7 @@ assert.equal(WALL_HEIGHT, Number(pillarMatch[1]),
   'smooth boundary walls must match the boundary-box pillar height');
 assert.match(obstaclesSource, /map-walls\.js\?v=20260718d/,
   'obstacles.js must import the stamped map-walls module');
-assert.match(engineSource, /obstacles\.js\?v=20260718d/,
+assert.match(engineSource, /obstacles\.js\?v=20260718f/,
   'engine.js must invalidate the cached pre-#186 obstacle renderer');
 assert.match(engineSource, /state\.mask_rects/,
   'engine.js must feed mask_rects from spectator keyframes');
