@@ -13,6 +13,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// Keep schema locks distinct from arenaRuntimeAdvisoryLockID. Reusing the
+// session-level runtime lock here makes a server deadlock itself during local
+// startup migrations after it has acquired the runtime lease.
+const chatSchemaAdvisoryLockID int64 = 2026071103
+
 // EnsureChatSchema creates the developer lobby chat table and adds the
 // chat-scoped ban column to customer_accounts. It runs after
 // EnsureCosmeticsSchema (which creates customer_accounts) and takes its own
@@ -35,7 +40,7 @@ func EnsureChatSchema(ctx context.Context) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(2026071102::BIGINT)`); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, chatSchemaAdvisoryLockID); err != nil {
 		return fmt.Errorf("EnsureChatSchema advisory lock: %w", err)
 	}
 
