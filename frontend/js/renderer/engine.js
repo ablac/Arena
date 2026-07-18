@@ -168,7 +168,10 @@ export class ArenaEngine {
     } catch {
       engine = new B.Engine(this.canvas, false, {
         preserveDrawingBuffer: false,
-        stencil: false,
+        // PickupRenderer uses Babylon's HighlightLayer, whose WebGL path
+        // requires an attached stencil buffer. Without it the layer logs a
+        // warning on every startup and silently loses the pickup outline.
+        stencil: true,
       });
       console.log('[Arena] WebGL');
     }

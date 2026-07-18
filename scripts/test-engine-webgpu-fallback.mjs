@@ -6,6 +6,12 @@ const isolatedSource = source.replace(/import[\s\S]*?from '[^']+';\r?\n/g, '');
 const moduleURL = `data:text/javascript;base64,${Buffer.from(isolatedSource).toString('base64')}`;
 const { webGPUAvailableWithin } = await import(moduleURL);
 
+assert.match(
+  source,
+  /new B\.Engine\(this\.canvas, false, \{[\s\S]{0,420}stencil:\s*true/,
+  'the WebGL fallback must enable stencil for the pickup HighlightLayer',
+);
+
 assert.equal(typeof webGPUAvailableWithin, 'function',
   'the renderer must expose one bounded WebGPU capability probe');
 

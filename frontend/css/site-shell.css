@@ -1261,6 +1261,49 @@ body.site-cinema-mode .arena-controls {
   }
 }
 
+/* Keep the glass controls visually compact while giving every spectator
+   action a reliable 44px hit box on the responsive layout. */
+@media (max-width: 768px) {
+  :root {
+    --spectator-touch-target: 44px;
+  }
+
+  .site-brand,
+  .mobile-command-actions :is(button, a),
+  .telemetry-toggle,
+  .arena-tab,
+  .hud-collapse-btn,
+  .hud-compact-toggle,
+  .sidebar-collapse-btn,
+  .arena-control-btn,
+  .arena-controls select,
+  .command-dock-close,
+  .drawer-close,
+  .service-status-banner button {
+    min-height: var(--spectator-touch-target);
+  }
+
+  .mobile-command-actions :is(button, a),
+  .telemetry-toggle,
+  .hud-collapse-btn,
+  .hud-compact-toggle,
+  .sidebar-collapse-btn,
+  .arena-control-btn,
+  .command-dock-close,
+  .drawer-close,
+  .service-status-banner button {
+    min-width: var(--spectator-touch-target);
+  }
+
+  .arena-controls .control-group {
+    min-height: var(--spectator-touch-target);
+  }
+
+  .arena-controls input[type="range"] {
+    height: var(--spectator-touch-target);
+  }
+}
+
 @media (max-width: 420px) {
   .hud-round.is-collapsed {
     max-width: calc(100% - 118px);

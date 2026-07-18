@@ -110,6 +110,7 @@ jobs:
           node scripts/test-round-transition-rendering.mjs
           node scripts/test-renderer-suspension.mjs
           node scripts/test-engine-webgpu-fallback.mjs
+          node scripts/test-rendering-safety-guardrails.mjs
           node scripts/test-trail-budget.mjs
           node scripts/test-cosmetic-trails.mjs
           node scripts/test-projectile-trail-texture.mjs
