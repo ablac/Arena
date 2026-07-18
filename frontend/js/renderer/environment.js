@@ -11,6 +11,112 @@ import { isEnabled } from '../settings.js';
 const ZONE_RING_SEGMENTS = 64;
 const ZONE_RING_BASE_ALPHA = 0.7;
 
+/**
+ * Per-map world identity (issue #182): one palette per map_shape, applied at
+ * round build (zero per-frame cost). Every entry stays inside the arena's
+ * editorial neon-on-navy language — hue leans, never full repaints. Fields:
+ *  - obstacleBody: merged pillar material {diffuse, emissive} (linear 0-1)
+ *  - obstacleTrim / wallTrim: emissive accents (linear 0-1)
+ *  - swirl: energy-floor shader color uniform (linear 0-1)
+ *  - floorBase: canvas radial-gradient center/mid RGB (0-255)
+ *  - floorSpeckle: canvas speckle base RGB (0-255, r/g jittered as before)
+ *  - floorPatch: canvas energy-patch gradient stops, two RGBs (0-255)
+ */
+const DEFAULT_MAP_PALETTE = Object.freeze({
+  obstacleBody: { diffuse: [0.07, 0.085, 0.11], emissive: [0.015, 0.03, 0.05] },
+  obstacleTrim: [0.08, 0.34, 0.62],
+  wallTrim: [0.24, 0.72, 1.0],
+  swirl: [0.04, 0.14, 0.34],
+  floorBase: [[10, 20, 38], [6, 12, 22]],
+  floorSpeckle: [80, 130, 255],
+  floorPatch: [[40, 120, 255], [80, 180, 255]],
+});
+
+const MAP_PALETTES = Object.freeze({
+  square: DEFAULT_MAP_PALETTE,
+  circle: Object.freeze({ // ice cyan
+    obstacleBody: { diffuse: [0.065, 0.09, 0.115], emissive: [0.012, 0.034, 0.052] },
+    obstacleTrim: [0.06, 0.40, 0.58],
+    wallTrim: [0.20, 0.80, 0.95],
+    swirl: [0.03, 0.16, 0.33],
+    floorBase: [[8, 22, 38], [5, 13, 22]],
+    floorSpeckle: [70, 150, 255],
+    floorPatch: [[30, 130, 255], [70, 190, 255]],
+  }),
+  hexagon: Object.freeze({ // gold-accented navy
+    obstacleBody: { diffuse: [0.085, 0.082, 0.10], emissive: [0.032, 0.026, 0.04] },
+    obstacleTrim: [0.52, 0.40, 0.10],
+    wallTrim: [1.0, 0.81, 0.33],
+    swirl: [0.10, 0.10, 0.24],
+    floorBase: [[16, 17, 32], [9, 10, 20]],
+    floorSpeckle: [200, 165, 110],
+    floorPatch: [[120, 100, 220], [230, 190, 90]],
+  }),
+  diamond: Object.freeze({ // silvered white-blue
+    obstacleBody: { diffuse: [0.08, 0.09, 0.115], emissive: [0.024, 0.03, 0.045] },
+    obstacleTrim: [0.34, 0.44, 0.58],
+    wallTrim: [0.72, 0.86, 1.0],
+    swirl: [0.08, 0.13, 0.30],
+    floorBase: [[13, 20, 34], [8, 12, 22]],
+    floorSpeckle: [140, 165, 255],
+    floorPatch: [[80, 130, 240], [150, 190, 255]],
+  }),
+  cross: Object.freeze({ // ember orange accents
+    obstacleBody: { diffuse: [0.09, 0.08, 0.095], emissive: [0.036, 0.024, 0.03] },
+    obstacleTrim: [0.55, 0.26, 0.08],
+    wallTrim: [1.0, 0.54, 0.24],
+    swirl: [0.13, 0.09, 0.22],
+    floorBase: [[17, 15, 28], [10, 9, 18]],
+    floorSpeckle: [220, 140, 90],
+    floorPatch: [[150, 90, 200], [255, 150, 80]],
+  }),
+  caves: Object.freeze({ // warm amber/rust
+    obstacleBody: { diffuse: [0.105, 0.085, 0.068], emissive: [0.046, 0.028, 0.014] },
+    obstacleTrim: [0.58, 0.28, 0.08],
+    wallTrim: [1.0, 0.62, 0.22],
+    swirl: [0.15, 0.09, 0.11],
+    floorBase: [[24, 17, 12], [13, 10, 8]],
+    floorSpeckle: [235, 150, 70],
+    floorPatch: [[200, 110, 50], [255, 170, 90]],
+  }),
+  donut: Object.freeze({ // magenta ring-world
+    obstacleBody: { diffuse: [0.095, 0.07, 0.105], emissive: [0.038, 0.018, 0.044] },
+    obstacleTrim: [0.48, 0.10, 0.44],
+    wallTrim: [1.0, 0.36, 0.86],
+    swirl: [0.15, 0.05, 0.26],
+    floorBase: [[20, 10, 27], [12, 7, 17]],
+    floorSpeckle: [225, 95, 255],
+    floorPatch: [[180, 60, 230], [255, 120, 220]],
+  }),
+  islands: Object.freeze({ // aqua/teal
+    obstacleBody: { diffuse: [0.06, 0.095, 0.10], emissive: [0.012, 0.038, 0.038] },
+    obstacleTrim: [0.06, 0.42, 0.38],
+    wallTrim: [0.24, 1.0, 0.82],
+    swirl: [0.03, 0.18, 0.26],
+    floorBase: [[7, 24, 28], [5, 14, 18]],
+    floorSpeckle: [85, 230, 200],
+    floorPatch: [[40, 190, 170], [90, 240, 210]],
+  }),
+  rooms: Object.freeze({ // slate/steel
+    obstacleBody: { diffuse: [0.085, 0.095, 0.11], emissive: [0.028, 0.033, 0.042] },
+    obstacleTrim: [0.24, 0.32, 0.42],
+    wallTrim: [0.60, 0.72, 0.86],
+    swirl: [0.07, 0.11, 0.21],
+    floorBase: [[14, 18, 27], [9, 11, 18]],
+    floorSpeckle: [135, 160, 210],
+    floorPatch: [[70, 110, 190], [130, 165, 220]],
+  }),
+  spiral: Object.freeze({ // violet
+    obstacleBody: { diffuse: [0.085, 0.075, 0.115], emissive: [0.032, 0.022, 0.052] },
+    obstacleTrim: [0.30, 0.15, 0.56],
+    wallTrim: [0.62, 0.42, 1.0],
+    swirl: [0.11, 0.06, 0.30],
+    floorBase: [[16, 12, 32], [10, 8, 20]],
+    floorSpeckle: [165, 115, 255],
+    floorPatch: [[120, 70, 230], [180, 130, 255]],
+  }),
+});
+
 export class EnvironmentRenderer {
   /** @param {BABYLON.Scene} scene @param {number} w @param {number} h */
   constructor(scene, w, h) {
@@ -25,6 +131,10 @@ export class EnvironmentRenderer {
     this._lastZoneCx = -1;
     this._lastZoneCy = -1;
     this._zoneSuddenDeath = false;
+    // Per-map identity state (issue #182): current shape + the obstacles of
+    // the running round (for the baked floor contact shadows).
+    this._mapShape = 'square';
+    this._roundObstacles = null;
 
     this._createSkybox();
     this._createSpaceObjects();
@@ -545,6 +655,122 @@ export class EnvironmentRenderer {
     });
   }
 
+  /** Current effective palette — the map's own when the toggle is on. */
+  getPalette() {
+    if (!isEnabled('arenaAmbience', 'mapPalettes')) return DEFAULT_MAP_PALETTE;
+    return MAP_PALETTES[this._mapShape] || DEFAULT_MAP_PALETTE;
+  }
+
+  /**
+   * Feed the round's map shape from the spectator state. Only a real change
+   * re-themes (round boundary); non-keyframe states without the field no-op.
+   */
+  setMapShape(shape) {
+    if (typeof shape !== 'string' || !shape || shape === this._mapShape) return;
+    this._mapShape = shape;
+    this.applyMapTheme();
+  }
+
+  /**
+   * Round-build hook from ObstacleRenderer: remember the layout and re-bake
+   * the floor so the contact shadows sit under this round's obstacles.
+   */
+  setRoundObstacles(obstacles) {
+    this._roundObstacles = Array.isArray(obstacles) ? obstacles : null;
+    this._paintFloor();
+  }
+
+  /**
+   * (Re)apply the current palette to everything environment-owned: wall trim
+   * emissive, energy-swirl shader uniform, and the baked floor canvas. Called
+   * on map-shape changes and from the engine's settings-change hook — never
+   * per frame.
+   */
+  applyMapTheme() {
+    const palette = this.getPalette();
+    if (this._wallTrimMat) {
+      this._wallTrimMat.unfreeze();
+      this._wallTrimMat.emissiveColor.set(...palette.wallTrim);
+      this._wallTrimMat.freeze();
+    }
+    if (this._floorGlowMat) {
+      const B = window.BABYLON;
+      this._floorGlowMat.setColor3('swirlColor', new B.Color3(...palette.swirl));
+    }
+    this._paintFloor();
+  }
+
+  /**
+   * @private Bake the floor deck canvas: palette-tinted gradient + speckles +
+   * energy patches (the pre-#182 look, hues parametrized), then soft-edged
+   * darkened rects under each obstacle footprint — cheap baked contact
+   * shadows that ground the merged pillars. Runs at round build only.
+   */
+  _paintFloor() {
+    if (!this._floorCanvas || !this._floorTex) return;
+    const ctx = this._floorCanvas.getContext('2d');
+    const palette = this.getPalette();
+    ctx.clearRect(0, 0, 1024, 1024);
+
+    const [baseCenter, baseMid] = palette.floorBase;
+    const grad = ctx.createRadialGradient(512, 512, 90, 512, 512, 640);
+    grad.addColorStop(0, `rgba(${baseCenter[0]},${baseCenter[1]},${baseCenter[2]},0.35)`);
+    grad.addColorStop(0.55, `rgba(${baseMid[0]},${baseMid[1]},${baseMid[2]},0.2)`);
+    grad.addColorStop(1, 'rgba(2,4,8,0.05)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 1024, 1024);
+
+    const sp = palette.floorSpeckle;
+    for (let i = 0; i < 2600; i++) {
+      const x = Math.random() * 1024;
+      const y = Math.random() * 1024;
+      const r = 0.6 + Math.random() * 2.2;
+      const a = 0.018 + Math.random() * 0.05;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${Math.min(255, sp[0] + (Math.random() * 50 | 0))},${Math.min(255, sp[1] + (Math.random() * 60 | 0))},${sp[2]},${a.toFixed(3)})`;
+      ctx.fill();
+    }
+
+    const [patchA, patchB] = palette.floorPatch;
+    for (let i = 0; i < 26; i++) {
+      const x = Math.random() * 1024;
+      const y = Math.random() * 1024;
+      const w = 80 + Math.random() * 180;
+      const h = 40 + Math.random() * 110;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(w, h));
+      g.addColorStop(0, `rgba(${patchA[0]},${patchA[1]},${patchA[2]},0.08)`);
+      g.addColorStop(0.45, `rgba(${patchB[0]},${patchB[1]},${patchB[2]},0.03)`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - w, y - h, w * 2, h * 2);
+    }
+
+    // Contact shadows (issue #182b): the ground UVs run u with +x and v with
+    // +z, and DynamicTexture uploads invert Y, so canvas y = (1 - z/h)*1024.
+    // Three nested fills approximate an ~8px feathered edge without relying
+    // on ctx.filter (not universal); cumulative center darkening ~35%.
+    if (this._roundObstacles && isEnabled('arenaAmbience', 'contactShadows')) {
+      const pxX = 1024 / this.w;
+      const pxY = 1024 / this.h;
+      const feather = 8;
+      for (const obs of this._roundObstacles) {
+        const cx = obs.x * pxX;
+        const cy = (1 - (obs.y + obs.height) / this.h) * 1024;
+        const cw = obs.width * pxX;
+        const ch = obs.height * pxY;
+        ctx.fillStyle = 'rgba(0,0,6,0.13)';
+        ctx.fillRect(cx - feather, cy - feather, cw + feather * 2, ch + feather * 2);
+        ctx.fillRect(cx - feather / 2, cy - feather / 2, cw + feather, ch + feather);
+        ctx.fillStyle = 'rgba(0,0,6,0.14)';
+        ctx.fillRect(cx, cy, cw, ch);
+      }
+    }
+
+    this._floorTex.getContext().drawImage(this._floorCanvas, 0, 0);
+    this._floorTex.update();
+  }
+
   /** @private Transparent arena floor with soft ambient energy motion. */
   _createFloor() {
     const B = window.BABYLON;
@@ -554,44 +780,12 @@ export class EnvironmentRenderer {
     ground.position.x = this.w / 2;
     ground.position.z = this.h / 2;
 
-    const floorCanvas = document.createElement('canvas');
-    floorCanvas.width = 1024;
-    floorCanvas.height = 1024;
-    const ctx = floorCanvas.getContext('2d');
-    const grad = ctx.createRadialGradient(512, 512, 90, 512, 512, 640);
-    grad.addColorStop(0, 'rgba(10,20,38,0.35)');
-    grad.addColorStop(0.55, 'rgba(6,12,22,0.2)');
-    grad.addColorStop(1, 'rgba(2,4,8,0.05)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 1024, 1024);
-
-    for (let i = 0; i < 2600; i++) {
-      const x = Math.random() * 1024;
-      const y = Math.random() * 1024;
-      const r = 0.6 + Math.random() * 2.2;
-      const a = 0.018 + Math.random() * 0.05;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${80 + (Math.random() * 50 | 0)},${130 + (Math.random() * 60 | 0)},255,${a.toFixed(3)})`;
-      ctx.fill();
-    }
-
-    for (let i = 0; i < 26; i++) {
-      const x = Math.random() * 1024;
-      const y = Math.random() * 1024;
-      const w = 80 + Math.random() * 180;
-      const h = 40 + Math.random() * 110;
-      const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(w, h));
-      g.addColorStop(0, 'rgba(40,120,255,0.08)');
-      g.addColorStop(0.45, 'rgba(80,180,255,0.03)');
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x - w, y - h, w * 2, h * 2);
-    }
-
-    const floorTex = new B.DynamicTexture('floorDeckTex', { width: 1024, height: 1024 }, this.scene, false);
-    floorTex.getContext().drawImage(floorCanvas, 0, 0);
-    floorTex.update();
+    this._floorCanvas = document.createElement('canvas');
+    this._floorCanvas.width = 1024;
+    this._floorCanvas.height = 1024;
+    this._floorTex = new B.DynamicTexture('floorDeckTex', { width: 1024, height: 1024 }, this.scene, false);
+    this._paintFloor();
+    const floorTex = this._floorTex;
 
     const mat = new B.StandardMaterial('floorMat', this.scene);
     mat.diffuseTexture = floorTex;
@@ -628,6 +822,7 @@ export class EnvironmentRenderer {
       precision highp float;
       varying vec2 vUV;
       uniform float time;
+      uniform vec3 swirlColor;
       void main() {
         vec2 p = vUV - 0.5;
         float dist = length(p);
@@ -637,7 +832,7 @@ export class EnvironmentRenderer {
         float edge = smoothstep(0.3, 0.5, abs(vUV.x - 0.5)) + smoothstep(0.3, 0.5, abs(vUV.y - 0.5));
 
         float energy = basin * (swirl * 0.06 + cloud * 0.03);
-        vec3 color = vec3(0.04, 0.14, 0.34) * energy;
+        vec3 color = swirlColor * energy;
         color += vec3(0.02, 0.06, 0.14) * edge * 0.05;
 
         float alpha = energy * 0.55 + edge * 0.018;
@@ -650,12 +845,15 @@ export class EnvironmentRenderer {
       fragment: 'energyFloor'
     }, {
       attributes: ['position', 'uv'],
-      uniforms: ['worldViewProjection', 'time'],
+      uniforms: ['worldViewProjection', 'time', 'swirlColor'],
       needAlphaBlending: true
     });
     glowMat.setFloat('time', 0);
+    // Per-map hue for the ambient swirl (issue #182) — re-set by applyMapTheme.
+    glowMat.setColor3('swirlColor', new B.Color3(...this.getPalette().swirl));
     glowMat.backFaceCulling = false;
     glowMat.alphaMode = B.Engine.ALPHA_ADD;
+    this._floorGlowMat = glowMat;
 
     glow.material = glowMat;
     glow.isPickable = false;
@@ -686,12 +884,14 @@ export class EnvironmentRenderer {
     wallMat.backFaceCulling = false;
     wallMat.freeze();
 
-    // Bright edge trim on top of walls
+    // Bright edge trim on top of walls. Emissive is palette-driven (issue
+    // #182): applyMapTheme() unfreezes/retints it at round boundaries.
     const trimMat = new B.StandardMaterial('trimMat', this.scene);
     trimMat.diffuseColor = B.Color3.Black();
-    trimMat.emissiveColor = new B.Color3(0.24, 0.72, 1.0);
+    trimMat.emissiveColor = new B.Color3(...this.getPalette().wallTrim);
     trimMat.disableLighting = true;
     trimMat.freeze();
+    this._wallTrimMat = trimMat;
 
     const specs = [
       [this.w / 2, 0, this.w + wallD, wallD],

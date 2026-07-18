@@ -8,7 +8,7 @@
 import { CameraController } from './camera.js?v=20260710d';
 import { BotRenderer } from './bots.js?v=20260718c';
 import { EnvironmentRenderer } from './environment.js?v=20260718c';
-import { ObstacleRenderer } from './obstacles.js?v=20260710f';
+import { ObstacleRenderer } from './obstacles.js?v=20260718c';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718b';
 import { TrailRenderer } from './trails.js?v=20260714e';
@@ -114,11 +114,28 @@ export class ArenaEngine {
       this.pipeline.fxaaEnabled = isEnabled('rendering', 'fxaa');
       this.pipeline.sharpenEnabled = isEnabled('rendering', 'sharpen');
     };
+    // World-identity toggles (issue #182) change round-built assets — floor
+    // bake, obstacle merge, palette tints. Re-run those builds only when one
+    // of the three flags actually flips; every other settings change is a
+    // no-op here.
+    const worldThemeSig = () =>
+      `${isEnabled('arenaAmbience', 'mapPalettes')}|` +
+      `${isEnabled('arenaAmbience', 'contactShadows')}|` +
+      `${isEnabled('arenaAmbience', 'obstacleDetailing')}`;
+    this._worldThemeSig = worldThemeSig();
+    const applyWorldTheme = () => {
+      const sig = worldThemeSig();
+      if (sig === this._worldThemeSig) return;
+      this._worldThemeSig = sig;
+      if (this.envRenderer) this.envRenderer.applyMapTheme();
+      if (this.obstacleRenderer) this.obstacleRenderer.refresh();
+    };
     // init() re-runs on between-round arena resizes; without unsubscribing in
     // dispose(), listeners would pile up holding disposed engines.
     this._unsubSettings = onSettingsChange(() => {
       applyResolution();
       applyPipelineFlags();
+      applyWorldTheme();
     });
     this.engine = engine;
     const scene = new B.Scene(engine);
@@ -376,6 +393,11 @@ export class ArenaEngine {
     // arriving at 10Hz either way, and every effect's cleanup runs in the
     // render loop, so spawning here would grow the scene without bound.
     // _seenArenaEvents dedup means skipped events never replay.
+    // Map shape first (issue #182): a round-boundary keyframe carries the new
+    // shape and the new obstacle layout together, so theming the environment
+    // before the obstacle rebuild lets the merged meshes pick up the round's
+    // palette in one pass.
+    this.envRenderer.setMapShape(state.map_shape);
     this.obstacleRenderer.update(state.obstacles);
     this.envRenderer.update(state.safe_zone, !!state.sudden_death);
     this.botRenderer.update(state.bots);
