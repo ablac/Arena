@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -8,6 +10,20 @@ import (
 
 	"arena-server/internal/db"
 )
+
+// The standings UI polls /leaderboard every 15s per open viewer (30s on
+// mobile) with no jitter, and every poll previously ran two uncached
+// aggregate queries. Cache the encoded response per (sort, period, limit) for
+// one poll interval so DB load stays constant in viewer count, and serve 304s
+// via ETag. Only the first page at the two shipped page sizes is cached —
+// arbitrary offset/limit combinations bypass the cache so the key space stays
+// bounded (6 sorts x 5 periods x 2 limits).
+const (
+	leaderboardCacheTTL    = 15 * time.Second
+	leaderboardLoadTimeout = 10 * time.Second
+)
+
+var leaderboardCache = newResponseCache(leaderboardCacheTTL, leaderboardLoadTimeout, time.Now)
 
 // GetLeaderboard handles GET /api/v1/leaderboard.
 // Query params: sort, limit, offset, period (all_time|30d|7d|24h|1h).
@@ -42,6 +58,17 @@ func GetLeaderboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Normalize period before it becomes part of a cache key: unknown values
+	// collapse to 24h (preserving the pre-cache fallback behavior).
+	period := r.URL.Query().Get("period")
+	switch period {
+	case "", "all_time":
+		period = "all_time"
+	case "1h", "24h", "7d", "30d":
+	default:
+		period = "24h"
+	}
+
 	if db.Pool == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"entries": []interface{}{}, "total": 0, "limit": limit, "offset": offset, "period": "all_time",
@@ -49,56 +76,65 @@ func GetLeaderboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
-	period := r.URL.Query().Get("period")
+	if offset == 0 && (limit == 20 || limit == 50) {
+		key := sortBy + "|" + period + "|" + strconv.Itoa(limit)
+		leaderboardCache.Serve(w, r, key, func(ctx context.Context) ([]byte, error) {
+			return buildLeaderboardBody(ctx, sortBy, period, limit, 0)
+		}, "failed to get leaderboard")
+		return
+	}
 
-	// Time-based leaderboard
-	if period != "" && period != "all_time" {
+	body, err := buildLeaderboardBody(r.Context(), sortBy, period, limit, offset)
+	if err != nil {
+		slog.Error("failed to get leaderboard", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to get leaderboard")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(body); err != nil {
+		slog.Error("failed to write leaderboard response", "error", err)
+	}
+}
+
+// buildLeaderboardBody runs the underlying queries and returns the encoded
+// JSON response for the given normalized parameters.
+func buildLeaderboardBody(ctx context.Context, sortBy, period string, limit, offset int) ([]byte, error) {
+	// Time-based leaderboard.
+	if period != "all_time" {
 		var since time.Time
 		switch period {
 		case "1h":
 			since = time.Now().Add(-1 * time.Hour)
-		case "24h":
-			since = time.Now().Add(-24 * time.Hour)
 		case "7d":
 			since = time.Now().Add(-7 * 24 * time.Hour)
 		case "30d":
 			since = time.Now().Add(-30 * 24 * time.Hour)
 		default:
 			since = time.Now().Add(-24 * time.Hour)
-			period = "24h"
 		}
 
 		entries, err := db.GetTimeBasedLeaderboard(ctx, since, sortBy, limit)
 		if err != nil {
-			slog.Error("failed to get time-based leaderboard", "error", err, "period", period)
-			writeError(w, http.StatusInternalServerError, "failed to get leaderboard")
-			return
+			return nil, err
 		}
-
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		return json.Marshal(map[string]interface{}{
 			"entries": entries,
 			"total":   len(entries),
 			"limit":   limit,
 			"offset":  0,
 			"period":  period,
 		})
-		return
 	}
 
-	// All-time leaderboard (existing behavior)
+	// All-time leaderboard.
 	entries, err := db.GetLeaderboard(ctx, sortBy, limit, offset)
 	if err != nil {
-		slog.Error("failed to get leaderboard", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to get leaderboard")
-		return
+		return nil, err
 	}
-
 	total, err := db.GetLeaderboardCount(ctx)
 	if err != nil {
-		slog.Error("failed to get leaderboard count", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to get leaderboard count")
-		return
+		return nil, err
 	}
 
 	apiEntries := make([]LeaderboardEntry, 0, len(entries))
@@ -109,8 +145,7 @@ func GetLeaderboard(w http.ResponseWriter, r *http.Request) {
 			DamageDealt: e.DamageDealt, RoundsPlayed: e.RoundsPlayed, RoundWins: e.RoundWins,
 		})
 	}
-
-	writeJSON(w, http.StatusOK, LeaderboardResponse{
+	return json.Marshal(LeaderboardResponse{
 		Entries: apiEntries, Total: total, Limit: limit, Offset: offset,
 	})
 }

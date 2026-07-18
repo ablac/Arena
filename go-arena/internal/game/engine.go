@@ -267,6 +267,23 @@ func (e *GameEngine) Run(ctx context.Context) {
 	e.Running = true
 	slog.Info("game engine started", "tick_rate", config.C.TickRate)
 
+	// Kill-log retention: once at startup, then daily, always off the tick
+	// goroutine. weapon_kill_totals keeps all-time stats intact, so this only
+	// bounds kill_log's disk/scan growth.
+	safeGo(func() {
+		PruneKillLogOnce()
+		pruneTicker := time.NewTicker(24 * time.Hour)
+		defer pruneTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pruneTicker.C:
+				PruneKillLogOnce()
+			}
+		}
+	})
+
 	for {
 		select {
 		case <-ctx.Done():

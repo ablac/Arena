@@ -298,8 +298,10 @@ func TestEndRoundPrunesDetachedSessionsAfterFinalPersistence(t *testing.T) {
 	isolateBotStatsPersistence(t)
 	persisted := make(chan db.BotStatsDelta, 4)
 	botStatsPersistenceMu.Lock()
-	applyBotStatsDelta = func(_ context.Context, delta *db.BotStatsDelta) error {
-		persisted <- *delta
+	applyBotStatsDeltas = func(_ context.Context, deltas []db.BotStatsDelta) error {
+		for _, delta := range deltas {
+			persisted <- delta
+		}
 		return nil
 	}
 	botStatsPersistenceMu.Unlock()

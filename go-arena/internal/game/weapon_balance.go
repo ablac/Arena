@@ -544,8 +544,15 @@ func persistWeaponBalanceSnapshot(ctx context.Context, state WeaponBalanceState,
 	}
 	if err := db.InsertWeaponBalanceHistory(ctx, history); err != nil {
 		slog.Error("failed to persist weapon balance history", "weapon", state.Weapon, "error", err)
+	} else if err := db.PruneWeaponBalanceHistory(ctx, state.Weapon, weaponBalanceHistoryKeep); err != nil {
+		slog.Warn("failed to prune weapon balance history", "weapon", state.Weapon, "error", err)
 	}
 }
+
+// weaponBalanceHistoryKeep bounds weapon_balance_history rows per weapon.
+// ListWeaponBalanceHistory serves at most 50 points per weapon, so 200 keeps
+// a comfortable buffer while capping the table at ~1.4k rows total.
+const weaponBalanceHistoryKeep = 200
 
 func refreshAllWeaponConfigsLocked() {
 	for name := range baseWeaponConfigs {
