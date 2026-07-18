@@ -1,6 +1,6 @@
 'use strict';
 
-export const BABYLON_SCRIPT_URL = 'https://cdn.babylonjs.com/v9.14.0/babylon.js';
+export const BABYLON_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/babylonjs@9.14.0/babylon.min.js';
 
 let babylonLoadPromise = null;
 

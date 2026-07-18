@@ -1,7 +1,6 @@
 package game
 
 import (
-	"container/heap"
 	"math"
 
 	"arena-server/internal/config"
@@ -14,6 +13,50 @@ type NavGrid struct {
 	Width    int // number of columns
 	Height   int // number of rows
 	Blocked  [][]bool
+
+	// scratch holds reusable A* buffers. FindPath is only ever called from
+	// the single tick goroutine (processMoveTo), and chasing fallback bots
+	// re-path nearly every tick, so per-call map allocations and per-node
+	// interface boxing were the dominant allocator in crowded rounds.
+	// Lazily sized to Width*Height; NavGrids are rebuilt per round so the
+	// dimensions never change within one grid's lifetime.
+	scratch *pathScratch
+}
+
+// pathScratch carries flat generation-stamped arrays (indexed cx*Height+cy)
+// replacing the per-FindPath gScore/cameFrom maps, plus a reusable open heap
+// and nearest-unblocked BFS queue. A cell's gScore/cameFrom entries are valid
+// only when visitGen[idx] equals the current generation, so resets are O(1).
+type pathScratch struct {
+	gen      uint32
+	visitGen []uint32
+	gScore   []float64
+	cameFrom []int32 // packed predecessor index, -1 for the start cell
+	open     pqHeap
+	nuQueue  [][2]int // nearestUnblocked BFS queue
+}
+
+func (g *NavGrid) ensureScratch() *pathScratch {
+	n := g.Width * g.Height
+	if g.scratch == nil || len(g.scratch.visitGen) != n {
+		g.scratch = &pathScratch{
+			visitGen: make([]uint32, n),
+			gScore:   make([]float64, n),
+			cameFrom: make([]int32, n),
+		}
+	}
+	return g.scratch
+}
+
+// nextGen starts a new visitation epoch. On uint32 wraparound the stamp array
+// is cleared so stale stamps can never alias the new generation.
+func (s *pathScratch) nextGen() uint32 {
+	s.gen++
+	if s.gen == 0 {
+		clear(s.visitGen)
+		s.gen = 1
+	}
+	return s.gen
 }
 
 // botPadding is added to every obstacle when building the blocked grid so that
@@ -165,25 +208,33 @@ func FindPath(start, goal Vec2, grid *NavGrid) []Vec2 {
 		startCell = alt
 	}
 
-	// A* open set (min-heap by f-score).
-	open := &pqHeap{}
-	heap.Init(open)
+	// A* open set (typed min-heap by f-score) over flat generation-stamped
+	// scratch arrays: no per-node interface boxing, no per-call maps.
+	s := grid.ensureScratch()
+	gen := s.nextGen()
+	open := s.open[:0]
+
+	idx := func(c [2]int) int32 { return int32(c[0]*grid.Height + c[1]) }
 
 	counter := 0
-	gScore := make(map[[2]int]float64)
-	gScore[startCell] = 0
-	cameFrom := make(map[[2]int][2]int)
+	startIdx := idx(startCell)
+	s.visitGen[startIdx] = gen
+	s.gScore[startIdx] = 0
+	s.cameFrom[startIdx] = -1
 
 	h := octileHeuristic(startCell, goalCell)
-	heap.Push(open, pqItem{f: h, seq: counter, cell: startCell})
+	open = open.pushItem(pqItem{f: h, seq: counter, cell: startCell})
 
-	for open.Len() > 0 {
-		cur := heap.Pop(open).(pqItem)
+	defer func() { s.open = open[:0] }()
+
+	for len(open) > 0 {
+		var cur pqItem
+		open, cur = open.popItem()
 		current := cur.cell
 
 		if current == goalCell {
 			// Reconstruct and convert to world coords.
-			pathCells := reconstructPath(cameFrom, current)
+			pathCells := reconstructPath(s, grid, current)
 			waypoints := make([]Vec2, 0, len(pathCells))
 			for i, c := range pathCells {
 				if i == len(pathCells)-1 {
@@ -197,7 +248,7 @@ func FindPath(start, goal Vec2, grid *NavGrid) []Vec2 {
 			return waypoints
 		}
 
-		currentG := gScore[current]
+		currentG := s.gScore[idx(current)]
 
 		for _, d := range directions {
 			nx := current[0] + d.dx
@@ -220,16 +271,18 @@ func FindPath(start, goal Vec2, grid *NavGrid) []Vec2 {
 			}
 
 			neighbor := [2]int{nx, ny}
+			nIdx := idx(neighbor)
 			tentativeG := currentG + d.cost
 
-			if prev, ok := gScore[neighbor]; ok && tentativeG >= prev {
+			if s.visitGen[nIdx] == gen && tentativeG >= s.gScore[nIdx] {
 				continue
 			}
 
-			gScore[neighbor] = tentativeG
-			cameFrom[neighbor] = current
+			s.visitGen[nIdx] = gen
+			s.gScore[nIdx] = tentativeG
+			s.cameFrom[nIdx] = idx(current)
 			counter++
-			heap.Push(open, pqItem{
+			open = open.pushItem(pqItem{
 				f:    tentativeG + octileHeuristic(neighbor, goalCell),
 				seq:  counter,
 				cell: neighbor,
@@ -248,17 +301,19 @@ func octileHeuristic(a, b [2]int) float64 {
 	return math.Max(dx, dy) + (sqrt2-1)*math.Min(dx, dy)
 }
 
-// reconstructPath walks the cameFrom map backwards from current to start and
-// returns the cell sequence excluding the start cell.
-func reconstructPath(cameFrom map[[2]int][2]int, current [2]int) [][2]int {
+// reconstructPath walks the scratch cameFrom chain backwards from current to
+// start and returns the cell sequence excluding the start cell.
+func reconstructPath(s *pathScratch, grid *NavGrid, current [2]int) [][2]int {
 	path := [][2]int{current}
+	cur := int32(current[0]*grid.Height + current[1])
 	for {
-		prev, ok := cameFrom[current]
-		if !ok {
+		prev := s.cameFrom[cur]
+		if prev < 0 {
 			break
 		}
-		path = append(path, prev)
-		current = prev
+		cell := [2]int{int(prev) / grid.Height, int(prev) % grid.Height}
+		path = append(path, cell)
+		cur = prev
 	}
 	// Reverse.
 	for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
@@ -271,37 +326,40 @@ func reconstructPath(cameFrom map[[2]int][2]int, current [2]int) [][2]int {
 	return path
 }
 
-// nearestUnblocked performs a BFS from cell to find the closest unblocked cell.
+// nearestUnblocked performs a BFS from cell to find the closest unblocked
+// cell. Reuses the grid's scratch visit stamps and queue: it runs whenever
+// the chased target stands in a padded-blocked cell, i.e. potentially every
+// re-path tick.
 func nearestUnblocked(cell [2]int, grid *NavGrid) ([2]int, bool) {
-	type qEntry struct {
-		cx, cy int
-	}
+	s := grid.ensureScratch()
+	gen := s.nextGen()
 
-	visited := make(map[[2]int]bool)
-	visited[cell] = true
-	queue := []qEntry{{cell[0], cell[1]}}
+	s.visitGen[cell[0]*grid.Height+cell[1]] = gen
+	queue := append(s.nuQueue[:0], cell)
+	head := 0
+	defer func() { s.nuQueue = queue[:0] }()
 	maxSearch := 200
 
-	for len(queue) > 0 && maxSearch > 0 {
+	for head < len(queue) && maxSearch > 0 {
 		maxSearch--
-		cur := queue[0]
-		queue = queue[1:]
+		cur := queue[head]
+		head++
 
 		for _, d := range directions {
-			nx := cur.cx + d.dx
-			ny := cur.cy + d.dy
+			nx := cur[0] + d.dx
+			ny := cur[1] + d.dy
 			if nx < 0 || nx >= grid.Width || ny < 0 || ny >= grid.Height {
 				continue
 			}
-			key := [2]int{nx, ny}
-			if visited[key] {
+			nIdx := nx*grid.Height + ny
+			if s.visitGen[nIdx] == gen {
 				continue
 			}
-			visited[key] = true
+			s.visitGen[nIdx] = gen
 			if !grid.Blocked[nx][ny] {
-				return key, true
+				return [2]int{nx, ny}, true
 			}
-			queue = append(queue, qEntry{nx, ny})
+			queue = append(queue, [2]int{nx, ny})
 		}
 	}
 
@@ -378,7 +436,10 @@ func lineClear(a, b Vec2, grid *NavGrid) bool {
 }
 
 // ---------------------------------------------------------------------------
-// Priority queue for A* (implements container/heap.Interface)
+// Priority queue for A*. A typed min-heap on []pqItem instead of
+// container/heap: the heap.Interface API takes and returns `any`, which
+// boxed a 32-byte pqItem into an interface — one heap allocation per push
+// AND per pop, i.e. thousands per FindPath call on long paths.
 // ---------------------------------------------------------------------------
 
 type pqItem struct {
@@ -389,14 +450,46 @@ type pqItem struct {
 
 type pqHeap []pqItem
 
-func (h pqHeap) Len() int            { return len(h) }
-func (h pqHeap) Less(i, j int) bool  { return h[i].f < h[j].f || (h[i].f == h[j].f && h[i].seq < h[j].seq) }
-func (h pqHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *pqHeap) Push(x any) { *h = append(*h, x.(pqItem)) }
-func (h *pqHeap) Pop() any {
-	old := *h
-	n := len(old)
-	item := old[n-1]
-	*h = old[:n-1]
-	return item
+func (h pqHeap) less(i, j int) bool {
+	return h[i].f < h[j].f || (h[i].f == h[j].f && h[i].seq < h[j].seq)
+}
+
+// pushItem appends it and sifts up, returning the (possibly regrown) heap.
+func (h pqHeap) pushItem(it pqItem) pqHeap {
+	h = append(h, it)
+	i := len(h) - 1
+	for i > 0 {
+		parent := (i - 1) / 2
+		if !h.less(i, parent) {
+			break
+		}
+		h[i], h[parent] = h[parent], h[i]
+		i = parent
+	}
+	return h
+}
+
+// popItem removes and returns the minimum item, sifting the moved tail down.
+func (h pqHeap) popItem() (pqHeap, pqItem) {
+	root := h[0]
+	n := len(h) - 1
+	h[0] = h[n]
+	h = h[:n]
+	i := 0
+	for {
+		l, r := 2*i+1, 2*i+2
+		smallest := i
+		if l < n && h.less(l, smallest) {
+			smallest = l
+		}
+		if r < n && h.less(r, smallest) {
+			smallest = r
+		}
+		if smallest == i {
+			break
+		}
+		h[i], h[smallest] = h[smallest], h[i]
+		i = smallest
+	}
+	return h, root
 }

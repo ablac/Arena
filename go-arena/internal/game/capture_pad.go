@@ -194,31 +194,49 @@ func maybeApplyCapturePadControlPulse(pad *CapturePad, contenders []*BotState, t
 	pad.NextControlPulseTick = tickCount + config.C.CapturePadControlPulseTicks
 }
 
+// CapturePadView is the typed protocol view of a capture pad. Position is
+// grid coordinates ([2]int) for bots/REST and world coordinates (Vec2) for
+// spectators, matching the useGridPos flag of BuildCapturePadView.
+type CapturePadView struct {
+	Type                   string `json:"type"`
+	ID                     string `json:"id"`
+	Radius                 int    `json:"radius"`
+	CaptureTicks           int    `json:"capture_ticks"`
+	ProgressTicks          int    `json:"progress_ticks"`
+	CapturingBotID         string `json:"capturing_bot_id"`
+	OwnerID                string `json:"owner_id"`
+	ContenderCount         int    `json:"contender_count"`
+	IsContested            bool   `json:"is_contested"`
+	IsReady                bool   `json:"is_ready"`
+	CooldownRemainingTicks int    `json:"cooldown_remaining_ticks"`
+	NextControlPulseTicks  int    `json:"next_control_pulse_ticks"`
+	Position               any    `json:"position"`
+}
+
 // BuildCapturePadView creates a protocol-compatible view of a capture pad.
-func BuildCapturePadView(pad CapturePad, tickCount int, useGridPos bool) map[string]interface{} {
+func BuildCapturePadView(pad CapturePad, tickCount int, useGridPos bool) CapturePadView {
 	remaining := 0
 	if pad.CooldownUntilTick > tickCount {
 		remaining = pad.CooldownUntilTick - tickCount
 	}
-	view := map[string]interface{}{
-		"type":                     "capture_pad",
-		"id":                       pad.ID,
-		"radius":                   pad.Radius,
-		"capture_ticks":            pad.CaptureTicksRequired,
-		"progress_ticks":           pad.ProgressTicks,
-		"capturing_bot_id":         pad.CapturingBotID,
-		"owner_id":                 pad.LastCapturedBy,
-		"contender_count":          pad.ContenderCount,
-		"is_contested":             pad.Contested,
-		"is_ready":                 remaining == 0,
-		"cooldown_remaining_ticks": remaining,
-		"next_control_pulse_ticks": max(0, pad.NextControlPulseTick-tickCount),
+	view := CapturePadView{
+		Type:                   "capture_pad",
+		ID:                     pad.ID,
+		Radius:                 pad.Radius,
+		CaptureTicks:           pad.CaptureTicksRequired,
+		ProgressTicks:          pad.ProgressTicks,
+		CapturingBotID:         pad.CapturingBotID,
+		OwnerID:                pad.LastCapturedBy,
+		ContenderCount:         pad.ContenderCount,
+		IsContested:            pad.Contested,
+		IsReady:                remaining == 0,
+		CooldownRemainingTicks: remaining,
+		NextControlPulseTicks:  max(0, pad.NextControlPulseTick-tickCount),
 	}
 	if useGridPos {
-		gridPos := posToGrid(pad.Position)
-		view["position"] = [2]int{gridPos[0], gridPos[1]}
+		view.Position = posToGrid(pad.Position)
 	} else {
-		view["position"] = pad.Position
+		view.Position = pad.Position
 	}
 	return view
 }

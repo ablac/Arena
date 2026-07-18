@@ -127,9 +127,11 @@ class FakeParticleSystem {
 function fakeRibbon(name, options) {
   if (options.instance) return options.instance;
   return {
-    name, enabled: true, disposed: false,
+    name, enabled: true, disposed: false, normalsFrozen: false,
     getTotalVertices: () => 24,
-    setVerticesData() {},
+    setVerticesData() { this.colorBufferCreated = true; },
+    updateVerticesData() { this.colorBufferUpdated = true; },
+    freezeNormals() { this.normalsFrozen = true; },
     isEnabled() { return this.enabled; },
     setEnabled(value) { this.enabled = value; },
     dispose() { this.disposed = true; },

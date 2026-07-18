@@ -61,6 +61,16 @@ export class PickupRenderer {
     this.scene = scene;
     /** @type {Map<string, Object>} */
     this.meshes = new Map();
+    /**
+     * Per-type disabled template parts. Every live pickup used to build its
+     * own geometry (torus knots at radialSegments 64 are ~845 verts) and
+     * draw as 1-3 separate calls; instances share the template's vertex
+     * buffers, so a spawn allocates no geometry and all instances of a type
+     * batch into one draw call. Templates also carry the HighlightLayer
+     * registration once per type — the HL glow is per-type colored anyway.
+     * @type {Map<string, {parts: BABYLON.Mesh[]}>}
+     */
+    this._templates = new Map();
   }
 
   update(pickups) {
@@ -87,96 +97,88 @@ export class PickupRenderer {
     }
   }
 
-  _create(p) {
+  /**
+   * Build (once per type) the disabled template meshes whose geometry and
+   * material every live pickup of that type instances. Templates are
+   * registered with the HighlightLayer here — instances of a registered
+   * template glow with the type color, and the HL's RTT pass batches per
+   * template instead of per pickup.
+   */
+  _getTemplate(type) {
+    let tpl = this._templates.get(type);
+    if (tpl) return tpl;
     const B = window.BABYLON;
-    const id = p.pickup_id;
-    const type = p.pickup_type || 'health_pack';
     const mats = _getMats(type, this.scene);
-    const root = new B.TransformNode(`pu-${id}`, this.scene);
+    const parts = [];
+    const part = (mesh) => { mesh.material = mats.shapeMat; parts.push(mesh); return mesh; };
 
-    let mesh;
     if (type === 'health_pack') {
       // Red/green cross shape
-      const h = B.MeshBuilder.CreateBox(`puh-${id}`, { width: 3, height: 8, depth: 3 }, this.scene);
-      const v = B.MeshBuilder.CreateBox(`puv-${id}`, { width: 8, height: 3, depth: 3 }, this.scene);
-      h.parent = root; v.parent = root;
-      h.material = mats.shapeMat; v.material = mats.shapeMat;
-      mesh = h; mesh._sibling = v;
+      part(B.MeshBuilder.CreateBox(`putpl-${type}-h`, { width: 3, height: 8, depth: 3 }, this.scene));
+      part(B.MeshBuilder.CreateBox(`putpl-${type}-v`, { width: 8, height: 3, depth: 3 }, this.scene));
     } else if (type === 'shield_bubble') {
-      mesh = B.MeshBuilder.CreateSphere(`pum-${id}`, { diameter: 8, segments: 6 }, this.scene);
-      mesh.parent = root;
-      mesh.material = mats.shapeMat;
+      part(B.MeshBuilder.CreateSphere(`putpl-${type}`, { diameter: 8, segments: 6 }, this.scene));
     } else if (type === 'speed_boost') {
       // Lightning bolt / arrow shape
-      mesh = B.MeshBuilder.CreateCylinder(`pum-${id}`, { diameterTop: 0, diameterBottom: 7, height: 10, tessellation: 3 }, this.scene);
-      mesh.parent = root;
-      mesh.material = mats.shapeMat;
+      part(B.MeshBuilder.CreateCylinder(`putpl-${type}`, { diameterTop: 0, diameterBottom: 7, height: 10, tessellation: 3 }, this.scene));
     } else if (type === 'cooldown_shard') {
-      mesh = B.MeshBuilder.CreateTorusKnot(`pum-${id}`, { radius: 3.2, tube: 0.9, radialSegments: 64, tubularSegments: 12, p: 2, q: 3 }, this.scene);
-      mesh.parent = root;
-      mesh.material = mats.shapeMat;
-      mesh.rotation.x = Math.PI / 2;
+      part(B.MeshBuilder.CreateTorusKnot(`putpl-${type}`, { radius: 3.2, tube: 0.9, radialSegments: 64, tubularSegments: 12, p: 2, q: 3 }, this.scene))
+        .rotation.x = Math.PI / 2;
     } else if (type === 'bounty_token') {
-      mesh = B.MeshBuilder.CreateCylinder(`pum-${id}`, { diameter: 7, height: 1.4, tessellation: 24 }, this.scene);
-      mesh.parent = root;
-      mesh.material = mats.shapeMat;
-      const ring = B.MeshBuilder.CreateTorus(`pur-${id}`, { diameter: 9, thickness: 0.5, tessellation: 32 }, this.scene);
-      ring.parent = root;
-      ring.material = mats.shapeMat;
-      ring.position.y = 0.2;
-      mesh._sibling = ring;
+      part(B.MeshBuilder.CreateCylinder(`putpl-${type}`, { diameter: 7, height: 1.4, tessellation: 24 }, this.scene));
+      part(B.MeshBuilder.CreateTorus(`putpl-${type}-ring`, { diameter: 9, thickness: 0.5, tessellation: 32 }, this.scene))
+        .position.y = 0.2;
     } else if (type === 'hazard_key') {
-      mesh = B.MeshBuilder.CreateTorusKnot(`pum-${id}`, { radius: 3.1, tube: 0.85, radialSegments: 64, tubularSegments: 12, p: 3, q: 2 }, this.scene);
-      mesh.parent = root;
-      mesh.material = mats.shapeMat;
-      mesh.rotation.x = Math.PI / 2;
-      const stem = B.MeshBuilder.CreateCylinder(`pus-${id}`, { diameter: 1.4, height: 7, tessellation: 12 }, this.scene);
-      stem.parent = root;
-      stem.material = mats.shapeMat;
-      stem.position.y = -1.5;
-      mesh._sibling = stem;
+      part(B.MeshBuilder.CreateTorusKnot(`putpl-${type}`, { radius: 3.1, tube: 0.85, radialSegments: 64, tubularSegments: 12, p: 3, q: 2 }, this.scene))
+        .rotation.x = Math.PI / 2;
+      part(B.MeshBuilder.CreateCylinder(`putpl-${type}-stem`, { diameter: 1.4, height: 7, tessellation: 12 }, this.scene))
+        .position.y = -1.5;
     } else if (type === 'overdrive_core') {
-      mesh = B.MeshBuilder.CreatePolyhedron(`pum-${id}`, { type: 1, size: 4.8 }, this.scene);
-      mesh.parent = root;
-      mesh.material = mats.shapeMat;
-      const ring = B.MeshBuilder.CreateTorus(`pur-${id}`, { diameter: 10, thickness: 0.65, tessellation: 36 }, this.scene);
-      ring.parent = root;
-      ring.material = mats.shapeMat;
-      ring.rotation.x = Math.PI / 2;
-      mesh._sibling = ring;
+      part(B.MeshBuilder.CreatePolyhedron(`putpl-${type}`, { type: 1, size: 4.8 }, this.scene));
+      part(B.MeshBuilder.CreateTorus(`putpl-${type}-ring`, { diameter: 10, thickness: 0.65, tessellation: 36 }, this.scene))
+        .rotation.x = Math.PI / 2;
     } else if (type === 'grapple_charge') {
-      mesh = B.MeshBuilder.CreateTorusKnot(`pum-${id}`, { radius: 2.7, tube: 0.7, radialSegments: 56, tubularSegments: 12, p: 2, q: 5 }, this.scene);
-      mesh.parent = root;
-      mesh.material = mats.shapeMat;
-      mesh.rotation.x = Math.PI / 2;
+      part(B.MeshBuilder.CreateTorusKnot(`putpl-${type}`, { radius: 2.7, tube: 0.7, radialSegments: 56, tubularSegments: 12, p: 2, q: 5 }, this.scene))
+        .rotation.x = Math.PI / 2;
     } else if (type === 'relay_battery') {
-      mesh = B.MeshBuilder.CreateCylinder(`pum-${id}`, { diameter: 4.6, height: 8.5, tessellation: 16 }, this.scene);
-      mesh.parent = root;
-      mesh.material = mats.shapeMat;
-      const capTop = B.MeshBuilder.CreateSphere(`put-${id}`, { diameter: 3.2, segments: 10 }, this.scene);
-      capTop.parent = root;
-      capTop.material = mats.shapeMat;
-      capTop.position.y = 3.5;
-      const capBottom = B.MeshBuilder.CreateSphere(`pub-${id}`, { diameter: 3.2, segments: 10 }, this.scene);
-      capBottom.parent = root;
-      capBottom.material = mats.shapeMat;
-      capBottom.position.y = -3.5;
-      mesh._sibling = capTop;
-      mesh._extraSibling = capBottom;
+      part(B.MeshBuilder.CreateCylinder(`putpl-${type}`, { diameter: 4.6, height: 8.5, tessellation: 16 }, this.scene));
+      part(B.MeshBuilder.CreateSphere(`putpl-${type}-top`, { diameter: 3.2, segments: 10 }, this.scene))
+        .position.y = 3.5;
+      part(B.MeshBuilder.CreateSphere(`putpl-${type}-bottom`, { diameter: 3.2, segments: 10 }, this.scene))
+        .position.y = -3.5;
     } else {
       // damage_boost and fallback — diamond
-      mesh = B.MeshBuilder.CreatePolyhedron(`pum-${id}`, { type: 1, size: 4 }, this.scene);
-      mesh.parent = root;
-      mesh.material = mats.shapeMat;
+      part(B.MeshBuilder.CreatePolyhedron(`putpl-${type}`, { type: 1, size: 4 }, this.scene));
     }
 
     const hl = _getHighlightLayer(this.scene);
     const c = COLORS[type] || COLORS.health_pack;
     const hlColor = new B.Color3(c[0], c[1], c[2]);
-    hl.addMesh(mesh, hlColor);
-    // For health_pack with sibling, add both
-    if (mesh._sibling) hl.addMesh(mesh._sibling, hlColor);
-    if (mesh._extraSibling) hl.addMesh(mesh._extraSibling, hlColor);
+    for (const m of parts) {
+      m.setEnabled(false);
+      m.isPickable = false;
+      hl.addMesh(m, hlColor);
+    }
+
+    tpl = { parts };
+    this._templates.set(type, tpl);
+    return tpl;
+  }
+
+  _create(p) {
+    const B = window.BABYLON;
+    const id = p.pickup_id;
+    const type = p.pickup_type || 'health_pack';
+    const root = new B.TransformNode(`pu-${id}`, this.scene);
+
+    const tpl = this._getTemplate(type);
+    const instances = tpl.parts.map((partMesh, i) => {
+      const inst = partMesh.createInstance(`pu-${id}-${i}`);
+      inst.parent = root;
+      inst.position.copyFrom(partMesh.position);
+      inst.rotation.copyFrom(partMesh.rotation);
+      return inst;
+    });
 
     // Floating bob animation (Babylon Animation API — runs automatically)
     const bobAnim = new B.Animation('pickupBob', 'position.y', 30,
@@ -197,20 +199,15 @@ export class PickupRenderer {
     ]);
     this.scene.beginDirectAnimation(root, [rotAnim], 0, 30, true, 0.8 + Math.random() * 0.4);
 
-    return { root, mesh };
+    return { root, instances };
   }
 
   _dispose(entry) {
-    const hl = _getHighlightLayer(this.scene);
-    if (hl) {
-      hl.removeMesh(entry.mesh);
-      if (entry.mesh._sibling) hl.removeMesh(entry.mesh._sibling);
-      if (entry.mesh._extraSibling) hl.removeMesh(entry.mesh._extraSibling);
-    }
+    // Templates stay registered on the HighlightLayer and keep their
+    // geometry for the scene's lifetime; only the per-pickup instances and
+    // transform go away.
     this.scene.stopAnimation(entry.root);
-    if (entry.mesh._sibling) entry.mesh._sibling.dispose();
-    if (entry.mesh._extraSibling) entry.mesh._extraSibling.dispose();
-    entry.mesh.dispose();
+    for (const inst of entry.instances) inst.dispose();
     entry.root.dispose();
     // Don't dispose shared materials
   }

@@ -147,7 +147,7 @@ func TestAfterRoundCreatedSuppressesDependentsOnFailure(t *testing.T) {
 func isolateBotStatsPersistence(t *testing.T) uint64 {
 	t.Helper()
 	botStatsPersistenceMu.Lock()
-	previousApply := applyBotStatsDelta
+	previousApply := applyBotStatsDeltas
 	previousInsertRound := insertRoundBotStats
 	previousPending := pendingBotStatsDeltas
 	previousEpoch := botStatsPersistenceEpoch.Load()
@@ -156,7 +156,7 @@ func isolateBotStatsPersistence(t *testing.T) uint64 {
 
 	t.Cleanup(func() {
 		botStatsPersistenceMu.Lock()
-		applyBotStatsDelta = previousApply
+		applyBotStatsDeltas = previousApply
 		insertRoundBotStats = previousInsertRound
 		pendingBotStatsDeltas = previousPending
 		botStatsPersistenceEpoch.Store(previousEpoch)
@@ -248,12 +248,15 @@ func TestFailedBotStatsDeltaIsRetriedWithNextSnapshot(t *testing.T) {
 	epoch := isolateBotStatsPersistence(t)
 	calls := 0
 	var applied db.BotStatsDelta
-	applyBotStatsDelta = func(_ context.Context, delta *db.BotStatsDelta) error {
+	applyBotStatsDeltas = func(_ context.Context, deltas []db.BotStatsDelta) error {
 		calls++
 		if calls == 1 {
 			return errors.New("temporary database failure")
 		}
-		applied = *delta
+		if len(deltas) != 1 {
+			return errors.New("expected a single merged delta")
+		}
+		applied = deltas[0]
 		return nil
 	}
 
@@ -307,8 +310,8 @@ func TestResetLeaderboardInvalidatesStaleSnapshots(t *testing.T) {
 	}
 
 	var applied []db.BotStatsDelta
-	applyBotStatsDelta = func(_ context.Context, delta *db.BotStatsDelta) error {
-		applied = append(applied, *delta)
+	applyBotStatsDeltas = func(_ context.Context, deltas []db.BotStatsDelta) error {
+		applied = append(applied, deltas...)
 		return nil
 	}
 	if err := engine.ResetLeaderboard(context.Background(), func(context.Context) error {
@@ -391,9 +394,8 @@ func TestRoundBotStatsRejectsPreResetEpoch(t *testing.T) {
 	epoch := isolateBotStatsPersistence(t)
 	inserted := 0
 	var insertedRoundID string
-	insertRoundBotStats = func(_ context.Context, roundID string, _ int, _, _, _ string,
-		_, _ int, _, _ int64, _, _, _, _ int, _ float64, _ int, _ bool) error {
-		inserted++
+	insertRoundBotStats = func(_ context.Context, roundID string, _ int, rows []db.RoundBotStatsRow) error {
+		inserted += len(rows)
 		insertedRoundID = roundID
 		return nil
 	}

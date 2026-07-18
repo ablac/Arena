@@ -19,8 +19,8 @@ var (
 	botStatsPersistenceMu    sync.Mutex
 	botStatsPersistenceEpoch atomic.Uint64
 	pendingBotStatsDeltas    = make(map[string]db.BotStatsDelta)
-	applyBotStatsDelta       = db.ApplyBotStatsDelta
-	insertRoundBotStats      = db.InsertRoundBotStats
+	applyBotStatsDeltas      = db.ApplyBotStatsDeltas
+	insertRoundBotStats      = db.InsertRoundBotStatsBatch
 )
 
 // PersistBotStatsFromSnapshot saves accumulated round stats using pre-copied
@@ -103,19 +103,28 @@ func queueBotStatsDeltaLocked(delta db.BotStatsDelta) {
 }
 
 func flushBotStatsDeltasLocked(ctx context.Context) {
+	if len(pendingBotStatsDeltas) == 0 {
+		return
+	}
 	botIDs := make([]string, 0, len(pendingBotStatsDeltas))
 	for botID := range pendingBotStatsDeltas {
 		botIDs = append(botIDs, botID)
 	}
 	sort.Strings(botIDs)
+	deltas := make([]db.BotStatsDelta, 0, len(botIDs))
 	for _, botID := range botIDs {
-		delta := pendingBotStatsDeltas[botID]
-		if err := applyBotStatsDelta(ctx, &delta); err != nil {
-			slog.Error("persist: failed to apply bot stats delta", "bot_id", botID, "error", err)
-			continue
-		}
-		delete(pendingBotStatsDeltas, botID)
+		deltas = append(deltas, pendingBotStatsDeltas[botID])
 	}
+	// One batched round trip instead of one Exec per bot. The batch is
+	// implicitly transactional (single Sync point), so treat the flush as
+	// all-or-nothing: only clear pending state when the whole batch committed;
+	// on any error keep every delta queued — queueBotStatsDeltaLocked merges
+	// additively, so the next flush retries the same totals.
+	if err := applyBotStatsDeltas(ctx, deltas); err != nil {
+		slog.Error("persist: failed to apply bot stats deltas", "bots", len(deltas), "error", err)
+		return
+	}
+	clear(pendingBotStatsDeltas)
 }
 
 // PersistSingleBot saves a single bot's stats, typically called on
@@ -143,20 +152,58 @@ func PersistRoundBotStats(ctx context.Context, epoch uint64, roundID string, rou
 		botIDs = append(botIDs, botID)
 	}
 	sort.Strings(botIDs)
+	rows := make([]db.RoundBotStatsRow, 0, len(botIDs))
 	for _, botID := range botIDs {
 		bot := bots[botID]
 		if bot == nil {
 			continue
 		}
-		won := bot.BotID == winnerID
 		lifeSecs := int(math.Round(float64(bot.RoundLongestLife) / math.Max(1, float64(config.C.TickRate))))
-		if err := insertRoundBotStats(ctx, roundID, roundNumber, bot.BotID, bot.Name, bot.Weapon,
-			bot.RoundKills, bot.RoundDeaths,
-			int64(bot.RoundDamageDealt), int64(bot.RoundDamageTaken),
-			lifeSecs, bot.RoundShotsFired, bot.RoundShotsHit, bot.RoundPickups,
-			bot.RoundDistance, ClampElo(bot.Elo), won); err != nil {
-			slog.Error("persist: failed to insert round bot stats", "bot_id", bot.BotID, "round_id", roundID, "round", roundNumber, "error", err)
-		}
+		rows = append(rows, db.RoundBotStatsRow{
+			BotID:           bot.BotID,
+			BotName:         bot.Name,
+			Weapon:          bot.Weapon,
+			Kills:           bot.RoundKills,
+			Deaths:          bot.RoundDeaths,
+			DamageDealt:     int64(bot.RoundDamageDealt),
+			DamageTaken:     int64(bot.RoundDamageTaken),
+			LongestLifeSecs: lifeSecs,
+			ShotsFired:      bot.RoundShotsFired,
+			ShotsHit:        bot.RoundShotsHit,
+			Pickups:         bot.RoundPickups,
+			Distance:        bot.RoundDistance,
+			Elo:             ClampElo(bot.Elo),
+			Won:             bot.BotID == winnerID,
+		})
+	}
+	// Single multi-row insert: one DB round trip per round end instead of one
+	// per bot, and a shorter botStatsPersistenceMu hold.
+	if err := insertRoundBotStats(ctx, roundID, roundNumber, rows); err != nil {
+		slog.Error("persist: failed to insert round bot stats", "bots", len(rows), "round_id", roundID, "round", roundNumber, "error", err)
+	}
+}
+
+// killLogRetention bounds kill_log growth. The weapon-stats windows need only
+// 24h of rows and all-time totals live in weapon_kill_totals, but keep a
+// month so per-round kill history stays inspectable for a while.
+const killLogRetention = 30 * 24 * time.Hour
+
+// PruneKillLogOnce deletes kill_log rows older than the retention window.
+// Called from a background goroutine at startup and daily; never on the tick
+// goroutine.
+func PruneKillLogOnce() {
+	if db.Pool == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	deleted, err := db.PruneKillLog(ctx, time.Now().Add(-killLogRetention), 5000)
+	if err != nil {
+		slog.Warn("persist: kill_log prune failed", "deleted_before_error", deleted, "error", err)
+		return
+	}
+	if deleted > 0 {
+		slog.Info("persist: kill_log pruned", "deleted", deleted)
 	}
 }
 

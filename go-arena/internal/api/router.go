@@ -75,6 +75,19 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	// Panic recovery.
 	r.Use(middleware.Recoverer)
 
+	// Response compression for text assets. text/event-stream is deliberately
+	// excluded (compressing it would buffer the dashboard SSE stream), and
+	// WebSocket upgrades are unaffected (the compress writer passes through
+	// http.Hijacker and 101 responses never match the type list).
+	r.Use(middleware.Compress(5,
+		"text/html",
+		"text/css",
+		"application/javascript",
+		"text/javascript",
+		"application/json",
+		"image/svg+xml",
+	))
+
 	// --- API v1 routes ---
 
 	adminHandler := NewAdminHandler(engine)
@@ -495,10 +508,19 @@ func noCacheStaticHandler(next http.Handler) http.Handler {
 		lastSegment := path[strings.LastIndex(path, "/")+1:]
 		isVersionedAsset := strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css")
 		isHTMLDocument := strings.HasSuffix(path, ".html") || !strings.Contains(lastSegment, ".")
-		if isVersionedAsset || isHTMLDocument {
+		if isHTMLDocument {
+			// HTML page shells keep the full belt-and-braces block: a stale
+			// cached page shell after a deploy is the regression class
+			// documented in docs/build-and-deploy.md.
 			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 			w.Header().Set("Pragma", "no-cache")
 			w.Header().Set("Expires", "0")
+		} else if isVersionedAsset {
+			// no-cache (without no-store) still forces revalidation on every
+			// load, but lets the browser store the body and answer with
+			// If-Modified-Since, so http.FileServer serves body-less 304s
+			// instead of re-transferring ~750 KB of JS/CSS per page view.
+			w.Header().Set("Cache-Control", "no-cache")
 		}
 		next.ServeHTTP(w, r)
 	})

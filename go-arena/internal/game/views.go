@@ -61,11 +61,15 @@ func isRearExposedToObserver(observerPos Vec2, bot *BotState) bool {
 	if bot == nil {
 		return false
 	}
-	targetFacing := bot.Facing.Normalized()
+	return isRearExposed(observerPos, bot.Position, bot.Facing)
+}
+
+func isRearExposed(observerPos, targetPos, facing Vec2) bool {
+	targetFacing := facing.Normalized()
 	if targetFacing.Length() <= 0 {
 		return false
 	}
-	fromTarget := observerPos.Sub(bot.Position).Normalized()
+	fromTarget := observerPos.Sub(targetPos).Normalized()
 	if fromTarget.Length() <= 0 {
 		return false
 	}
@@ -81,19 +85,58 @@ func posToGrid(pos Vec2) [2]int {
 	return [2]int{int(pos.X()), int(pos.Y())}
 }
 
-// BuildBotNearbyView builds the protocol-compatible map for a bot as seen by
-// a nearby observer. Position is reported as grid coordinates.
-// observerPos is the world-space position of the observing bot (for LOS checks).
-func BuildBotNearbyView(bot *BotState, observerPos Vec2) map[string]interface{} {
-	var lastAction interface{}
+// BotNearbyView is the typed protocol view of a bot as seen by a nearby
+// observer. Only HasLOS and RearExposed depend on the observer; every other
+// field is observer-independent, so one base view is built per visible bot
+// per tick and copied per observer via ObservedBy (see sendBotTickUpdates).
+type BotNearbyView struct {
+	Type                   string  `json:"type"`
+	ID                     string  `json:"id"`
+	BotID                  string  `json:"bot_id"`
+	Name                   string  `json:"name"`
+	Team                   int     `json:"team"`
+	Position               [2]int  `json:"position"`
+	HP                     float64 `json:"hp"`
+	MaxHP                  float64 `json:"max_hp"`
+	Weapon                 string  `json:"weapon"`
+	IsAlive                bool    `json:"is_alive"`
+	AvatarColor            string  `json:"avatar_color"`
+	LastAction             *string `json:"last_action"`
+	Action                 *string `json:"action"`
+	TargetID               string  `json:"target_id"`
+	IsDodging              bool    `json:"is_dodging"`
+	IsStunned              bool    `json:"is_stunned"`
+	Facing                 Vec2    `json:"facing"`
+	RecentlyDisruptedTicks int     `json:"recently_disrupted_ticks"`
+	BraceReady             bool    `json:"brace_ready"`
+	BowChargeTicks         int     `json:"bow_charge_ticks"`
+	BowChargeLevel         float64 `json:"bow_charge_level"`
+	ChargedShotReady       bool    `json:"charged_shot_ready"`
+	HasLOS                 bool    `json:"has_los"`
+	AttackRange            int     `json:"attack_range"`
+	CanAttack              bool    `json:"can_attack"`
+	RearExposed            bool    `json:"rear_exposed"`
+	NearImpactSurface      bool    `json:"near_impact_surface"`
+	ThreatScore            float64 `json:"threat_score"`
+
+	// worldPos is the bot's world-space position, retained for the
+	// observer-dependent LOS/rear checks. Unexported, so not serialized.
+	worldPos Vec2
+	// worldFacing keeps the raw facing for the rear-exposure dot product.
+	worldFacing Vec2
+}
+
+// BuildBotNearbyBaseView builds the observer-independent part of a bot's
+// nearby view (HasLOS and RearExposed are left false). Position is reported
+// as grid coordinates.
+func BuildBotNearbyBaseView(bot *BotState) BotNearbyView {
+	var lastAction *string
 	if bot.LastActionResult != nil {
-		lastAction = bot.LastActionResult.Action
+		action := bot.LastActionResult.Action
+		lastAction = &action
 	}
 
 	gridPos := posToGrid(bot.Position)
-
-	// Line of sight check.
-	hasLOS := ActiveTerrain != nil && !ActiveTerrain.GridLineBlocked(observerPos, bot.Position)
 
 	// Weapon attack range.
 	wc := GetWeaponConfig(bot.Weapon)
@@ -101,55 +144,158 @@ func BuildBotNearbyView(bot *BotState, observerPos Vec2) map[string]interface{} 
 	// Threat score: (kills * 10 + hp_percent * 5)
 	threatScore := round1(float64(bot.RoundKills)*10 + (bot.HP/bot.MaxHP)*500)
 
-	return map[string]interface{}{
-		"type":                     "bot",
-		"id":                       bot.BotID,
-		"bot_id":                   bot.BotID,
-		"name":                     bot.Name,
-		"team":                     bot.Team,
-		"position":                 [2]int{gridPos[0], gridPos[1]},
-		"hp":                       math.Round(bot.HP),
-		"max_hp":                   math.Round(bot.MaxHP),
-		"weapon":                   bot.Weapon,
-		"is_alive":                 bot.IsAlive,
-		"avatar_color":             bot.AvatarColor,
-		"last_action":              lastAction,
-		"action":                   lastAction,
-		"target_id":                botTargetID(bot),
-		"is_dodging":               bot.InvulnTicks > 0,
-		"is_stunned":               bot.StunTicks > 0,
-		"facing":                   bot.Facing,
-		"recently_disrupted_ticks": bot.RecentlyDisruptedTicks,
-		"brace_ready":              bot.Weapon == "spear" && isBraceReady(bot),
-		"bow_charge_ticks":         bot.BowChargeTicks,
-		"bow_charge_level":         bowChargeLevel(bot),
-		"charged_shot_ready":       chargedShotReady(bot),
-		"has_los":                  hasLOS,
-		"attack_range":             wc.GridRange,
-		"can_attack":               bot.CooldownRemaining <= 0,
-		"rear_exposed":             isRearExposedToObserver(observerPos, bot),
-		"near_impact_surface":      isNearImpactSurface(bot.Position, nil),
-		"threat_score":             threatScore,
+	return BotNearbyView{
+		Type:                   "bot",
+		ID:                     bot.BotID,
+		BotID:                  bot.BotID,
+		Name:                   bot.Name,
+		Team:                   bot.Team,
+		Position:               gridPos,
+		HP:                     math.Round(bot.HP),
+		MaxHP:                  math.Round(bot.MaxHP),
+		Weapon:                 bot.Weapon,
+		IsAlive:                bot.IsAlive,
+		AvatarColor:            bot.AvatarColor,
+		LastAction:             lastAction,
+		Action:                 lastAction,
+		TargetID:               botTargetID(bot),
+		IsDodging:              bot.InvulnTicks > 0,
+		IsStunned:              bot.StunTicks > 0,
+		Facing:                 bot.Facing,
+		RecentlyDisruptedTicks: bot.RecentlyDisruptedTicks,
+		BraceReady:             bot.Weapon == "spear" && isBraceReady(bot),
+		BowChargeTicks:         bot.BowChargeTicks,
+		BowChargeLevel:         bowChargeLevel(bot),
+		ChargedShotReady:       chargedShotReady(bot),
+		AttackRange:            wc.GridRange,
+		CanAttack:              bot.CooldownRemaining <= 0,
+		NearImpactSurface:      isNearImpactSurface(bot.Position, nil),
+		ThreatScore:            threatScore,
+		worldPos:               bot.Position,
+		worldFacing:            bot.Facing,
 	}
 }
 
-// BuildPickupNearbyView builds the protocol-compatible map for a pickup.
+// ObservedBy returns a copy of the base view with the observer-dependent
+// fields (line of sight, rear exposure) filled in. The copy is mandatory:
+// each observer's message is marshaled after the engine lock is released, so
+// observers must never share one mutable view.
+func (v BotNearbyView) ObservedBy(observerPos Vec2) *BotNearbyView {
+	view := v
+	view.HasLOS = ActiveTerrain != nil && !ActiveTerrain.GridLineBlocked(observerPos, v.worldPos)
+	view.RearExposed = isRearExposed(observerPos, v.worldPos, v.worldFacing)
+	return &view
+}
+
+// BuildBotNearbyView builds the full protocol view for a bot as seen by a
+// nearby observer. Position is reported as grid coordinates. observerPos is
+// the world-space position of the observing bot (for LOS checks).
+func BuildBotNearbyView(bot *BotState, observerPos Vec2) *BotNearbyView {
+	return BuildBotNearbyBaseView(bot).ObservedBy(observerPos)
+}
+
+// PickupNearbyView is the typed protocol view of a pickup in a bot's
+// nearby-entities list.
+type PickupNearbyView struct {
+	Type       string `json:"type"`
+	ID         string `json:"id"`
+	PickupID   string `json:"pickup_id"`
+	PickupType string `json:"pickup_type"`
+	Position   [2]int `json:"position"`
+}
+
+// BuildPickupNearbyView builds the protocol view for a pickup.
 // Position is reported as grid coordinates.
-func BuildPickupNearbyView(p Pickup) map[string]interface{} {
+func BuildPickupNearbyView(p Pickup) PickupNearbyView {
 	gridPos := posToGrid(p.Position)
 
-	return map[string]interface{}{
-		"type":        "pickup",
-		"id":          p.ID,
-		"pickup_id":   p.ID,
-		"pickup_type": string(p.Type),
-		"position":    [2]int{gridPos[0], gridPos[1]},
+	return PickupNearbyView{
+		Type:       "pickup",
+		ID:         p.ID,
+		PickupID:   p.ID,
+		PickupType: string(p.Type),
+		Position:   gridPos,
 	}
 }
 
-// BuildYourState builds the full your_state dict sent to a bot each tick.
+// BountyTargetView is the typed protocol view of the current bounty target,
+// visible to all bots regardless of fog.
+type BountyTargetView struct {
+	Type     string `json:"type"`
+	ID       string `json:"id"`
+	BotID    string `json:"bot_id"`
+	Name     string `json:"name"`
+	Position [2]int `json:"position"`
+}
+
+// EffectView is the typed protocol view of an active effect in your_state.
+type EffectView struct {
+	Name  string `json:"name"`
+	Ticks int    `json:"ticks"`
+}
+
+// HitReceivedView is the typed protocol view of a hit received this tick.
+type HitReceivedView struct {
+	AttackerID string  `json:"attacker_id"`
+	Damage     float64 `json:"damage"`
+	Weapon     string  `json:"weapon"`
+}
+
+// YourStateView is the typed your_state payload sent to a bot each tick.
 // All positions and distances are reported in grid coordinates/tiles.
-func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCount int) map[string]interface{} {
+type YourStateView struct {
+	BotID                  string            `json:"bot_id"`
+	Team                   int               `json:"team"`
+	Position               [2]int            `json:"position"`
+	HP                     float64           `json:"hp"`
+	MaxHP                  float64           `json:"max_hp"`
+	Speed                  float64           `json:"speed"`
+	Weapon                 string            `json:"weapon"`
+	CooldownRemaining      float64           `json:"cooldown_remaining"`
+	WeaponReady            bool              `json:"weapon_ready"`
+	IsAlive                bool              `json:"is_alive"`
+	KillStreak             int               `json:"kill_streak"`
+	RoundKills             int               `json:"round_kills"`
+	DodgeCooldown          int               `json:"dodge_cooldown"`
+	InvulnTicks            int               `json:"invuln_ticks"`
+	StunTicks              int               `json:"stun_ticks"`
+	Facing                 Vec2              `json:"facing"`
+	RecentlyDisruptedTicks int               `json:"recently_disrupted_ticks"`
+	BraceReady             bool              `json:"brace_ready"`
+	BowChargeTicks         int               `json:"bow_charge_ticks"`
+	BowChargeLevel         float64           `json:"bow_charge_level"`
+	ChargedShotReady       bool              `json:"charged_shot_ready"`
+	ShieldAbsorb           float64           `json:"shield_absorb"`
+	HazardKeyActive        bool              `json:"hazard_key_active"`
+	HazardKeyTicks         int               `json:"hazard_key_ticks"`
+	RelayBatteryActive     bool              `json:"relay_battery_active"`
+	RelayBatteryTicks      int               `json:"relay_battery_ticks"`
+	Effects                []EffectView      `json:"effects"`
+	LastActionResult       *ActionResult     `json:"last_action_result"`
+	HitsReceived           []HitReceivedView `json:"hits_received"`
+	KillFeed               []KillFeedEntry   `json:"kill_feed"`
+	// Zone info (in grid tiles).
+	InSafeZone         bool   `json:"in_safe_zone"`
+	DistanceToZoneEdge int    `json:"distance_to_zone_edge"`
+	ZoneRadius         int    `json:"zone_radius"`
+	ZoneCenter         [2]int `json:"zone_center"`
+	ZoneTargetCenter   [2]int `json:"zone_target_center"`
+	ZoneTargetRadius   int    `json:"zone_target_radius"`
+	// New gameplay state.
+	IsBountyTarget    bool    `json:"is_bounty_target"`
+	BountyTokenBonus  int     `json:"bounty_token_bonus"`
+	MineCount         int     `json:"mine_count"`
+	GravityWellCharge int     `json:"gravity_well_charge"`
+	GrappleCharges    int     `json:"grapple_charges"`
+	GrappleCooldown   float64 `json:"grapple_cooldown"`
+}
+
+// BuildYourState builds the full your_state view sent to a bot each tick.
+// All positions and distances are reported in grid coordinates/tiles. The
+// returned view is a value snapshot: reference-typed bot state (notably
+// LastActionResult) is copied here, under the engine lock, so the view can
+// be marshaled safely after the lock is released.
+func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCount int) *YourStateView {
 	// Effective speed (apply speed boost effects).
 	effectiveSpeed := bot.Speed
 	for _, eff := range bot.ActiveEffects {
@@ -159,27 +305,29 @@ func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCoun
 	}
 
 	// Effects list.
-	effects := make([]map[string]interface{}, 0, len(bot.ActiveEffects))
+	effects := make([]EffectView, 0, len(bot.ActiveEffects))
 	for _, eff := range bot.ActiveEffects {
-		effects = append(effects, map[string]interface{}{
-			"name":  eff.Name,
-			"ticks": eff.RemainingTicks,
+		effects = append(effects, EffectView{
+			Name:  eff.Name,
+			Ticks: eff.RemainingTicks,
 		})
 	}
 
-	// Last action result.
-	var lastActionResult interface{}
+	// Last action result — copied by value so the view does not alias the
+	// live *ActionResult, which the next locked tick may replace or clear.
+	var lastActionResult *ActionResult
 	if bot.LastActionResult != nil {
-		lastActionResult = bot.LastActionResult
+		resultCopy := *bot.LastActionResult
+		lastActionResult = &resultCopy
 	}
 
 	// Hits received.
-	hitsReceived := make([]interface{}, 0, len(bot.HitsReceived))
+	hitsReceived := make([]HitReceivedView, 0, len(bot.HitsReceived))
 	for _, hr := range bot.HitsReceived {
-		hitsReceived = append(hitsReceived, map[string]interface{}{
-			"attacker_id": hr.AttackerID,
-			"damage":      hr.Damage,
-			"weapon":      hr.Weapon,
+		hitsReceived = append(hitsReceived, HitReceivedView{
+			AttackerID: hr.AttackerID,
+			Damage:     hr.Damage,
+			Weapon:     hr.Weapon,
 		})
 	}
 
@@ -202,54 +350,50 @@ func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCoun
 	zoneTargetRadiusTiles := int(math.Round(arena.ZoneTargetRadius / cellSize))
 	distToEdgeTiles := int(math.Round(distToEdge / cellSize))
 
-	state := map[string]interface{}{
-		"bot_id":                   bot.BotID,
-		"team":                     bot.Team,
-		"position":                 [2]int{gridPos[0], gridPos[1]},
-		"hp":                       math.Round(bot.HP),
-		"max_hp":                   math.Round(bot.MaxHP),
-		"speed":                    round1(effectiveSpeed),
-		"weapon":                   bot.Weapon,
-		"cooldown_remaining":       round1(bot.CooldownRemaining),
-		"weapon_ready":             bot.CooldownRemaining <= 0,
-		"is_alive":                 bot.IsAlive,
-		"kill_streak":              bot.KillStreak,
-		"round_kills":              bot.RoundKills,
-		"dodge_cooldown":           bot.DodgeCooldown,
-		"invuln_ticks":             bot.InvulnTicks,
-		"stun_ticks":               bot.StunTicks,
-		"facing":                   bot.Facing,
-		"recently_disrupted_ticks": bot.RecentlyDisruptedTicks,
-		"brace_ready":              bot.Weapon == "spear" && isBraceReady(bot),
-		"bow_charge_ticks":         bot.BowChargeTicks,
-		"bow_charge_level":         bowChargeLevel(bot),
-		"charged_shot_ready":       chargedShotReady(bot),
-		"shield_absorb":            bot.ShieldAbsorb,
-		"hazard_key_active":        hasEffectByName(bot.ActiveEffects, "hazard_key"),
-		"hazard_key_ticks":         effectRemainingTicks(bot.ActiveEffects, "hazard_key"),
-		"relay_battery_active":     hasEffectByName(bot.ActiveEffects, "relay_battery"),
-		"relay_battery_ticks":      effectRemainingTicks(bot.ActiveEffects, "relay_battery"),
-		"effects":                  effects,
-		"last_action_result":       lastActionResult,
-		"hits_received":            hitsReceived,
-		"kill_feed":                killFeedEntries,
-		// Zone info (in grid tiles).
-		"in_safe_zone":          inSafeZone,
-		"distance_to_zone_edge": distToEdgeTiles,
-		"zone_radius":           zoneRadiusTiles,
-		"zone_center":           [2]int{zoneCenter[0], zoneCenter[1]},
-		"zone_target_center":    [2]int{zoneTargetCenter[0], zoneTargetCenter[1]},
-		"zone_target_radius":    zoneTargetRadiusTiles,
-		// New gameplay state.
-		"is_bounty_target":    bot.IsBountyTarget,
-		"bounty_token_bonus":  bot.BountyTokenBonus,
-		"mine_count":          bot.MineCount,
-		"gravity_well_charge": bot.GravityWellCharge,
-		"grapple_charges":     bot.GrappleCharges,
-		"grapple_cooldown":    round1(bot.GrappleCooldown),
+	return &YourStateView{
+		BotID:                  bot.BotID,
+		Team:                   bot.Team,
+		Position:               gridPos,
+		HP:                     math.Round(bot.HP),
+		MaxHP:                  math.Round(bot.MaxHP),
+		Speed:                  round1(effectiveSpeed),
+		Weapon:                 bot.Weapon,
+		CooldownRemaining:      round1(bot.CooldownRemaining),
+		WeaponReady:            bot.CooldownRemaining <= 0,
+		IsAlive:                bot.IsAlive,
+		KillStreak:             bot.KillStreak,
+		RoundKills:             bot.RoundKills,
+		DodgeCooldown:          bot.DodgeCooldown,
+		InvulnTicks:            bot.InvulnTicks,
+		StunTicks:              bot.StunTicks,
+		Facing:                 bot.Facing,
+		RecentlyDisruptedTicks: bot.RecentlyDisruptedTicks,
+		BraceReady:             bot.Weapon == "spear" && isBraceReady(bot),
+		BowChargeTicks:         bot.BowChargeTicks,
+		BowChargeLevel:         bowChargeLevel(bot),
+		ChargedShotReady:       chargedShotReady(bot),
+		ShieldAbsorb:           bot.ShieldAbsorb,
+		HazardKeyActive:        hasEffectByName(bot.ActiveEffects, "hazard_key"),
+		HazardKeyTicks:         effectRemainingTicks(bot.ActiveEffects, "hazard_key"),
+		RelayBatteryActive:     hasEffectByName(bot.ActiveEffects, "relay_battery"),
+		RelayBatteryTicks:      effectRemainingTicks(bot.ActiveEffects, "relay_battery"),
+		Effects:                effects,
+		LastActionResult:       lastActionResult,
+		HitsReceived:           hitsReceived,
+		KillFeed:               killFeedEntries,
+		InSafeZone:             inSafeZone,
+		DistanceToZoneEdge:     distToEdgeTiles,
+		ZoneRadius:             zoneRadiusTiles,
+		ZoneCenter:             zoneCenter,
+		ZoneTargetCenter:       zoneTargetCenter,
+		ZoneTargetRadius:       zoneTargetRadiusTiles,
+		IsBountyTarget:         bot.IsBountyTarget,
+		BountyTokenBonus:       bot.BountyTokenBonus,
+		MineCount:              bot.MineCount,
+		GravityWellCharge:      bot.GravityWellCharge,
+		GrappleCharges:         bot.GrappleCharges,
+		GrappleCooldown:        round1(bot.GrappleCooldown),
 	}
-
-	return state
 }
 
 // BuildSpectatorState builds the full arena snapshot for spectator clients.

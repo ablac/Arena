@@ -161,25 +161,37 @@ func ProcessTeleports(bots map[string]*BotState, pads []TeleportPad, grid *Spati
 	return events
 }
 
+// TeleportPadView is the typed protocol view of a teleport pad. Position is
+// grid coordinates ([2]int) for bots/REST and world coordinates (Vec2) for
+// spectators, matching the useGridPos flag of the builders.
+type TeleportPadView struct {
+	Type                   string `json:"type"`
+	ID                     string `json:"id"`
+	LinkedPadID            string `json:"linked_pad_id"`
+	Color                  string `json:"color"`
+	IsReady                bool   `json:"is_ready"`
+	CooldownRemainingTicks int    `json:"cooldown_remaining_ticks"`
+	Position               any    `json:"position"`
+}
+
 // BuildTeleportPadView creates a protocol-compatible view of a teleport pad.
-func BuildTeleportPadView(pad TeleportPad, tickCount int, useGridPos bool) map[string]interface{} {
+func BuildTeleportPadView(pad TeleportPad, tickCount int, useGridPos bool) TeleportPadView {
 	remaining := 0
 	if pad.CooldownUntilTick > tickCount {
 		remaining = pad.CooldownUntilTick - tickCount
 	}
-	view := map[string]interface{}{
-		"type":                     "teleport_pad",
-		"id":                       pad.ID,
-		"linked_pad_id":            pad.LinkedPadID,
-		"color":                    pad.Color,
-		"is_ready":                 remaining == 0,
-		"cooldown_remaining_ticks": remaining,
+	view := TeleportPadView{
+		Type:                   "teleport_pad",
+		ID:                     pad.ID,
+		LinkedPadID:            pad.LinkedPadID,
+		Color:                  pad.Color,
+		IsReady:                remaining == 0,
+		CooldownRemainingTicks: remaining,
 	}
 	if useGridPos {
-		gridPos := posToGrid(pad.Position)
-		view["position"] = [2]int{gridPos[0], gridPos[1]}
+		view.Position = posToGrid(pad.Position)
 	} else {
-		view["position"] = pad.Position
+		view.Position = pad.Position
 	}
 	return view
 }
@@ -187,17 +199,17 @@ func BuildTeleportPadView(pad TeleportPad, tickCount int, useGridPos bool) map[s
 // BuildTeleportPadViewForBot adds the observer's personal reuse cooldown to
 // the global pad lock. Spectator and REST views continue to use
 // BuildTeleportPadView because their readiness is not tied to one bot.
-func BuildTeleportPadViewForBot(pad TeleportPad, tickCount int, useGridPos bool, bot *BotState) map[string]interface{} {
+func BuildTeleportPadViewForBot(pad TeleportPad, tickCount int, useGridPos bool, bot *BotState) TeleportPadView {
 	view := BuildTeleportPadView(pad, tickCount, useGridPos)
 	if bot == nil || bot.TeleportCooldowns == nil {
 		return view
 	}
-	remaining, _ := view["cooldown_remaining_ticks"].(int)
+	remaining := view.CooldownRemainingTicks
 	if expiry := bot.TeleportCooldowns[pad.ID]; expiry > tickCount && expiry-tickCount > remaining {
 		remaining = expiry - tickCount
 	}
-	view["is_ready"] = remaining == 0
-	view["cooldown_remaining_ticks"] = remaining
+	view.IsReady = remaining == 0
+	view.CooldownRemainingTicks = remaining
 	return view
 }
 

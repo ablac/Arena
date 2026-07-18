@@ -10,9 +10,9 @@ import (
 // before any dynamic scaling mutates them, so repeated scaling never
 // compounds and disabling dynamic sizing restores the configured values.
 var arenaSizeBase struct {
-	once       sync.Once
-	w, h       float64
-	cx, cy     float64
+	once   sync.Once
+	w, h   float64
+	cx, cy float64
 }
 
 // arenaSizeMinBots anchors the small end of the down-scale curve: a 2-bot

@@ -27,7 +27,7 @@ func TestKillFeedViewCache(t *testing.T) {
 	if len(v2) != 3 {
 		t.Fatalf("expected 3 views after add, got %d", len(v2))
 	}
-	if v2[2]["killer"] != "e" {
+	if v2[2].Killer != "e" {
 		t.Errorf("expected newest entry last, got %v", v2[2])
 	}
 

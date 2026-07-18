@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -265,8 +266,18 @@ func TestBotHandlerLimitsOversizedAuthenticationFrameBeforeAuth(t *testing.T) {
 		config.C.WSConnectRatePerMin = previousConnectRate
 	})
 
-	server := httptest.NewServer(BotHandler(game.NewGameEngine()))
+	// Hijacked websocket sessions run in the request goroutine and
+	// server.Close() does not wait for them; wait explicitly so the session
+	// cannot outlive the test and race the next test's config.C writes.
+	handler := BotHandler(game.NewGameEngine())
+	var sessions sync.WaitGroup
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sessions.Add(1)
+		defer sessions.Done()
+		handler(w, r)
+	}))
 	defer server.Close()
+	defer sessions.Wait()
 
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
 	if err != nil {

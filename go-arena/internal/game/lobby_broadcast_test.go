@@ -24,6 +24,7 @@ func TestLobbyBroadcastSharesOneMarshaledPayloadAcrossBots(t *testing.T) {
 		}
 
 		engine.tickLobby(&config.C)
+		engine.flushTickOutbox()
 
 		assertSharedLobbyPayload(t, bots)
 	})
@@ -37,6 +38,7 @@ func TestLobbyBroadcastSharesOneMarshaledPayloadAcrossBots(t *testing.T) {
 		}
 
 		engine.sendLobbyStateUpdate()
+		engine.flushTickOutbox()
 
 		assertSharedLobbyPayload(t, waitingBots)
 	})

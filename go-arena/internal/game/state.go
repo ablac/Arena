@@ -43,9 +43,11 @@ func (v Vec2) Normalized() Vec2 {
 	return Vec2{v[0] / l, v[1] / l}
 }
 
-func (v Vec2) MarshalJSON() ([]byte, error) {
-	return json.Marshal([2]float64{v[0], v[1]})
-}
+// Vec2 deliberately has no MarshalJSON: encoding/json's native [2]float64
+// array encoder already emits the exact `[x,y]` wire format, written directly
+// into the outer buffer. A custom marshaler re-entering json.Marshal cost 2-3
+// allocations per vector at hundreds-to-thousands of vectors per second.
+// UnmarshalJSON stays: inputs arrive in both array and object form.
 
 func (v *Vec2) UnmarshalJSON(data []byte) error {
 	var values []float64
@@ -363,8 +365,16 @@ type BotState struct {
 	DisconnectedAtTick int
 
 	// WebSocket (nil for AI-only bots)
-	Conn                *websocket.Conn
-	SendChan            chan []byte
+	Conn     *websocket.Conn
+	SendChan chan []byte
+	// Lobby-frame dedup (engine lock): the exact payload slice last pushed to
+	// this bot and the connection it went out on. Lobby content changes at
+	// most once per second (countdown) or on join/leave/loadout, but was
+	// re-marshaled identically and re-sent at 5 Hz; skipping identical
+	// re-sends needs per-bot markers so a (re)connected bot still receives
+	// the current frame immediately.
+	lastLobbyPayload    []byte
+	lastLobbyConn       *websocket.Conn
 	TickChan            chan []byte
 	TransportCloseCause chan BotTransportCloseCause
 }
@@ -546,18 +556,23 @@ type SpectatorState struct {
 	Bots         []map[string]interface{} `json:"bots"`
 	SafeZone     map[string]interface{}   `json:"safe_zone"`
 	Pickups      []map[string]interface{} `json:"pickups"`
-	KillFeed     []map[string]interface{} `json:"kill_feed"`
+	KillFeed     []KillFeedEntry          `json:"kill_feed"`
 	Obstacles    []Obstacle               `json:"obstacles,omitempty"`
 	WaitingBots  []map[string]interface{} `json:"waiting_bots,omitempty"`
-	TeleportPads []map[string]interface{} `json:"teleport_pads,omitempty"`
-	CapturePads  []map[string]interface{} `json:"capture_pads,omitempty"`
-	HazardZones  []map[string]interface{} `json:"hazard_zones,omitempty"`
-	BurnFields   []map[string]interface{} `json:"burn_fields,omitempty"`
-	Landmines    []map[string]interface{} `json:"landmines,omitempty"`
-	GravityWells []map[string]interface{} `json:"gravity_wells,omitempty"`
-	StaffImpacts []map[string]interface{} `json:"staff_impacts,omitempty"`
-	VoidTiles    [][2]int                 `json:"void_tiles,omitempty"`
-	SuddenDeath  bool                     `json:"sudden_death"`
+	TeleportPads []TeleportPadView        `json:"teleport_pads,omitempty"`
+	CapturePads  []CapturePadView         `json:"capture_pads,omitempty"`
+	HazardZones  []HazardZoneView         `json:"hazard_zones,omitempty"`
+	BurnFields   []BurnFieldView          `json:"burn_fields,omitempty"`
+	Landmines    []MineView               `json:"landmines,omitempty"`
+	GravityWells []GravityWellView        `json:"gravity_wells,omitempty"`
+	StaffImpacts []StaffImpactView        `json:"staff_impacts,omitempty"`
+	// VoidTiles is populated only on spectator keyframes (~1 Hz): the set only
+	// accumulates during sudden death, so 10 Hz re-broadcast of the full list
+	// was pure duplication. No omitempty — clients must distinguish null
+	// ("no update this frame") from [] ("authoritatively empty", e.g. after a
+	// round reset).
+	VoidTiles   [][2]int `json:"void_tiles"`
+	SuddenDeath bool     `json:"sudden_death"`
 	// SuddenDeathStall is true while the no-combat window has been exceeded
 	// and every living bot is taking ramping stall damage.
 	SuddenDeathStall bool `json:"sudden_death_stall,omitempty"`
@@ -568,9 +583,9 @@ type SpectatorState struct {
 	Events          []ArenaEvent `json:"events,omitempty"`
 
 	// Game modes (groundwork)
-	GameMode   string                   `json:"game_mode,omitempty"`
-	TeamScores map[string]int           `json:"team_scores,omitempty"`
-	Flags      []map[string]interface{} `json:"flags,omitempty"`
+	GameMode   string         `json:"game_mode,omitempty"`
+	TeamScores map[string]int `json:"team_scores,omitempty"`
+	Flags      []FlagView     `json:"flags,omitempty"`
 
 	// Map shape metadata for non-square maps ("square" when absent).
 	MapShape string `json:"map_shape,omitempty"`

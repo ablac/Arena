@@ -158,31 +158,46 @@ func isBotInHazardZone(pos Vec2, zone *HazardZone) bool {
 		botCell[1] >= zoneCell[1]-halfH && botCell[1] <= zoneCell[1]+halfH
 }
 
+// HazardZoneView is the typed protocol view of a hazard zone. Position is
+// grid coordinates ([2]int) for bots/REST and world coordinates (Vec2) for
+// spectators, matching the useGridPos flag of BuildHazardZoneView.
+type HazardZoneView struct {
+	Type          string  `json:"type"`
+	ID            string  `json:"id"`
+	Width         int     `json:"width"`
+	Height        int     `json:"height"`
+	Active        bool    `json:"active"`
+	OnTicks       int     `json:"on_ticks"`
+	OffTicks      int     `json:"off_ticks"`
+	TickCounter   int     `json:"tick_counter"`
+	DamagePerTick float64 `json:"damage_per_tick"`
+	Position      any     `json:"position"`
+}
+
 // BuildHazardZoneView creates a protocol-compatible view of a hazard zone.
-func BuildHazardZoneView(zone HazardZone, useGridPos bool, mod RoundModifier) map[string]interface{} {
+func BuildHazardZoneView(zone HazardZone, useGridPos bool, mod RoundModifier) HazardZoneView {
 	onTicks, offTicks, damagePerTick := effectiveHazardProfile(mod, zone)
-	view := map[string]interface{}{
-		"type": "hazard_zone",
-		"id":   zone.ID,
+	view := HazardZoneView{
+		Type: "hazard_zone",
+		ID:   zone.ID,
 		// isBotInHazardZone/hazardRectOpen both extend zone.Width/2 (integer
 		// division) tiles in each direction from center, i.e. a span of
 		// 2*(Width/2)+1 tiles - one tile wider than Width itself whenever
 		// Width is even. Report the true span so a bot computing a safe
 		// standing distance from these fields doesn't still take damage
 		// just outside what it was told is the zone.
-		"width":           2*(zone.Width/2) + 1,
-		"height":          2*(zone.Height/2) + 1,
-		"active":          zone.Active,
-		"on_ticks":        onTicks,
-		"off_ticks":       offTicks,
-		"tick_counter":    zone.TickCounter,
-		"damage_per_tick": damagePerTick,
+		Width:         2*(zone.Width/2) + 1,
+		Height:        2*(zone.Height/2) + 1,
+		Active:        zone.Active,
+		OnTicks:       onTicks,
+		OffTicks:      offTicks,
+		TickCounter:   zone.TickCounter,
+		DamagePerTick: damagePerTick,
 	}
 	if useGridPos {
-		gridPos := posToGrid(zone.Position)
-		view["position"] = [2]int{gridPos[0], gridPos[1]}
+		view.Position = posToGrid(zone.Position)
 	} else {
-		view["position"] = zone.Position
+		view.Position = zone.Position
 	}
 	return view
 }

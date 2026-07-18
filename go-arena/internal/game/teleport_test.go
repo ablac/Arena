@@ -66,11 +66,11 @@ func TestProcessTeleportsRejectsLockedUnlitPairAndRearmsAtBoundary(t *testing.T)
 	}
 
 	before := BuildTeleportPadView(pads[0], 129, true)
-	if ready, _ := before["is_ready"].(bool); ready {
+	if before.IsReady {
 		t.Fatal("pad view reported ready one tick before lock expiry")
 	}
-	if remaining, _ := before["cooldown_remaining_ticks"].(int); remaining != 1 {
-		t.Fatalf("remaining cooldown at tick 129 = %d, want 1", remaining)
+	if before.CooldownRemainingTicks != 1 {
+		t.Fatalf("remaining cooldown at tick 129 = %d, want 1", before.CooldownRemainingTicks)
 	}
 
 	rearmed := teleportTestBot("rearmed", [2]int{2, 2}, grid)
@@ -78,7 +78,7 @@ func TestProcessTeleportsRejectsLockedUnlitPairAndRearmsAtBoundary(t *testing.T)
 		t.Fatalf("rearmed pair events at exact boundary = %d, want 1", len(events))
 	}
 	after := BuildTeleportPadView(pads[0], 130, true)
-	if after["is_ready"] != false || after["cooldown_remaining_ticks"] != 30 {
+	if after.IsReady || after.CooldownRemainingTicks != 30 {
 		t.Fatalf("view after reactivation = %#v, want unready with a fresh 30-tick lock", after)
 	}
 }
@@ -88,11 +88,11 @@ func TestBuildTeleportPadViewReadyAtExactBoundary(t *testing.T) {
 	pad := TeleportPad{ID: "a", Position: ActiveTerrain.GridToWorld([2]int{2, 2}), CooldownUntilTick: 130}
 
 	before := BuildTeleportPadView(pad, 129, true)
-	if before["is_ready"] != false || before["cooldown_remaining_ticks"] != 1 {
+	if before.IsReady || before.CooldownRemainingTicks != 1 {
 		t.Fatalf("tick 129 view = %#v, want unready with one tick remaining", before)
 	}
 	at := BuildTeleportPadView(pad, 130, true)
-	if at["is_ready"] != true || at["cooldown_remaining_ticks"] != 0 {
+	if !at.IsReady || at.CooldownRemainingTicks != 0 {
 		t.Fatalf("tick 130 view = %#v, want ready with zero remaining", at)
 	}
 }

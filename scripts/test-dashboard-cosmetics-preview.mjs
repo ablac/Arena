@@ -85,7 +85,7 @@ const CURRENT = {
 
 assert.equal(
   BABYLON_SCRIPT_URL,
-  'https://cdn.babylonjs.com/v9.14.0/babylon.js',
+  'https://cdn.jsdelivr.net/npm/babylonjs@9.14.0/babylon.min.js',
   'Dashboard must pin the same Babylon version as the Arena instead of loading latest',
 );
 
@@ -206,7 +206,10 @@ assert.equal(
   assert.deepEqual(calls.at(-1), ['loadout', secondLoadout]);
 }
 
-const dashboardHTML = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8');
+const dashboardHTML = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8')
+  // The dashboard runtime was extracted from the inline <script> to
+  // dashboard.js; these probes span both, so read them as one source.
+  + readFileSync(new URL('../frontend/dashboard/dashboard.js', import.meta.url), 'utf8');
 const outfitterIndex = dashboardHTML.indexOf('id="accountCosmeticsOutfitter"');
 const inventoryIndex = dashboardHTML.indexOf('id="accountCosmeticsPanel"');
 assert.ok(outfitterIndex >= 0 && inventoryIndex > outfitterIndex,

@@ -598,7 +598,12 @@ assert.match(loadingKeysHTML, /id="accountKeyCreate"[^>]*disabled/, 'Dashboard m
 const failedKeysHTML = cosmetics.renderAccountKeys({keys:null,keysError:'key service offline'});
 assert.match(failedKeysHTML, /id="accountKeyCreate"[^>]*disabled/, 'Dashboard must keep generation fail-closed when the key list is unavailable');
 
-const dashboardHTML = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8');
+const dashboardHTML = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8')
+  // The dashboard runtime and styles were extracted from inline blocks to
+  // dashboard.js/dashboard.css; these probes span all three, so read them
+  // as one source.
+  + readFileSync(new URL('../frontend/dashboard/dashboard.js', import.meta.url), 'utf8')
+  + readFileSync(new URL('../frontend/dashboard/dashboard.css', import.meta.url), 'utf8');
 assert.match(dashboardHTML, /dashboard\/login/, 'verified-email sign-in should use the customer dashboard login route');
 assert.match(dashboardHTML, /id="accountSignInButton"[^>]*disabled/, 'email login stays disabled until session capability is known');
 assert.match(dashboardHTML, /method:'POST'/, 'account sign-out should use a CSRF-protected POST');

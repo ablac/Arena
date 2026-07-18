@@ -3,8 +3,10 @@ package ws
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,8 +51,20 @@ func TestQueryAuthenticatedBotVerifiesAPIKeyOnce(t *testing.T) {
 	config.C.WSConnectRatePerMin = 0
 	t.Cleanup(func() { config.C.WSConnectRatePerMin = previousConnectRate })
 
-	server := httptest.NewServer(BotHandler(game.NewGameEngine()))
+	// The bot session runs inside the request goroutine and the websocket is
+	// hijacked, so server.Close() does NOT wait for it. Track the session
+	// goroutine explicitly and wait for it before the test returns: a session
+	// still entering handleLoadoutPhase reads config.C and would race the
+	// next test's config.C writes (a real -race failure seen in CI).
+	handler := BotHandler(game.NewGameEngine())
+	var sessions sync.WaitGroup
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sessions.Add(1)
+		defer sessions.Done()
+		handler(w, r)
+	}))
 	defer server.Close()
+	defer sessions.Wait()
 
 	conn, _, err := websocket.DefaultDialer.Dial(
 		"ws"+strings.TrimPrefix(server.URL, "http")+"?key=arena_test_key",

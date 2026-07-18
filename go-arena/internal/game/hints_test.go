@@ -19,10 +19,9 @@ func TestBuildHintsReportsDistanceInGridTiles(t *testing.T) {
 		enemy.BotID: enemy,
 	}, []Pickup{pickup})
 
-	byType := make(map[string]map[string]interface{}, len(hints))
-	for _, hint := range hints {
-		hintType, _ := hint["hint_type"].(string)
-		byType[hintType] = hint
+	byType := make(map[string]*HintView, len(hints))
+	for i := range hints {
+		byType[hints[i].HintType] = &hints[i]
 	}
 
 	for _, hintType := range []string{"bot", "pickup"} {
@@ -30,17 +29,14 @@ func TestBuildHintsReportsDistanceInGridTiles(t *testing.T) {
 		if hint == nil {
 			t.Fatalf("missing %s hint in %#v", hintType, hints)
 		}
-		if got, _ := hint["distance"].(float64); got != 10 {
+		if got := hint.Distance; got != 10 {
 			t.Errorf("%s hint distance = %v, want 10 grid tiles for 200 world units with 20-unit cells", hintType, got)
 		}
 	}
 
 	botHint := byType["bot"]
-	direction, ok := botHint["direction"].([2]float64)
-	if !ok {
-		t.Fatalf("bot hint direction = %T, want [2]float64", botHint["direction"])
-	}
-	distance, _ := botHint["distance"].(float64)
+	direction := botHint.Direction
+	distance := botHint.Distance
 	originGrid := bot.Position.Scale(1 / ActiveTerrain.CellSize)
 	reconstructedTarget := originGrid.Add(NewVec2(direction[0], direction[1]).Scale(distance))
 	wantTarget := enemy.Position.Scale(1 / ActiveTerrain.CellSize)
@@ -86,14 +82,10 @@ func TestBuildHintsDeterministicallySelectsThreeEqualDistanceBots(t *testing.T) 
 		hints := buildHints(observer, allBots, nil)
 		got := make([][2]float64, 0, 3)
 		for _, hint := range hints {
-			if hint["hint_type"] != "bot" {
+			if hint.HintType != "bot" {
 				continue
 			}
-			direction, ok := hint["direction"].([2]float64)
-			if !ok {
-				t.Fatalf("bot hint direction = %T, want [2]float64", hint["direction"])
-			}
-			got = append(got, direction)
+			got = append(got, hint.Direction)
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("iteration %d bot hint directions = %v, want deterministic BotID tie order %v", iteration, got, want)

@@ -183,6 +183,10 @@ type GameEngine struct {
 	// static round data regardless of the keyframe interval (set on join).
 	// Guarded by spectatorsMu.
 	forceKeyframe bool
+
+	// Last lobby broadcast frame (engine lock). Kept so byte-identical lobby
+	// frames share one slice identity and per-bot dedup can skip re-sends.
+	lastLobbyPayload []byte
 	// Persistence tracking
 	lastPersistTick      int
 	skipLeaderboardRound int // active round that straddled a leaderboard reset
@@ -199,6 +203,11 @@ type GameEngine struct {
 	// to goroutine or database scheduling order.
 	bountyPersistMu         sync.Mutex
 	bountyPersistGeneration atomic.Uint64
+
+	// outbox stages the payloads built during the locked tick phase; the tick
+	// goroutine marshals and delivers them after releasing e.mu. Touched only
+	// by the tick goroutine (see outbox.go).
+	outbox tickOutbox
 }
 
 // GameEventHook is a callback for emitting game events to the dashboard.
@@ -267,6 +276,23 @@ func (e *GameEngine) Run(ctx context.Context) {
 	e.Running = true
 	slog.Info("game engine started", "tick_rate", config.C.TickRate)
 
+	// Kill-log retention: once at startup, then daily, always off the tick
+	// goroutine. weapon_kill_totals keeps all-time stats intact, so this only
+	// bounds kill_log's disk/scan growth.
+	safeGo(func() {
+		PruneKillLogOnce()
+		pruneTicker := time.NewTicker(24 * time.Hour)
+		defer pruneTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pruneTicker.C:
+				PruneKillLogOnce()
+			}
+		}
+	})
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -279,10 +305,22 @@ func (e *GameEngine) Run(ctx context.Context) {
 	}
 }
 
-// tick is the main per-tick update. It acquires the write lock for the
-// duration of the game-state mutation, releasing it briefly for network
-// sends.
+// tick runs one full engine step in two phases. The locked phase advances
+// the simulation and stages every outbound payload as a self-contained value
+// snapshot in e.outbox; the unlocked phase then marshals those snapshots to
+// JSON and performs the non-blocking channel handoffs, still on the single
+// tick goroutine. The engine write lock is therefore held for simulation and
+// view building only — serialization no longer stalls action submissions or
+// REST readers.
 func (e *GameEngine) tick() {
+	e.tickLocked()
+	e.flushTickOutbox()
+}
+
+// tickLocked is the simulation/staging phase. It holds e.mu for its whole
+// duration; nothing inside it may perform JSON marshaling for the per-bot,
+// spectator, lobby, or death/kill paths — those are staged in e.outbox.
+func (e *GameEngine) tickLocked() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -350,7 +388,9 @@ func (e *GameEngine) tickLobby(c *config.Config) {
 		e.Round.LobbyCountdownTicks = 0
 	}
 
-	// Send lobby updates every 2 ticks.
+	// Stage lobby updates every 2 ticks. The payload inputs (player list,
+	// countdown) are captured under the lock; marshal, dedup, and delivery
+	// happen in flushTickOutbox after the lock is released.
 	if e.TickCount%2 == 0 {
 		var countdown *int
 		if e.Round.LobbyCountdownTicks > 0 {
@@ -360,13 +400,16 @@ func (e *GameEngine) tickLobby(c *config.Config) {
 			}
 			countdown = &secs
 		}
-		payload, err := buildLobbyUpdatePayload(connected, config.C.MinBotsToStart, countdown, e.Bots)
-		if err != nil {
-			slog.Error("failed to marshal lobby update", "error", err)
-		} else {
-			for _, bot := range e.Bots {
-				sendLobbyPayload(bot, payload)
-			}
+		recipients := make([]*BotState, 0, len(e.Bots))
+		for _, bot := range e.Bots {
+			recipients = append(recipients, bot)
+		}
+		e.outbox.lobbyUpdate = &outboundLobbyUpdate{
+			connected:  connected,
+			minBots:    config.C.MinBotsToStart,
+			countdown:  countdown,
+			players:    buildLobbyPlayers(e.Bots),
+			recipients: recipients,
 		}
 	}
 }
@@ -789,6 +832,12 @@ func (e *GameEngine) endRound() {
 	}
 
 	nextRoundIn := config.C.IntermissionTime
+
+	// Discard any bot tick snapshots staged earlier in this tick: they show
+	// alive state from the round that just ended, and flushing them after the
+	// round_end control messages below would deliver exactly the stale
+	// round_end-then-tick sequence that SendRoundEnd's queue discard prevents.
+	e.outbox.botTicks = e.outbox.botTicks[:0]
 
 	for _, bot := range e.Bots {
 		SendRoundEnd(bot, info, nextRoundIn)
@@ -2170,9 +2219,38 @@ func (e *GameEngine) checkAFK() {
 
 // sendBotTickUpdates sends the per-tick state update to each connected bot.
 // Uses fog_radius (grid tiles) to determine entity visibility.
+// sendBotTickUpdates builds each connected bot's tick envelope and stages it
+// in the outbox. Everything here runs under the engine lock and produces
+// value snapshots only; flushTickOutbox marshals and delivers them after the
+// lock is released.
 func (e *GameEngine) sendBotTickUpdates() {
 	fogRadius := config.C.FogRadius
 	viewRadius := float64(fogRadius) * config.C.PathfindingCellSize
+
+	// Shared per-tick data, identical for every recipient: safe_zone submap,
+	// game-mode fields, service status, and the round extras. Built once here
+	// instead of once per bot.
+	safeZone := BuildSafeZoneGridView(e.Arena)
+	var modeExtra TickMessage
+	AddModeTickExtra(&modeExtra, e.ModeRules, e.TeamScores, e.Flags)
+	// Maintenance data is repeated only while active. This is a bounded
+	// reliability fallback for a direct control message dropped from a slow
+	// bot's normal send queue.
+	var serviceStatus *ServiceStatus
+	if status := e.GetServiceStatus(); status.Maintenance != nil {
+		serviceStatus = &status
+	}
+	suddenDeathActive := e.SuddenDeath.Active
+	suddenDeathStall := e.SuddenDeath.StallActive
+	bountyTarget := e.Bounty.TargetID
+	roundTick := e.TickCount - e.Round.StartTick
+	roundModifier := string(e.Round.Modifier)
+
+	// Observer-independent nearby-bot views, built at most once per visible
+	// bot per tick. Only has_los/rear_exposed depend on the observer, so each
+	// observer gets a cheap struct copy via ObservedBy instead of a full
+	// rebuild per observer-target pair.
+	baseViews := make(map[string]*BotNearbyView, len(e.Bots))
 
 	var nearbyIDs []string
 	for _, bot := range e.Bots {
@@ -2191,7 +2269,7 @@ func (e *GameEngine) sendBotTickUpdates() {
 
 		// Build nearby entities using fog radius.
 		nearbyIDs = e.Grid.QueryRadiusInto(bot.Position, viewRadius, nearbyIDs[:0])
-		var nearby []map[string]interface{}
+		var nearby []any
 
 		nearbyBotCount := 0
 		for _, id := range nearbyIDs {
@@ -2199,7 +2277,16 @@ func (e *GameEngine) sendBotTickUpdates() {
 				continue
 			}
 			if other, ok := e.Bots[id]; ok {
-				nearby = append(nearby, BuildBotNearbyView(other, bot.Position))
+				base := baseViews[id]
+				if base == nil {
+					baseView := BuildBotNearbyBaseView(other)
+					base = &baseView
+					baseViews[id] = base
+				}
+				// ObservedBy copies the base view per observer — required, as
+				// each copy is marshaled independently after unlock. The
+				// per-pair LOS raycast is correct behavior and stays.
+				nearby = append(nearby, base.ObservedBy(bot.Position))
 				nearbyBotCount++
 			}
 		}
@@ -2286,19 +2373,18 @@ func (e *GameEngine) sendBotTickUpdates() {
 		// Include bounty target position (visible to all bots regardless of fog).
 		if e.Bounty.TargetID != "" && e.Bounty.TargetID != bot.BotID {
 			if bountyBot, ok := e.Bots[e.Bounty.TargetID]; ok && bountyBot.IsAlive {
-				gridPos := posToGrid(bountyBot.Position)
-				nearby = append(nearby, map[string]interface{}{
-					"type":     "bounty_target",
-					"id":       bountyBot.BotID,
-					"bot_id":   bountyBot.BotID,
-					"name":     bountyBot.Name,
-					"position": [2]int{gridPos[0], gridPos[1]},
+				nearby = append(nearby, BountyTargetView{
+					Type:     "bounty_target",
+					ID:       bountyBot.BotID,
+					BotID:    bountyBot.BotID,
+					Name:     bountyBot.Name,
+					Position: posToGrid(bountyBot.Position),
 				})
 			}
 		}
 
 		// Build directional hints when no bots are within fog radius.
-		var hints []map[string]interface{}
+		var hints []HintView
 		if nearbyBotCount == 0 {
 			hints = buildHints(bot, e.Bots, e.Pickups)
 		}
@@ -2316,29 +2402,28 @@ func (e *GameEngine) sendBotTickUpdates() {
 			}
 		}
 
-		// Add sudden death, bounty, and game-mode info to tick.
-		tickExtra := map[string]interface{}{
-			"sudden_death":       e.SuddenDeath.Active,
-			"sudden_death_stall": e.SuddenDeath.StallActive,
-			"bounty_target":      e.Bounty.TargetID,
-			"nearby_mines":       nearbyMineCount,
-			"round_tick":         e.TickCount - e.Round.StartTick,
-			"round_modifier":     string(e.Round.Modifier),
-		}
-		// Maintenance data is repeated only while active. This is a bounded
-		// reliability fallback for a direct control message dropped from a slow
-		// bot's normal send queue.
-		if serviceStatus := e.GetServiceStatus(); serviceStatus.Maintenance != nil {
-			tickExtra["service_status"] = serviceStatus
-		}
+		// Assemble the envelope with the sudden death, bounty, and game-mode
+		// extras (shared per-tick values captured above).
+		msg := NewTickMessage(yourState, nearby, e.TickCount, safeZone, hints, fogRadius)
+		msg.SuddenDeath = suddenDeathActive
+		msg.SuddenDeathStall = suddenDeathStall
+		msg.BountyTarget = bountyTarget
+		msg.NearbyMines = nearbyMineCount
+		msg.RoundTick = roundTick
+		msg.RoundModifier = roundModifier
+		msg.ServiceStatus = serviceStatus
+		msg.GameMode = modeExtra.GameMode
+		msg.TeamScores = modeExtra.TeamScores
+		msg.Flags = modeExtra.Flags
 		// Void tiles within the bot's fog radius (omitted entirely while
-		// sudden death is inactive to keep payloads small).
-		if e.SuddenDeath.Active {
-			tickExtra["void_tiles"] = e.SuddenDeath.VoidTilesNear(botCell, fogRadius)
+		// sudden death is inactive to keep payloads small; present — possibly
+		// empty — whenever it is active).
+		if suddenDeathActive {
+			tiles := e.SuddenDeath.VoidTilesNear(botCell, fogRadius)
+			msg.VoidTiles = &tiles
 		}
-		AddModeTickExtra(tickExtra, e.ModeRules, e.TeamScores, e.Flags)
 
-		SendTickUpdate(bot, yourState, nearby, e.TickCount, e.Arena, hints, fogRadius, tickExtra)
+		e.outbox.botTicks = append(e.outbox.botTicks, outboundBotTick{bot: bot, msg: msg})
 	}
 }
 
@@ -2346,6 +2431,18 @@ func (e *GameEngine) sendBotTickUpdates() {
 // During active rounds, waiting bots are included so the lobby tab stays populated.
 func (e *GameEngine) sendLobbyStateUpdate() {
 	c := &config.C
+
+	// With nobody to receive it — no spectators AND no waiting bots — skip
+	// building and marshaling the lobby state entirely. (An idle server
+	// previously paid this at 10 Hz forever. Both recipient groups must be
+	// empty: the tail of this function serves waiting bots independently of
+	// spectators.)
+	e.spectatorsMu.RLock()
+	lobbySpectatorCount := len(e.Spectators)
+	e.spectatorsMu.RUnlock()
+	if lobbySpectatorCount == 0 && len(e.WaitingBots) == 0 {
+		return
+	}
 
 	// During lobby phase, all bots are in e.Bots. During active/intermission,
 	// mid-round joiners sit in e.WaitingBots.
@@ -2365,39 +2462,30 @@ func (e *GameEngine) sendLobbyStateUpdate() {
 		countdown = secs
 	}
 
-	state := map[string]interface{}{
-		"type":           "lobby_state",
-		"tick":           e.TickCount,
-		"bots_connected": len(lobbyBots),
-		"bots_needed":    c.MinBotsToStart,
-		"countdown":      countdown,
-		"players":        players,
+	staged := &outboundLobbyState{
+		state: map[string]interface{}{
+			"type":           "lobby_state",
+			"tick":           e.TickCount,
+			"bots_connected": len(lobbyBots),
+			"bots_needed":    c.MinBotsToStart,
+			"countdown":      countdown,
+			"players":        players,
+		},
 	}
 
-	data, err := marshalJSON(state)
-	if err != nil {
-		slog.Error("failed to marshal lobby state", "error", err)
-		return
-	}
-
-	e.spectatorsMu.RLock()
-	specs := make([]*SpectatorConn, len(e.Spectators))
-	copy(specs, e.Spectators)
-	e.spectatorsMu.RUnlock()
-
-	BroadcastToSpectators(specs, data)
-
-	// Also send lobby updates to waiting bots so they know they're queued.
+	// Also stage lobby updates for waiting bots so they know they're queued.
 	if len(e.WaitingBots) > 0 {
-		payload, err := marshalLobbyUpdatePayload(len(lobbyBots), c.MinBotsToStart, nil, players)
-		if err != nil {
-			slog.Error("failed to marshal waiting-room lobby update", "error", err)
-			return
-		}
+		staged.waitingConnected = len(lobbyBots)
+		staged.waitingMinBots = c.MinBotsToStart
+		staged.waitingPlayers = players
+		staged.waitingBots = make([]*BotState, 0, len(e.WaitingBots))
 		for _, bot := range e.WaitingBots {
-			sendLobbyPayload(bot, payload)
+			staged.waitingBots = append(staged.waitingBots, bot)
 		}
 	}
+
+	// Marshal + broadcast happen in flushTickOutbox after the lock drops.
+	e.outbox.lobbyState = staged
 }
 
 // sendSpectatorUpdate broadcasts the full arena state to all spectators.
@@ -2429,6 +2517,11 @@ func (e *GameEngine) sendSpectatorUpdate() {
 	e.spectatorsMu.Unlock()
 	if keyframe {
 		state.ArenaSize = []float64{e.Arena.Width, e.Arena.Height}
+		// Void tiles ride keyframes only (see SpectatorState.VoidTiles).
+		// forceKeyframe already guarantees a late-joining spectator gets the
+		// current set; new tiles reach spectators within a keyframe interval,
+		// which is visually acceptable for a slow-accumulating hazard.
+		state.VoidTiles = e.SuddenDeath.GetAllVoidTiles()
 	} else {
 		state.Obstacles = nil
 	}
@@ -2455,7 +2548,6 @@ func (e *GameEngine) sendSpectatorUpdate() {
 	for _, field := range e.BurnFields {
 		state.BurnFields = append(state.BurnFields, BuildBurnFieldView(field, false))
 	}
-	state.VoidTiles = e.SuddenDeath.GetAllVoidTiles()
 	state.SuddenDeath = e.SuddenDeath.Active
 	state.SuddenDeathStall = e.SuddenDeath.StallActive
 	if e.SuddenDeath.Active {
@@ -2481,32 +2573,26 @@ func (e *GameEngine) sendSpectatorUpdate() {
 		state.Events = append(state.Events, e.RecentEvents...)
 	}
 
-	data, err := marshalJSON(state)
-	if err != nil {
-		slog.Error("failed to marshal spectator state", "error", err)
-		return
-	}
-
-	e.spectatorsMu.RLock()
-	specs := make([]*SpectatorConn, len(e.Spectators))
-	copy(specs, e.Spectators)
-	e.spectatorsMu.RUnlock()
-
-	BroadcastToSpectators(specs, data)
+	// The snapshot is complete (transient events copied, keyframe flag
+	// consumed above); marshal + PreparedMessage + broadcast happen in
+	// flushTickOutbox after the lock drops.
+	e.outbox.spectator = &state
 	e.RecentEvents = nil
 }
 
-// sendEventMessages delivers buffered death and kill events to the relevant
-// bots, then drains the event buffers.
+// sendEventMessages stages buffered death and kill events for the relevant
+// bots, then drains the event buffers. Recipient sessions are resolved here,
+// under the lock; the events themselves are plain value structs, so marshal
+// and delivery run in flushTickOutbox.
 func (e *GameEngine) sendEventMessages() {
 	for _, ev := range e.DeathEvents {
 		if victim, ok := e.Bots[ev.VictimID]; ok {
-			SendDeathMessage(victim, ev)
+			e.outbox.deathSends = append(e.outbox.deathSends, outboundDeathMessage{bot: victim, event: ev})
 		}
 	}
 	for _, ev := range e.KillEvents {
 		if killer, ok := e.Bots[ev.KillerID]; ok {
-			SendKillMessage(killer, ev)
+			e.outbox.killSends = append(e.outbox.killSends, outboundKillMessage{bot: killer, event: ev})
 		}
 	}
 	// No respawns - dead bots stay dead until next round.
@@ -2517,7 +2603,7 @@ func (e *GameEngine) sendEventMessages() {
 
 // buildHints generates directional hints for a bot that has no nearby bots.
 // Returns directions to the nearest 3 bots and the nearest pickup of each type.
-func buildHints(bot *BotState, allBots map[string]*BotState, pickups []Pickup) []map[string]interface{} {
+func buildHints(bot *BotState, allBots map[string]*BotState, pickups []Pickup) []HintView {
 	type botDist struct {
 		id   string
 		dir  Vec2
@@ -2551,12 +2637,12 @@ func buildHints(bot *BotState, allBots map[string]*BotState, pickups []Pickup) [
 		nearest[insertAt] = candidate
 	}
 
-	var hints []map[string]interface{}
+	var hints []HintView
 	for i := range nearest {
-		hints = append(hints, map[string]interface{}{
-			"hint_type": "bot",
-			"direction": [2]float64{round1(nearest[i].dir.X()), round1(nearest[i].dir.Y())},
-			"distance":  round1(nearest[i].dist),
+		hints = append(hints, HintView{
+			HintType:  "bot",
+			Direction: [2]float64{round1(nearest[i].dir.X()), round1(nearest[i].dir.Y())},
+			Distance:  round1(nearest[i].dist),
 		})
 	}
 
@@ -2574,11 +2660,11 @@ func buildHints(bot *BotState, allBots map[string]*BotState, pickups []Pickup) [
 		}
 	}
 	for _, pd := range bestPickup {
-		hints = append(hints, map[string]interface{}{
-			"hint_type":   "pickup",
-			"pickup_type": string(pd.pType),
-			"direction":   [2]float64{round1(pd.dir.X()), round1(pd.dir.Y())},
-			"distance":    round1(pd.dist),
+		hints = append(hints, HintView{
+			HintType:   "pickup",
+			PickupType: string(pd.pType),
+			Direction:  [2]float64{round1(pd.dir.X()), round1(pd.dir.Y())},
+			Distance:   round1(pd.dist),
 		})
 	}
 
@@ -2631,12 +2717,18 @@ func (e *GameEngine) ResetLeaderboard(ctx context.Context, reset func(context.Co
 		return fmt.Errorf("reset leaderboard: nil reset function")
 	}
 
+	// botStatsPersistenceMu is held for the whole operation so the epoch-gate
+	// semantics in PersistBotStatsFromSnapshot/PersistRoundBotStats are
+	// unchanged. e.mu, however, is released around the DB reset: reset() runs
+	// a TRUNCATE whose ACCESS EXCLUSIVE lock can wait behind any concurrent
+	// leaderboard SELECT (or a pg_dump), and holding the engine write lock
+	// across that round trip froze the entire game world — tick(), every bot
+	// action, and every REST read — for an unbounded time.
 	botStatsPersistenceMu.Lock()
 	defer botStatsPersistenceMu.Unlock()
-	e.mu.Lock()
-	defer e.mu.Unlock()
 
-	backups := make(map[*BotState]BotState, len(e.Bots)+len(e.WaitingBots))
+	e.mu.Lock()
+	backups := make(map[*BotState]leaderboardResetBackup, len(e.Bots)+len(e.WaitingBots))
 	previousSkippedRound := e.skipLeaderboardRound
 	if e.Round.Phase == PhaseActive {
 		e.skipLeaderboardRound = e.Round.RoundNumber
@@ -2648,7 +2740,7 @@ func (e *GameEngine) ResetLeaderboard(ctx context.Context, reset func(context.Co
 		if _, seen := backups[bot]; seen {
 			return
 		}
-		backups[bot] = *bot
+		backups[bot] = captureLeaderboardResetBackup(bot)
 		resetBotLeaderboardState(bot)
 	}
 	for _, bot := range e.Bots {
@@ -2657,18 +2749,73 @@ func (e *GameEngine) ResetLeaderboard(ctx context.Context, reset func(context.Co
 	for _, bot := range e.WaitingBots {
 		resetBot(bot)
 	}
+	e.mu.Unlock()
 
 	if err := reset(ctx); err != nil {
+		// Restore ONLY the fields resetBotLeaderboardState touched: ticks
+		// advanced live state (position, HP, round score, Grid placement)
+		// while the lock was released, so a full-struct restore would revert
+		// live gameplay and desync the spatial grid. Elo deltas earned during
+		// the failed-reset window are accepted as lost on this admin path.
+		e.mu.Lock()
 		for bot, previous := range backups {
-			*bot = previous
+			previous.restore(bot)
 		}
 		e.skipLeaderboardRound = previousSkippedRound
+		e.mu.Unlock()
 		return fmt.Errorf("reset leaderboard: %w", err)
 	}
 
+	// Only after a successful TRUNCATE: discarding pending deltas or bumping
+	// the epoch before knowing the outcome would throw away stat deltas the
+	// DB still holds.
 	pendingBotStatsDeltas = make(map[string]db.BotStatsDelta)
 	botStatsPersistenceEpoch.Add(1)
 	return nil
+}
+
+// leaderboardResetBackup holds exactly the fields resetBotLeaderboardState
+// mutates, so a failed DB reset can restore them without reverting live
+// gameplay state that advanced while the engine lock was released.
+type leaderboardResetBackup struct {
+	elo                  int
+	persistedKills       int
+	persistedDeaths      int
+	persistedDamageDealt float64
+	persistedDamageTaken float64
+	persistedDistance    float64
+	persistedPickups     int
+	rebased              bool
+	killBaseline         int
+	lifeBaseline         int
+}
+
+func captureLeaderboardResetBackup(bot *BotState) leaderboardResetBackup {
+	return leaderboardResetBackup{
+		elo:                  bot.Elo,
+		persistedKills:       bot.PersistedKills,
+		persistedDeaths:      bot.PersistedDeaths,
+		persistedDamageDealt: bot.PersistedDamageDealt,
+		persistedDamageTaken: bot.PersistedDamageTaken,
+		persistedDistance:    bot.PersistedDistance,
+		persistedPickups:     bot.PersistedPickups,
+		rebased:              bot.LeaderboardRebased,
+		killBaseline:         bot.LeaderboardKillBaseline,
+		lifeBaseline:         bot.LeaderboardLifeBaseline,
+	}
+}
+
+func (b leaderboardResetBackup) restore(bot *BotState) {
+	bot.Elo = b.elo
+	bot.PersistedKills = b.persistedKills
+	bot.PersistedDeaths = b.persistedDeaths
+	bot.PersistedDamageDealt = b.persistedDamageDealt
+	bot.PersistedDamageTaken = b.persistedDamageTaken
+	bot.PersistedDistance = b.persistedDistance
+	bot.PersistedPickups = b.persistedPickups
+	bot.LeaderboardRebased = b.rebased
+	bot.LeaderboardKillBaseline = b.killBaseline
+	bot.LeaderboardLifeBaseline = b.lifeBaseline
 }
 
 func resetBotLeaderboardState(bot *BotState) {
@@ -2826,7 +2973,7 @@ func (e *GameEngine) GetBotProfile(botID string) (map[string]interface{}, bool) 
 		"invuln_ticks":        bot.InvulnTicks,
 		"stun_ticks":          bot.StunTicks,
 		"shield_absorb":       round1(bot.ShieldAbsorb),
-		"active_effects":      bot.ActiveEffects,
+		"active_effects":      append([]Effect(nil), bot.ActiveEffects...),
 		"kill_streak":         bot.KillStreak,
 		"round_kills":         bot.RoundKills,
 		"round_deaths":        bot.RoundDeaths,
@@ -3014,9 +3161,12 @@ func (e *GameEngine) GetFullGameState() map[string]interface{} {
 			"deaths":      bot.RoundDeaths,
 			"elo":         bot.Elo,
 			"kill_streak": bot.KillStreak,
-			"effects":     bot.ActiveEffects,
-			"stats":       bot.Stats,
-			"speed":       round1(bot.Speed),
+			// Snapshot: the tick goroutine mutates ActiveEffects in place
+			// (TickEffects decrements/compacts) while HTTP handlers marshal
+			// this map after the RLock is released.
+			"effects": append([]Effect(nil), bot.ActiveEffects...),
+			"stats":   bot.Stats,
+			"speed":   round1(bot.Speed),
 		})
 	}
 
@@ -3045,11 +3195,13 @@ func (e *GameEngine) GetFullGameState() map[string]interface{} {
 		"bots":          bots,
 		// Dynamic arena sizing can change dimensions between rounds; admin
 		// minimaps should rescale from this instead of assuming a fixed size.
-		"arena_size":   [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
-		"game_mode":    string(e.Round.Mode),
-		"map_shape":    string(ActiveMapShape),
-		"pickups":      len(e.Pickups),
-		"pickups_list": e.Pickups,
+		"arena_size": [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
+		"game_mode":  string(e.Round.Mode),
+		"map_shape":  string(ActiveMapShape),
+		"pickups":    len(e.Pickups),
+		// Snapshot: pickup collection shifts e.Pickups elements in place on
+		// the tick goroutine; handlers marshal outside the lock.
+		"pickups_list": append([]Pickup(nil), e.Pickups...),
 		"projectiles":  len(e.Projectiles),
 		"zone": map[string]interface{}{
 			"center":        e.Arena.ZoneCenter,
@@ -3081,9 +3233,23 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 		connInfo["remote_addr"] = bot.Conn.RemoteAddr().String()
 	}
 
+	// Copy the reference-typed fields while the RLock is held: the caller
+	// json-marshals the returned map with no lock, racing the tick goroutine
+	// otherwise. ActionResult is a flat value struct; Action carries one
+	// pointer field that must be duplicated too.
 	var lastAction interface{}
 	if bot.LastActionResult != nil {
-		lastAction = bot.LastActionResult
+		la := *bot.LastActionResult
+		lastAction = &la
+	}
+	var pendingAction *Action
+	if bot.PendingAction != nil {
+		pa := *bot.PendingAction
+		if pa.TargetPosition != nil {
+			tp := *pa.TargetPosition
+			pa.TargetPosition = &tp
+		}
+		pendingAction = &pa
 	}
 
 	return map[string]interface{}{
@@ -3109,7 +3275,7 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 		"stun_ticks":         bot.StunTicks,
 		"frozen":             bot.Frozen,
 		"shield_absorb":      round1(bot.ShieldAbsorb),
-		"active_effects":     bot.ActiveEffects,
+		"active_effects":     append([]Effect(nil), bot.ActiveEffects...),
 		"round_kills":        bot.RoundKills,
 		"round_deaths":       bot.RoundDeaths,
 		"round_damage_dealt": round1(bot.RoundDamageDealt),
@@ -3120,7 +3286,7 @@ func (e *GameEngine) GetBotDetail(botID string) (map[string]interface{}, bool) {
 		"round_pickups":      bot.RoundPickups,
 		"last_action_tick":   bot.LastActionTick,
 		"last_action_result": lastAction,
-		"current_action":     bot.PendingAction,
+		"current_action":     pendingAction,
 		"connected_at":       bot.ConnectedAt,
 		"action_counts":      botActionCounts(bot),
 		"connection":         connInfo,

@@ -14,6 +14,11 @@ const MAX_HISTORY = 24;
 // same ribbon geometry from interpolated points without adding useful truth.
 const SAMPLE_INTERVAL = 0.1;
 const MAX_RENDERED_TRAILS = 48;
+// Queue selection already carries hysteresis to stay stable between frames, so
+// rebuilding (and double-sorting) it at display rate only reproduced the same
+// result with per-bot string allocations. Mirror the bots.js body-form LOD
+// cadence; membership changes and reset() force an immediate rebuild.
+const RENDER_QUEUE_REBUILD_INTERVAL_MS = 250;
 const MAX_PARTICLE_SYSTEMS = 24;
 const MAX_PARTICLES_PER_TRAIL = 28;
 const TRAIL_SELECTION_HYSTERESIS_SQ = 40 * 40;
@@ -143,6 +148,8 @@ export class TrailRenderer {
     this._renderQueue = [];
     this._paidCandidates = [];
     this._standardCandidates = [];
+    this._queueRefreshAt = 0;
+    this._queueEntriesSize = -1;
     this._motionQuery = typeof window.matchMedia === 'function'
       ? window.matchMedia('(prefers-reduced-motion: reduce)')
       : null;
@@ -270,6 +277,9 @@ export class TrailRenderer {
 
   /** Break every existing ribbon at the latest snapped bot position. */
   reset(botEntries) {
+    // Resume-from-hidden must re-rank against fresh positions immediately, not
+    // act on a queue captured up to 250ms before the tab was hidden.
+    this._queueRefreshAt = 0;
     for (const [botId, trail] of this.trails) {
       const entry = botEntries?.get(botId);
       trail.timer = 0;
@@ -337,7 +347,27 @@ export class TrailRenderer {
     trail.dirty = true;
   }
 
+  /** @private A cached queue is valid only while every queued bot still exists. */
+  _queueMembershipValid(botEntries) {
+    if (botEntries.size !== this._queueEntriesSize) return false;
+    for (const botId of this._renderQueue) {
+      if (!botEntries.has(botId)) return false;
+    }
+    return true;
+  }
+
   _buildRenderQueue(botEntries) {
+    // Cadenced rebuild: selection hysteresis keeps membership stable between
+    // frames, so re-ranking at display rate bought nothing. Any membership
+    // change rebuilds immediately so the seen-set dispose loop below cannot
+    // leave a departed bot's ribbon lingering for up to a cadence interval.
+    const now = performance.now();
+    if (now < this._queueRefreshAt && this._queueMembershipValid(botEntries)) {
+      return this._renderQueue;
+    }
+    this._queueRefreshAt = now + RENDER_QUEUE_REBUILD_INTERVAL_MS;
+    this._queueEntriesSize = botEntries.size;
+
     const queue = this._renderQueue;
     const paid = this._paidCandidates;
     const standard = this._standardCandidates;
@@ -404,19 +434,29 @@ export class TrailRenderer {
 
     for (const botId of this._buildRenderQueue(botEntries)) {
       const entry = botEntries.get(botId);
-      const style = resolveTrailStyle(cosmeticTrailKey(entry));
       seen.add(botId);
+
+      // Per-frame cosmetic-change detection without per-frame string work:
+      // the resolved style object is cached on the trail keyed by the RAW
+      // server string, so an equipped-trail swap still lands on the very next
+      // frame while the steady state performs zero trim/lowercase allocations.
+      let trail = this.trails.get(botId);
+      const rawStyleKey = entry?.botData?.cosmetics?.trail;
+      const style = trail && trail._styleRaw === rawStyleKey
+        ? trail.style
+        : resolveTrailStyle(cosmeticTrailKey(entry));
 
       const position = entryPosition(entry);
       if (!position) continue;
       const x = position.x;
       const z = position.z;
-      let trail = this.trails.get(botId);
       if (!trail) {
         trail = this._createTrail(botId, entry, x, z, style);
+        trail._styleRaw = rawStyleKey;
         this.trails.set(botId, trail);
-      } else {
+      } else if (trail._styleRaw !== rawStyleKey) {
         this._updateStyle(trail, entry, style);
+        trail._styleRaw = rawStyleKey;
       }
 
       trail.timer += Number.isFinite(dt) ? Math.max(0, dt) : 0;
@@ -517,8 +557,20 @@ export class TrailRenderer {
           ribbon.material = this._getSharedRibbonMaterial();
           ribbon.isPickable = false;
           ribbon.hasVertexAlpha = true;
+          // The shared ribbon material is unlit (disableLighting with
+          // vertex-color emissive output), so normals are never read.
+          // Freezing them lets Babylon's ribbon instance-update path skip
+          // ComputeNormals on every dirty frame.
+          ribbon.freezeNormals();
           trail.mesh = ribbon;
+          // Create the updatable ColorKind GPU buffer exactly once; dirty
+          // frames then update it in place. (updateVerticesData silently
+          // no-ops while the buffer does not exist, so this creation-time
+          // setVerticesData is load-bearing.) Vertex count never changes:
+          // paths are always padded to MAX_HISTORY.
           trail.colors = new Float32Array(ribbon.getTotalVertices() * 4);
+          ribbon.setVerticesData(B.VertexBuffer.ColorKind, trail.colors, true);
+          trail._colorSigN = -1;
         } else {
           B.MeshBuilder.CreateRibbon(null, {
             pathArray: [trail.left, trail.right],
@@ -534,8 +586,11 @@ export class TrailRenderer {
           core.material = this._getSharedRibbonMaterial();
           core.isPickable = false;
           core.hasVertexAlpha = true;
+          core.freezeNormals();
           trail.coreMesh = core;
           trail.coreColors = new Float32Array(core.getTotalVertices() * 4);
+          core.setVerticesData(B.VertexBuffer.ColorKind, trail.coreColors, true);
+          trail._colorSigN = -1;
         } else if (trail.coreMesh) {
           B.MeshBuilder.CreateRibbon(null, {
             pathArray: [trail.coreLeft, trail.coreRight],
@@ -555,31 +610,56 @@ export class TrailRenderer {
         // A purchased trail is an explicit visual entitlement: it never dims
         // behind the optional free-wake brightness toggle.
         const brightness = bright || paid || this.options.forceEnabled === true ? 1 : 0.55;
-        const vertexCount = trail.mesh.getTotalVertices();
-        for (let vertex = 0; vertex < vertexCount; vertex++) {
-          const index = vertex % MAX_HISTORY;
-          const amount = index < n ? (index / (n - 1)) ** 0.8 : 0;
-          const red = primary.r + (secondary.r - primary.r) * amount;
-          const green = primary.g + (secondary.g - primary.g) * amount;
-          const blue = primary.b + (secondary.b - primary.b) * amount;
-          trail.colors[vertex * 4] = red * brightness;
-          trail.colors[vertex * 4 + 1] = green * brightness;
-          trail.colors[vertex * 4 + 2] = blue * brightness;
-          trail.colors[vertex * 4 + 3] = index < n ? amount * style.alpha : 0;
-        }
-        trail.mesh.setVerticesData(B.VertexBuffer.ColorKind, trail.colors, true);
-        if (trail.coreMesh && trail.coreColors) {
-          const core = this._getStyleColors(style).core;
-          const coreCount = trail.coreMesh.getTotalVertices();
-          for (let vertex = 0; vertex < coreCount; vertex++) {
+        // The vertex-color gradient depends only on this signature — not on
+        // the pulse/jitter geometry animation that marks most dirty frames —
+        // so the color loops and GPU upload run only when it changes. Color
+        // VALUES are snapshotted because the standard style reads the live
+        // avatar material reference, which can be recolored in place.
+        const colorsCurrent = trail._colorSigN === n &&
+          trail._colorSigKey === style.key &&
+          trail._colorSigBright === brightness &&
+          trail._colorSigPR === primary.r &&
+          trail._colorSigPG === primary.g &&
+          trail._colorSigPB === primary.b &&
+          trail._colorSigSR === secondary.r &&
+          trail._colorSigSG === secondary.g &&
+          trail._colorSigSB === secondary.b;
+        if (!colorsCurrent) {
+          const vertexCount = trail.mesh.getTotalVertices();
+          for (let vertex = 0; vertex < vertexCount; vertex++) {
             const index = vertex % MAX_HISTORY;
             const amount = index < n ? (index / (n - 1)) ** 0.8 : 0;
-            trail.coreColors[vertex * 4] = core.r;
-            trail.coreColors[vertex * 4 + 1] = core.g;
-            trail.coreColors[vertex * 4 + 2] = core.b;
-            trail.coreColors[vertex * 4 + 3] = index < n ? amount * 0.95 : 0;
+            const red = primary.r + (secondary.r - primary.r) * amount;
+            const green = primary.g + (secondary.g - primary.g) * amount;
+            const blue = primary.b + (secondary.b - primary.b) * amount;
+            trail.colors[vertex * 4] = red * brightness;
+            trail.colors[vertex * 4 + 1] = green * brightness;
+            trail.colors[vertex * 4 + 2] = blue * brightness;
+            trail.colors[vertex * 4 + 3] = index < n ? amount * style.alpha : 0;
           }
-          trail.coreMesh.setVerticesData(B.VertexBuffer.ColorKind, trail.coreColors, true);
+          trail.mesh.updateVerticesData(B.VertexBuffer.ColorKind, trail.colors);
+          if (trail.coreMesh && trail.coreColors) {
+            const core = this._getStyleColors(style).core;
+            const coreCount = trail.coreMesh.getTotalVertices();
+            for (let vertex = 0; vertex < coreCount; vertex++) {
+              const index = vertex % MAX_HISTORY;
+              const amount = index < n ? (index / (n - 1)) ** 0.8 : 0;
+              trail.coreColors[vertex * 4] = core.r;
+              trail.coreColors[vertex * 4 + 1] = core.g;
+              trail.coreColors[vertex * 4 + 2] = core.b;
+              trail.coreColors[vertex * 4 + 3] = index < n ? amount * 0.95 : 0;
+            }
+            trail.coreMesh.updateVerticesData(B.VertexBuffer.ColorKind, trail.coreColors);
+          }
+          trail._colorSigN = n;
+          trail._colorSigKey = style.key;
+          trail._colorSigBright = brightness;
+          trail._colorSigPR = primary.r;
+          trail._colorSigPG = primary.g;
+          trail._colorSigPB = primary.b;
+          trail._colorSigSR = secondary.r;
+          trail._colorSigSG = secondary.g;
+          trail._colorSigSB = secondary.b;
         }
       } catch {
         // A transient degenerate path is safe to skip; the next sample reuses

@@ -29,8 +29,8 @@ func TestBuildHazardZoneViewReportsActualDamageSpan(t *testing.T) {
 			Width: tc.width, Height: tc.height, Active: true,
 		}
 		view := BuildHazardZoneView(zone, false, RoundModifierNone)
-		gotW, _ := view["width"].(int)
-		gotH, _ := view["height"].(int)
+		gotW := view.Width
+		gotH := view.Height
 		if gotW != tc.wantW || gotH != tc.wantH {
 			t.Fatalf("Width=%d Height=%d: reported view = {width:%d height:%d}, want {width:%d height:%d}",
 				tc.width, tc.height, gotW, gotH, tc.wantW, tc.wantH)

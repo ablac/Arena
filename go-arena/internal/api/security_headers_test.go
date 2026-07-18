@@ -51,7 +51,7 @@ func TestSecurityHeadersMiddleware_AllowsStripeEmbeddedCheckout(t *testing.T) {
 
 	csp := rec.Header().Get("Content-Security-Policy")
 	for _, directive := range []string{
-		"script-src 'self' https://cdn.babylonjs.com https://js.stripe.com https://*.js.stripe.com https://checkout.stripe.com",
+		"script-src 'self' https://cdn.jsdelivr.net https://cdn.babylonjs.com https://js.stripe.com https://*.js.stripe.com https://checkout.stripe.com",
 		"frame-src 'self' https://checkout.stripe.com https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com https://link.com https://*.link.com",
 		"connect-src 'self' ws: wss: https://cdn.babylonjs.com https://api.stripe.com https://checkout.stripe.com https://link.com https://*.link.com",
 		"img-src 'self' data: blob: https://*.stripe.com https://*.link.com",

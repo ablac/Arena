@@ -13,6 +13,14 @@ import { isEnabled } from '../settings.js';
 const MAX_DMG_NUMBERS = 12;
 
 /**
+ * Capacity of every pooled transient particle system — the max any combat
+ * burst in this file requests (staff explosion, 38). Pooling one shared size
+ * lets a hit spark reuse the system a death burst just released instead of
+ * paying the 5-GPU-buffer construction cost per event.
+ */
+const POOLED_PS_CAPACITY = 38;
+
+/**
  * Tube thickness of the pooled unit ring (torus of diameter 1). Pooled rings
  * vary only by a uniform scale, so thickness tracks diameter at this fixed
  * ratio; the transient combat rings it replaces span ratios of 0.075-0.1,
@@ -44,6 +52,10 @@ export class EffectRenderer {
     this.active = [];
     this._dmgCount = 0;
     this._glowTex = null;
+    // Per-instance (NOT module-level) free list of transient particle
+    // systems: the scene is disposed and rebuilt between rounds, so pooled
+    // systems must die with their EffectRenderer.
+    this._psPool = [];
     this._initGlowTexture();
   }
 
@@ -63,16 +75,38 @@ export class EffectRenderer {
   }
 
   /**
-   * @private Start a transient particle system and hand its lifetime to the
-   * wall-clock registry swept by update().
+   * @private Acquire a pooled transient particle system. Pop-or-create; every
+   * spawn site must fully reassign emitter/directions/colors/sizes/lifetimes/
+   * emitRate/power/gravity/targetStopDuration AND blendMode (bow-miss dust is
+   * BLENDMODE_STANDARD while everything else is ADD — state would bleed
+   * otherwise). The system keeps one persistent PointParticleEmitter and one
+   * emitter Vector3, so spawns copy values in place instead of allocating a
+   * new emitter + vectors per event.
+   */
+  _acquirePS() {
+    const B = window.BABYLON;
+    let ps = this._psPool.pop();
+    if (!ps) {
+      ps = new B.ParticleSystem(`fx-ps-${++_psCounter}`, POOLED_PS_CAPACITY, this.scene);
+      ps.createPointEmitter(new B.Vector3(0, 0, 0), new B.Vector3(0, 0, 0));
+      ps.emitter = new B.Vector3(0, 0, 0);
+    }
+    return ps;
+  }
+
+  /**
+   * @private Start a pooled transient particle system and hand its lifetime
+   * to the wall-clock registry swept by update().
    *
    * Two Babylon traps live here. (1) A texture-less ParticleSystem never
    * animates (isReady() stays false), so targetStopDuration never fires and
    * the system stays in scene.particleSystems forever — the shared glow
    * texture is load-bearing, not cosmetic. (2) disposeOnStop calls dispose()
    * with disposeTexture=true, which would destroy that shared texture for
-   * every other system; manual dispose(false) from the registry is the only
-   * safe owner. The registry sweep runs from the WS-driven update() path, so
+   * every other system; the registry is the only safe owner, and it now
+   * reset()s the finished system back into the per-renderer pool instead of
+   * disposing its GPU buffers per event (dispose(false) happens once, in
+   * dispose()). The registry sweep runs from the WS-driven update() path, so
    * cleanup keeps working while a hidden/occluded tab has no rAF frames.
    */
   _launch(ps) {
@@ -80,7 +114,13 @@ export class EffectRenderer {
     ps.start();
     this.active.push({
       created: Date.now(),
-      dispose: () => { try { ps.dispose(false); } catch { /* already gone */ } },
+      dispose: () => {
+        try {
+          ps.stop();
+          ps.reset();
+          this._psPool.push(ps);
+        } catch { /* scene torn down mid-flight */ }
+      },
     });
   }
 
@@ -201,24 +241,22 @@ export class EffectRenderer {
     if (!isEnabled('weaponImpactVfx', 'hitSparks')) return;
     const cfg = HIT_EFFECTS[weapon] || HIT_EFFECTS.sword;
     const B = window.BABYLON;
-    const ps = new B.ParticleSystem(`sparks-${++_psCounter}`, cfg.count, this.scene);
-    ps.emitter = new B.Vector3(x, 12, z);
-    ps.createPointEmitter(
-      new B.Vector3(cfg.d1[0], cfg.d1[1], cfg.d1[2]),
-      new B.Vector3(cfg.d2[0], cfg.d2[1], cfg.d2[2])
-    );
-    ps.color1 = new B.Color4(cfg.c1[0], cfg.c1[1], cfg.c1[2], 1);
+    const ps = this._acquirePS();
+    ps.emitter.set(x, 12, z);
+    ps.direction1.set(cfg.d1[0], cfg.d1[1], cfg.d1[2]);
+    ps.direction2.set(cfg.d2[0], cfg.d2[1], cfg.d2[2]);
+    ps.color1.set(cfg.c1[0], cfg.c1[1], cfg.c1[2], 1);
     const c = parseColor(hexColor);
-    ps.color2 = new B.Color4(c.r, c.g, c.b, 1);
-    ps.colorDead = new B.Color4(cfg.dead[0], cfg.dead[1], cfg.dead[2], 0);
+    ps.color2.set(c.r, c.g, c.b, 1);
+    ps.colorDead.set(cfg.dead[0], cfg.dead[1], cfg.dead[2], 0);
     ps.minSize = cfg.minSz; ps.maxSize = cfg.maxSz;
     ps.minLifeTime = cfg.minLife; ps.maxLifeTime = cfg.maxLife;
     ps.emitRate = cfg.rate;
     ps.minEmitPower = cfg.minPow; ps.maxEmitPower = cfg.maxPow;
-    ps.gravity = new B.Vector3(0, -50, 0);
+    ps.gravity.set(0, -50, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = cfg.stop;
-        this._launch(ps);
+    this._launch(ps);
   }
 
   /**
@@ -246,20 +284,21 @@ export class EffectRenderer {
     );
 
     if (!didHit) {
-      const dust = new B.ParticleSystem(`bow-miss-${++_psCounter}`, 12, this.scene);
-      dust.emitter = new B.Vector3(x, 1.4, z);
-      dust.createPointEmitter(new B.Vector3(-1.2, 0.3, -1.2), new B.Vector3(1.2, 1.5, 1.2));
-      dust.color1 = new B.Color4(0.6, 0.65, 0.72, 0.45);
-      dust.color2 = new B.Color4(0.35, 0.4, 0.48, 0.22);
-      dust.colorDead = new B.Color4(0.15, 0.18, 0.2, 0);
+      const dust = this._acquirePS();
+      dust.emitter.set(x, 1.4, z);
+      dust.direction1.set(-1.2, 0.3, -1.2);
+      dust.direction2.set(1.2, 1.5, 1.2);
+      dust.color1.set(0.6, 0.65, 0.72, 0.45);
+      dust.color2.set(0.35, 0.4, 0.48, 0.22);
+      dust.colorDead.set(0.15, 0.18, 0.2, 0);
       dust.minSize = 0.8; dust.maxSize = 2.4;
       dust.minLifeTime = 0.08; dust.maxLifeTime = 0.16;
       dust.emitRate = 120;
       dust.minEmitPower = 4; dust.maxEmitPower = 10;
-      dust.gravity = new B.Vector3(0, -15, 0);
+      dust.gravity.set(0, -15, 0);
       dust.blendMode = B.ParticleSystem.BLENDMODE_STANDARD;
       dust.targetStopDuration = 0.06;
-            this._launch(dust);
+      this._launch(dust);
     }
 
     const start = performance.now();
@@ -286,20 +325,21 @@ export class EffectRenderer {
     if (!isEnabled('weaponImpactVfx', 'dodgeAfterimage')) return;
     const B = window.BABYLON;
     const c = parseColor(hexColor);
-    const ps = new B.ParticleSystem(`dodge-${++_psCounter}`, 10, this.scene);
-    ps.emitter = new B.Vector3(x, 10, z);
-    ps.createPointEmitter(new B.Vector3(-1, 0.5, -1), new B.Vector3(1, 0.5, 1));
-    ps.color1 = new B.Color4(c.r, c.g, c.b, 0.8);
-    ps.color2 = new B.Color4(1, 1, 1, 0.6);
-    ps.colorDead = new B.Color4(c.r, c.g, c.b, 0);
+    const ps = this._acquirePS();
+    ps.emitter.set(x, 10, z);
+    ps.direction1.set(-1, 0.5, -1);
+    ps.direction2.set(1, 0.5, 1);
+    ps.color1.set(c.r, c.g, c.b, 0.8);
+    ps.color2.set(1, 1, 1, 0.6);
+    ps.colorDead.set(c.r, c.g, c.b, 0);
     ps.minSize = 2; ps.maxSize = 5;
     ps.minLifeTime = 0.1; ps.maxLifeTime = 0.3;
     ps.emitRate = 200;
     ps.minEmitPower = 10; ps.maxEmitPower = 25;
-    ps.gravity = new B.Vector3(0, -10, 0);
+    ps.gravity.set(0, -10, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.05;
-        this._launch(ps);
+    this._launch(ps);
   }
 
   /**
@@ -322,24 +362,22 @@ export class EffectRenderer {
     const nx = dx / len;
     const nz = dz / len;
 
-    const ps = new B.ParticleSystem(`shove-${++_psCounter}`, 15, this.scene);
-    ps.emitter = new B.Vector3(tx, 10, tz);
+    const ps = this._acquirePS();
+    ps.emitter.set(tx, 10, tz);
     // Blast outward in the push direction
-    ps.createPointEmitter(
-      new B.Vector3(nx * 0.5 - 0.3, 0.3, nz * 0.5 - 0.3),
-      new B.Vector3(nx * 2 + 0.3, 0.8, nz * 2 + 0.3)
-    );
-    ps.color1 = new B.Color4(1, 1, 1, 0.9);
-    ps.color2 = new B.Color4(c.r, c.g, c.b, 0.8);
-    ps.colorDead = new B.Color4(c.r * 0.3, c.g * 0.3, c.b * 0.3, 0);
+    ps.direction1.set(nx * 0.5 - 0.3, 0.3, nz * 0.5 - 0.3);
+    ps.direction2.set(nx * 2 + 0.3, 0.8, nz * 2 + 0.3);
+    ps.color1.set(1, 1, 1, 0.9);
+    ps.color2.set(c.r, c.g, c.b, 0.8);
+    ps.colorDead.set(c.r * 0.3, c.g * 0.3, c.b * 0.3, 0);
     ps.minSize = 2; ps.maxSize = 5;
     ps.minLifeTime = 0.08; ps.maxLifeTime = 0.2;
     ps.emitRate = 200;
     ps.minEmitPower = 30; ps.maxEmitPower = 60;
-    ps.gravity = new B.Vector3(0, -20, 0);
+    ps.gravity.set(0, -20, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.06;
-        this._launch(ps);
+    this._launch(ps);
   }
 
   /**
@@ -635,20 +673,21 @@ export class EffectRenderer {
     if (!isEnabled('deathEffects', 'deathBurst')) return;
     const B = window.BABYLON;
     const c = parseColor(hexColor);
-    const ps = new B.ParticleSystem(`death-${++_psCounter}`, 20, this.scene);
-    ps.emitter = new B.Vector3(x, 10, z);
-    ps.createPointEmitter(new B.Vector3(-1, 1, -1), new B.Vector3(1, 1, 1));
-    ps.color1 = new B.Color4(c.r, c.g, c.b, 1);
-    ps.color2 = new B.Color4(1, 0.9, 0.7, 1);
-    ps.colorDead = new B.Color4(c.r * 0.2, c.g * 0.2, c.b * 0.2, 0);
+    const ps = this._acquirePS();
+    ps.emitter.set(x, 10, z);
+    ps.direction1.set(-1, 1, -1);
+    ps.direction2.set(1, 1, 1);
+    ps.color1.set(c.r, c.g, c.b, 1);
+    ps.color2.set(1, 0.9, 0.7, 1);
+    ps.colorDead.set(c.r * 0.2, c.g * 0.2, c.b * 0.2, 0);
     ps.minSize = 2; ps.maxSize = 5;
     ps.minLifeTime = 0.2; ps.maxLifeTime = 0.6;
     ps.emitRate = 200;
     ps.minEmitPower = 25; ps.maxEmitPower = 60;
-    ps.gravity = new B.Vector3(0, -40, 0);
+    ps.gravity.set(0, -40, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.1;
-        this._launch(ps);
+    this._launch(ps);
 
     // A kill is the most spectator-tracked event; the burst alone was the
     // smallest effect in this file. Three additions, all self-disposing
@@ -707,20 +746,21 @@ export class EffectRenderer {
     });
 
     // (3) Slow lingering embers that hang in the air after the flash.
-    const embers = new B.ParticleSystem(`death-embers-${++_psCounter}`, 14, this.scene);
-    embers.emitter = new B.Vector3(x, 12, z);
-    embers.createPointEmitter(new B.Vector3(-0.6, 0.4, -0.6), new B.Vector3(0.6, 1, 0.6));
-    embers.color1 = new B.Color4(Math.min(1, c.r + 0.3), Math.min(1, c.g + 0.3), Math.min(1, c.b + 0.3), 0.9);
-    embers.color2 = new B.Color4(1, 0.8, 0.5, 0.8);
-    embers.colorDead = new B.Color4(c.r * 0.3, c.g * 0.3, c.b * 0.3, 0);
+    const embers = this._acquirePS();
+    embers.emitter.set(x, 12, z);
+    embers.direction1.set(-0.6, 0.4, -0.6);
+    embers.direction2.set(0.6, 1, 0.6);
+    embers.color1.set(Math.min(1, c.r + 0.3), Math.min(1, c.g + 0.3), Math.min(1, c.b + 0.3), 0.9);
+    embers.color2.set(1, 0.8, 0.5, 0.8);
+    embers.colorDead.set(c.r * 0.3, c.g * 0.3, c.b * 0.3, 0);
     embers.minSize = 1; embers.maxSize = 2.5;
     embers.minLifeTime = 0.4; embers.maxLifeTime = 0.9;
     embers.emitRate = 90;
     embers.minEmitPower = 8; embers.maxEmitPower = 20;
-    embers.gravity = new B.Vector3(0, -8, 0);
+    embers.gravity.set(0, -8, 0);
     embers.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     embers.targetStopDuration = 0.15;
-        this._launch(embers);
+    this._launch(embers);
   }
 
   /**
@@ -797,20 +837,24 @@ export class EffectRenderer {
 
     // Spark particles at both ends
     const spawnSparks = (x, z) => {
-      const ps = new B.ParticleSystem(`gspark-${++_psCounter}`, 15, scene);
-      ps.emitter = new B.Vector3(x, CHAIN_Y, z);
-      ps.createPointEmitter(new B.Vector3(-1, 1, -1), new B.Vector3(1, 2, 1));
-      ps.color1 = new B.Color4(color.r, color.g, color.b, 1);
-      ps.color2 = new B.Color4(Math.min(1, color.r + 0.3), Math.min(1, color.g + 0.2), Math.min(1, color.b + 0.1), 1);
-      ps.colorDead = new B.Color4(0, 0.3, 0.5, 0);
+      const ps = this._acquirePS();
+      ps.emitter.set(x, CHAIN_Y, z);
+      ps.direction1.set(-1, 1, -1);
+      ps.direction2.set(1, 2, 1);
+      ps.color1.set(color.r, color.g, color.b, 1);
+      ps.color2.set(Math.min(1, color.r + 0.3), Math.min(1, color.g + 0.2), Math.min(1, color.b + 0.1), 1);
+      ps.colorDead.set(0, 0.3, 0.5, 0);
       ps.minSize = 0.5; ps.maxSize = 2;
       ps.minLifeTime = 0.05; ps.maxLifeTime = 0.15;
-      ps.emitRate = 200;
+      // 200/s x 0.4s previously outran the old capacity-15 system anyway;
+      // 100/s keeps the same visible density inside the shared pooled
+      // capacity without mid-burst starvation.
+      ps.emitRate = 100;
       ps.minEmitPower = 15; ps.maxEmitPower = 40;
-      ps.gravity = new B.Vector3(0, -30, 0);
+      ps.gravity.set(0, -30, 0);
       ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
       ps.targetStopDuration = 0.4;
-            this._launch(ps);
+      this._launch(ps);
       return ps;
     };
 
@@ -937,20 +981,21 @@ export class EffectRenderer {
     scorchMat.alpha = 0.42;
     scorch.material = scorchMat;
 
-    const ps = new B.ParticleSystem(`mine-ps-${++_psCounter}`, 35, this.scene);
-    ps.emitter = new B.Vector3(x, 2, z);
-    ps.createPointEmitter(new B.Vector3(-3, 1, -3), new B.Vector3(3, 6, 3));
-    ps.color1 = new B.Color4(1, 0.85, 0.3, 1);
-    ps.color2 = new B.Color4(1, 0.35, 0.05, 0.9);
-    ps.colorDead = new B.Color4(0.2, 0.05, 0.02, 0);
+    const ps = this._acquirePS();
+    ps.emitter.set(x, 2, z);
+    ps.direction1.set(-3, 1, -3);
+    ps.direction2.set(3, 6, 3);
+    ps.color1.set(1, 0.85, 0.3, 1);
+    ps.color2.set(1, 0.35, 0.05, 0.9);
+    ps.colorDead.set(0.2, 0.05, 0.02, 0);
     ps.minSize = 1.5; ps.maxSize = 4.5;
     ps.minLifeTime = 0.12; ps.maxLifeTime = 0.28;
     ps.emitRate = 240;
     ps.minEmitPower = 18; ps.maxEmitPower = 45;
-    ps.gravity = new B.Vector3(0, -35, 0);
+    ps.gravity.set(0, -35, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.10;
-        this._launch(ps);
+    this._launch(ps);
 
     const start = performance.now();
     const obs = this.scene.onBeforeRenderObservable.add(() => {
@@ -1029,20 +1074,21 @@ export class EffectRenderer {
     flashMat.disableLighting = true;
     flash.material = flashMat;
 
-    const ps = new B.ParticleSystem(`staff-ps-${++_psCounter}`, 38, this.scene);
-    ps.emitter = new B.Vector3(x, 3, z);
-    ps.createPointEmitter(new B.Vector3(-2.2, 0.8, -2.2), new B.Vector3(2.2, 5.8, 2.2));
-    ps.color1 = new B.Color4(Math.min(1, c.r + 0.25), Math.min(1, c.g + 0.1), Math.min(1, c.b + 0.2), 1);
-    ps.color2 = new B.Color4(0.95, 0.85, 1.0, 0.75);
-    ps.colorDead = new B.Color4(c.r * 0.25, c.g * 0.15, c.b * 0.25, 0);
+    const ps = this._acquirePS();
+    ps.emitter.set(x, 3, z);
+    ps.direction1.set(-2.2, 0.8, -2.2);
+    ps.direction2.set(2.2, 5.8, 2.2);
+    ps.color1.set(Math.min(1, c.r + 0.25), Math.min(1, c.g + 0.1), Math.min(1, c.b + 0.2), 1);
+    ps.color2.set(0.95, 0.85, 1.0, 0.75);
+    ps.colorDead.set(c.r * 0.25, c.g * 0.15, c.b * 0.25, 0);
     ps.minSize = 1.4; ps.maxSize = 4.6;
     ps.minLifeTime = 0.14; ps.maxLifeTime = 0.26;
     ps.emitRate = 260;
     ps.minEmitPower = 14; ps.maxEmitPower = 34;
-    ps.gravity = new B.Vector3(0, -18, 0);
+    ps.gravity.set(0, -18, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.08;
-        this._launch(ps);
+    this._launch(ps);
 
     const start = performance.now();
     const obs = this.scene.onBeforeRenderObservable.add(() => {
@@ -1103,20 +1149,21 @@ export class EffectRenderer {
     discMat.alpha = 0.26;
     disc.material = discMat;
 
-    const ps = new B.ParticleSystem(`cap-ps-${++_psCounter}`, 26, this.scene);
-    ps.emitter = new B.Vector3(x, 2.2, z);
-    ps.createPointEmitter(new B.Vector3(-2.5, 1.0, -2.5), new B.Vector3(2.5, 5.5, 2.5));
-    ps.color1 = new B.Color4(Math.min(1, c.r + 0.18), Math.min(1, c.g + 0.18), Math.min(1, c.b + 0.18), 1);
-    ps.color2 = new B.Color4(1, 1, 1, 0.8);
-    ps.colorDead = new B.Color4(c.r * 0.25, c.g * 0.25, c.b * 0.25, 0);
+    const ps = this._acquirePS();
+    ps.emitter.set(x, 2.2, z);
+    ps.direction1.set(-2.5, 1.0, -2.5);
+    ps.direction2.set(2.5, 5.5, 2.5);
+    ps.color1.set(Math.min(1, c.r + 0.18), Math.min(1, c.g + 0.18), Math.min(1, c.b + 0.18), 1);
+    ps.color2.set(1, 1, 1, 0.8);
+    ps.colorDead.set(c.r * 0.25, c.g * 0.25, c.b * 0.25, 0);
     ps.minSize = 1.4; ps.maxSize = 4.2;
     ps.minLifeTime = 0.14; ps.maxLifeTime = 0.24;
     ps.emitRate = 220;
     ps.minEmitPower = 12; ps.maxEmitPower = 28;
-    ps.gravity = new B.Vector3(0, -12, 0);
+    ps.gravity.set(0, -12, 0);
     ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.08;
-        this._launch(ps);
+    this._launch(ps);
 
     const start = performance.now();
     const obs = this.scene.onBeforeRenderObservable.add(() => {
@@ -1149,23 +1196,21 @@ export class EffectRenderer {
     const B = window.BABYLON;
     const c = parseColor(hexColor);
     const burstAt = (x, z, invert = false) => {
-      const ps = new B.ParticleSystem(`tp-burst-${++_psCounter}`, 24, this.scene);
-      ps.emitter = new B.Vector3(x, 8, z);
-      ps.createPointEmitter(
-        new B.Vector3(-2, invert ? -1 : 1, -2),
-        new B.Vector3(2, invert ? 4 : 7, 2)
-      );
-      ps.color1 = new B.Color4(c.r, c.g, c.b, 1);
-      ps.color2 = new B.Color4(1, 1, 1, 0.9);
-      ps.colorDead = new B.Color4(c.r * 0.2, c.g * 0.2, c.b * 0.2, 0);
+      const ps = this._acquirePS();
+      ps.emitter.set(x, 8, z);
+      ps.direction1.set(-2, invert ? -1 : 1, -2);
+      ps.direction2.set(2, invert ? 4 : 7, 2);
+      ps.color1.set(c.r, c.g, c.b, 1);
+      ps.color2.set(1, 1, 1, 0.9);
+      ps.colorDead.set(c.r * 0.2, c.g * 0.2, c.b * 0.2, 0);
       ps.minSize = 1.5; ps.maxSize = 5;
       ps.minLifeTime = 0.08; ps.maxLifeTime = 0.22;
       ps.emitRate = 220;
       ps.minEmitPower = 12; ps.maxEmitPower = 32;
-      ps.gravity = new B.Vector3(0, invert ? 10 : -10, 0);
+      ps.gravity.set(0, invert ? 10 : -10, 0);
       ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
       ps.targetStopDuration = 0.06;
-            this._launch(ps);
+      this._launch(ps);
     };
     const rippleAt = (x, z, tint = 1) => {
       const ringEntry = this._acquireRing();
@@ -1295,6 +1340,14 @@ export class EffectRenderer {
     if (this._dmgPool) {
       for (const { plane, tex, mat } of this._dmgPool) { plane.dispose(); tex.dispose(); mat.dispose(); }
       this._dmgPool.length = 0;
+    }
+    // Active-entry dispose() pushed every in-flight system back into the
+    // pool above, so draining the pool here is the single place pooled
+    // particle systems actually release their GPU buffers. dispose(false)
+    // protects the shared glow texture.
+    if (this._psPool) {
+      for (const ps of this._psPool) { try { ps.dispose(false); } catch { /* scene torn down */ } }
+      this._psPool.length = 0;
     }
     // Shared glow texture is freed last, after every particle system that
     // referenced it has been disposed without it (dispose(false)).

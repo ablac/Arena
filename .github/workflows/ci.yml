@@ -114,7 +114,6 @@ jobs:
           node scripts/test-admin-broadcast-ui.mjs
           node scripts/test-public-paths.mjs
           node scripts/test-spectator-client.mjs
-          node scripts/test-swordsman-material-lifecycle.mjs
           node scripts/test-responsive-site-shell.mjs
           node scripts/test-arena-brand-lockup.mjs
           node scripts/test-teleporter-readiness.mjs

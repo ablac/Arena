@@ -217,6 +217,7 @@ func TestTauntNeverReachesBotTick(t *testing.T) {
 	}
 	e.mu.Lock()
 	e.sendSpectatorUpdate()
+	e.flushTickOutbox()
 	e.mu.Unlock()
 
 	select {

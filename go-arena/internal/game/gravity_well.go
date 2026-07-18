@@ -122,20 +122,31 @@ func UpdateGravityWells(wells *[]GravityWell, bots map[string]*BotState, grid *S
 	*wells = active
 }
 
+// GravityWellView is the typed protocol view of a gravity well. Position is
+// grid coordinates ([2]int) for bots and world coordinates (Vec2) for
+// spectators, matching the useGridPos flag of BuildGravityWellView.
+type GravityWellView struct {
+	Type           string `json:"type"`
+	ID             string `json:"id"`
+	OwnerID        string `json:"owner_id"`
+	RemainingTicks int    `json:"remaining_ticks"`
+	PullRadius     int    `json:"pull_radius"`
+	Position       any    `json:"position"`
+}
+
 // BuildGravityWellView creates a protocol-compatible view of a gravity well.
-func BuildGravityWellView(well GravityWell, useGridPos bool) map[string]interface{} {
-	view := map[string]interface{}{
-		"type":            "gravity_well",
-		"id":              well.ID,
-		"owner_id":        well.OwnerID,
-		"remaining_ticks": well.RemainingTicks,
-		"pull_radius":     well.PullRadius,
+func BuildGravityWellView(well GravityWell, useGridPos bool) GravityWellView {
+	view := GravityWellView{
+		Type:           "gravity_well",
+		ID:             well.ID,
+		OwnerID:        well.OwnerID,
+		RemainingTicks: well.RemainingTicks,
+		PullRadius:     well.PullRadius,
 	}
 	if useGridPos {
-		gridPos := posToGrid(well.Position)
-		view["position"] = [2]int{gridPos[0], gridPos[1]}
+		view.Position = posToGrid(well.Position)
 	} else {
-		view["position"] = well.Position
+		view.Position = well.Position
 	}
 	return view
 }

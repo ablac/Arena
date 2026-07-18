@@ -115,6 +115,23 @@ func EnsureCoreSchema(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_kill_log_round_id ON kill_log (round_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_kill_log_created_at ON kill_log (created_at DESC)`,
+		// Running all-time per-weapon totals, maintained by InsertKillLog, so
+		// ListWeaponKillStats never needs a full scan of the unbounded
+		// kill_log table. Raw (non-canonicalized) weapon sources are stored;
+		// staff_burn/grapple_slam merging stays at read time.
+		`CREATE TABLE IF NOT EXISTS weapon_kill_totals (
+			weapon TEXT PRIMARY KEY,
+			kills BIGINT NOT NULL DEFAULT 0,
+			finisher_damage BIGINT NOT NULL DEFAULT 0
+		)`,
+		// Seed the running totals from pre-existing kill_log rows exactly once
+		// (first boot after the aggregate table is introduced); the
+		// uncorrelated NOT EXISTS makes this a no-op when any totals exist.
+		`INSERT INTO weapon_kill_totals (weapon, kills, finisher_damage)
+		 SELECT weapon, COUNT(*), COALESCE(SUM(damage), 0)
+		 FROM kill_log
+		 WHERE NOT EXISTS (SELECT 1 FROM weapon_kill_totals)
+		 GROUP BY weapon`,
 		`CREATE TABLE IF NOT EXISTS rate_limits (
 			ip_address TEXT PRIMARY KEY,
 			keys_generated INT NOT NULL DEFAULT 0,
@@ -390,6 +407,93 @@ func InsertRoundBotStats(ctx context.Context, roundID string, roundNumber int, b
 	return err
 }
 
+// RoundBotStatsRow is one bot's per-round stats line for batched insertion.
+type RoundBotStatsRow struct {
+	BotID           string
+	BotName         string
+	Weapon          string
+	Kills           int
+	Deaths          int
+	DamageDealt     int64
+	DamageTaken     int64
+	LongestLifeSecs int
+	ShotsFired      int
+	ShotsHit        int
+	Pickups         int
+	Distance        float64
+	Elo             int
+	Won             bool
+}
+
+// InsertRoundBotStatsBatch inserts all bots' round stats in a single
+// multi-row statement (unnest over parallel arrays), replacing one Pool.Exec
+// round trip per bot at round end with one per round.
+func InsertRoundBotStatsBatch(ctx context.Context, roundID string, roundNumber int, rows []RoundBotStatsRow) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
+	if roundID == "" {
+		return fmt.Errorf("InsertRoundBotStatsBatch: round identity is required")
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	n := len(rows)
+	botIDs := make([]string, n)
+	botNames := make([]string, n)
+	weapons := make([]string, n)
+	kills := make([]int32, n)
+	deaths := make([]int32, n)
+	dmgDealt := make([]int64, n)
+	dmgTaken := make([]int64, n)
+	lifeSecs := make([]int32, n)
+	shotsFired := make([]int32, n)
+	shotsHit := make([]int32, n)
+	pickups := make([]int32, n)
+	distances := make([]float64, n)
+	elos := make([]int32, n)
+	wons := make([]bool, n)
+	for i, row := range rows {
+		botIDs[i] = row.BotID
+		botNames[i] = row.BotName
+		weapons[i] = row.Weapon
+		kills[i] = int32(row.Kills)
+		deaths[i] = int32(row.Deaths)
+		dmgDealt[i] = row.DamageDealt
+		dmgTaken[i] = row.DamageTaken
+		lifeSecs[i] = int32(row.LongestLifeSecs)
+		shotsFired[i] = int32(row.ShotsFired)
+		shotsHit[i] = int32(row.ShotsHit)
+		pickups[i] = int32(row.Pickups)
+		distances[i] = row.Distance
+		elos[i] = int32(config.ClampElo(row.Elo))
+		wons[i] = row.Won
+	}
+	_, err := Pool.Exec(ctx, `
+		INSERT INTO round_bot_stats
+			(round_id, round_number, bot_id, bot_name, weapon, kills, deaths,
+			 damage_dealt, damage_taken, longest_life_secs, shots_fired,
+			 shots_hit, pickups, distance, elo, won)
+		SELECT $1, $2, u.bot_id, u.bot_name, u.weapon, u.kills, u.deaths,
+			 u.damage_dealt, u.damage_taken, u.longest_life_secs, u.shots_fired,
+			 u.shots_hit, u.pickups, u.distance, u.elo, u.won
+		FROM unnest(
+			$3::text[], $4::text[], $5::text[], $6::int[], $7::int[],
+			$8::bigint[], $9::bigint[], $10::int[], $11::int[], $12::int[],
+			$13::int[], $14::double precision[], $15::int[], $16::boolean[]
+		) AS u(bot_id, bot_name, weapon, kills, deaths, damage_dealt,
+			 damage_taken, longest_life_secs, shots_fired, shots_hit, pickups,
+			 distance, elo, won)`,
+		roundID, roundNumber,
+		botIDs, botNames, weapons, kills, deaths, dmgDealt, dmgTaken,
+		lifeSecs, shotsFired, shotsHit, pickups, distances, elos, wons,
+	)
+	if err != nil {
+		return fmt.Errorf("InsertRoundBotStatsBatch: %w", err)
+	}
+	return nil
+}
+
 // EnsureAdminRegistryTables creates the small admin-managed registries used by
 // the Admin Panel. These tables store validated records, not arbitrary files.
 func EnsureAdminRegistryTables(ctx context.Context) error {
@@ -428,12 +532,15 @@ func ListRecentWeaponPerformance(ctx context.Context, roundLimit int) ([]WeaponR
 	}
 	rows, err := Pool.Query(ctx, `
 		WITH recent_rounds AS (
-			SELECT stats.round_id, rounds.persisted_order
-			FROM round_bot_stats AS stats
-			JOIN rounds ON rounds.id = stats.round_id
-			WHERE stats.round_id IS NOT NULL AND stats.round_id <> ''
-			GROUP BY stats.round_id, rounds.persisted_order
-			ORDER BY rounds.persisted_order DESC
+			-- Walk rounds backwards by persisted_order (unique index) and keep
+			-- the first $1 that have stats, instead of GROUP BY over the whole
+			-- round_bot_stats x rounds join: O(limit) index probes vs O(history).
+			SELECT r.id AS round_id
+			FROM rounds AS r
+			WHERE EXISTS (
+				SELECT 1 FROM round_bot_stats AS s WHERE s.round_id = r.id
+			)
+			ORDER BY r.persisted_order DESC
 			LIMIT $1
 		)
 		SELECT
@@ -533,6 +640,35 @@ func InsertWeaponBalanceHistory(ctx context.Context, item *WeaponBalanceHistory)
 	)
 	if err != nil {
 		return fmt.Errorf("InsertWeaponBalanceHistory: %w", err)
+	}
+	return nil
+}
+
+// PruneWeaponBalanceHistory deletes a weapon's history rows beyond the most
+// recent keep entries (retention order: revision DESC, id DESC — the same
+// order ListWeaponBalanceHistory ranks by). Nothing else ever deletes from
+// weapon_balance_history, so without this the table grows ~2k rows/day and
+// the ROW_NUMBER() window in ListWeaponBalanceHistory scans all of it once a
+// minute. Served by idx_weapon_balance_history_weapon_revision. When the
+// weapon has fewer than keep+1 rows the subquery returns no row and the
+// NULL comparison deletes nothing.
+func PruneWeaponBalanceHistory(ctx context.Context, weapon string, keep int) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
+	_, err := Pool.Exec(ctx, `
+		DELETE FROM weapon_balance_history
+		WHERE weapon = $1
+		  AND (revision, id) < (
+			SELECT revision, id FROM weapon_balance_history
+			WHERE weapon = $1
+			ORDER BY revision DESC, id DESC
+			OFFSET $2 LIMIT 1
+		  )`,
+		weapon, keep,
+	)
+	if err != nil {
+		return fmt.Errorf("PruneWeaponBalanceHistory: %w", err)
 	}
 	return nil
 }
@@ -1176,6 +1312,46 @@ func ApplyBotStatsDelta(ctx context.Context, delta *BotStatsDelta) error {
 	return nil
 }
 
+// ApplyBotStatsDeltas applies all captured deltas in one network round trip
+// via a pgx batch. A batch outside an explicit transaction uses a single Sync
+// point, making it implicitly transactional: a mid-batch failure rolls back
+// statements that already reported success, so callers must treat the flush
+// as all-or-nothing and keep every delta pending on error.
+func ApplyBotStatsDeltas(ctx context.Context, deltas []BotStatsDelta) error {
+	if Pool == nil {
+		return ErrNoDatabase
+	}
+	if len(deltas) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for i := range deltas {
+		d := &deltas[i]
+		batch.Queue(applyBotStatsDeltaSQL,
+			d.BotID, d.Kills, d.Deaths, d.DamageDealt, d.DamageTaken,
+			d.CurrentStreak, d.BestStreak, config.ClampElo(d.Elo), d.LongestLifeSecs,
+			d.RoundsPlayed, d.RoundWins, d.PickupsCollected,
+			d.DistanceTraveled, d.CapturedAt,
+		)
+	}
+	br := Pool.SendBatch(ctx, batch)
+	var execErr error
+	for range deltas {
+		if _, err := br.Exec(); err != nil {
+			execErr = err
+			break
+		}
+	}
+	closeErr := br.Close()
+	if execErr != nil {
+		return fmt.Errorf("ApplyBotStatsDeltas: %w", execErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("ApplyBotStatsDeltas close: %w", closeErr)
+	}
+	return nil
+}
+
 // ---------- kill_log ----------
 
 // InsertKillLog inserts a new kill log entry.
@@ -1183,10 +1359,20 @@ func InsertKillLog(ctx context.Context, log *KillLog) error {
 	if Pool == nil {
 		return ErrNoDatabase
 	}
+	// One statement so the event row and the running aggregate can never
+	// drift: either both land or neither does.
 	_, err := Pool.Exec(ctx,
-		`INSERT INTO kill_log (id, round_id, killer_id, victim_id, weapon, damage,
-		                       killer_hp, tick, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		`WITH ins AS (
+			INSERT INTO kill_log (id, round_id, killer_id, victim_id, weapon, damage,
+			                      killer_hp, tick, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			RETURNING weapon, damage
+		 )
+		 INSERT INTO weapon_kill_totals (weapon, kills, finisher_damage)
+		 SELECT weapon, 1, damage FROM ins
+		 ON CONFLICT (weapon) DO UPDATE SET
+			kills = weapon_kill_totals.kills + 1,
+			finisher_damage = weapon_kill_totals.finisher_damage + EXCLUDED.finisher_damage`,
 		log.ID, log.RoundID, log.KillerID, log.VictimID, log.Weapon, log.Damage,
 		log.KillerHP, log.Tick, log.CreatedAt,
 	)
@@ -1194,6 +1380,40 @@ func InsertKillLog(ctx context.Context, log *KillLog) error {
 		return fmt.Errorf("InsertKillLog: %w", err)
 	}
 	return nil
+}
+
+// PruneKillLog deletes kill_log rows older than the retention window in
+// bounded batches (so the first run after months of uptime cannot create one
+// giant delete/vacuum spike). Returns total rows deleted. The running
+// weapon_kill_totals aggregate preserves all-time stats, and the windowed
+// 24h/1h counts only need recent rows, so pruning is invisible to
+// ListWeaponKillStats.
+func PruneKillLog(ctx context.Context, olderThan time.Time, batchSize int) (int64, error) {
+	if Pool == nil {
+		return 0, ErrNoDatabase
+	}
+	if batchSize <= 0 {
+		batchSize = 5000
+	}
+	var total int64
+	for {
+		tag, err := Pool.Exec(ctx, `
+			DELETE FROM kill_log
+			WHERE ctid IN (
+				SELECT ctid FROM kill_log
+				WHERE created_at < $1
+				LIMIT $2
+			)`,
+			olderThan, batchSize,
+		)
+		if err != nil {
+			return total, fmt.Errorf("PruneKillLog: %w", err)
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < int64(batchSize) {
+			return total, nil
+		}
+	}
 }
 
 // ---------- rounds ----------
@@ -1367,16 +1587,28 @@ func ListWeaponKillStats(ctx context.Context) ([]WeaponKillStats, error) {
 	if Pool == nil {
 		return nil, ErrNoDatabase
 	}
+	// All-time totals come from the weapon_kill_totals running aggregate
+	// (maintained atomically by InsertKillLog); only the 24h/1h windows touch
+	// kill_log, as a bounded range scan on idx_kill_log_created_at. This keeps
+	// the query O(recent kills) instead of a full scan of an unbounded table.
 	rows, err := Pool.Query(ctx, `
 		SELECT
-			weapon,
-			COUNT(*)::INT AS kills,
-			COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::INT AS kills_24h,
-			COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour')::INT AS kills_1h,
-			COALESCE(SUM(damage), 0)::BIGINT AS finisher_damage
-		FROM kill_log
-		GROUP BY weapon
-		ORDER BY weapon
+			t.weapon,
+			t.kills::INT AS kills,
+			COALESCE(w.kills_24h, 0)::INT AS kills_24h,
+			COALESCE(w.kills_1h, 0)::INT AS kills_1h,
+			t.finisher_damage AS finisher_damage
+		FROM weapon_kill_totals AS t
+		LEFT JOIN (
+			SELECT
+				weapon,
+				COUNT(*)::INT AS kills_24h,
+				COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour')::INT AS kills_1h
+			FROM kill_log
+			WHERE created_at >= NOW() - INTERVAL '24 hours'
+			GROUP BY weapon
+		) AS w ON w.weapon = t.weapon
+		ORDER BY t.weapon
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("ListWeaponKillStats: %w", err)

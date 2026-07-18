@@ -16,20 +16,24 @@ import (
 // nothing telling it to revalidate.
 func TestNoCacheStaticHandler_HTMLDocuments(t *testing.T) {
 	cases := []struct {
-		name        string
-		path        string
-		wantNoCache bool
+		name             string
+		path             string
+		wantCacheControl string
 	}{
-		{"root", "/", true},
-		{"dashboard directory", "/dashboard/", true},
-		{"admin directory", "/admin/", true},
-		{"mobile directory", "/m/", true},
-		{"shop directory", "/shop/", true},
-		{"explicit html file", "/dashboard/index.html", true},
-		{"js asset", "/js/app.js", true},
-		{"css asset", "/css/arena.css", true},
-		{"texture asset", "/textures/skybox/px.jpg", false},
-		{"favicon", "/favicon.ico", false},
+		{"root", "/", "no-cache, no-store, must-revalidate"},
+		{"dashboard directory", "/dashboard/", "no-cache, no-store, must-revalidate"},
+		{"admin directory", "/admin/", "no-cache, no-store, must-revalidate"},
+		{"mobile directory", "/m/", "no-cache, no-store, must-revalidate"},
+		{"shop directory", "/shop/", "no-cache, no-store, must-revalidate"},
+		{"explicit html file", "/dashboard/index.html", "no-cache, no-store, must-revalidate"},
+		// JS/CSS get no-cache WITHOUT no-store: the browser must revalidate
+		// every load (so a deploy is picked up immediately) but may store the
+		// body, enabling If-Modified-Since/304 revalidation instead of full
+		// re-downloads.
+		{"js asset", "/js/app.js", "no-cache"},
+		{"css asset", "/css/arena.css", "no-cache"},
+		{"texture asset", "/textures/skybox/px.jpg", ""},
+		{"favicon", "/favicon.ico", ""},
 	}
 
 	for _, tc := range cases {
@@ -42,9 +46,8 @@ func TestNoCacheStaticHandler_HTMLDocuments(t *testing.T) {
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
 
-			got := rec.Header().Get("Cache-Control") == "no-cache, no-store, must-revalidate"
-			if got != tc.wantNoCache {
-				t.Errorf("path %q: no-cache header present = %v, want %v (Cache-Control=%q)", tc.path, got, tc.wantNoCache, rec.Header().Get("Cache-Control"))
+			if got := rec.Header().Get("Cache-Control"); got != tc.wantCacheControl {
+				t.Errorf("path %q: Cache-Control = %q, want %q", tc.path, got, tc.wantCacheControl)
 			}
 		})
 	}

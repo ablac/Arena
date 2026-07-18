@@ -7,20 +7,20 @@ func TestTeleportPadBotViewUsesObserverEffectiveCooldown(t *testing.T) {
 	bot := &BotState{TeleportCooldowns: map[string]int{"pad-a": 150}}
 
 	global := BuildTeleportPadView(pad, 135, true)
-	if ready, _ := global["is_ready"].(bool); !ready {
+	if !global.IsReady {
 		t.Fatalf("global pad view changed by observer state: %+v", global)
 	}
 
 	observer := BuildTeleportPadViewForBot(pad, 135, true, bot)
-	if ready, _ := observer["is_ready"].(bool); ready {
+	if observer.IsReady {
 		t.Fatalf("pad reported ready before observer cooldown expired: %+v", observer)
 	}
-	if got := observer["cooldown_remaining_ticks"]; got != 15 {
-		t.Fatalf("observer cooldown remaining = %v, want 15", got)
+	if observer.CooldownRemainingTicks != 15 {
+		t.Fatalf("observer cooldown remaining = %v, want 15", observer.CooldownRemainingTicks)
 	}
 
 	ready := BuildTeleportPadViewForBot(pad, 150, true, bot)
-	if isReady, _ := ready["is_ready"].(bool); !isReady {
+	if !ready.IsReady {
 		t.Fatalf("pad did not become ready at observer cooldown boundary: %+v", ready)
 	}
 }

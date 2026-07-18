@@ -31,37 +31,100 @@ func SendToBot(bot *BotState, msg interface{}) {
 	safeSend(bot.SendChan, data)
 }
 
-// SendTickUpdate sends the per-tick game state update to a bot.
-// hints is optional — when non-nil it provides directional hints to far-away
-// bots and pickups (only sent when no bots are within view radius).
-func SendTickUpdate(bot *BotState, yourState map[string]interface{}, nearbyEntities []map[string]interface{}, tickCount int, arena *ArenaMap, hints []map[string]interface{}, fogRadius int, extra ...map[string]interface{}) {
-	var cellSize float64 = config.C.PathfindingCellSize
-	zoneCenter := posToGrid(arena.ZoneCenter)
-	zoneTargetCenter := posToGrid(arena.ZoneTargetCenter)
+// SafeZoneGridView is the safe_zone submap of the tick envelope, expressed in
+// grid tiles. It is identical for every bot in a tick, so the engine builds
+// it once per tick and shares the value across all envelopes.
+type SafeZoneGridView struct {
+	Center       [2]int `json:"center"`
+	Radius       int    `json:"radius"`
+	TargetCenter [2]int `json:"target_center"`
+	TargetRadius int    `json:"target_radius"`
+}
 
-	msg := map[string]interface{}{
-		"type":            "tick",
-		"tick":            tickCount,
-		"tick_number":     tickCount,
-		"your_state":      yourState,
-		"nearby_entities": nearbyEntities,
-		"fog_radius":      fogRadius,
-		"safe_zone": map[string]interface{}{
-			"center":        [2]int{zoneCenter[0], zoneCenter[1]},
-			"radius":        int(math.Round(arena.ZoneRadius / cellSize)),
-			"target_center": [2]int{zoneTargetCenter[0], zoneTargetCenter[1]},
-			"target_radius": int(math.Round(arena.ZoneTargetRadius / cellSize)),
-		},
+// BuildSafeZoneGridView builds the shared per-tick safe_zone view.
+func BuildSafeZoneGridView(arena *ArenaMap) SafeZoneGridView {
+	cellSize := config.C.PathfindingCellSize
+	return SafeZoneGridView{
+		Center:       posToGrid(arena.ZoneCenter),
+		Radius:       int(math.Round(arena.ZoneRadius / cellSize)),
+		TargetCenter: posToGrid(arena.ZoneTargetCenter),
+		TargetRadius: int(math.Round(arena.ZoneTargetRadius / cellSize)),
+	}
+}
+
+// HintView is a directional hint sent to bots with nothing in view radius.
+// PickupType is set only on pickup hints, matching the previous map payloads
+// where bot hints carried no pickup_type key.
+type HintView struct {
+	HintType   string     `json:"hint_type"`
+	PickupType string     `json:"pickup_type,omitempty"`
+	Direction  [2]float64 `json:"direction"`
+	Distance   float64    `json:"distance"`
+}
+
+// TickMessage is the typed per-tick envelope sent to each bot. All fields are
+// value snapshots built under the engine lock; the tick goroutine marshals
+// the message after the lock is released.
+//
+// Presence semantics (wire parity with the previous map-based envelope):
+//   - Hints is a pointer so the key appears exactly when hints were built
+//     (non-nil), never for an inapplicable tick.
+//   - VoidTiles is a pointer-to-slice: present (possibly []) whenever sudden
+//     death is active, absent otherwise. Bare omitempty would wrongly drop
+//     the authoritative empty list.
+//   - ServiceStatus appears only while a maintenance notice is active.
+//   - TeamScores/Flags appear only in team modes; Flags is a pointer so team
+//     modes with zero flags still serialize "flags":[].
+type TickMessage struct {
+	Type           string           `json:"type"`
+	Tick           int              `json:"tick"`
+	TickNumber     int              `json:"tick_number"`
+	YourState      *YourStateView   `json:"your_state"`
+	NearbyEntities []any            `json:"nearby_entities"`
+	FogRadius      int              `json:"fog_radius"`
+	SafeZone       SafeZoneGridView `json:"safe_zone"`
+	Hints          *[]HintView      `json:"hints,omitempty"`
+
+	// Per-tick extras (previously the variadic extra map).
+	SuddenDeath      bool           `json:"sudden_death"`
+	SuddenDeathStall bool           `json:"sudden_death_stall"`
+	BountyTarget     string         `json:"bounty_target"`
+	NearbyMines      int            `json:"nearby_mines"`
+	RoundTick        int            `json:"round_tick"`
+	RoundModifier    string         `json:"round_modifier"`
+	ServiceStatus    *ServiceStatus `json:"service_status,omitempty"`
+	VoidTiles        *[][2]int      `json:"void_tiles,omitempty"`
+
+	// Game-mode fields (previously merged by AddModeTickExtra).
+	GameMode   string         `json:"game_mode"`
+	TeamScores map[string]int `json:"team_scores,omitempty"`
+	Flags      *[]FlagView    `json:"flags,omitempty"`
+}
+
+// NewTickMessage assembles the base tick envelope. hints is optional — when
+// non-nil it provides directional hints to far-away bots and pickups (only
+// sent when no bots are within view radius). safeZone is passed in prebuilt
+// because it is identical for every bot in a tick.
+func NewTickMessage(yourState *YourStateView, nearbyEntities []any, tickCount int, safeZone SafeZoneGridView, hints []HintView, fogRadius int) *TickMessage {
+	msg := &TickMessage{
+		Type:           "tick",
+		Tick:           tickCount,
+		TickNumber:     tickCount,
+		YourState:      yourState,
+		NearbyEntities: nearbyEntities,
+		FogRadius:      fogRadius,
+		SafeZone:       safeZone,
 	}
 	if hints != nil {
-		msg["hints"] = hints
+		msg.Hints = &hints
 	}
-	// Merge extra data into the tick message.
-	for _, ext := range extra {
-		for k, v := range ext {
-			msg[k] = v
-		}
-	}
+	return msg
+}
+
+// SendTickUpdate marshals a prepared tick envelope and queues it on the bot's
+// coalescing tick channel. The engine calls this after releasing the engine
+// lock; the message must therefore already be a self-contained snapshot.
+func SendTickUpdate(bot *BotState, msg *TickMessage) {
 	if bot.TickChan == nil {
 		// Compatibility for tests and non-network callers that construct a
 		// BotState without the production transport split.
@@ -209,6 +272,12 @@ func marshalLobbyUpdatePayload(connectedCount, minBots int, countdown *int, play
 		"players":        players,
 	}
 	return marshalJSON(msg)
+}
+
+// sameByteSlice reports whether a and b are the identical slice (same backing
+// array and length) — an O(1) identity check, not a content comparison.
+func sameByteSlice(a, b []byte) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
 }
 
 func sendLobbyPayload(bot *BotState, data []byte) {

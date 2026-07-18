@@ -813,37 +813,57 @@ func ProcessBurnFields(burnFields *[]BurnField, bots map[string]*BotState, antiT
 	*burnFields = active
 }
 
+// StaffImpactView is the typed protocol view of a pending staff blast.
+// Position is grid coordinates ([2]int) for bots and world coordinates (Vec2)
+// for spectators, matching the useGridPos flag of BuildStaffImpactView.
+type StaffImpactView struct {
+	Type      string  `json:"type"`
+	OwnerID   string  `json:"owner_id"`
+	Radius    float64 `json:"radius"`
+	TicksLeft int     `json:"ticks_left"`
+	Position  any     `json:"position"`
+}
+
 // BuildStaffImpactView creates a protocol-compatible view of a pending staff blast.
-func BuildStaffImpactView(impact StaffImpact, useGridPos bool) map[string]interface{} {
-	view := map[string]interface{}{
-		"type":       "staff_impact",
-		"owner_id":   impact.OwnerID,
-		"radius":     impact.Radius,
-		"ticks_left": impact.TicksLeft,
+func BuildStaffImpactView(impact StaffImpact, useGridPos bool) StaffImpactView {
+	view := StaffImpactView{
+		Type:      "staff_impact",
+		OwnerID:   impact.OwnerID,
+		Radius:    impact.Radius,
+		TicksLeft: impact.TicksLeft,
 	}
 	if useGridPos {
-		gridPos := posToGrid(impact.Position)
-		view["position"] = [2]int{gridPos[0], gridPos[1]}
+		view.Position = posToGrid(impact.Position)
 	} else {
-		view["position"] = impact.Position
+		view.Position = impact.Position
 	}
 	return view
 }
 
-func BuildBurnFieldView(field BurnField, useGridPos bool) map[string]interface{} {
-	view := map[string]interface{}{
-		"type":       "burn_field",
-		"id":         field.ID,
-		"owner_id":   field.OwnerID,
-		"radius":     field.Radius,
-		"ticks_left": field.TicksLeft,
-		"active":     true,
+// BurnFieldView is the typed protocol view of a lingering staff burn field.
+type BurnFieldView struct {
+	Type      string  `json:"type"`
+	ID        string  `json:"id"`
+	OwnerID   string  `json:"owner_id"`
+	Radius    float64 `json:"radius"`
+	TicksLeft int     `json:"ticks_left"`
+	Active    bool    `json:"active"`
+	Position  any     `json:"position"`
+}
+
+func BuildBurnFieldView(field BurnField, useGridPos bool) BurnFieldView {
+	view := BurnFieldView{
+		Type:      "burn_field",
+		ID:        field.ID,
+		OwnerID:   field.OwnerID,
+		Radius:    field.Radius,
+		TicksLeft: field.TicksLeft,
+		Active:    true,
 	}
 	if useGridPos {
-		gridPos := posToGrid(field.Position)
-		view["position"] = [2]int{gridPos[0], gridPos[1]}
+		view.Position = posToGrid(field.Position)
 	} else {
-		view["position"] = field.Position
+		view.Position = field.Position
 	}
 	return view
 }

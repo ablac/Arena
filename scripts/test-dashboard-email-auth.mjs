@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
-const dashboard = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8');
+const dashboard = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8')
+  // The dashboard runtime was extracted from the inline <script> to
+  // dashboard.js; these probes span both, so read them as one source.
+  + readFileSync(new URL('../frontend/dashboard/dashboard.js', import.meta.url), 'utf8');
 const cosmeticsSource = readFileSync(new URL('../frontend/dashboard/account-cosmetics.js', import.meta.url), 'utf8');
 const sandbox = {};
 vm.runInNewContext(cosmeticsSource, sandbox, {filename:'account-cosmetics.js'});
