@@ -549,23 +549,23 @@ type ArenaEvent struct {
 
 // SpectatorState is the serialized arena state for spectators.
 type SpectatorState struct {
-	Type         string                   `json:"type"`
-	Tick         int                      `json:"tick"`
-	RoundTick    int                      `json:"round_tick"`
-	RoundNumber  int                      `json:"round_number,omitempty"`
-	Bots         []map[string]interface{} `json:"bots"`
-	SafeZone     map[string]interface{}   `json:"safe_zone"`
-	Pickups      []map[string]interface{} `json:"pickups"`
-	KillFeed     []KillFeedEntry          `json:"kill_feed"`
-	Obstacles    []Obstacle               `json:"obstacles,omitempty"`
-	WaitingBots  []map[string]interface{} `json:"waiting_bots,omitempty"`
-	TeleportPads []TeleportPadView        `json:"teleport_pads,omitempty"`
-	CapturePads  []CapturePadView         `json:"capture_pads,omitempty"`
-	HazardZones  []HazardZoneView         `json:"hazard_zones,omitempty"`
-	BurnFields   []BurnFieldView          `json:"burn_fields,omitempty"`
-	Landmines    []MineView               `json:"landmines,omitempty"`
-	GravityWells []GravityWellView        `json:"gravity_wells,omitempty"`
-	StaffImpacts []StaffImpactView        `json:"staff_impacts,omitempty"`
+	Type         string                    `json:"type"`
+	Tick         int                       `json:"tick"`
+	RoundTick    int                       `json:"round_tick"`
+	RoundNumber  int                       `json:"round_number,omitempty"`
+	Bots         []BotSpectatorView        `json:"bots"`
+	SafeZone     SafeZoneSpectatorView     `json:"safe_zone"`
+	Pickups      []PickupSpectatorView     `json:"pickups"`
+	KillFeed     []KillFeedEntry           `json:"kill_feed"`
+	Obstacles    []Obstacle                `json:"obstacles,omitempty"`
+	WaitingBots  []WaitingBotSpectatorView `json:"waiting_bots,omitempty"`
+	TeleportPads []TeleportPadView         `json:"teleport_pads,omitempty"`
+	CapturePads  []CapturePadView          `json:"capture_pads,omitempty"`
+	HazardZones  []HazardZoneView          `json:"hazard_zones,omitempty"`
+	BurnFields   []BurnFieldView           `json:"burn_fields,omitempty"`
+	Landmines    []MineView                `json:"landmines,omitempty"`
+	GravityWells []GravityWellView         `json:"gravity_wells,omitempty"`
+	StaffImpacts []StaffImpactView         `json:"staff_impacts,omitempty"`
 	// VoidTiles is populated only on spectator keyframes (~1 Hz): the set only
 	// accumulates during sudden death, so 10 Hz re-broadcast of the full list
 	// was pure duplication. No omitempty — clients must distinguish null
