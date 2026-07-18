@@ -105,6 +105,7 @@ jobs:
           node scripts/test-forge-mount-metrics.mjs
           node scripts/test-safe-zone-geometry.mjs
           node scripts/test-map-walls-geometry.mjs
+          node scripts/test-obstacle-clusters.mjs
           node scripts/test-intermission-director.mjs
           node scripts/test-renderer-suspension.mjs
           node scripts/test-engine-webgpu-fallback.mjs
