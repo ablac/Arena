@@ -17,16 +17,19 @@ import (
 type MapShape string
 
 const (
-	ShapeSquare  MapShape = "square"
-	ShapeCircle  MapShape = "circle"
-	ShapeHexagon MapShape = "hexagon"
-	ShapeDiamond MapShape = "diamond"
-	ShapeCross   MapShape = "cross"
-	ShapeCaves   MapShape = "caves"
-	ShapeDonut   MapShape = "donut"
-	ShapeIslands MapShape = "islands"
-	ShapeRooms   MapShape = "rooms"
-	ShapeSpiral  MapShape = "spiral"
+	ShapeSquare    MapShape = "square"
+	ShapeCircle    MapShape = "circle"
+	ShapeHexagon   MapShape = "hexagon"
+	ShapeDiamond   MapShape = "diamond"
+	ShapeCross     MapShape = "cross"
+	ShapeCaves     MapShape = "caves"
+	ShapeDonut     MapShape = "donut"
+	ShapeIslands   MapShape = "islands"
+	ShapeRooms     MapShape = "rooms"
+	ShapeSpiral    MapShape = "spiral"
+	ShapeStar      MapShape = "star"
+	ShapeHourglass MapShape = "hourglass"
+	ShapeClover    MapShape = "clover"
 )
 
 // builtInMapShapes is the single canonical list of built-in shapes. Name
@@ -35,6 +38,7 @@ const (
 var builtInMapShapes = []MapShape{
 	ShapeSquare, ShapeCircle, ShapeHexagon, ShapeDiamond, ShapeCross,
 	ShapeCaves, ShapeDonut, ShapeIslands, ShapeRooms, ShapeSpiral,
+	ShapeStar, ShapeHourglass, ShapeClover,
 }
 
 // ActiveMapShape is the shape of the currently-active round's terrain.
@@ -285,6 +289,15 @@ func generateShapeMask(shape MapShape, cols, rows int, rng *rand.Rand) [][]bool 
 
 	case ShapeSpiral:
 		generateSpiralMask(mask, cols, rows)
+
+	case ShapeStar:
+		generateStarMask(mask, cols, rows)
+
+	case ShapeHourglass:
+		generateHourglassMask(mask, cols, rows)
+
+	case ShapeClover:
+		generateCloverMask(mask, cols, rows)
 	}
 
 	ensureConnected(mask, cols, rows)
@@ -409,7 +422,7 @@ func generateSpiralMask(mask [][]bool, cols, rows int) {
 	ccx, ccy := float64(cols-1)/2, float64(rows-1)/2
 	maxR := math.Min(ccx, ccy) - 1
 	const turns = 2.25
-	halfWidth := math.Max(3, math.Min(float64(cols), float64(rows))*0.045)
+	halfWidth := math.Max(4, math.Min(float64(cols), float64(rows))*0.07)
 
 	// Walk the Archimedean spiral from rim to centre carving open discs.
 	steps := int(turns * 2 * math.Pi * maxR) // dense enough to leave no gaps
@@ -423,6 +436,57 @@ func generateSpiralMask(mask [][]bool, cols, rows int) {
 	}
 	// Open centre arena where the spiral terminates.
 	carveDisc(mask, cols, rows, ccx, ccy, math.Max(halfWidth*2.2, maxR*0.18))
+}
+
+// generateStarMask carves a five-point arena with broad arms and a generous
+// centre, creating alternating long sightlines and defensive pockets.
+func generateStarMask(mask [][]bool, cols, rows int) {
+	cx, cy := float64(cols-1)/2, float64(rows-1)/2
+	outerR := math.Min(cx, cy) - 1
+	for x := 1; x < cols-1; x++ {
+		for y := 1; y < rows-1; y++ {
+			dx, dy := float64(x)-cx, float64(y)-cy
+			angle := math.Atan2(dy, dx) - math.Pi/2
+			limit := outerR * (0.72 + 0.22*math.Cos(5*angle))
+			mask[x][y] = math.Hypot(dx, dy) <= limit
+		}
+	}
+}
+
+// generateHourglassMask carves two broad fighting zones joined by a wide
+// waist. The centre is narrow enough to matter without becoming a pinch point.
+func generateHourglassMask(mask [][]bool, cols, rows int) {
+	cx, cy := float64(cols-1)/2, float64(rows-1)/2
+	for x := 1; x < cols-1; x++ {
+		for y := 1; y < rows-1; y++ {
+			nx := math.Abs(float64(x)-cx) / cx
+			ny := math.Abs(float64(y)-cy) / cy
+			mask[x][y] = ny <= 0.96 && nx <= 0.28+0.68*ny
+		}
+	}
+}
+
+// generateCloverMask joins four overlapping circular lobes around an open
+// centre, giving combatants several routes between roomy skirmish areas.
+func generateCloverMask(mask [][]bool, cols, rows int) {
+	cx, cy := float64(cols-1)/2, float64(rows-1)/2
+	r := math.Min(cx, cy)
+	offset := r * 0.30
+	lobeR := r * 0.55
+	centres := [][2]float64{
+		{cx + offset, cy}, {cx - offset, cy},
+		{cx, cy + offset}, {cx, cy - offset},
+	}
+	for x := 1; x < cols-1; x++ {
+		for y := 1; y < rows-1; y++ {
+			for _, centre := range centres {
+				if math.Hypot(float64(x)-centre[0], float64(y)-centre[1]) <= lobeR {
+					mask[x][y] = true
+					break
+				}
+			}
+		}
+	}
 }
 
 // carveDisc opens all cells within radius of (px, py), keeping a 1-cell rim.
