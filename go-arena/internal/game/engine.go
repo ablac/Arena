@@ -824,6 +824,13 @@ func (e *GameEngine) endRound() {
 	winnerID, winnerName := DetermineWinner(e.Bots, e.TeamScores)
 	awards := CalculateAwards(e.Bots)
 
+	// Capture the winner's avatar color for the spectator round_end broadcast
+	// now, before the reconnect-pending prune below can remove the session.
+	winnerColor := ""
+	if winner := e.Bots[winnerID]; winner != nil {
+		winnerColor = winner.AvatarColor
+	}
+
 	info := RoundEndInfo{
 		RoundNumber: e.Round.RoundNumber,
 		WinnerID:    winnerID,
@@ -923,6 +930,31 @@ func (e *GameEngine) endRound() {
 	e.NextObstacles, e.NextNavGrid, e.NextTerrain, e.NextMapShape, e.NextMaskRects = generateRoundTerrain(len(e.Bots) + len(e.WaitingBots))
 	ActiveTerrain = e.NextTerrain
 	ActiveMapShape = e.NextMapShape
+
+	// Stage the typed round_end spectator broadcast (issue #189): winner
+	// announcement plus a preview of the next round's pre-generated terrain,
+	// so clients can run the intermission show and pre-build the next map.
+	// generateRoundTerrain above already applied dynamic sizing for the NEXT
+	// round, so config.C.Arena{Width,Height} here are exactly the dimensions
+	// the next round's first keyframe will report (ArenaMap.Reset copies
+	// them) — the client must see identical values or it would tear the
+	// scene down twice. Marshal + delivery happen in flushTickOutbox after
+	// the engine lock is released, and only when spectators are connected.
+	roundEndMsg := &RoundEndSpectatorMessage{
+		Type:             "round_end",
+		RoundNumber:      e.Round.RoundNumber,
+		IntermissionSecs: config.C.IntermissionTime,
+		NextMap: &NextMapView{
+			Shape:     string(e.NextMapShape),
+			ArenaSize: [2]float64{config.C.ArenaWidth, config.C.ArenaHeight},
+			Obstacles: ExpandObstaclesForClient(e.NextObstacles, e.NextMaskRects, e.NextTerrain.CellSize),
+			MaskRects: e.NextMaskRects,
+		},
+	}
+	if winnerID != "" {
+		roundEndMsg.Winner = &RoundWinnerView{ID: winnerID, Name: winnerName, Color: winnerColor}
+	}
+	e.outbox.spectatorEvent = roundEndMsg
 
 	slog.Info("round ended",
 		"round", e.Round.RoundNumber,

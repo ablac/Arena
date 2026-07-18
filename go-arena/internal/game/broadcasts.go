@@ -229,6 +229,45 @@ func SendRoundStart(bot *BotState, round RoundState, bots map[string]*BotState, 
 	SendToBot(bot, msg)
 }
 
+// RoundWinnerView is the winner submap of the spectator round_end envelope.
+// Color is the bot's avatar color so the client can tint the winner banner
+// without a roster lookup.
+type RoundWinnerView struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color,omitempty"`
+}
+
+// NextMapView previews the NEXT round's pre-generated terrain for the
+// spectator intermission show (issue #189). Obstacles carries exactly what
+// the next round's first keyframe will carry (expanded + grid-snapped, mask
+// rects appended — see ExpandObstaclesForClient) so the client can hand its
+// renderers the data ahead of time and the keyframe swap is a no-op.
+type NextMapView struct {
+	Shape     string     `json:"shape"`
+	ArenaSize [2]float64 `json:"arena_size"`
+	Obstacles []Obstacle `json:"obstacles"`
+	MaskRects []Obstacle `json:"mask_rects,omitempty"`
+}
+
+// RoundEndSpectatorMessage is the typed spectator broadcast staged by
+// endRound: winner announcement plus the next map, so clients can stage the
+// between-round show during intermission. Same precedent as TickMessage —
+// value snapshot built under the engine lock, marshaled in flushTickOutbox
+// after the lock is released.
+//
+// Presence semantics: Winner is a pointer so the key is absent when the
+// round resolved without a winner (no bots left to rank); NextMap is a
+// pointer for the same reason on the (never-expected) path where terrain
+// pre-generation is unavailable.
+type RoundEndSpectatorMessage struct {
+	Type             string           `json:"type"`
+	RoundNumber      int              `json:"round_number"`
+	Winner           *RoundWinnerView `json:"winner,omitempty"`
+	IntermissionSecs float64          `json:"intermission_secs"`
+	NextMap          *NextMapView     `json:"next_map,omitempty"`
+}
+
 // SendLobbyUpdate sends a lobby status message to a bot.
 func SendLobbyUpdate(bot *BotState, connectedCount, minBots int, countdown *int, allBots map[string]*BotState) {
 	data, err := buildLobbyUpdatePayload(connectedCount, minBots, countdown, allBots)

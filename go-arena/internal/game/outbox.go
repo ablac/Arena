@@ -16,12 +16,16 @@ import (
 // published to the engine (BotID, SendChan, TickChan, Conn) plus the lobby
 // dedup markers, which are owned exclusively by the tick goroutine.
 type tickOutbox struct {
-	botTicks    []outboundBotTick
-	spectator   *SpectatorState
-	deathSends  []outboundDeathMessage
-	killSends   []outboundKillMessage
-	lobbyUpdate *outboundLobbyUpdate
-	lobbyState  *outboundLobbyState
+	botTicks  []outboundBotTick
+	spectator *SpectatorState
+	// spectatorEvent stages a one-shot typed spectator broadcast (currently
+	// only the round_end envelope) delivered right after the spectator state
+	// so a round-ending tick's final arena_state precedes its round_end.
+	spectatorEvent *RoundEndSpectatorMessage
+	deathSends     []outboundDeathMessage
+	killSends      []outboundKillMessage
+	lobbyUpdate    *outboundLobbyUpdate
+	lobbyState     *outboundLobbyState
 }
 
 type outboundBotTick struct {
@@ -92,6 +96,21 @@ func (e *GameEngine) flushTickOutbox() {
 			BroadcastToSpectators(e.snapshotSpectators(), data)
 		}
 		out.spectator = nil
+	}
+
+	// One-shot spectator event (round_end). Marshal only when someone is
+	// connected to hear it — endRound stages it unconditionally because the
+	// snapshot is a handful of pointers, but serializing the next map's
+	// obstacle list for zero spectators would be pure waste.
+	if ev := out.spectatorEvent; ev != nil {
+		out.spectatorEvent = nil
+		if specs := e.snapshotSpectators(); len(specs) > 0 {
+			if data, err := marshalJSON(ev); err != nil {
+				slog.Error("failed to marshal spectator round_end", "error", err)
+			} else {
+				BroadcastToSpectators(specs, data)
+			}
+		}
 	}
 
 	// Death/kill notifications.
