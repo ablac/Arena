@@ -13,7 +13,7 @@ import (
 // compilation — tightening further would require a frontend refactor.
 const contentSecurityPolicy = "" +
 	"default-src 'self'; " +
-	"script-src 'self' https://cdn.babylonjs.com https://js.stripe.com https://*.js.stripe.com https://checkout.stripe.com 'unsafe-inline' 'unsafe-eval'; " +
+	"script-src 'self' https://cdn.jsdelivr.net https://cdn.babylonjs.com https://js.stripe.com https://*.js.stripe.com https://checkout.stripe.com 'unsafe-inline' 'unsafe-eval'; " +
 	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
 	"font-src 'self' https://fonts.gstatic.com; " +
 	"img-src 'self' data: blob: https://*.stripe.com https://*.link.com; " +
