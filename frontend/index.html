@@ -14,12 +14,14 @@
   <link rel="stylesheet" href="css/chat.css?v=20260714b">
   <link rel="stylesheet" href="css/embedded-checkout.css?v=20260713a">
   <link rel="stylesheet" href="css/brand-lockup.css?v=20260714a">
-  <script src="https://cdn.babylonjs.com/v9.14.0/babylon.js"></script>
-  <script src="https://cdn.babylonjs.com/v9.14.0/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
-  <script src="https://cdn.babylonjs.com/v9.14.0/materialsLibrary/babylonjs.materials.min.js"></script>
-  <script src="https://cdn.babylonjs.com/v9.14.0/gui/babylon.gui.min.js"></script>
-  <script src="js/cosmetic-themes.js?v=20260713f"></script>
-  <script src="js/embedded-checkout.js?v=20260713a"></script>
+  <!-- jsdelivr serves the minified build compressed (~1.6 MB wire vs 8.6 MB
+       uncompressed on cdn.babylonjs.com, which has no min variant at the
+       versioned path). defer keeps document order and still runs before the
+       type=module entry points. -->
+  <script defer src="https://cdn.jsdelivr.net/npm/babylonjs@9.14.0/babylon.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/babylonjs-gui@9.14.0/babylon.gui.min.js"></script>
+  <script defer src="js/cosmetic-themes.js?v=20260713f"></script>
+  <script defer src="js/embedded-checkout.js?v=20260713a"></script>
   <!-- service-status.js is NOT loaded here: app.js and site-shell.js import
        it (unversioned), and a second versioned URL would create a separate
        module instance with its own banner controller racing the first. -->
