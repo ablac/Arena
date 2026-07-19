@@ -1,6 +1,6 @@
 'use strict';
 
-export const BABYLON_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/babylonjs@9.14.0/babylon.min.js';
+export const BABYLON_SCRIPT_URL = '../js/babylon-runtime.js?v=20260718a';
 
 let babylonLoadPromise = null;
 
@@ -34,7 +34,7 @@ export function loadPinnedBabylon({windowObject = defaultWindow(), documentObjec
       if (timer) windowObject.clearTimeout?.(timer);
       if (error || !windowObject.BABYLON) {
         babylonLoadPromise = null;
-        if (createdHere && script.dataset?.arenaCosmeticsPreview === 'babylon-9.14.0') script.remove?.();
+        if (createdHere && script.dataset?.arenaCosmeticsPreview === 'babylon-runtime-local') script.remove?.();
         reject(error || new Error('Babylon.js loaded without exposing its renderer'));
         return;
       }
@@ -45,9 +45,9 @@ export function loadPinnedBabylon({windowObject = defaultWindow(), documentObjec
     script.addEventListener('error', () => finish(new Error('The 3D preview renderer could not be downloaded')), {once: true});
     if (createdHere) {
       script.src = BABYLON_SCRIPT_URL;
+      script.type = 'module';
       script.async = true;
-      script.crossOrigin = 'anonymous';
-      script.dataset.arenaCosmeticsPreview = 'babylon-9.14.0';
+      script.dataset.arenaCosmeticsPreview = 'babylon-runtime-local';
       documentObject.head.append(script);
     } else if (windowObject.BABYLON) {
       finish();

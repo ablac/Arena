@@ -154,6 +154,20 @@ test('spectator layout and round lifecycle stay bounded', async ({ page }, testI
   // mesh creation and animate(), when the sparkle emitter is still idle.
   await expect.poll(async () => (await snapshot(page))?.bounty.visible).toBe(true);
   await expect.poll(async () => (await snapshot(page))?.bounty.emitRate).toBeGreaterThan(0);
+  // Follow-camera movement is intentionally eased. On a phone the minimap's
+  // left inset is large enough that the bounty effect can already be live
+  // while the label is still crossing into the safe viewport. Synchronize on
+  // the actual framing contract instead of that unrelated visual effect.
+  await expect.poll(async () => {
+    const [current, frame] = await Promise.all([
+      snapshot(page),
+      projectBotLabel(page, 'winner'),
+    ]);
+    const safe = current?.safeViewport;
+    if (!safe || !frame) return false;
+    return frame.x >= safe.left && frame.x <= frame.canvasWidth - safe.right &&
+      frame.y >= safe.top && frame.y <= frame.canvasHeight - safe.bottom;
+  }).toBe(true);
   const initial = await snapshot(page);
   const projected = await projectBotLabel(page, 'winner');
   expect(projected).not.toBeNull();

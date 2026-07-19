@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -390,20 +391,23 @@ func TestSpectatorWriterPreservesGameplayStateOrderAcrossRoundEnd(t *testing.T) 
 	const stateDelay = 80 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	arenaMessage := testSpectatorMessage(t, `{"type":"arena_state","tick":99}`)
-	lobbyMessage := testSpectatorMessage(t, `{"bots_connected":3,"type":"lobby_state"}`)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := spectatorUpgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
 		spec := &game.SpectatorConn{
-			Conn: conn, SendChan: make(chan *game.SpectatorMessage, 2), Done: make(chan struct{}),
+			Conn:         conn,
+			SendChan:     make(chan *game.SpectatorMessage, game.SpectatorSendBufferSize),
+			StateChan:    make(chan *game.SpectatorMessage, 1),
+			RoundEndChan: make(chan game.SpectatorRoundEndBatch, 1),
+			Done:         make(chan struct{}),
 		}
-		spec.SendChan <- arenaMessage
+		game.BroadcastToSpectators([]*game.SpectatorConn{spec}, []byte(`{"type":"arena_state","tick":99}`))
+		game.BroadcastToSpectators([]*game.SpectatorConn{spec}, []byte(`{"type":"round_end","round_number":7}`))
 		// Lobby state is marshaled from a map, so type is not guaranteed to be
 		// the first JSON field. The classifier must still treat it as gameplay.
-		spec.SendChan <- lobbyMessage
+		game.BroadcastToSpectators([]*game.SpectatorConn{spec}, []byte(`{"bots_connected":3,"type":"lobby_state"}`))
 		spectatorWriterWithTimings(
 			ctx, spec, func() bool { return false },
 			time.Hour, time.Hour, stateDelay,
@@ -422,7 +426,7 @@ func TestSpectatorWriterPreservesGameplayStateOrderAcrossRoundEnd(t *testing.T) 
 
 	started := time.Now()
 	var got []string
-	for range 2 {
+	for range 3 {
 		_, payload, err := conn.ReadMessage()
 		if err != nil {
 			t.Fatalf("read delayed gameplay state: %v", err)
@@ -435,11 +439,97 @@ func TestSpectatorWriterPreservesGameplayStateOrderAcrossRoundEnd(t *testing.T) 
 		}
 		got = append(got, envelope.Type)
 	}
-	if got[0] != "arena_state" || got[1] != "lobby_state" {
-		t.Fatalf("gameplay state order = %v, want [arena_state lobby_state]", got)
+	if got[0] != "arena_state" || got[1] != "round_end" || got[2] != "lobby_state" {
+		t.Fatalf("gameplay state order = %v, want [arena_state round_end lobby_state]", got)
 	}
 	if elapsed := time.Since(started); elapsed < stateDelay-15*time.Millisecond {
 		t.Fatalf("lobby state bypassed presentation delay after %v", elapsed)
+	}
+}
+
+func TestSpectatorWriterRetainsRoundEndWhenDelayedQueueIsSaturated(t *testing.T) {
+	const stateDelay = 150 * time.Millisecond
+	const arenaFrames = maxDelayedSpectatorMessages + 17
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := spectatorUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		spec := &game.SpectatorConn{
+			Conn: conn, SendChan: make(chan *game.SpectatorMessage, arenaFrames+2), Done: make(chan struct{}),
+		}
+		for tick := range arenaFrames {
+			spec.SendChan <- testSpectatorMessage(t, fmt.Sprintf(`{"type":"arena_state","tick":%d}`, tick))
+		}
+		spec.SendChan <- testSpectatorMessage(t, `{"type":"round_end","round_number":7}`)
+		spec.SendChan <- testSpectatorMessage(t, `{"type":"service_status","paused":false}`)
+		spectatorWriterWithTimings(
+			ctx, spec, func() bool { return false },
+			time.Hour, time.Hour, stateDelay,
+		)
+	}))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial spectator writer: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+
+	started := time.Now()
+	_, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read immediate service status: %v", err)
+	}
+	var immediate struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(payload, &immediate); err != nil {
+		t.Fatalf("decode immediate spectator message %q: %v", payload, err)
+	}
+	if immediate.Type != "service_status" || time.Since(started) >= stateDelay {
+		t.Fatalf("saturated queue delayed service status: type=%q elapsed=%v", immediate.Type, time.Since(started))
+	}
+
+	roundEnds := 0
+	lastType := ""
+	lastArenaTick := -1
+	arenaTickBeforeRoundEnd := -1
+	roundEndElapsed := time.Duration(0)
+	for range maxDelayedSpectatorMessages {
+		_, payload, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("read saturated delayed queue: %v", err)
+		}
+		var envelope struct {
+			Type string `json:"type"`
+			Tick int    `json:"tick"`
+		}
+		if err := json.Unmarshal(payload, &envelope); err != nil {
+			t.Fatalf("decode spectator message %q: %v", payload, err)
+		}
+		if envelope.Type == "round_end" {
+			roundEnds++
+			arenaTickBeforeRoundEnd = lastArenaTick
+			roundEndElapsed = time.Since(started)
+		} else if envelope.Type == "arena_state" {
+			lastArenaTick = envelope.Tick
+		}
+		lastType = envelope.Type
+	}
+	if roundEnds != 1 || lastType != "round_end" || arenaTickBeforeRoundEnd != arenaFrames-1 {
+		t.Fatalf(
+			"saturated queue delivered round_end count=%d last=%q after arena tick=%d, want one terminal message after newest tick %d",
+			roundEnds, lastType, arenaTickBeforeRoundEnd, arenaFrames-1,
+		)
+	}
+	if roundEndElapsed < stateDelay-15*time.Millisecond {
+		t.Fatalf("saturated round_end bypassed presentation delay after %v", roundEndElapsed)
 	}
 }
 

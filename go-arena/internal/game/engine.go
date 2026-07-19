@@ -223,13 +223,26 @@ type SpectatorMessage struct {
 	Prepared *websocket.PreparedMessage
 }
 
+// SpectatorRoundEndBatch keeps the newest final arena snapshot and its
+// lifecycle boundary atomic at the engine-to-writer handoff.
+type SpectatorRoundEndBatch struct {
+	FinalState *SpectatorMessage
+	RoundEnd   *SpectatorMessage
+}
+
+// SpectatorSendBufferSize is the bounded handoff between the simulation's
+// non-blocking broadcasts and each spectator writer.
+const SpectatorSendBufferSize = 32
+
 // SpectatorConn wraps a WebSocket connection for a spectator client.
 type SpectatorConn struct {
-	Conn        *websocket.Conn
-	SendChan    chan *SpectatorMessage
-	Done        chan struct{}
-	IP          string
-	ConnectedAt time.Time
+	Conn         *websocket.Conn
+	SendChan     chan *SpectatorMessage
+	StateChan    chan *SpectatorMessage
+	RoundEndChan chan SpectatorRoundEndBatch
+	Done         chan struct{}
+	IP           string
+	ConnectedAt  time.Time
 
 	closeDoneOnce sync.Once
 }

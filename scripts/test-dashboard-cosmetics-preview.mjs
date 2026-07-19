@@ -85,8 +85,8 @@ const CURRENT = {
 
 assert.equal(
   BABYLON_SCRIPT_URL,
-  'https://cdn.jsdelivr.net/npm/babylonjs@9.14.0/babylon.min.js',
-  'Dashboard must pin the same Babylon version as the Arena instead of loading latest',
+  '../js/babylon-runtime.js?v=20260718a',
+  'Dashboard must lazy-load the same local Babylon bridge as the Arena',
 );
 
 {
@@ -130,7 +130,8 @@ assert.equal(
   assert.equal(existing.removed, 0, 'a failed script owned by another surface must not be removed');
 
   const ownedFailure = loadPinnedBabylon({windowObject, documentObject});
-  assert.equal(created[0].dataset.arenaCosmeticsPreview, 'babylon-9.14.0');
+  assert.equal(created[0].dataset.arenaCosmeticsPreview, 'babylon-runtime-local');
+  assert.equal(created[0].type, 'module');
   created[0].fire('error');
   await assert.rejects(ownedFailure, /could not be downloaded/i);
   assert.equal(created[0].removed, 1, 'a failed Dashboard-owned script must be removed so retry can reload it');

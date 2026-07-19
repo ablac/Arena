@@ -31,6 +31,7 @@ func TestNoCacheStaticHandler_HTMLDocuments(t *testing.T) {
 		// body, enabling If-Modified-Since/304 revalidation instead of full
 		// re-downloads.
 		{"js asset", "/js/app.js", "no-cache"},
+		{"hashed vendor js", "/assets/vendor/babylon-runtime.012345abcdef.min.js", "public, max-age=31536000, immutable"},
 		{"css asset", "/css/arena.css", "no-cache"},
 		{"texture asset", "/textures/skybox/px.jpg", ""},
 		{"favicon", "/favicon.ico", ""},
