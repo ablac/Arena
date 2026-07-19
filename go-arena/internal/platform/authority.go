@@ -25,6 +25,7 @@ type MetadataAuthority interface {
 	TransitionProfile(context.Context, db.PlatformProfileTransition) (*db.PlatformProfileTransitionResult, error)
 	Changes(context.Context, int64, int) ([]db.PlatformChange, int64, error)
 	AgentLinkHistory(context.Context, string, int64, int) ([]db.PlatformAgentLinkEvent, int64, error)
+	LinkAgent(context.Context, db.PlatformAgentLinkCommand) (*db.PlatformAgentLinkResult, error)
 }
 
 // CosmeticsAuthority owns shared catalog, account-agent links, licenses, and
@@ -41,7 +42,7 @@ type CosmeticsAuthority interface {
 	DeletePack(context.Context, string, string) (bool, error)
 	ListAudit(context.Context, int) ([]db.CosmeticCatalogAudit, error)
 	AccountInventory(context.Context, string) (*db.CustomerCosmeticsInventory, error)
-	LinkAgent(context.Context, string, string) (*db.AccountBot, error)
+	ClaimArenaAgent(context.Context, string, string) (*db.AccountBot, error)
 	UnlinkAgent(context.Context, string, string) (bool, error)
 	AssignLicense(context.Context, string, string, *string) (*db.CosmeticAssignmentChange, error)
 	GrantLicense(context.Context, string, string, string, string) (*db.CosmeticLicense, bool, error)

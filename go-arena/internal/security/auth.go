@@ -3,9 +3,6 @@ package security
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -16,6 +13,7 @@ import (
 
 	"arena-server/internal/config"
 	"arena-server/internal/db"
+	"arena-server/internal/security/credential"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -30,9 +28,9 @@ const botContextKey contextKey = "bot"
 const base62Chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 const (
-	apiKeyDigestFamilyPrefix = "sha256:"
-	apiKeyDigestPrefix       = "sha256:v1:"
-	bcryptHashLength         = 60
+	apiKeyDigestFamilyPrefix = credential.DigestFamilyPrefix
+	apiKeyDigestPrefix       = credential.DigestPrefix
+	bcryptHashLength         = credential.BcryptHashLength
 	apiKeyLastSeenWriteEvery = time.Minute
 )
 
@@ -71,27 +69,7 @@ func GenerateAPIKey() (fullKey string, keyHash string, keyPrefix string, err err
 }
 
 func digestAPIKey(fullKey string) string {
-	digest := sha256.Sum256([]byte(fullKey))
-	return apiKeyDigestPrefix + hex.EncodeToString(digest[:])
-}
-
-func verifyAPIKeyDigest(storedDigest, fullKey string) error {
-	if !strings.HasPrefix(storedDigest, apiKeyDigestPrefix) {
-		return fmt.Errorf("unsupported API key digest version")
-	}
-	encodedDigest := storedDigest[len(apiKeyDigestPrefix):]
-	if len(encodedDigest) != hex.EncodedLen(sha256.Size) {
-		return fmt.Errorf("invalid API key digest encoding")
-	}
-	var expected [sha256.Size]byte
-	if _, err := hex.Decode(expected[:], []byte(encodedDigest)); err != nil {
-		return fmt.Errorf("invalid API key digest encoding")
-	}
-	candidate := sha256.Sum256([]byte(fullKey))
-	if subtle.ConstantTimeCompare(expected[:], candidate[:]) != 1 {
-		return fmt.Errorf("API key digest mismatch")
-	}
-	return nil
+	return credential.Digest(fullKey)
 }
 
 // verifyAPIKeyCredential returns a replacement credential only when a legacy
@@ -100,26 +78,7 @@ func verifyAPIKeyDigest(storedDigest, fullKey string) error {
 // while using the appended digest on the connection hot path. Unknown SHA-256
 // versions fail closed instead of falling through to the legacy verifier.
 func verifyAPIKeyCredential(storedHash, fullKey string) (replacementHash string, err error) {
-	if strings.HasPrefix(storedHash, apiKeyDigestFamilyPrefix) {
-		return "", verifyAPIKeyDigest(storedHash, fullKey)
-	}
-
-	if len(storedHash) > bcryptHashLength {
-		bcryptHash := storedHash[:bcryptHashLength]
-		if _, err := bcrypt.Cost([]byte(bcryptHash)); err != nil {
-			return "", fmt.Errorf("invalid composite API key credential: %w", err)
-		}
-		digest := storedHash[bcryptHashLength:]
-		if !strings.HasPrefix(digest, apiKeyDigestFamilyPrefix) {
-			return "", fmt.Errorf("invalid composite API key credential")
-		}
-		return "", verifyAPIKeyDigest(digest, fullKey)
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(fullKey)); err != nil {
-		return "", err
-	}
-	return storedHash + digestAPIKey(fullKey), nil
+	return credential.Verify(storedHash, fullKey)
 }
 
 type apiKeyLookupFunc func(context.Context, string) (*db.ApiKey, *db.Bot, error)
