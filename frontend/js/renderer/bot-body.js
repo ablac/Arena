@@ -1,11 +1,11 @@
 'use strict';
 
 /**
- * Forge bot entry construction plus scene-owned HUD/shadow resources.
+ * Forge bot entry construction plus scene-owned selection/shadow resources.
  * @module renderer/bot-body
  */
 
-import {createForgeCharacter, disposeForgeCharacter} from './character-rig.js?v=20260718c';
+import {createForgeCharacter, disposeForgeCharacter} from './character-rig.js?v=20260718n';
 
 const SHADOW_RADIUS = 6.5;
 
@@ -75,7 +75,6 @@ export function createBotEntry(bot, scene, options = {}) {
   const presentationOnly = options.presentationOnly === true;
   return createForgeCharacter(bot, scene, {
     ...options,
-    guiTexture: options.guiTexture || (presentationOnly ? null : getGuiTexture()),
     shadowTemplate: options.shadowTemplate || _getTplShadow(scene),
   });
 }
@@ -83,15 +82,4 @@ export function createBotEntry(bot, scene, options = {}) {
 /** Dispose a production Forge entry without touching scene-owned templates. */
 export function disposeBotEntry(entry) {
   disposeForgeCharacter(entry);
-}
-
-/** Set HP bar color based on health ratio. */
-export function setHpColor(fill, ratio) {
-  if (ratio > 0.6) {
-    fill.background = '#00ff00';
-  } else if (ratio > 0.3) {
-    fill.background = '#ffff00';
-  } else {
-    fill.background = '#ff0000';
-  }
 }

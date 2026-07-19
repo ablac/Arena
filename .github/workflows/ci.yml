@@ -102,6 +102,7 @@ jobs:
           node scripts/test-forge-facing.mjs
           node scripts/test-forge-lod.mjs
           node scripts/test-forge-visibility.mjs
+          node scripts/test-world-bot-hud.mjs
           node scripts/test-forge-mount-metrics.mjs
           node scripts/test-safe-zone-geometry.mjs
           node scripts/test-map-walls-geometry.mjs

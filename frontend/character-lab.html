@@ -36,7 +36,10 @@
 <div id="legend"></div>
 <canvas id="canvas"></canvas>
 <script type="module">
-import {createBotEntry} from './js/renderer/bot-body.js?v=20260714e';
+import {createBotEntry} from './js/renderer/bot-body.js?v=20260718n';
+import {
+  scaleWorldBotHud, showWorldTaunt, updateWorldBotHudHealth,
+} from './js/renderer/world-hud.js?v=20260718n';
 import {
   updateForgeCharacter, triggerForgeAttack, triggerForgeDodge,
   triggerForgeHit, triggerForgeShove,
@@ -74,6 +77,8 @@ const setKey = n => `arena_set_${String(n).padStart(3, '0')}_lab`;
 const entries = [];
 const entryMap = new Map();
 const SPACING = 26;
+const SHOW_WORLD_HUD = new URLSearchParams(location.search).get('hud') === '1';
+const hudEntries = [];
 
 // Row 0 (front, z=0): the 7 default chassis, one per weapon.
 FORGE_WEAPONS.forEach((weapon, i) => {
@@ -87,7 +92,7 @@ FORGE_WEAPONS.forEach((weapon, i) => {
       trail: TRAILS[i % TRAILS.length],
     },
   };
-  const entry = createBotEntry(bot, scene, {presentationOnly: true});
+  const entry = createBotEntry(bot, scene, {presentationOnly: !SHOW_WORLD_HUD});
   entry.botData = bot;
   applyBotCosmetics(entry, bot, scene, {forceEnabled: true});
   entryMap.set(bot.bot_id, entry);
@@ -97,6 +102,11 @@ FORGE_WEAPONS.forEach((weapon, i) => {
   entry._weapon = weapon;
   entry._row = 0;
   entries.push(entry);
+  if (entry.worldHud) {
+    updateWorldBotHudHealth(entry.worldHud, 1 - i * 0.13);
+    scaleWorldBotHud(entry.worldHud, camera.radius);
+    hudEntries.push(entry);
+  }
 });
 
 // Rows 1+ (behind): every body form, 7 per row, cycling weapons.
@@ -131,6 +141,7 @@ for (let r = 0; r * 7 < BODY_FORM_SPECS.length; r += 1) {
   legendLines.push(`row${r + 1}: ` + BODY_FORM_SPECS.slice(r * 7, r * 7 + 7).map(s => s.key).join(' | '));
 }
 document.getElementById('legend').textContent = legendLines.join('\n');
+if (hudEntries[0]?.worldHud) showWorldTaunt(hudEntries[0].worldHud, 'World HUD: one small texture');
 
 const trailRenderer = new TrailRenderer(scene, {forceEnabled: true});
 let mode = 'idle';
@@ -175,6 +186,7 @@ scene.onBeforeRenderObservable.add(() => {
   const dt = Math.min((now - last) / 1000, 0.1) * speedScale;
   last = now;
   modeClock += dt;
+  for (const entry of hudEntries) scaleWorldBotHud(entry.worldHud, camera.radius);
   if (dt === 0) return;
 
   for (const entry of entries) {

@@ -6,7 +6,7 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture, setHpColor } from './bot-body.js?v=20260718a';
+import { createBotEntry, disposeBotEntry, getGuiTexture } from './bot-body.js?v=20260718n';
 import {
   forgeContactDelay,
   updateForgeCharacter,
@@ -15,9 +15,17 @@ import {
   triggerForgeHit,
   triggerForgeShove,
 } from './character-anims.js?v=20260714e';
-import {setForgeChassisLighting, updateForgeCharacterLOD} from './character-rig.js?v=20260718c';
+import {setForgeChassisLighting, updateForgeCharacterLOD} from './character-rig.js?v=20260718n';
 import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260714e';
 import {bodyFormKeyForBot} from './body-form-roster.js?v=20260714e';
+import {
+  hideWorldTaunt,
+  scaleWorldBotHud,
+  setWorldBotHudVisible,
+  showWorldTaunt,
+  updateWorldBotHudHealth,
+  worldHudScaleForRadius,
+} from './world-hud.js?v=20260718n';
 import { isEnabled } from '../settings.js';
 
 export const BODY_FORM_NEAR_CHARACTER_LIMIT = 64;
@@ -129,10 +137,8 @@ export class BotRenderer {
   }
 
   _disposeTaunt(entry) {
-    if (!entry?.tauntBubble) return;
-    entry.tauntBubble.dispose();
-    entry.tauntBubble = null;
-    entry.tauntText = null;
+    if (!entry?.worldHud) return;
+    hideWorldTaunt(entry.worldHud, true);
   }
 
   _initSelectionPanel() {
@@ -259,8 +265,7 @@ export class BotRenderer {
       const fallDone = entry.anim && entry.anim.deathTimer >= 0.88;
       entry.root.setEnabled(bot.is_alive ||
         (!fallDone && (entry._corpseUntil || 0) > now));
-      if (entry.nameLabel) entry.nameLabel.isVisible = bot.is_alive;
-      if (entry.hpContainer) entry.hpContainer.isVisible = bot.is_alive;
+      setWorldBotHudVisible(entry.worldHud, bot.is_alive);
 
       // HP bar — only update when HP changes
       if (bot.hp !== entry._lastHp) {
@@ -282,8 +287,7 @@ export class BotRenderer {
         }
         entry._lastHp = bot.hp;
         const hpRatio = bot.hp / bot.max_hp;
-        entry.hpFill.width = Math.max(0.01, hpRatio);
-        setHpColor(entry.hpFill, hpRatio);
+        updateWorldBotHudHealth(entry.worldHud, hpRatio);
         // Wound level drives the Forge idle slump: 0 healthy,
         // 1 wounded (<35%), 2 critical (<15%). Recomputed on every HP change,
         // so a heal or respawn (HP back up) clears it automatically.
@@ -485,10 +489,16 @@ export class BotRenderer {
       this._bodyFormLODSelectedBotId = this.selectedBotId;
     }
 
+    const cameraRadius = Number(this.scene.activeCamera?.radius) || 800;
+    const hudScale = worldHudScaleForRadius(cameraRadius);
     for (const [id, entry] of this.entries) {
-      if (entry.tauntBubble && entry.tauntBubble.isVisible &&
+      if (entry.worldHud && entry._worldHudScale !== hudScale) {
+        scaleWorldBotHud(entry.worldHud, cameraRadius);
+        entry._worldHudScale = hudScale;
+      }
+      if (entry.worldHud?.tauntBubble?.isVisible &&
           (!entry.isAlive || now >= entry.tauntHideAt)) {
-        entry.tauntBubble.isVisible = false;
+        hideWorldTaunt(entry.worldHud);
       }
       // A completed corpse is both hidden and immutable until the next server
       // respawn snapshot. Do not keep sampling poses for it every display frame.
@@ -603,44 +613,14 @@ export class BotRenderer {
 
   /**
    * Shows a short-lived speech bubble above a bot. Text is server-authored
-   * (the taunt emote table), but GUI TextBlock text is canvas-drawn and
-   * injection-safe regardless. One bubble per bot; a new taunt replaces it.
+   * (the taunt emote table) and is canvas-drawn into a small world texture.
+   * One bubble per bot; a new taunt replaces it.
    */
   showTaunt(botId, text) {
     if (!isEnabled('taunts', 'speechBubbles')) return;
     const entry = this.entries.get(botId);
     if (!entry || !entry.isAlive) return;
-    const GUI = window.BABYLON && window.BABYLON.GUI;
-    if (!GUI) return;
-
-    if (!entry.tauntBubble) {
-      const adt = getGuiTexture();
-      const bubble = new GUI.Rectangle('taunt-' + botId);
-      bubble.adaptWidthToChildren = true;
-      bubble.height = '30px';
-      bubble.thickness = 1;
-      bubble.cornerRadius = 10;
-      bubble.color = 'rgba(255,215,90,0.9)';
-      bubble.background = 'rgba(8,12,20,0.88)';
-      bubble.isVisible = false;
-      adt.addControl(bubble);
-
-      const tb = new GUI.TextBlock('taunt-text-' + botId);
-      tb.color = '#ffd75a';
-      tb.fontFamily = 'monospace';
-      tb.fontSize = 13;
-      tb.paddingLeft = '10px';
-      tb.paddingRight = '10px';
-      tb.resizeToFit = true;
-      bubble.addControl(tb);
-
-      bubble.linkWithMesh(entry.root);
-      bubble.linkOffsetY = -74;
-      entry.tauntBubble = bubble;
-      entry.tauntText = tb;
-    }
-    entry.tauntText.text = String(text).slice(0, 28);
-    entry.tauntBubble.isVisible = true;
+    showWorldTaunt(entry.worldHud, text);
     // Wall-clock expiry swept in interpolate(): survives tab throttling and
     // needs no timers that could outlive a scene rebuild.
     entry.tauntHideAt = performance.now() + 2600;
