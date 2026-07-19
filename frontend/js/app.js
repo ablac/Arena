@@ -5,7 +5,7 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260718i';
+import { ArenaEngine } from './renderer/engine.js?v=20260718j';
 import { HudRenderer } from './renderer/hud.js?v=20260711b';
 import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';
@@ -15,6 +15,7 @@ import { isEnabled, onSettingsChange } from './settings.js';
 import { initSettingsPanel } from './settings-panel.js';
 import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';
 import { handleServiceStatus } from './service-status.js';
+import { observeArenaSafeViewport } from './safe-viewport.js?v=20260718a';
 
 const ARENA_WIDTH = 2000;
 const ARENA_HEIGHT = 2000;
@@ -78,6 +79,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (err) {
     console.error('[App] Engine init failed:', err);
   }
+  const stopSafeViewport = observeArenaSafeViewport(
+    canvas,
+    (viewport) => arenaEngine.setSafeViewport(viewport),
+  );
+  window.addEventListener('pagehide', stopSafeViewport, { once: true });
 
   // Spectator WebSocket
   const wsUrl = wsURL('/spectator');

@@ -5,7 +5,7 @@
  * @module renderer/engine
  */
 
-import { CameraController } from './camera.js?v=20260710d';
+import { CameraController } from './camera.js?v=20260718a';
 import { BotRenderer } from './bots.js?v=20260718n';
 import { EnvironmentRenderer } from './environment.js?v=20260718h';
 import { ObstacleRenderer } from './obstacles.js?v=20260718h';
@@ -150,6 +150,7 @@ export class ArenaEngine {
     this._seenArenaEvents = new Set();
     this._roundTransitionActive = false;
     this._roundTransitionRound = null;
+    this._safeViewport = null;
   }
 
   /** Initialize Babylon engine. */
@@ -266,6 +267,7 @@ export class ArenaEngine {
     scene.useMaterialMeshMap = true;
 
     this.camera = new CameraController(scene, this.canvas, this.arenaWidth, this.arenaHeight);
+    if (this._safeViewport) this.camera.setSafeViewport(this._safeViewport);
     this.envRenderer = new EnvironmentRenderer(scene, this.arenaWidth, this.arenaHeight);
     this.obstacleRenderer = new ObstacleRenderer(scene, this.envRenderer);
     this.botRenderer = new BotRenderer(scene);
@@ -842,6 +844,10 @@ export class ArenaEngine {
   setZoom(z) { if (this.camera) this.camera.setZoom(z); }
   followBot(id) { if (this.camera) this.camera.followBot(id); }
   setAutoPan(on) { if (this.camera) this.camera.setAutoPan(on); }
+  setSafeViewport(viewport) {
+    this._safeViewport = viewport || null;
+    if (this.camera) this.camera.setSafeViewport(this._safeViewport);
+  }
   getState() { return this.state; }
   selectBot(id) { if (this.botRenderer) this.botRenderer.selectBot(id); }
 

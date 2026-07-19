@@ -13,6 +13,19 @@ const MIN_BETA = 0.01;   // nearly straight up from below
 const MAX_BETA = Math.PI; // full orbit — can go under the arena
 const PAN_SPEED = 8;
 
+/** Translate a desired screen-space focal offset into the camera's XZ target. */
+export function frameWorldTarget(x, z, offsetX, offsetY, radius, alpha) {
+  const scale = radius / 500;
+  const dx = offsetX * scale;
+  const dy = offsetY * scale;
+  const cosA = Math.cos(alpha);
+  const sinA = Math.sin(alpha);
+  return {
+    x: x + dx * sinA - dy * cosA,
+    z: z - dx * cosA - dy * sinA,
+  };
+}
+
 export class CameraController {
   constructor(scene, canvas, w, h) {
     const B = window.BABYLON;
@@ -26,6 +39,7 @@ export class CameraController {
     this.targetZ = h / 2;
     this.bots = [];
     this.onZoomChange = null;
+    this._safeViewport = null;
 
     // Track held keys
     this._keys = new Set();
@@ -61,6 +75,22 @@ export class CameraController {
     const sinA = Math.sin(this.camera.alpha);
     this.targetX += dx * sinA - dy * cosA;
     this.targetZ += -dx * cosA - dy * sinA;
+  }
+
+  setSafeViewport(viewport) {
+    this._safeViewport = viewport || null;
+  }
+
+  _framedTarget(x, z) {
+    const viewport = this._safeViewport;
+    if (!viewport) return { x, z };
+    return frameWorldTarget(
+      x, z,
+      viewport.focalOffsetX || 0,
+      viewport.focalOffsetY || 0,
+      this.camera.radius,
+      this.camera.alpha,
+    );
   }
 
   /** @private Orbit matching Babylon's drag direction and rough sensitivity. */
@@ -248,8 +278,9 @@ export class CameraController {
     if (this.followId && this.bots.length > 0) {
       const bot = this.bots.find(b => b.bot_id === this.followId);
       if (bot && bot.position) {
-        this.targetX = bot.position[0];
-        this.targetZ = bot.position[1];
+        const target = this._framedTarget(bot.position[0], bot.position[1]);
+        this.targetX = target.x;
+        this.targetZ = target.z;
       }
     } else if (this.autoPan && this.bots.length > 0) {
       this._autoPanToAction();
@@ -274,8 +305,9 @@ export class CameraController {
     if (alive.length === 0) return;
     let ax = 0, az = 0;
     alive.forEach(b => { ax += b.position[0]; az += b.position[1]; });
-    this.targetX = ax / alive.length;
-    this.targetZ = az / alive.length;
+    const target = this._framedTarget(ax / alive.length, az / alive.length);
+    this.targetX = target.x;
+    this.targetZ = target.z;
   }
 
   setZoom(zoom) {
