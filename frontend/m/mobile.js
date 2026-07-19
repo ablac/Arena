@@ -1,5 +1,10 @@
 'use strict';
 
+import {
+  MOBILE_SAFE_VIEWPORT_REGIONS,
+  observeArenaSafeViewport,
+} from '../js/safe-viewport.js?v=20260718b';
+
 /**
  * Mobile spectator shell — full-viewport 3D stage, floating top bar,
  * action cluster, and a draggable bottom sheet (Players / Kills / Ranks).
@@ -9,7 +14,7 @@
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260718h';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260718m';
 import { Minimap } from '../js/renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, appPath, wsURL } from '../js/paths.js?v=20260710a';
@@ -221,6 +226,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (err) {
     console.error('[Mobile] Engine init failed:', err);
   }
+  const stopSafeViewport = observeArenaSafeViewport(
+    canvas,
+    (viewport) => engine.setSafeViewport(viewport),
+    MOBILE_SAFE_VIEWPORT_REGIONS,
+  );
+  window.addEventListener('pagehide', stopSafeViewport, { once: true });
 
   // Camera state that must survive dynamic arena-size scene rebuilds
   // (ArenaEngine recreates its CameraController; zoom/follow are restored

@@ -21,6 +21,7 @@ import {
 } from './forge-weapons.js?v=20260718c';
 import {bodyFormForAsset} from './body-form-roster.js?v=20260714e';
 import {buildBodyFormGeometry, createBodyFormFarProxy} from './body-form-geometry.js?v=20260714e';
+import {createWorldBotHud, disposeWorldBotHud} from './world-hud.js?v=20260718o';
 import {isEnabled} from '../settings.js';
 
 const _sceneResources = new WeakMap();
@@ -397,47 +398,12 @@ const CHASSIS_STYLE = Object.freeze({
   }),
 });
 
-function createHUD(bot, id, root, guiTexture) {
-  if (!guiTexture) return {nameLabel: null, hpContainer: null, hpFill: null};
-  const GUI = window.BABYLON.GUI;
-  const nameLabel = new GUI.TextBlock(`forge-label-${id}`);
-  const displayName = bot.name || '???';
-  nameLabel.text = displayName.length > 12 ? `${displayName.slice(0, 11)}\u2026` : displayName;
-  nameLabel.color = 'white';
-  nameLabel.fontSize = 14;
-  nameLabel.fontFamily = 'monospace';
-  nameLabel.fontWeight = 'bold';
-  nameLabel.resizeToFit = true;
-  guiTexture.addControl(nameLabel);
-  nameLabel.linkWithMesh(root);
-  nameLabel.linkOffsetY = -54;
-
-  const hpContainer = new GUI.Rectangle(`forge-hp-background-${id}`);
-  hpContainer.width = '60px';
-  hpContainer.height = '8px';
-  hpContainer.background = '#1a1a1a';
-  hpContainer.thickness = 0;
-  hpContainer.alpha = 0.85;
-  guiTexture.addControl(hpContainer);
-  hpContainer.linkWithMesh(root);
-  hpContainer.linkOffsetY = -41;
-
-  const hpFill = new GUI.Rectangle(`forge-hp-${id}`);
-  hpFill.width = 1;
-  hpFill.height = 1;
-  hpFill.background = '#00ff00';
-  hpFill.thickness = 0;
-  hpFill.horizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-  hpContainer.addControl(hpFill);
-  return {nameLabel, hpContainer, hpFill};
-}
-
 /**
  * Build one Forge combat chassis.
  *
  * @param {Object} bot trusted snapshot fields (bot_id, avatar_color, weapon, name)
  * @param {BABYLON.Scene} scene
- * @param {{presentationOnly?: boolean, guiTexture?: Object, shadowTemplate?: Object}} options
+ * @param {{presentationOnly?: boolean, shadowTemplate?: Object}} options
  */
 export function createForgeCharacter(bot, scene, options = {}) {
   const B = window.BABYLON;
@@ -753,9 +719,7 @@ export function createForgeCharacter(bot, scene, options = {}) {
   head.isPickable = !presentationOnly;
   head.metadata = {botId: id};
 
-  const hud = presentationOnly
-    ? {nameLabel: null, hpContainer: null, hpFill: null}
-    : createHUD(bot, id, root, options.guiTexture);
+  const hud = presentationOnly ? null : createWorldBotHud(bot, id, root, scene);
   const joints = {
     body: bodyJoint,
     torso,
@@ -851,9 +815,10 @@ export function createForgeCharacter(bot, scene, options = {}) {
     shadow,
     selector,
     weapon,
-    hpContainer: hud.hpContainer,
-    hpFill: hud.hpFill,
-    nameLabel: hud.nameLabel,
+    worldHud: hud,
+    hpContainer: hud?.hpContainer || null,
+    hpFill: hud?.hpFill || null,
+    nameLabel: hud?.nameLabel || null,
     pickMeshes: presentationOnly ? [] : [selector, renderedBody, renderedHead, lowDetail].filter(Boolean),
     anim: Object.assign(new ForgeAnimState(profile.weapon), {
       formMotion: bodyForm?.motion || null,
@@ -896,9 +861,7 @@ export function createForgeCharacter(bot, scene, options = {}) {
 /** Dispose per-bot nodes/materials while leaving scene-owned templates intact. */
 export function disposeForgeCharacter(entry) {
   if (!entry) return;
-  if (entry.hpFill) entry.hpFill.dispose();
-  if (entry.hpContainer) entry.hpContainer.dispose();
-  if (entry.nameLabel) entry.nameLabel.dispose();
+  if (entry.worldHud) disposeWorldBotHud(entry.worldHud);
   if (entry.weapon) disposeForgeWeapon(entry.weapon);
   if (entry.selector && !entry.selector.isDisposed()) entry.selector.dispose();
   if (entry.shadow && !entry.shadow.isDisposed()) entry.shadow.dispose();

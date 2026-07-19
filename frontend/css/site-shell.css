@@ -82,18 +82,9 @@ summary {
 .site-header-status {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: flex-end;
+  margin-inline-start: auto;
   min-width: 0;
-}
-
-.site-round-summary {
-  max-width: 34ch;
-  overflow: hidden;
-  color: var(--text-soft);
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .mobile-command-actions {
@@ -662,7 +653,6 @@ body.site-cinema-mode .arena-controls {
     --shell-dock-width: 64px;
   }
 
-  .site-round-summary,
   .arena-sidebar-intro {
     display: none;
   }
@@ -1268,6 +1258,49 @@ body.site-cinema-mode .arena-controls {
     left: auto;
     display: block;
     width: auto;
+  }
+}
+
+/* Keep the glass controls visually compact while giving every spectator
+   action a reliable 44px hit box on the responsive layout. */
+@media (max-width: 768px) {
+  :root {
+    --spectator-touch-target: 44px;
+  }
+
+  .site-brand,
+  .mobile-command-actions :is(button, a),
+  .telemetry-toggle,
+  .arena-tab,
+  .hud-collapse-btn,
+  .hud-compact-toggle,
+  .sidebar-collapse-btn,
+  .arena-control-btn,
+  .arena-controls select,
+  .command-dock-close,
+  .drawer-close,
+  .service-status-banner button {
+    min-height: var(--spectator-touch-target);
+  }
+
+  .mobile-command-actions :is(button, a),
+  .telemetry-toggle,
+  .hud-collapse-btn,
+  .hud-compact-toggle,
+  .sidebar-collapse-btn,
+  .arena-control-btn,
+  .command-dock-close,
+  .drawer-close,
+  .service-status-banner button {
+    min-width: var(--spectator-touch-target);
+  }
+
+  .arena-controls .control-group {
+    min-height: var(--spectator-touch-target);
+  }
+
+  .arena-controls input[type="range"] {
+    height: var(--spectator-touch-target);
   }
 }
 

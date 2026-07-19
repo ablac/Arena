@@ -5,8 +5,8 @@
  * @module renderer/engine
  */
 
-import { CameraController } from './camera.js?v=20260710d';
-import { BotRenderer } from './bots.js?v=20260718f';
+import { CameraController } from './camera.js?v=20260718b';
+import { BotRenderer } from './bots.js?v=20260718o';
 import { EnvironmentRenderer } from './environment.js?v=20260718h';
 import { ObstacleRenderer } from './obstacles.js?v=20260718h';
 import { IntermissionDirector } from './intermission-director.js?v=20260718h';
@@ -14,7 +14,7 @@ import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
 import { TrailRenderer } from './trails.js?v=20260714e';
 import { ProjectileRenderer } from './projectiles.js?v=20260711a';
-import { GameplayRenderer } from './gameplay.js?v=20260710g';
+import { GameplayRenderer } from './gameplay.js?v=20260718i';
 import { getState, isEnabled, onSettingsChange } from '../settings.js';
 
 // Bot positions are smoothed via exponential lerp each frame,
@@ -128,6 +128,13 @@ export async function webGPUAvailableWithin(B, timeoutMs = WEBGPU_PROBE_TIMEOUT_
   }
 }
 
+/** A restarted Arena can reset its in-memory round counter to zero. */
+export function roundStateReleasesTransition(stateRound, transitionRound) {
+  const round = Number(stateRound);
+  const heldRound = Number(transitionRound);
+  return Number.isFinite(round) && Number.isFinite(heldRound) && round !== heldRound;
+}
+
 export class ArenaEngine {
   /** @param {HTMLCanvasElement} canvas @param {Object} opts */
   constructor(canvas, opts = {}) {
@@ -148,6 +155,9 @@ export class ArenaEngine {
     this.state = null;
     this.ready = false;
     this._seenArenaEvents = new Set();
+    this._roundTransitionActive = false;
+    this._roundTransitionRound = null;
+    this._safeViewport = null;
   }
 
   /** Initialize Babylon engine. */
@@ -166,7 +176,10 @@ export class ArenaEngine {
     } catch {
       engine = new B.Engine(this.canvas, false, {
         preserveDrawingBuffer: false,
-        stencil: false,
+        // PickupRenderer uses Babylon's HighlightLayer, whose WebGL path
+        // requires an attached stencil buffer. Without it the layer logs a
+        // warning on every startup and silently loses the pickup outline.
+        stencil: true,
       });
       console.log('[Arena] WebGL');
     }
@@ -261,6 +274,7 @@ export class ArenaEngine {
     scene.useMaterialMeshMap = true;
 
     this.camera = new CameraController(scene, this.canvas, this.arenaWidth, this.arenaHeight);
+    if (this._safeViewport) this.camera.setSafeViewport(this._safeViewport);
     this.envRenderer = new EnvironmentRenderer(scene, this.arenaWidth, this.arenaHeight);
     this.obstacleRenderer = new ObstacleRenderer(scene, this.envRenderer);
     this.botRenderer = new BotRenderer(scene);
@@ -270,6 +284,10 @@ export class ArenaEngine {
     this.trailRenderer = new TrailRenderer(scene);
     this.projectileRenderer = new ProjectileRenderer(scene);
     this.gameplayRenderer = new GameplayRenderer(scene);
+    // A stage resize can rebuild the scene during intermission. Preserve
+    // round-transition ownership so the recreated renderer cannot briefly
+    // revive the stale winner crown.
+    if (this._roundTransitionActive) this.gameplayRenderer.beginRoundTransition();
     // Between-round spectator show (issue #189): driven by the server's
     // round_end broadcast through setState, per-frame from the render loop.
     // Created once and kept across mid-show stage resizes (issue #192):
@@ -442,7 +460,7 @@ export class ArenaEngine {
       }
       const dt = Math.min((now - _lastFrame) / 1000, 0.1);
       _lastFrame = now;
-      if (self.botRenderer) {
+      if (self.botRenderer && !self._roundTransitionActive) {
         self.botRenderer.interpolate();
       }
       if (self.trailRenderer) {
@@ -473,8 +491,17 @@ export class ArenaEngine {
       this._canvasVisible = true;
       this._visObserver = new IntersectionObserver((entries) => {
         for (const entry of entries) {
-          this._canvasVisible = entry.isIntersecting;
-          if (!entry.isIntersecting) frameSuspended = true;
+          // Some Chromium/WebGL combinations can transiently report
+          // isIntersecting=false for a full-viewport canvas during layout.
+          // Confirm the element is geometrically outside the viewport before
+          // parking the render loop so one bad observer callback cannot freeze
+          // a live arena. Truly off-screen/zero-size canvases still suspend.
+          const rect = entry.boundingClientRect || this.canvas.getBoundingClientRect();
+          const overlapsViewport = rect.width > 0 && rect.height > 0 &&
+            rect.bottom > 0 && rect.right > 0 &&
+            rect.top < window.innerHeight && rect.left < window.innerWidth;
+          this._canvasVisible = entry.isIntersecting || overlapsViewport;
+          if (!this._canvasVisible) frameSuspended = true;
           resetFrameClock();
         }
       }, { threshold: 0 });
@@ -522,6 +549,7 @@ export class ArenaEngine {
     if (state.type === 'round_end') {
       // Typed spectator round_end (issue #189): starts the intermission
       // show. Old servers never send it, so the feature stays inert there.
+      this._beginRoundTransition(state);
       if (this.intermissionDirector) this.intermissionDirector.handleRoundEnd(state);
       return;
     }
@@ -530,6 +558,7 @@ export class ArenaEngine {
     // intermission show — before the resize check below so a dynamic arena
     // rebuild never tears the scene down under live show artifacts.
     if (this.intermissionDirector) this.intermissionDirector.handleArenaState(state);
+    this._maybeEndRoundTransition(state);
     this.setGamePhase('round');
     this.setSuddenDeath(!!state.sudden_death);
 
@@ -595,6 +624,27 @@ export class ArenaEngine {
     this.effectRenderer.update(state.bots);
     this.gameplayRenderer.update(state);
     this.camera.updateBotPositions(state.bots);
+  }
+
+  /** @private Transfer bot/gameplay animation ownership to the round show. */
+  _beginRoundTransition(state) {
+    const round = Number(state && (state.round_number ?? state.round));
+    const currentRound = Number(this.state && this.state.round_number);
+    this._roundTransitionRound = Number.isFinite(round)
+      ? round
+      : (Number.isFinite(currentRound) ? currentRound : 0);
+    this._roundTransitionActive = true;
+    if (this.gameplayRenderer) this.gameplayRenderer.beginRoundTransition();
+  }
+
+  /** @private Resume only for a different authoritative round. The counter
+   * can reset after a server restart, so strict numeric increase is unsafe. */
+  _maybeEndRoundTransition(state) {
+    if (!this._roundTransitionActive) return;
+    if (!roundStateReleasesTransition(state && state.round_number, this._roundTransitionRound)) return;
+    this._roundTransitionActive = false;
+    this._roundTransitionRound = null;
+    if (this.gameplayRenderer) this.gameplayRenderer.endRoundTransition();
   }
 
   /**
@@ -810,8 +860,67 @@ export class ArenaEngine {
   setZoom(z) { if (this.camera) this.camera.setZoom(z); }
   followBot(id) { if (this.camera) this.camera.followBot(id); }
   setAutoPan(on) { if (this.camera) this.camera.setAutoPan(on); }
+  setSafeViewport(viewport) {
+    this._safeViewport = viewport || null;
+    if (this.camera) this.camera.setSafeViewport(this._safeViewport);
+  }
   getState() { return this.state; }
   selectBot(id) { if (this.botRenderer) this.botRenderer.selectBot(id); }
+
+  /**
+   * Return a serializable renderer snapshot for browser diagnostics. This is
+   * intentionally a method instead of exposing Babylon objects: smoke tests
+   * and support tooling can compare lifecycle baselines without taking
+   * ownership of scene resources or depending on renderer implementation
+   * details.
+   */
+  getLifecycleSnapshot() {
+    const scene = this.scene;
+    const activeParticles = scene?.getActiveParticles ? scene.getActiveParticles() : null;
+    const activeParticleCount = Number.isFinite(Number(activeParticles))
+      ? Number(activeParticles)
+      : (Number(activeParticles?.length) || 0);
+    const roundNumber = Number(this.state?.round_number);
+    const resources = {
+      meshes: scene?.meshes?.length || 0,
+      materials: scene?.materials?.length || 0,
+      textures: scene?.textures?.length || 0,
+      particleSystems: scene?.particleSystems?.length || 0,
+      transformNodes: scene?.transformNodes?.length || 0,
+      activeParticles: activeParticleCount,
+    };
+    const bots = [];
+    if (this.botRenderer?.entries) {
+      for (const [id, entry] of this.botRenderer.entries) {
+        bots.push({
+          id,
+          x: Number(entry?.root?.position?.x) || 0,
+          y: Number(entry?.root?.position?.y) || 0,
+          z: Number(entry?.root?.position?.z) || 0,
+          enabled: typeof entry?.root?.isEnabled === 'function' ? entry.root.isEnabled() : false,
+          labelVisible: entry?.worldHud?.nameLabel?.isVisible !== false,
+        });
+      }
+    }
+    bots.sort((left, right) => String(left.id).localeCompare(String(right.id)));
+    const bounty = this.gameplayRenderer?.bountyGroup;
+    const ring = bounty?.ring;
+    return {
+      ready: this.ready,
+      roundNumber: Number.isFinite(roundNumber) ? roundNumber : null,
+      roundTransitionActive: this._roundTransitionActive,
+      intermissionActive: this.intermissionDirector?.active === true,
+      arenaSize: [this.arenaWidth, this.arenaHeight],
+      safeViewport: this._safeViewport ? { ...this._safeViewport } : null,
+      resources,
+      bots,
+      bounty: {
+        targetId: this.gameplayRenderer?.bountyTargetId || null,
+        visible: !!(ring && !ring.isDisposed?.() && ring.visibility > 0 && ring.isEnabled()),
+        emitRate: Number(bounty?.sparkle?.emitRate) || 0,
+      },
+    };
+  }
 
   dispose() {
     if (this._resizeHandler) {
