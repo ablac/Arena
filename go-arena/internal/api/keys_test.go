@@ -202,6 +202,23 @@ func TestAccountKeysCreateMapsFiveKeyLimitToConflict(t *testing.T) {
 	}
 }
 
+func TestAccountKeysCreateMapsPlatformAgentLimitToConflict(t *testing.T) {
+	store := &fakeAccountAPIKeyStore{createErr: &db.PlatformAgentLimitError{
+		CurrentAgents: 10,
+		MaximumAgents: 10,
+	}}
+	handler := newAccountKeysHandler(store, nil, security.GenerateAPIKey)
+	rec := httptest.NewRecorder()
+
+	handler.Create(rec, verifiedAccountKeyRequest(http.MethodPost, "/api/v1/account/keys", nil))
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "AGENT_LIMIT") ||
+		!strings.Contains(rec.Body.String(), `"current_agents":10`) ||
+		!strings.Contains(rec.Body.String(), `"maximum_agents":10`) {
+		t.Fatalf("agent-limit response = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAccountKeysCreatePreflightsCapacityBeforeGeneratingSecret(t *testing.T) {
 	const historyLimit = 100
 	for _, tc := range []struct {

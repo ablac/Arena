@@ -21,6 +21,7 @@ type IdentityAuthority interface {
 // same-database implementation is ready for the later versioned platform HTTP
 // adapter; W1b.2 deliberately does not expose a new public route.
 type MetadataAuthority interface {
+	AccountCapacity(context.Context, string) (*db.PlatformAccountCapacity, error)
 	TransitionProfile(context.Context, db.PlatformProfileTransition) (*db.PlatformProfileTransitionResult, error)
 	Changes(context.Context, int64, int) ([]db.PlatformChange, int64, error)
 	AgentLinkHistory(context.Context, string, int64, int) ([]db.PlatformAgentLinkEvent, int64, error)

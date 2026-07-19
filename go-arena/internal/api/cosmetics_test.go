@@ -384,6 +384,7 @@ func TestLinkAccountBotMapsDurableKeyOwnershipConflicts(t *testing.T) {
 		{name: "owned by another account", err: db.ErrCustomerAPIKeyAlreadyOwned},
 		{name: "active key limit", err: db.ErrCustomerAPIKeyLimit},
 		{name: "lifetime history limit", err: db.ErrCustomerAPIKeyHistoryLimit},
+		{name: "platform agent limit", err: db.ErrPlatformAgentLimit},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &fakeCosmeticsStore{grantErr: tc.err}
