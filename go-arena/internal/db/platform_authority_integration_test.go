@@ -174,7 +174,7 @@ func TestPostgresPlatformAgentLinkEnforcesProofRevisionAndProofFreeIdempotency(t
 	if err != nil {
 		t.Fatalf("LinkPlatformAgent replay: %v", err)
 	}
-	if !reflect.DeepEqual(replayed, result) {
+	if !equalPlatformAgentLinkResult(replayed, result) {
 		t.Fatalf("replayed result = %+v, want %+v", replayed, result)
 	}
 	conflict := command
@@ -211,7 +211,7 @@ func TestPostgresPlatformAgentLinkEnforcesProofRevisionAndProofFreeIdempotency(t
 	if err != nil {
 		t.Fatalf("LinkPlatformAgent replay after retirement: %v", err)
 	}
-	if !reflect.DeepEqual(postRetirementReplay, result) {
+	if !equalPlatformAgentLinkResult(postRetirementReplay, result) {
 		t.Fatalf("post-retirement replay = %+v, want %+v", postRetirementReplay, result)
 	}
 	newAfterRetirement := command
@@ -387,7 +387,7 @@ func TestPostgresPlatformAgentLinkConcurrentIdenticalCommandsReplayOneCommit(t *
 		if errorsFound[index] != nil {
 			t.Fatalf("caller %d: %v", index, errorsFound[index])
 		}
-		if index > 0 && !reflect.DeepEqual(results[index], results[0]) {
+		if index > 0 && !equalPlatformAgentLinkResult(results[index], results[0]) {
 			t.Fatalf("caller %d result = %+v, want %+v", index, results[index], results[0])
 		}
 	}
@@ -406,6 +406,20 @@ func TestPostgresPlatformAgentLinkConcurrentIdenticalCommandsReplayOneCommit(t *
 	if links != 1 || events != 1 || idempotencyRecords != 1 {
 		t.Fatalf("committed links=%d events=%d idempotency=%d, want 1/1/1", links, events, idempotencyRecords)
 	}
+}
+
+func equalPlatformAgentLinkResult(left, right *PlatformAgentLinkResult) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	if left.AccountID != right.AccountID || left.AgentID != right.AgentID || left.Status != right.Status || left.Revision != right.Revision ||
+		!left.LinkedAt.Equal(right.LinkedAt) || !left.UpdatedAt.Equal(right.UpdatedAt) {
+		return false
+	}
+	if left.UnlinkedAt == nil || right.UnlinkedAt == nil {
+		return left.UnlinkedAt == nil && right.UnlinkedAt == nil
+	}
+	return left.UnlinkedAt.Equal(*right.UnlinkedAt)
 }
 
 func TestPostgresPlatformAgentLinkRejectsProofRevokedAheadOfCredentialLock(t *testing.T) {
