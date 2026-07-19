@@ -1,6 +1,7 @@
 package game
 
 import (
+	"bytes"
 	"encoding/json"
 	"log/slog"
 	"math"
@@ -412,7 +413,14 @@ func BroadcastToSpectators(spectators []*SpectatorConn, data []byte) {
 	}
 	for _, s := range spectators {
 		if s != nil && s.SendChan != nil {
-			safeSendSpectator(s.SendChan, message)
+			switch {
+			case isArenaSpectatorMessage(message) && s.StateChan != nil:
+				safeReplaceSpectatorState(s.StateChan, message)
+			case isRoundEndSpectatorMessage(message) && s.RoundEndChan != nil:
+				safeReplaceSpectatorRoundEnd(s, message)
+			default:
+				safeSendSpectator(s.SendChan, message)
+			}
 		}
 	}
 }
@@ -429,6 +437,54 @@ func safeSendSpectator(ch chan *SpectatorMessage, message *SpectatorMessage) {
 	defer func() { recover() }()
 	select {
 	case ch <- message:
+	default:
+	}
+}
+
+func isArenaSpectatorMessage(message *SpectatorMessage) bool {
+	return message != nil && bytes.HasPrefix(message.Payload, []byte(`{"type":"arena_state"`))
+}
+
+func isRoundEndSpectatorMessage(message *SpectatorMessage) bool {
+	return message != nil && bytes.HasPrefix(message.Payload, []byte(`{"type":"round_end"`))
+}
+
+func safeReplaceSpectatorState(ch chan *SpectatorMessage, message *SpectatorMessage) {
+	defer func() { recover() }()
+	select {
+	case ch <- message:
+		return
+	default:
+	}
+	select {
+	case <-ch:
+	default:
+	}
+	select {
+	case ch <- message:
+	default:
+	}
+}
+
+func safeReplaceSpectatorRoundEnd(spec *SpectatorConn, roundEnd *SpectatorMessage) {
+	defer func() { recover() }()
+	var finalState *SpectatorMessage
+	select {
+	case finalState = <-spec.StateChan:
+	default:
+	}
+	batch := SpectatorRoundEndBatch{FinalState: finalState, RoundEnd: roundEnd}
+	select {
+	case spec.RoundEndChan <- batch:
+		return
+	default:
+	}
+	select {
+	case <-spec.RoundEndChan:
+	default:
+	}
+	select {
+	case spec.RoundEndChan <- batch:
 	default:
 	}
 }

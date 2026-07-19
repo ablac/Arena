@@ -559,6 +559,10 @@ export class ArenaEngine {
     // rebuild never tears the scene down under live show artifacts.
     if (this.intermissionDirector) this.intermissionDirector.handleArenaState(state);
     this._maybeEndRoundTransition(state);
+    // Keep this guard for cached/older servers and reordered frames: while the
+    // ended round still owns the transition, its stale combat events and HP
+    // deltas must not spawn effects around already-despawned bots.
+    if (this._roundTransitionActive) return;
     this.setGamePhase('round');
     this.setSuddenDeath(!!state.sudden_death);
 

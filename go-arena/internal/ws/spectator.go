@@ -36,12 +36,14 @@ const (
 	spectatorHeartbeatInterval = 10 * time.Second
 	spectatorWriteTimeout      = 10 * time.Second
 	// Public spectators intentionally trail live gameplay so a competing bot
-	// cannot use the full-state rendering feed as a real-time radar. Control
-	// messages and service-status updates remain immediate.
+	// cannot use the full-state rendering feed as a real-time radar. Round-end
+	// presentation stays in that ordered stream; service-status updates and
+	// heartbeats remain immediate.
 	spectatorStateDelay = 5 * time.Second
-	// At the normal 10 Hz broadcast rate this holds more than twice the
-	// delayed window while keeping a stalled connection's memory bounded.
-	maxDelayedSpectatorMessages = 128
+	// This covers the five-second delay window at the supported 60 Hz maximum,
+	// plus scheduling headroom, while keeping a stalled connection's memory
+	// bounded. One slot is reserved for the terminal round_end message.
+	maxDelayedSpectatorMessages = 384
 	// A full server asks browsers to retry shortly rather than paying for a
 	// WebSocket upgrade known to have no available spectator slot.
 	spectatorCapacityRetryAfterSeconds = 5
@@ -125,11 +127,13 @@ func SpectatorHandler(engine *game.GameEngine) http.HandlerFunc {
 
 		// Create spectator connection with buffered send channel.
 		spec := &game.SpectatorConn{
-			Conn:        conn,
-			SendChan:    make(chan *game.SpectatorMessage, 32),
-			Done:        make(chan struct{}),
-			IP:          clientIP,
-			ConnectedAt: time.Now(),
+			Conn:         conn,
+			SendChan:     make(chan *game.SpectatorMessage, game.SpectatorSendBufferSize),
+			StateChan:    make(chan *game.SpectatorMessage, 1),
+			RoundEndChan: make(chan game.SpectatorRoundEndBatch, 1),
+			Done:         make(chan struct{}),
+			IP:           clientIP,
+			ConnectedAt:  time.Now(),
 		}
 
 		// Admission and capacity checking must be one atomic engine operation;
@@ -233,8 +237,66 @@ func spectatorWriterWithTimings(ctx context.Context, spec *game.SpectatorConn, i
 	defer heartbeatTicker.Stop()
 	defer delayTimer.Stop()
 	defer spec.Conn.Close()
+	handleMessage := func(msg *game.SpectatorMessage) bool {
+		if msg == nil {
+			return true
+		}
+		if stateDelay > 0 && isDelayedSpectatorState(msg.Payload) {
+			roundEnd := isRoundEndSpectatorState(msg.Payload)
+			if !roundEnd && len(delayed) >= maxDelayedSpectatorMessages-1 {
+				// Coalesce the oldest replaceable snapshot so the newest/final
+				// arena state remains immediately before round_end. Appending
+				// with a fresh release time preserves the anti-radar delay.
+				var evicted bool
+				delayed, evicted = evictOldestDelayedArenaState(delayed)
+				if !evicted {
+					return true
+				}
+			}
+			if roundEnd && len(delayed) >= maxDelayedSpectatorMessages {
+				// Keep the newest lifecycle boundary without allowing the
+				// queue to grow. A normal stream always has a replaceable arena
+				// state here; the fallback handles malformed terminal floods.
+				var evicted bool
+				delayed, evicted = evictOldestDelayedArenaState(delayed)
+				if !evicted {
+					delayed[0].message = nil
+					copy(delayed, delayed[1:])
+					delayed[len(delayed)-1] = delayedSpectatorMessage{}
+					delayed = delayed[:len(delayed)-1]
+				}
+			}
+			delayed = append(delayed, delayedSpectatorMessage{
+				message:   msg,
+				releaseAt: time.Now().Add(stateDelay),
+			})
+			if len(delayed) == 1 {
+				delayTimer.Reset(stateDelay)
+				delayReady = delayTimer.C
+			}
+			return true
+		}
+		if err := writePreparedSpectatorMessage(spec.Conn, msg); err != nil {
+			slog.Warn("spectator write error", "error", err)
+			return false
+		}
+		return true
+	}
+	handleRoundEnd := func(batch game.SpectatorRoundEndBatch) bool {
+		return handleMessage(batch.FinalState) && handleMessage(batch.RoundEnd)
+	}
 
 	for {
+		// Lifecycle batches outrank later lobby/control backlog. The batch itself
+		// always applies its captured final state before round_end.
+		select {
+		case batch := <-spec.RoundEndChan:
+			if !handleRoundEnd(batch) {
+				return
+			}
+			continue
+		default:
+		}
 		select {
 		case <-ctx.Done():
 			_ = writeSpectatorMessage(spec.Conn,
@@ -277,6 +339,16 @@ func spectatorWriterWithTimings(ctx context.Context, spec *game.SpectatorConn, i
 				delayReady = delayTimer.C
 			}
 
+		case batch := <-spec.RoundEndChan:
+			if !handleRoundEnd(batch) {
+				return
+			}
+
+		case msg := <-spec.StateChan:
+			if !handleMessage(msg) {
+				return
+			}
+
 		case msg, ok := <-spec.SendChan:
 			if !ok {
 				// Channel closed.
@@ -286,38 +358,51 @@ func spectatorWriterWithTimings(ctx context.Context, spec *game.SpectatorConn, i
 				)
 				return
 			}
-
-			if stateDelay > 0 && isDelayedSpectatorState(msg.Payload) {
-				if len(delayed) >= maxDelayedSpectatorMessages {
-					// Preserve the oldest/keyframe messages and shed only excess
-					// newest frames until the writer catches up.
-					continue
+			// If a lifecycle batch arrived concurrently with this normal frame,
+			// queue it first so later lobby traffic cannot cross the boundary.
+			select {
+			case batch := <-spec.RoundEndChan:
+				if !handleRoundEnd(batch) {
+					return
 				}
-				delayed = append(delayed, delayedSpectatorMessage{
-					message:   msg,
-					releaseAt: time.Now().Add(stateDelay),
-				})
-				if len(delayed) == 1 {
-					delayTimer.Reset(stateDelay)
-					delayReady = delayTimer.C
-				}
-				continue
+			default:
 			}
-
-			if err := writePreparedSpectatorMessage(spec.Conn, msg); err != nil {
-				slog.Warn("spectator write error", "error", err)
+			if !handleMessage(msg) {
 				return
 			}
 		}
 	}
 }
 
+func evictOldestDelayedArenaState(delayed []delayedSpectatorMessage) ([]delayedSpectatorMessage, bool) {
+	for i := range delayed {
+		if delayed[i].message == nil || !isArenaSpectatorState(delayed[i].message.Payload) {
+			continue
+		}
+		delayed[i].message = nil
+		copy(delayed[i:], delayed[i+1:])
+		delayed[len(delayed)-1] = delayedSpectatorMessage{}
+		return delayed[:len(delayed)-1], true
+	}
+	return delayed, false
+}
+
 func isDelayedSpectatorState(payload []byte) bool {
-	// SpectatorState is marshaled from a struct whose Type field is first, so
-	// keep its hot-path check at the prefix. Lobby state is marshaled from a map,
-	// where encoding/json sorts keys and may place type later in the payload.
-	return bytes.HasPrefix(payload, []byte(`{"type":"arena_state"`)) ||
+	// SpectatorState and RoundEndSpectatorMessage are marshaled from structs
+	// whose Type field is first, so keep their hot-path checks at the prefix.
+	// Lobby state is marshaled from a map, where encoding/json sorts keys and
+	// may place type later in the payload.
+	return isArenaSpectatorState(payload) ||
+		isRoundEndSpectatorState(payload) ||
 		bytes.Contains(payload, []byte(`"type":"lobby_state"`))
+}
+
+func isArenaSpectatorState(payload []byte) bool {
+	return bytes.HasPrefix(payload, []byte(`{"type":"arena_state"`))
+}
+
+func isRoundEndSpectatorState(payload []byte) bool {
+	return bytes.HasPrefix(payload, []byte(`{"type":"round_end"`))
 }
 
 type spectatorHeartbeat struct {
