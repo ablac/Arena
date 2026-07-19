@@ -1,5 +1,7 @@
 'use strict';
 
+import '../js/babylon-runtime.js?v=20260718a';
+
 import {
   MOBILE_SAFE_VIEWPORT_REGIONS,
   observeArenaSafeViewport,

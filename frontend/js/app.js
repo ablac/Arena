@@ -1,5 +1,7 @@
 'use strict';
 
+import './babylon-runtime.js?v=20260718a';
+
 /**
  * Main application - wires up all modules.
  * @module app

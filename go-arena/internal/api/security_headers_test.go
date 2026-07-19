@@ -64,3 +64,23 @@ func TestSecurityHeadersMiddleware_AllowsStripeEmbeddedCheckout(t *testing.T) {
 		t.Errorf("Permissions-Policy blocks Stripe wallet payments: %q", policy)
 	}
 }
+
+// Cloudflare Browser Insights is disabled for arena.angel-serv.com with a
+// hostname-scoped Configuration Rule. Keep its executable origin out of the
+// CSP: if edge injection returns, the deployment is misconfigured and should
+// be fixed at Cloudflare instead of widening Arena's script policy.
+func TestSecurityHeadersMiddleware_RejectsCloudflareInsightsInjection(t *testing.T) {
+	config.C.SecurityHeadersEnabled = true
+	handler := SecurityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	for _, forbidden := range []string{"cloudflareinsights.com", "static.cloudflareinsights.com"} {
+		if strings.Contains(csp, forbidden) {
+			t.Errorf("CSP must not trust Cloudflare Browser Insights origin %q: %q", forbidden, csp)
+		}
+	}
+}

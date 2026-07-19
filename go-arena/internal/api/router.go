@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ import (
 // GlobalEventBus is the shared event bus for dashboard logging.
 // It is initialised by NewRouter and accessible to other packages via this variable.
 var GlobalEventBus *EventBus
+
+var immutableVendorAssetPattern = regexp.MustCompile(`\.[a-f0-9]{12}\.min\.js$`)
 
 // NewRouter builds the HTTP router with all API routes, WebSocket endpoints,
 // middleware, and static file serving.
@@ -509,6 +512,8 @@ func noCacheStaticHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		lastSegment := path[strings.LastIndex(path, "/")+1:]
+		isImmutableVendorAsset := strings.HasPrefix(path, "/assets/vendor/") &&
+			immutableVendorAssetPattern.MatchString(path)
 		isVersionedAsset := strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css")
 		isHTMLDocument := strings.HasSuffix(path, ".html") || !strings.Contains(lastSegment, ".")
 		if isHTMLDocument {
@@ -518,6 +523,8 @@ func noCacheStaticHandler(next http.Handler) http.Handler {
 			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 			w.Header().Set("Pragma", "no-cache")
 			w.Header().Set("Expires", "0")
+		} else if isImmutableVendorAsset {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		} else if isVersionedAsset {
 			// no-cache (without no-store) still forces revalidation on every
 			// load, but lets the browser store the body and answer with

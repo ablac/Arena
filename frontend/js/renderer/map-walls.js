@@ -658,12 +658,12 @@ export function buildTrimGeometry(groups, { height = WALL_HEIGHT } = {}) {
 }
 
 /**
- * Locate an earcut triangulator. Babylon's UMD bundle references a bare
- * `earcut` global for PolygonMeshBuilder but does NOT ship the
+ * Locate an earcut triangulator. Babylon references a bare `earcut` global
+ * for PolygonMeshBuilder but does not ship the
  * implementation (verified against babylonjs@9.14.0 — default-argument
- * references only). Both site shells load earcut@2.2.4 via a CDN script
- * tag, so in production this resolves the global and full top caps are the
- * live path; the ring-cap fallback only covers a failed CDN fetch.
+ * references only). Arena's local compatibility runtime exposes earcut@2.2.4
+ * both globally and on BABYLON; the ring-cap fallback only covers a failed
+ * runtime load.
  * @returns {Function|null}
  */
 export function resolveEarcut() {
