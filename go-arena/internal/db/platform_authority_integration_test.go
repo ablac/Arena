@@ -57,6 +57,95 @@ func TestPostgresPlatformAccountMetadataDefaultsToTenAndComputesCurrentAgents(t 
 	}
 }
 
+func TestPostgresPlatformAccountMetadataUpgradesRetiredStatusToClosed(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"platform-account-status-upgrade@example.com",
+		"https://id.example",
+		"platform-account-status-upgrade",
+		"Platform Account Status Upgrade",
+	)
+	if err != nil {
+		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
+	}
+	statements := []struct {
+		description string
+		sql         string
+	}{
+		{
+			description: "drop current status constraint",
+			sql: `ALTER TABLE platform_account_metadata
+				DROP CONSTRAINT platform_account_metadata_status_check`,
+		},
+		{
+			description: "install published status constraint",
+			sql: `ALTER TABLE platform_account_metadata
+				ADD CONSTRAINT platform_account_metadata_status_check
+				CHECK (status IN ('active', 'suspended', 'retired'))`,
+		},
+	}
+	for _, statement := range statements {
+		if _, err := Pool.Exec(ctx, statement.sql); err != nil {
+			t.Fatalf("%s: %v", statement.description, err)
+		}
+	}
+	if _, err := Pool.Exec(ctx, `
+		UPDATE platform_account_metadata
+		SET status = 'retired'
+		WHERE account_id = $1`, account.ID); err != nil {
+		t.Fatalf("seed published account status: %v", err)
+	}
+
+	if err := EnsurePlatformAuthoritySchema(ctx); err != nil {
+		t.Fatalf("EnsurePlatformAuthoritySchema upgrade: %v", err)
+	}
+
+	var status, constraintDefinition string
+	var constraintOID int64
+	if err := Pool.QueryRow(ctx, `
+		SELECT metadata.status, constraint_row.oid::BIGINT, pg_get_constraintdef(constraint_row.oid)
+		FROM platform_account_metadata AS metadata
+		JOIN pg_constraint AS constraint_row
+		  ON constraint_row.conrelid = 'platform_account_metadata'::regclass
+		 AND constraint_row.conname = 'platform_account_metadata_status_check'
+		WHERE metadata.account_id = $1`, account.ID).Scan(&status, &constraintOID, &constraintDefinition); err != nil {
+		t.Fatalf("load upgraded account status contract: %v", err)
+	}
+	if status != "closed" {
+		t.Fatalf("upgraded account status = %q, want closed", status)
+	}
+	if !strings.Contains(constraintDefinition, "'closed'") || strings.Contains(constraintDefinition, "'retired'") {
+		t.Fatalf("account status constraint = %q, want active/suspended/closed", constraintDefinition)
+	}
+
+	if err := EnsurePlatformAuthoritySchema(ctx); err != nil {
+		t.Fatalf("repeat EnsurePlatformAuthoritySchema: %v", err)
+	}
+	var repeatedOID int64
+	var repeatedDefinition string
+	if err := Pool.QueryRow(ctx, `
+		SELECT oid::BIGINT, pg_get_constraintdef(oid)
+		FROM pg_constraint
+		WHERE conrelid = 'platform_account_metadata'::regclass
+		  AND conname = 'platform_account_metadata_status_check'`).Scan(&repeatedOID, &repeatedDefinition); err != nil {
+		t.Fatalf("load repeated account status constraint: %v", err)
+	}
+	if repeatedOID != constraintOID || repeatedDefinition != constraintDefinition {
+		t.Fatalf(
+			"repeat schema pass replaced account status constraint: (%d, %q) -> (%d, %q)",
+			constraintOID,
+			constraintDefinition,
+			repeatedOID,
+			repeatedDefinition,
+		)
+	}
+}
+
 func TestPostgresPlatformAgentCapacitySerializesConcurrentLinksIndependentlyOfAPIKeys(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {

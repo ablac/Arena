@@ -597,7 +597,7 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 	if _, err := tx.Exec(ctx, fmt.Sprintf(`CREATE TABLE IF NOT EXISTS platform_account_metadata (
 		account_id TEXT PRIMARY KEY REFERENCES customer_accounts(id) ON DELETE RESTRICT,
 		status TEXT NOT NULL DEFAULT 'active'
-			CHECK (status IN ('active', 'suspended', 'retired')),
+			CHECK (status IN ('active', 'suspended', 'closed')),
 		maximum_agents INTEGER NOT NULL DEFAULT %d
 			CHECK (maximum_agents BETWEEN 1 AND 1000),
 		revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
@@ -634,6 +634,39 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("EnsurePlatformAuthoritySchema validate account agent capacity: %w", err)
+	}
+	var accountStatusConstraint string
+	if err := tx.QueryRow(ctx, `
+		SELECT pg_get_constraintdef(oid)
+		FROM pg_constraint
+		WHERE conrelid = 'platform_account_metadata'::regclass
+		  AND conname = 'platform_account_metadata_status_check'`).Scan(&accountStatusConstraint); err != nil {
+		return fmt.Errorf("EnsurePlatformAuthoritySchema inspect account status constraint: %w", err)
+	}
+	switch normalizedPlatformAccountStatusConstraint(accountStatusConstraint) {
+	case "active,suspended,closed":
+		// The final contract is already installed. Avoid repeated ACCESS
+		// EXCLUSIVE locks and full-table CHECK validation on later starts.
+	case "active,suspended,retired":
+		if _, err := tx.Exec(ctx, `ALTER TABLE platform_account_metadata
+			DROP CONSTRAINT platform_account_metadata_status_check`); err != nil {
+			return fmt.Errorf("EnsurePlatformAuthoritySchema drop legacy account status constraint: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE platform_account_metadata
+			SET status = 'closed'
+			WHERE status = 'retired'`); err != nil {
+			return fmt.Errorf("EnsurePlatformAuthoritySchema upgrade account status: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `ALTER TABLE platform_account_metadata
+			ADD CONSTRAINT platform_account_metadata_status_check
+			CHECK (status IN ('active', 'suspended', 'closed'))`); err != nil {
+			return fmt.Errorf("EnsurePlatformAuthoritySchema install account status constraint: %w", err)
+		}
+	default:
+		return fmt.Errorf(
+			"EnsurePlatformAuthoritySchema unexpected account status constraint %q",
+			accountStatusConstraint,
+		)
 	}
 
 	statements := []string{
@@ -783,6 +816,25 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 		return fmt.Errorf("EnsurePlatformAuthoritySchema commit: %w", err)
 	}
 	return nil
+}
+
+func normalizedPlatformAccountStatusConstraint(definition string) string {
+	normalized := strings.NewReplacer(
+		"::text", "",
+		" ", "",
+		"\n", "",
+		"\r", "",
+		"\t", "",
+	).Replace(definition)
+
+	switch normalized {
+	case "CHECK((status=ANY(ARRAY['active','suspended','closed'])))":
+		return "active,suspended,closed"
+	case "CHECK((status=ANY(ARRAY['active','suspended','retired'])))":
+		return "active,suspended,retired"
+	default:
+		return ""
+	}
 }
 
 func reconcilePlatformAgentLinksTx(ctx context.Context, tx pgx.Tx) error {
