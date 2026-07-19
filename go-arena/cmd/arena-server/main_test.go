@@ -127,6 +127,40 @@ func TestManagedSchemaPreflightRequiresAccountAPIKeyOwnership(t *testing.T) {
 	}
 }
 
+func TestManagedSchemaPreflightRequiresPlatformAuthorityMetadata(t *testing.T) {
+	for _, required := range []string{
+		"('platform_agents', 'agent_id')",
+		"('platform_agents', 'registration_source')",
+		"('platform_agents', 'status')",
+		"('platform_agents', 'revision')",
+		"('platform_game_profiles', 'profile_id')",
+		"('platform_game_profiles', 'agent_id')",
+		"('platform_game_profiles', 'game')",
+		"('platform_game_profiles', 'status')",
+		"('platform_game_profiles', 'revision')",
+		"('platform_changes', 'change_id')",
+		"('platform_changes', 'subject_kind')",
+		"('platform_changes', 'subject_id')",
+		"('platform_changes', 'transition')",
+		"('platform_changes', 'revision')",
+		"('platform_idempotency_records', 'operation')",
+		"('platform_idempotency_records', 'idempotency_key')",
+		"('platform_idempotency_records', 'request_hash')",
+		"('platform_idempotency_records', 'response')",
+		"('platform_idempotency_records', 'subject_id')",
+		"('platform_idempotency_records', 'revision')",
+		"('platform_agent_link_events', 'event_id')",
+		"('platform_agent_link_events', 'account_id')",
+		"('platform_agent_link_events', 'agent_id')",
+		"('platform_agent_link_events', 'status')",
+		"('platform_agent_link_events', 'revision')",
+	} {
+		if !strings.Contains(managedSchemaPreflightQuery, required) {
+			t.Errorf("managed schema preflight is missing %s", required)
+		}
+	}
+}
+
 func TestRuntimePrivilegeStatementsAreScopedAndRoleValidated(t *testing.T) {
 	statements, err := runtimePrivilegeStatements("arena_app")
 	if err != nil {

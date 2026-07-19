@@ -152,6 +152,9 @@ func CreateAccountAPIKeyAndBot(
 	); err != nil {
 		return nil, 0, fmt.Errorf("CreateAccountAPIKeyAndBot bot insert: %w", err)
 	}
+	if err := enrollArenaAgentTx(ctx, tx, bot, "arena"); err != nil {
+		return nil, 0, fmt.Errorf("CreateAccountAPIKeyAndBot enrollment: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO account_api_keys (account_id, api_key_id, linked_at)
 		VALUES ($1, $2, NOW())`, accountID, id); err != nil {
@@ -161,6 +164,9 @@ func CreateAccountAPIKeyAndBot(
 		INSERT INTO account_bot_links (account_id, bot_id, linked_at)
 		VALUES ($1, $2, NOW())`, accountID, bot.ID); err != nil {
 		return nil, 0, fmt.Errorf("CreateAccountAPIKeyAndBot bot link insert: %w", err)
+	}
+	if err := appendPlatformAgentLinkEventTx(ctx, tx, accountID, bot.ID, "linked", "arena_account_registration", time.Now()); err != nil {
+		return nil, 0, fmt.Errorf("CreateAccountAPIKeyAndBot platform link: %w", err)
 	}
 
 	key, err := scanAccountAPIKey(tx.QueryRow(ctx,

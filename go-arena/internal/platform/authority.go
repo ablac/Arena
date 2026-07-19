@@ -17,6 +17,15 @@ type IdentityAuthority interface {
 	UpsertVerifiedIdentity(context.Context, string, string, string, string) (*db.CustomerAccount, error)
 }
 
+// MetadataAuthority exposes the revisioned W1b.2 agent/profile contract. Its
+// same-database implementation is ready for the later versioned platform HTTP
+// adapter; W1b.2 deliberately does not expose a new public route.
+type MetadataAuthority interface {
+	TransitionProfile(context.Context, db.PlatformProfileTransition) (*db.PlatformProfileTransitionResult, error)
+	Changes(context.Context, int64, int) ([]db.PlatformChange, int64, error)
+	AgentLinkHistory(context.Context, string, int64, int) ([]db.PlatformAgentLinkEvent, int64, error)
+}
+
 // CosmeticsAuthority owns shared catalog, account-agent links, licenses, and
 // their lifecycle. Bot loadout reads and equip writes are intentionally absent:
 // those are Arena gameplay presentation state.
@@ -46,5 +55,6 @@ type CosmeticsAuthority interface {
 // handlers accept the narrow facet they use so tests do not need broad mocks.
 type Authority interface {
 	IdentityAuthority
+	MetadataAuthority
 	CosmeticsAuthority
 }

@@ -52,6 +52,9 @@ func createAPIKeyAndBotWithBegin(
 	); err != nil {
 		return fmt.Errorf("CreateAPIKeyAndBot bot insert: %w", err)
 	}
+	if err := enrollArenaAgentTx(ctx, tx, bot, "arena"); err != nil {
+		return fmt.Errorf("CreateAPIKeyAndBot enrollment: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("CreateAPIKeyAndBot commit: %w", err)
 	}
