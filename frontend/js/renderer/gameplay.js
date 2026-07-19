@@ -986,6 +986,11 @@ export class GameplayRenderer {
       mat.disableLighting = true;
       ring.material = mat;
       ring.isPickable = false;
+      // Babylon meshes start visible. Keep the crown hidden until animate()
+      // has resolved and applied its first target position; otherwise a slow
+      // first frame can briefly show it at the world origin while the sparkle
+      // system is still stopped.
+      ring.visibility = 0;
       // Gold sparkle drip under the crown so the streak leader - the
       // spectator's "who is winning" anchor - reads from across the room.
       // Shares _glowTex (dispose(false)); emitter tracked in animate().

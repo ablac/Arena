@@ -149,7 +149,11 @@ test('spectator layout and round lifecycle stay bounded', async ({ page }, testI
   }
 
   await page.locator('#follow-bot').selectOption('winner');
-  await page.waitForTimeout(500);
+  // The WebGL smoke job intentionally uses software rendering in CI. Wait
+  // for the first fully animated bounty frame instead of sampling between
+  // mesh creation and animate(), when the sparkle emitter is still idle.
+  await expect.poll(async () => (await snapshot(page))?.bounty.visible).toBe(true);
+  await expect.poll(async () => (await snapshot(page))?.bounty.emitRate).toBeGreaterThan(0);
   const initial = await snapshot(page);
   const projected = await projectBotLabel(page, 'winner');
   expect(projected).not.toBeNull();
