@@ -1,7 +1,6 @@
 {
   "name": "arena-frontend-build",
   "private": true,
-  "type": "module",
   "scripts": {
     "build:babylon": "node scripts/build-babylon-runtime.mjs",
     "check:babylon": "node scripts/build-babylon-runtime.mjs --check"

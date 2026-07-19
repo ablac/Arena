@@ -7,7 +7,7 @@ frontend build step in the production Go image while preserving the existing
 
 ## Babylon runtime
 
-The source surface is `frontend/vendor-src/babylon-runtime-entry.js`. It pins
+The source surface is `frontend/vendor-src/babylon-runtime-entry.mjs`. It pins
 `@babylonjs/core` 9.14.0 and includes only the classes, mesh factories, and
 runtime registrations used by Arena. Earcut is included in the same bundle and
 is exposed as both `globalThis.earcut` and `BABYLON.earcut` for map

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const entry = resolve(root, 'frontend/vendor-src/babylon-runtime-entry.js');
+const entry = resolve(root, 'frontend/vendor-src/babylon-runtime-entry.mjs');
 const vendorDir = resolve(root, 'frontend/assets/vendor');
 const bridgePath = resolve(root, 'frontend/js/babylon-runtime.js');
 const checkOnly = process.argv.includes('--check');

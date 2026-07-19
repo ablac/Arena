@@ -194,15 +194,9 @@ one.
 
 ## Static File Notes
 
-The frontend is served directly from `frontend/`; the production image has no
-Node build step. JavaScript, CSS, and HTML changes take effect on the next
-request after the container has the new files. The modular Babylon runtime is
-the exception during development: generate and commit its content-hashed asset
-before building the image. See [Frontend performance](frontend-performance.md).
+The frontend is served directly from `frontend/`; there is no build step. JavaScript, CSS, and HTML changes take effect on the next request after the container has the new files.
 
 `go-arena/internal/api/router.go` applies no-cache headers to JavaScript, CSS, HTML, and extensionless page routes so browsers fetch the newest page shell and code.
-Content-hashed files matching `/assets/vendor/*.xxxxxxxxxxxx.min.js` are safe
-to cache for one year with `immutable`; their stable bridge remains `no-cache`.
 
 ## Regression Notes
 
