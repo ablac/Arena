@@ -300,97 +300,119 @@ func ListAccountBots(ctx context.Context, accountID string) ([]AccountBot, error
 	return bots, rows.Err()
 }
 
-func LinkBotToCustomerAccount(ctx context.Context, accountID, botID string) (*AccountBot, error) {
+func ClaimArenaAgentWithControlProof(
+	ctx context.Context,
+	accountID, controlProof string,
+) (*AccountBot, error) {
 	if Pool == nil {
 		return nil, ErrNoDatabase
 	}
+	if len(controlProof) < 12 || len(controlProof) > 256 {
+		return nil, ErrPlatformControlProofRejected
+	}
 	tx, err := Pool.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("LinkBotToCustomerAccount begin: %w", err)
+		return nil, fmt.Errorf("ClaimArenaAgentWithControlProof begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
 	if _, err := lockCustomerAccount(ctx, tx, accountID, true); err != nil {
 		return nil, err
 	}
+	// Match the exact-command and native-registration lock order. The legacy
+	// facade intentionally adopts the locked current revision instead of
+	// inventing a client revision or idempotency key.
+	if _, err := lockPlatformAccountCapacityTx(ctx, tx, accountID); err != nil {
+		return nil, err
+	}
 
-	var bot AccountBot
-	var apiKeyID string
-	if err := tx.QueryRow(ctx, `
-		SELECT b.id, b.name, b.avatar_color, b.default_weapon, b.api_key_id,
-		       k.key_prefix, k.is_active, NOW()
-		FROM bots b JOIN api_keys k ON k.id = b.api_key_id
-		WHERE b.id = $1
-		FOR UPDATE OF b FOR SHARE OF k`, botID).Scan(
-		&bot.BotID, &bot.Name, &bot.AvatarColor, &bot.DefaultWeapon, &apiKeyID,
-		&bot.KeyPrefix, &bot.KeyIsActive, &bot.LinkedAt,
-	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrCosmeticBotNotFound
-		}
-		return nil, fmt.Errorf("LinkBotToCustomerAccount bot: %w", err)
+	bot, apiKeyID, agentStatus, err := loadPlatformAgentControlProofTx(ctx, tx, controlProof)
+	if err != nil {
+		return nil, err
 	}
-	if !bot.KeyIsActive {
-		return nil, ErrCustomerBotKeyInactive
+	if agentStatus == "retired" {
+		return nil, ErrPlatformAgentInactive
 	}
+
+	linked, _, err := linkBotToCustomerAccountTx(ctx, tx, accountID, bot, apiKeyID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("ClaimArenaAgentWithControlProof commit: %w", err)
+	}
+	return linked, nil
+}
+
+// linkBotToCustomerAccountTx is the single private link-state core. Callers
+// must lock the verified customer account and, for existing agents, verify and
+// lock the control credential before entering it.
+func linkBotToCustomerAccountTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID string,
+	bot AccountBot,
+	apiKeyID string,
+) (*AccountBot, bool, error) {
+	botID := bot.BotID
 
 	var owningAccountID string
 	ownershipErr := tx.QueryRow(ctx, `
 		SELECT account_id FROM account_api_keys WHERE api_key_id = $1 FOR UPDATE`, apiKeyID).Scan(&owningAccountID)
 	if ownershipErr == nil && owningAccountID != accountID {
-		return nil, ErrCustomerAPIKeyAlreadyOwned
+		return nil, false, ErrCustomerAPIKeyAlreadyOwned
 	}
 	if ownershipErr != nil && !errors.Is(ownershipErr, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("LinkBotToCustomerAccount key ownership: %w", ownershipErr)
+		return nil, false, fmt.Errorf("LinkBotToCustomerAccount key ownership: %w", ownershipErr)
 	}
 	if errors.Is(ownershipErr, pgx.ErrNoRows) {
 		activeCount, totalCount, err := accountAPIKeyCapacity(ctx, tx, accountID)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if activeCount >= MaxActiveAccountAPIKeys {
-			return nil, ErrCustomerAPIKeyLimit
+			return nil, false, ErrCustomerAPIKeyLimit
 		}
 		if totalCount >= MaxAccountAPIKeyHistory {
-			return nil, ErrCustomerAPIKeyHistoryLimit
+			return nil, false, ErrCustomerAPIKeyHistoryLimit
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO account_api_keys (account_id, api_key_id, linked_at)
 			VALUES ($1, $2, NOW())`, accountID, apiKeyID); err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				return nil, ErrCustomerAPIKeyAlreadyOwned
+				return nil, false, ErrCustomerAPIKeyAlreadyOwned
 			}
-			return nil, fmt.Errorf("LinkBotToCustomerAccount key ownership insert: %w", err)
+			return nil, false, fmt.Errorf("LinkBotToCustomerAccount key ownership insert: %w", err)
 		}
 	}
 
 	var existingAccountID string
-	err = tx.QueryRow(ctx, `SELECT account_id FROM account_bot_links WHERE bot_id = $1 FOR UPDATE`, botID).Scan(&existingAccountID)
+	err := tx.QueryRow(ctx, `SELECT account_id FROM account_bot_links WHERE bot_id = $1 FOR UPDATE`, botID).Scan(&existingAccountID)
 	if err == nil && existingAccountID != accountID {
-		return nil, ErrCustomerBotAlreadyLinked
+		return nil, false, ErrCustomerBotAlreadyLinked
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("LinkBotToCustomerAccount existing link: %w", err)
+		return nil, false, fmt.Errorf("LinkBotToCustomerAccount existing link: %w", err)
 	}
 	linkCreated := errors.Is(err, pgx.ErrNoRows)
 	if linkCreated {
 		if err := enforcePlatformAgentCapacityTx(ctx, tx, accountID); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO account_bot_links (account_id, bot_id, linked_at)
 			VALUES ($1, $2, NOW())`, accountID, botID); err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				return nil, ErrCustomerBotAlreadyLinked
+				return nil, false, ErrCustomerBotAlreadyLinked
 			}
-			return nil, fmt.Errorf("LinkBotToCustomerAccount insert: %w", err)
+			return nil, false, fmt.Errorf("LinkBotToCustomerAccount insert: %w", err)
 		}
 	}
 	if linkCreated {
 		if err := appendPlatformAgentLinkEventTx(ctx, tx, accountID, botID, "linked", "arena_account_link", time.Now()); err != nil {
-			return nil, fmt.Errorf("LinkBotToCustomerAccount platform link: %w", err)
+			return nil, false, fmt.Errorf("LinkBotToCustomerAccount platform link: %w", err)
 		}
 	}
 
@@ -402,7 +424,7 @@ func LinkBotToCustomerAccount(ctx context.Context, accountID, botID string) (*Ac
 		WHERE legacy_bot_id = $1 AND account_id IS NULL
 		ORDER BY id FOR UPDATE`, botID)
 	if err != nil {
-		return nil, fmt.Errorf("LinkBotToCustomerAccount legacy locks: %w", err)
+		return nil, false, fmt.Errorf("LinkBotToCustomerAccount legacy locks: %w", err)
 	}
 	type legacyClaim struct {
 		licenseID string
@@ -414,13 +436,13 @@ func LinkBotToCustomerAccount(ctx context.Context, accountID, botID string) (*Ac
 		var claim legacyClaim
 		if err := legacyRows.Scan(&claim.licenseID, &claim.assigned, &claim.status); err != nil {
 			legacyRows.Close()
-			return nil, fmt.Errorf("LinkBotToCustomerAccount legacy scan: %w", err)
+			return nil, false, fmt.Errorf("LinkBotToCustomerAccount legacy scan: %w", err)
 		}
 		claims = append(claims, claim)
 	}
 	if err := legacyRows.Err(); err != nil {
 		legacyRows.Close()
-		return nil, fmt.Errorf("LinkBotToCustomerAccount legacy rows: %w", err)
+		return nil, false, fmt.Errorf("LinkBotToCustomerAccount legacy rows: %w", err)
 	}
 	legacyRows.Close()
 	for _, claim := range claims {
@@ -428,29 +450,26 @@ func LinkBotToCustomerAccount(ctx context.Context, accountID, botID string) (*Ac
 			UPDATE cosmetic_licenses
 			SET account_id = $2, legacy_bot_id = NULL, assigned_bot_id = NULL, updated_at = NOW()
 			WHERE id = $1`, claim.licenseID, accountID); err != nil {
-			return nil, fmt.Errorf("LinkBotToCustomerAccount claim legacy: %w", err)
+			return nil, false, fmt.Errorf("LinkBotToCustomerAccount claim legacy: %w", err)
 		}
 		if claim.status == "active" && claim.assigned != nil && *claim.assigned == botID {
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO cosmetic_license_assignments (license_id, account_id, bot_id, assigned_at)
 				VALUES ($1, $2, $3, NOW())`, claim.licenseID, accountID, botID); err != nil {
-				return nil, fmt.Errorf("LinkBotToCustomerAccount migrate assignment: %w", err)
+				return nil, false, fmt.Errorf("LinkBotToCustomerAccount migrate assignment: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE bot_cosmetic_loadout SET account_id = $2, updated_at = NOW()
 				WHERE license_id = $1 AND bot_id = $3`, claim.licenseID, accountID, botID); err != nil {
-				return nil, fmt.Errorf("LinkBotToCustomerAccount migrate loadout: %w", err)
+				return nil, false, fmt.Errorf("LinkBotToCustomerAccount migrate loadout: %w", err)
 			}
 		}
 	}
 	if err := tx.QueryRow(ctx, `SELECT linked_at FROM account_bot_links WHERE account_id = $1 AND bot_id = $2`,
 		accountID, botID).Scan(&bot.LinkedAt); err != nil {
-		return nil, fmt.Errorf("LinkBotToCustomerAccount linked_at: %w", err)
+		return nil, false, fmt.Errorf("LinkBotToCustomerAccount linked_at: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("LinkBotToCustomerAccount commit: %w", err)
-	}
-	return &bot, nil
+	return &bot, linkCreated, nil
 }
 
 func UnlinkBotFromCustomerAccount(ctx context.Context, accountID, botID string) (bool, error) {

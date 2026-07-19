@@ -84,13 +84,34 @@ type PlatformProfileTransitionResult struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+type PlatformAgentLinkCommand struct {
+	AccountID               string `json:"account_id"`
+	AgentID                 string `json:"agent_id"`
+	ControlProof            string `json:"-"`
+	ExpectedAccountRevision int64  `json:"expected_account_revision"`
+	IdempotencyKey          string `json:"-"`
+}
+
+type PlatformAgentLinkResult struct {
+	AccountID  string     `json:"account_id"`
+	AgentID    string     `json:"agent_id"`
+	Status     string     `json:"status"`
+	Revision   int64      `json:"revision"`
+	LinkedAt   time.Time  `json:"linked_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	UnlinkedAt *time.Time `json:"unlinked_at,omitempty"`
+}
+
 var (
-	ErrPlatformIdempotencyConflict = errors.New("platform idempotency key was already used for a different request")
-	ErrPlatformRevisionConflict    = errors.New("platform resource revision changed")
-	ErrPlatformProfileNotFound     = errors.New("platform game profile was not found")
-	ErrPlatformAccountNotFound     = errors.New("platform account metadata was not found")
-	ErrPlatformAccountInactive     = errors.New("platform account is not active")
-	ErrPlatformAgentLimit          = errors.New("platform account maximum_agents reached")
+	ErrPlatformIdempotencyConflict  = errors.New("platform idempotency key was already used for a different request")
+	ErrPlatformRevisionConflict     = errors.New("platform resource revision changed")
+	ErrPlatformProfileNotFound      = errors.New("platform game profile was not found")
+	ErrPlatformAccountNotFound      = errors.New("platform account metadata was not found")
+	ErrPlatformAccountInactive      = errors.New("platform account is not active")
+	ErrPlatformAgentInactive        = errors.New("platform agent is not active")
+	ErrPlatformAgentLimit           = errors.New("platform account maximum_agents reached")
+	ErrPlatformControlProofRejected = errors.New("platform agent control proof was rejected")
+	ErrPlatformAgentAlreadyLinked   = errors.New("platform agent is already linked")
 )
 
 const insertPlatformAgentSQL = `

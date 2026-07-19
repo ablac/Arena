@@ -52,7 +52,6 @@ type CosmeticsHandler struct {
 	store                      arenaCosmeticsStore
 	engine                     *game.GameEngine
 	checkoutEnabled            bool
-	verifyAPIKey               func(context.Context, string) (*db.Bot, error)
 	consumeAccountKeyQuota     func(context.Context, string, db.AccountAPIKeyQuotaAction, int) (bool, int, error)
 	checkAccountInventoryQuota func(context.Context, string, int) (bool, error)
 	// catalogCache serves the public catalog (4 DB queries + a 100-250 KB
@@ -67,7 +66,7 @@ const cosmeticCatalogCacheTTL = time.Minute
 
 func newCosmeticsHandlerWithStores(authority platform.CosmeticsAuthority, store arenaCosmeticsStore, engine *game.GameEngine) *CosmeticsHandler {
 	return &CosmeticsHandler{
-		authority: authority, store: store, engine: engine, verifyAPIKey: security.VerifyAPIKey,
+		authority: authority, store: store, engine: engine,
 		consumeAccountKeyQuota: db.ConsumeAccountAPIKeyQuota,
 		checkAccountInventoryQuota: func(ctx context.Context, accountID string, limit int) (bool, error) {
 			allowed, _, _, err := security.CheckRateLimit(ctx, "cosmetics-inventory-account:"+accountID, limit, 60)
@@ -79,7 +78,7 @@ func newCosmeticsHandlerWithStores(authority platform.CosmeticsAuthority, store 
 
 func newCosmeticsHandlerWithStore(store cosmeticsStore, engine *game.GameEngine) *CosmeticsHandler {
 	return &CosmeticsHandler{
-		authority: store, store: store, engine: engine, verifyAPIKey: security.VerifyAPIKey,
+		authority: store, store: store, engine: engine,
 		consumeAccountKeyQuota: func(context.Context, string, db.AccountAPIKeyQuotaAction, int) (bool, int, error) {
 			return true, 0, nil
 		},
@@ -471,14 +470,11 @@ func (h *CosmeticsHandler) LinkAccountBot(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-	bot, err := h.verifyAPIKey(r.Context(), strings.TrimSpace(req.APIKey))
-	if err != nil || bot == nil {
-		writeError(w, http.StatusUnauthorized, "invalid API key")
-		return
-	}
-	linkedBot, err := h.authority.LinkAgent(r.Context(), session.AccountID, bot.ID)
+	linkedBot, err := h.authority.ClaimArenaAgent(r.Context(), session.AccountID, strings.TrimSpace(req.APIKey))
 	if err != nil {
 		switch {
+		case errors.Is(err, db.ErrPlatformControlProofRejected):
+			writeError(w, http.StatusUnauthorized, "invalid API key")
 		case errors.Is(err, db.ErrCustomerBotAlreadyLinked):
 			writeError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, db.ErrCustomerAPIKeyAlreadyOwned):
@@ -496,6 +492,10 @@ func (h *CosmeticsHandler) LinkAccountBot(w http.ResponseWriter, r *http.Request
 		case errors.Is(err, db.ErrPlatformAccountInactive):
 			writeJSON(w, http.StatusForbidden, map[string]interface{}{
 				"error": err.Error(), "code": "PLATFORM_ACCOUNT_INACTIVE",
+			})
+		case errors.Is(err, db.ErrPlatformAgentInactive):
+			writeJSON(w, http.StatusForbidden, map[string]interface{}{
+				"error": err.Error(), "code": "PLATFORM_AGENT_INACTIVE",
 			})
 		case errors.Is(err, db.ErrCustomerBotKeyInactive):
 			writeError(w, http.StatusConflict, err.Error())

@@ -89,18 +89,46 @@ refunded, revoked, chargeback, or expired license. W1b.2 does not add a second
 ownership store, dual-write records, expose platform HTTP handlers, or
 physically extract a service.
 
+### W1b.3 control-proof checkpoint
+
+Account-agent linking now consumes the Arena API-key control proof inside the
+same PostgreSQL transaction as account revision and capacity enforcement,
+credential ownership, link/history/change writes, and legacy-license recovery.
+The public compatibility route remains `POST /api/v1/account/bots` with its
+existing `{api_key}` body, quota-before-proof ordering, response, and error
+behavior. It delegates the plaintext proof once to the authority and does not
+pre-verify a trusted bot ID.
+
+The authority also exposes an in-process exact command for account ID, agent
+ID, control proof, expected account revision, and idempotency key. Exact-command
+replay is scoped by account, verifies proof before returning a replay, binds the
+proof-derived bot to the requested agent, and stores only a non-secret request
+identity and response. A committed replay remains response-stable if the agent
+is retired later; retirement rejects only new link commands. Plaintext proof is
+never logged, returned, or written to idempotency, history, change, or license
+records.
+
+Both entry points lock the verified customer account, platform account
+metadata, and credential in that order before invoking one private link-state
+core. Credential verification is implemented inside the authority boundary;
+production callers cannot substitute a verifier. Missing, inactive, malformed,
+mismatched, incorrect, or retired-agent credentials fail closed. The native
+account-key creation transaction remains the separate
+privileged registration-and-initial-link path; it cannot claim an existing
+agent by trusted ID. W1b.3 still does not expose the versioned platform HTTP
+adapter or create a second writable authority.
+
 ### Later W1b checkpoints
 
 Later checkpoints must add and prove the remaining operational contract before
 service extraction:
 
-1. authority-owned control-proof consumption for account-agent linking;
-2. license lifecycle reconciliation that never reactivates a terminal
+1. license lifecycle reconciliation that never reactivates a terminal
    refunded, revoked, chargeback, or expired license;
-3. provider-neutral fulfillment and subscription paths through the same
+2. provider-neutral fulfillment and subscription paths through the same
    authority;
-4. service-bearer authentication and the versioned platform HTTP adapter;
-5. checkpoint-specific backfill, restart, rollback, concurrency, and
+3. service-bearer authentication and the versioned platform HTTP adapter;
+4. checkpoint-specific backfill, restart, rollback, concurrency, and
    large-history verification before any physical database or service split.
 
 The native email verification transaction, Stripe order/subscription

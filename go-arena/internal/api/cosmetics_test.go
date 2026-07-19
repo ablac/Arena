@@ -55,6 +55,8 @@ type fakeCosmeticsStore struct {
 	lastExpiry         time.Time
 	lastSource         string
 	lastReference      string
+	lastControlProof   string
+	claimCalls         int
 	expiredMemberships int
 }
 
@@ -290,8 +292,9 @@ func TestAccountCosmeticsInventoryExpiryRefreshIsScopedAndNonBlocking(t *testing
 		t.Fatalf("visual refresh bots=%q, want only affected-bot", got)
 	}
 }
-func (f *fakeCosmeticsStore) LinkAgent(_ context.Context, accountID, botID string) (*db.AccountBot, error) {
-	f.lastAccount, f.lastBotID = accountID, botID
+func (f *fakeCosmeticsStore) ClaimArenaAgent(_ context.Context, accountID, controlProof string) (*db.AccountBot, error) {
+	f.lastAccount, f.lastControlProof = accountID, controlProof
+	f.claimCalls++
 	return f.linkBot, f.grantErr
 }
 func (f *fakeCosmeticsStore) UnlinkAgent(_ context.Context, accountID, botID string) (bool, error) {
@@ -389,9 +392,6 @@ func TestLinkAccountBotMapsDurableKeyOwnershipConflicts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &fakeCosmeticsStore{grantErr: tc.err}
 			handler := newCosmeticsHandlerWithStore(store, nil)
-			handler.verifyAPIKey = func(context.Context, string) (*db.Bot, error) {
-				return &db.Bot{ID: "bot-1", APIKeyID: "key-1"}, nil
-			}
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/account/bots", strings.NewReader(`{"api_key":"arena_valid"}`))
 			req = req.WithContext(withCustomerSession(req.Context(), &CustomerSession{AccountID: "account-1"}))
 			rec := httptest.NewRecorder()
@@ -405,16 +405,44 @@ func TestLinkAccountBotMapsDurableKeyOwnershipConflicts(t *testing.T) {
 	}
 }
 
+func TestLinkAccountBotMapsRetiredPlatformAgent(t *testing.T) {
+	store := &fakeCosmeticsStore{grantErr: db.ErrPlatformAgentInactive}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/account/bots", strings.NewReader(`{"api_key":"arena_retired_control_proof"}`))
+	req = req.WithContext(withCustomerSession(req.Context(), &CustomerSession{AccountID: "account-1"}))
+	recorder := httptest.NewRecorder()
+
+	handler.LinkAccountBot(recorder, req)
+
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), `"code":"PLATFORM_AGENT_INACTIVE"`) {
+		t.Fatalf("retired agent response = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestLinkAccountBotPassesControlProofOnceToAuthority(t *testing.T) {
+	store := &fakeCosmeticsStore{linkBot: &db.AccountBot{BotID: "bot-1"}}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/account/bots", strings.NewReader(`{"api_key":"arena_control_proof_1234567890"}`))
+	req = req.WithContext(withCustomerSession(req.Context(), &CustomerSession{AccountID: "account-1"}))
+	recorder := httptest.NewRecorder()
+
+	handler.LinkAccountBot(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if store.claimCalls != 1 || store.lastAccount != "account-1" || store.lastControlProof != "arena_control_proof_1234567890" {
+		t.Fatalf("authority claim = (%q, %q)", store.lastAccount, store.lastControlProof)
+	}
+}
+
 func TestLinkAccountBotRejectsOversizedBodyBeforeQuotaOrBcrypt(t *testing.T) {
-	handler := newCosmeticsHandlerWithStore(&fakeCosmeticsStore{}, nil)
-	quotaCalls, verifyCalls := 0, 0
+	store := &fakeCosmeticsStore{}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+	quotaCalls := 0
 	handler.consumeAccountKeyQuota = func(context.Context, string, db.AccountAPIKeyQuotaAction, int) (bool, int, error) {
 		quotaCalls++
 		return true, 1, nil
-	}
-	handler.verifyAPIKey = func(context.Context, string) (*db.Bot, error) {
-		verifyCalls++
-		return nil, errors.New("should not run")
 	}
 	body := `{"api_key":"` + strings.Repeat("x", 8<<10) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/account/bots", strings.NewReader(body))
@@ -423,8 +451,8 @@ func TestLinkAccountBotRejectsOversizedBodyBeforeQuotaOrBcrypt(t *testing.T) {
 
 	handler.LinkAccountBot(recorder, req)
 
-	if recorder.Code != http.StatusBadRequest || quotaCalls != 0 || verifyCalls != 0 {
-		t.Fatalf("oversized link = status %d quota=%d verify=%d body=%s", recorder.Code, quotaCalls, verifyCalls, recorder.Body.String())
+	if recorder.Code != http.StatusBadRequest || quotaCalls != 0 || store.claimCalls != 0 {
+		t.Fatalf("oversized link = status %d quota=%d claims=%d body=%s", recorder.Code, quotaCalls, store.claimCalls, recorder.Body.String())
 	}
 }
 
@@ -433,8 +461,9 @@ func TestLinkAccountBotQuotaIsPerAccountAcrossSourceIPsAndRunsBeforeBcrypt(t *te
 	config.C.CustomerBotLinkPerHour = 1
 	t.Cleanup(func() { config.C.CustomerBotLinkPerHour = previous })
 
-	handler := newCosmeticsHandlerWithStore(&fakeCosmeticsStore{linkBot: &db.AccountBot{BotID: "bot-1"}}, nil)
-	quotaCount, verifyCalls := 0, 0
+	store := &fakeCosmeticsStore{linkBot: &db.AccountBot{BotID: "bot-1"}}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+	quotaCount := 0
 	handler.consumeAccountKeyQuota = func(_ context.Context, accountID string, action db.AccountAPIKeyQuotaAction, limit int) (bool, int, error) {
 		if accountID != "account-1" || action != db.AccountAPIKeyQuotaLink || limit != 1 {
 			t.Fatalf("quota input account=%q action=%q limit=%d", accountID, action, limit)
@@ -444,10 +473,6 @@ func TestLinkAccountBotQuotaIsPerAccountAcrossSourceIPsAndRunsBeforeBcrypt(t *te
 		}
 		quotaCount++
 		return true, 0, nil
-	}
-	handler.verifyAPIKey = func(context.Context, string) (*db.Bot, error) {
-		verifyCalls++
-		return &db.Bot{ID: "bot-1", APIKeyID: "key-1"}, nil
 	}
 
 	for index, remote := range []string{"198.51.100.10:1000", "203.0.113.20:2000"} {
@@ -463,8 +488,8 @@ func TestLinkAccountBotQuotaIsPerAccountAcrossSourceIPsAndRunsBeforeBcrypt(t *te
 			t.Fatalf("second link = %d %s", recorder.Code, recorder.Body.String())
 		}
 	}
-	if verifyCalls != 1 {
-		t.Fatalf("bcrypt verification calls = %d, want 1", verifyCalls)
+	if store.claimCalls != 1 {
+		t.Fatalf("authority claim calls = %d, want 1", store.claimCalls)
 	}
 }
 

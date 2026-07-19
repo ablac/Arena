@@ -8,9 +8,510 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"arena-server/internal/security/credential"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestPostgresArenaAgentClaimVerifiesLockedControlProofAndRejectsInactiveCredentials(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"platform-control-proof@example.com",
+		"https://id.example",
+		"platform-control-proof",
+		"Platform Control Proof",
+	)
+	if err != nil {
+		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
+	}
+
+	const proof = "arena_control_proof_1234567890"
+	bot := accountAPIKeyTestBot("platform-control-proof-key", "platform-control-proof-agent")
+	if err := CreateAPIKeyAndBot(
+		ctx,
+		bot.APIKeyID,
+		credential.Digest(proof),
+		proof[:12],
+		"127.0.0.1",
+		bot,
+	); err != nil {
+		t.Fatalf("CreateAPIKeyAndBot: %v", err)
+	}
+
+	wrongProof := proof[:12] + "wrong_control_proof"
+	if _, err := ClaimArenaAgentWithControlProof(ctx, account.ID, wrongProof); !errors.Is(err, ErrPlatformControlProofRejected) {
+		t.Fatalf("wrong proof error = %v, want %v", err, ErrPlatformControlProofRejected)
+	}
+	var links, ownership, events int
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM account_bot_links WHERE bot_id = $1`, bot.ID).Scan(&links); err != nil {
+		t.Fatalf("count rejected links: %v", err)
+	}
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM account_api_keys WHERE api_key_id = $1`, bot.APIKeyID).Scan(&ownership); err != nil {
+		t.Fatalf("count rejected ownership: %v", err)
+	}
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM platform_agent_link_events WHERE agent_id = $1`, bot.ID).Scan(&events); err != nil {
+		t.Fatalf("count rejected events: %v", err)
+	}
+	if links != 0 || ownership != 0 || events != 0 {
+		t.Fatalf("wrong proof wrote links=%d ownership=%d events=%d", links, ownership, events)
+	}
+
+	linked, err := ClaimArenaAgentWithControlProof(ctx, account.ID, proof)
+	if err != nil {
+		t.Fatalf("ClaimArenaAgentWithControlProof: %v", err)
+	}
+	if linked.BotID != bot.ID || linked.LinkedAt.IsZero() {
+		t.Fatalf("linked bot = %+v", linked)
+	}
+
+	const inactiveProof = "arena_inactive_proof_1234567890"
+	inactive := accountAPIKeyTestBot("platform-inactive-proof-key", "platform-inactive-proof-agent")
+	inactive.CreatedAt, inactive.UpdatedAt = time.Now(), time.Now()
+	if err := CreateAPIKeyAndBot(
+		ctx,
+		inactive.APIKeyID,
+		credential.Digest(inactiveProof),
+		inactiveProof[:12],
+		"127.0.0.1",
+		inactive,
+	); err != nil {
+		t.Fatalf("CreateAPIKeyAndBot inactive: %v", err)
+	}
+	if err := DeactivateAPIKey(ctx, inactive.APIKeyID); err != nil {
+		t.Fatalf("DeactivateAPIKey: %v", err)
+	}
+	if _, err := ClaimArenaAgentWithControlProof(ctx, account.ID, inactiveProof); !errors.Is(err, ErrPlatformControlProofRejected) {
+		t.Fatalf("inactive proof error = %v, want %v", err, ErrPlatformControlProofRejected)
+	}
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM account_bot_links WHERE bot_id = $1`, inactive.ID).Scan(&links); err != nil {
+		t.Fatalf("count inactive links: %v", err)
+	}
+	if links != 0 {
+		t.Fatalf("inactive proof wrote %d links", links)
+	}
+
+	const retiredProof = "arena_retired_proof_1234567890"
+	retired := accountAPIKeyTestBot("platform-retired-proof-key", "platform-retired-proof-agent")
+	retired.CreatedAt, retired.UpdatedAt = time.Now(), time.Now()
+	if err := CreateAPIKeyAndBot(
+		ctx,
+		retired.APIKeyID,
+		credential.Digest(retiredProof),
+		retiredProof[:12],
+		"127.0.0.1",
+		retired,
+	); err != nil {
+		t.Fatalf("CreateAPIKeyAndBot retired: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		UPDATE platform_agents SET status = 'retired', revision = revision + 1, updated_at = NOW()
+		WHERE agent_id = $1`, retired.ID); err != nil {
+		t.Fatalf("retire platform agent: %v", err)
+	}
+	if _, err := ClaimArenaAgentWithControlProof(ctx, account.ID, retiredProof); !errors.Is(err, ErrPlatformAgentInactive) {
+		t.Fatalf("retired agent error = %v, want %v", err, ErrPlatformAgentInactive)
+	}
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM account_bot_links WHERE bot_id = $1`, retired.ID).Scan(&links); err != nil {
+		t.Fatalf("count retired links: %v", err)
+	}
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM account_api_keys WHERE api_key_id = $1`, retired.APIKeyID).Scan(&ownership); err != nil {
+		t.Fatalf("count retired ownership: %v", err)
+	}
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM platform_agent_link_events WHERE agent_id = $1`, retired.ID).Scan(&events); err != nil {
+		t.Fatalf("count retired events: %v", err)
+	}
+	if links != 0 || ownership != 0 || events != 0 {
+		t.Fatalf("retired proof wrote links=%d ownership=%d events=%d", links, ownership, events)
+	}
+}
+
+func TestPostgresPlatformAgentLinkEnforcesProofRevisionAndProofFreeIdempotency(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"platform-exact-link@example.com",
+		"https://id.example",
+		"platform-exact-link",
+		"Platform Exact Link",
+	)
+	if err != nil {
+		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
+	}
+	capacity, err := GetPlatformAccountCapacity(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetPlatformAccountCapacity: %v", err)
+	}
+
+	const proof = "arena_exact_control_proof_1234567890"
+	bot := accountAPIKeyTestBot("platform-exact-link-key", "platform-exact-link-agent")
+	if err := CreateAPIKeyAndBot(ctx, bot.APIKeyID, credential.Digest(proof), proof[:12], "127.0.0.1", bot); err != nil {
+		t.Fatalf("CreateAPIKeyAndBot: %v", err)
+	}
+	command := PlatformAgentLinkCommand{
+		AccountID:               account.ID,
+		AgentID:                 bot.ID,
+		ControlProof:            proof,
+		ExpectedAccountRevision: capacity.Revision,
+		IdempotencyKey:          "exact-link-command-001",
+	}
+	result, err := LinkPlatformAgent(ctx, command)
+	if err != nil {
+		t.Fatalf("LinkPlatformAgent: %v", err)
+	}
+	if result.AccountID != account.ID || result.AgentID != bot.ID || result.Status != "active" || result.Revision != 1 {
+		t.Fatalf("link result = %+v", result)
+	}
+	replayed, err := LinkPlatformAgent(ctx, command)
+	if err != nil {
+		t.Fatalf("LinkPlatformAgent replay: %v", err)
+	}
+	if !reflect.DeepEqual(replayed, result) {
+		t.Fatalf("replayed result = %+v, want %+v", replayed, result)
+	}
+	conflict := command
+	conflict.ExpectedAccountRevision++
+	if _, err := LinkPlatformAgent(ctx, conflict); !errors.Is(err, ErrPlatformIdempotencyConflict) {
+		t.Fatalf("conflicting replay error = %v, want %v", err, ErrPlatformIdempotencyConflict)
+	}
+
+	var recordCount int
+	var requestHashHex, responseText string
+	if err := Pool.QueryRow(ctx, `
+		SELECT COUNT(*)::INTEGER, MIN(encode(request_hash, 'hex')), MIN(response::TEXT)
+		FROM platform_idempotency_records
+		WHERE operation = 'link_platform_agent' AND subject_id = $1`, bot.ID).Scan(
+		&recordCount,
+		&requestHashHex,
+		&responseText,
+	); err != nil {
+		t.Fatalf("load exact link idempotency: %v", err)
+	}
+	if recordCount != 1 || strings.Contains(requestHashHex, proof) || strings.Contains(responseText, proof) {
+		t.Fatalf("idempotency record count=%d hash=%q response=%q", recordCount, requestHashHex, responseText)
+	}
+	if strings.Contains(responseText, "control_proof") || strings.Contains(responseText, "api_key") {
+		t.Fatalf("idempotency response disclosed credential metadata: %s", responseText)
+	}
+
+	if _, err := Pool.Exec(ctx, `
+		UPDATE platform_agents SET status = 'retired', revision = revision + 1, updated_at = NOW()
+		WHERE agent_id = $1`, bot.ID); err != nil {
+		t.Fatalf("retire linked platform agent: %v", err)
+	}
+	postRetirementReplay, err := LinkPlatformAgent(ctx, command)
+	if err != nil {
+		t.Fatalf("LinkPlatformAgent replay after retirement: %v", err)
+	}
+	if !reflect.DeepEqual(postRetirementReplay, result) {
+		t.Fatalf("post-retirement replay = %+v, want %+v", postRetirementReplay, result)
+	}
+	newAfterRetirement := command
+	newAfterRetirement.IdempotencyKey = "exact-link-command-after-retirement"
+	newAfterRetirement.ExpectedAccountRevision = result.Revision
+	if _, err := LinkPlatformAgent(ctx, newAfterRetirement); !errors.Is(err, ErrPlatformAgentInactive) {
+		t.Fatalf("new post-retirement command error = %v, want %v", err, ErrPlatformAgentInactive)
+	}
+
+	const staleProof = "arena_stale_control_proof_1234567890"
+	staleBot := accountAPIKeyTestBot("platform-stale-link-key", "platform-stale-link-agent")
+	if err := CreateAPIKeyAndBot(ctx, staleBot.APIKeyID, credential.Digest(staleProof), staleProof[:12], "127.0.0.1", staleBot); err != nil {
+		t.Fatalf("CreateAPIKeyAndBot stale: %v", err)
+	}
+	stale := PlatformAgentLinkCommand{
+		AccountID:               account.ID,
+		AgentID:                 staleBot.ID,
+		ControlProof:            staleProof,
+		ExpectedAccountRevision: capacity.Revision,
+		IdempotencyKey:          "exact-stale-command-001",
+	}
+	if _, err := LinkPlatformAgent(ctx, stale); !errors.Is(err, ErrPlatformRevisionConflict) {
+		t.Fatalf("stale revision error = %v, want %v", err, ErrPlatformRevisionConflict)
+	}
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM account_bot_links WHERE bot_id = $1`, staleBot.ID).Scan(&recordCount); err != nil {
+		t.Fatalf("count stale links: %v", err)
+	}
+	if recordCount != 0 {
+		t.Fatalf("stale revision wrote %d links", recordCount)
+	}
+	if err := Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM platform_idempotency_records
+		WHERE operation = 'link_platform_agent' AND subject_id = $1`, staleBot.ID).Scan(&recordCount); err != nil {
+		t.Fatalf("count stale idempotency: %v", err)
+	}
+	if recordCount != 0 {
+		t.Fatalf("stale revision wrote %d idempotency records", recordCount)
+	}
+	var staleLastSeen *time.Time
+	if err := Pool.QueryRow(ctx, `SELECT last_seen FROM api_keys WHERE id = $1`, staleBot.APIKeyID).Scan(&staleLastSeen); err != nil {
+		t.Fatalf("load stale credential timestamp: %v", err)
+	}
+	if staleLastSeen != nil {
+		t.Fatalf("stale revision committed proof-side last_seen = %v", *staleLastSeen)
+	}
+}
+
+func TestPostgresPlatformAgentLinkScopesIdempotencyByAccountAndBindsProofToAgent(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	type fixture struct {
+		account  *CustomerAccount
+		bot      *Bot
+		proof    string
+		revision int64
+	}
+	fixtures := make([]fixture, 2)
+	for index := range fixtures {
+		account, err := UpsertVerifiedCustomerAccount(
+			ctx,
+			fmt.Sprintf("platform-scoped-link-%d@example.com", index),
+			"https://id.example",
+			fmt.Sprintf("platform-scoped-link-%d", index),
+			fmt.Sprintf("Platform Scoped Link %d", index),
+		)
+		if err != nil {
+			t.Fatalf("UpsertVerifiedCustomerAccount %d: %v", index, err)
+		}
+		proof := fmt.Sprintf("arena_scope%d_control_proof_1234567890", index)
+		bot := accountAPIKeyTestBot(
+			fmt.Sprintf("platform-scoped-link-key-%d", index),
+			fmt.Sprintf("platform-scoped-link-agent-%d", index),
+		)
+		if err := CreateAPIKeyAndBot(ctx, bot.APIKeyID, credential.Digest(proof), proof[:12], "127.0.0.1", bot); err != nil {
+			t.Fatalf("CreateAPIKeyAndBot %d: %v", index, err)
+		}
+		capacity, err := GetPlatformAccountCapacity(ctx, account.ID)
+		if err != nil {
+			t.Fatalf("GetPlatformAccountCapacity %d: %v", index, err)
+		}
+		fixtures[index] = fixture{account: account, bot: bot, proof: proof, revision: capacity.Revision}
+	}
+
+	mismatch := PlatformAgentLinkCommand{
+		AccountID:               fixtures[0].account.ID,
+		AgentID:                 fixtures[1].bot.ID,
+		ControlProof:            fixtures[0].proof,
+		ExpectedAccountRevision: fixtures[0].revision,
+		IdempotencyKey:          "shared-client-key-001",
+	}
+	if _, err := LinkPlatformAgent(ctx, mismatch); !errors.Is(err, ErrPlatformControlProofRejected) {
+		t.Fatalf("agent/proof mismatch error = %v, want %v", err, ErrPlatformControlProofRejected)
+	}
+
+	for index, fixture := range fixtures {
+		result, err := LinkPlatformAgent(ctx, PlatformAgentLinkCommand{
+			AccountID:               fixture.account.ID,
+			AgentID:                 fixture.bot.ID,
+			ControlProof:            fixture.proof,
+			ExpectedAccountRevision: fixture.revision,
+			IdempotencyKey:          "shared-client-key-001",
+		})
+		if err != nil {
+			t.Fatalf("LinkPlatformAgent %d: %v", index, err)
+		}
+		if result.AccountID != fixture.account.ID || result.AgentID != fixture.bot.ID {
+			t.Fatalf("result %d = %+v", index, result)
+		}
+	}
+	var records, distinctKeys int
+	if err := Pool.QueryRow(ctx, `
+		SELECT COUNT(*)::INTEGER, COUNT(DISTINCT idempotency_key)::INTEGER
+		FROM platform_idempotency_records
+		WHERE operation = 'link_platform_agent'`).Scan(&records, &distinctKeys); err != nil {
+		t.Fatalf("count scoped idempotency records: %v", err)
+	}
+	if records != 2 || distinctKeys != 2 {
+		t.Fatalf("scoped idempotency = %d records / %d keys, want 2 / 2", records, distinctKeys)
+	}
+}
+
+func TestPostgresPlatformAgentLinkConcurrentIdenticalCommandsReplayOneCommit(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"platform-concurrent-link@example.com",
+		"https://id.example",
+		"platform-concurrent-link",
+		"Platform Concurrent Link",
+	)
+	if err != nil {
+		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
+	}
+	capacity, err := GetPlatformAccountCapacity(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetPlatformAccountCapacity: %v", err)
+	}
+	const proof = "arena_concurrent_control_proof_1234567890"
+	bot := accountAPIKeyTestBot("platform-concurrent-link-key", "platform-concurrent-link-agent")
+	if err := CreateAPIKeyAndBot(ctx, bot.APIKeyID, credential.Digest(proof), proof[:12], "127.0.0.1", bot); err != nil {
+		t.Fatalf("CreateAPIKeyAndBot: %v", err)
+	}
+	command := PlatformAgentLinkCommand{
+		AccountID:               account.ID,
+		AgentID:                 bot.ID,
+		ControlProof:            proof,
+		ExpectedAccountRevision: capacity.Revision,
+		IdempotencyKey:          "concurrent-exact-link-command-001",
+	}
+
+	const callers = 8
+	start := make(chan struct{})
+	results := make([]*PlatformAgentLinkResult, callers)
+	errorsFound := make([]error, callers)
+	var wait sync.WaitGroup
+	for index := range callers {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-start
+			results[index], errorsFound[index] = LinkPlatformAgent(context.Background(), command)
+		}(index)
+	}
+	close(start)
+	wait.Wait()
+
+	for index := range callers {
+		if errorsFound[index] != nil {
+			t.Fatalf("caller %d: %v", index, errorsFound[index])
+		}
+		if index > 0 && !reflect.DeepEqual(results[index], results[0]) {
+			t.Fatalf("caller %d result = %+v, want %+v", index, results[index], results[0])
+		}
+	}
+	var links, events, idempotencyRecords int
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM account_bot_links WHERE bot_id = $1`, bot.ID).Scan(&links); err != nil {
+		t.Fatalf("count links: %v", err)
+	}
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM platform_agent_link_events WHERE agent_id = $1 AND status = 'linked'`, bot.ID).Scan(&events); err != nil {
+		t.Fatalf("count link events: %v", err)
+	}
+	if err := Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM platform_idempotency_records
+		WHERE operation = 'link_platform_agent' AND subject_id = $1`, bot.ID).Scan(&idempotencyRecords); err != nil {
+		t.Fatalf("count idempotency records: %v", err)
+	}
+	if links != 1 || events != 1 || idempotencyRecords != 1 {
+		t.Fatalf("committed links=%d events=%d idempotency=%d, want 1/1/1", links, events, idempotencyRecords)
+	}
+}
+
+func TestPostgresPlatformAgentLinkRejectsProofRevokedAheadOfCredentialLock(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"platform-revoke-race@example.com",
+		"https://id.example",
+		"platform-revoke-race",
+		"Platform Revoke Race",
+	)
+	if err != nil {
+		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
+	}
+	capacity, err := GetPlatformAccountCapacity(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetPlatformAccountCapacity: %v", err)
+	}
+	const proof = "arena_revoke_race_control_proof_1234567890"
+	bot := accountAPIKeyTestBot("platform-revoke-race-key", "platform-revoke-race-agent")
+	if err := CreateAPIKeyAndBot(ctx, bot.APIKeyID, credential.Digest(proof), proof[:12], "127.0.0.1", bot); err != nil {
+		t.Fatalf("CreateAPIKeyAndBot: %v", err)
+	}
+
+	blocker, err := Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin credential blocker: %v", err)
+	}
+	defer blocker.Rollback(ctx)
+	var lockedID string
+	if err := blocker.QueryRow(ctx, `SELECT id FROM api_keys WHERE id = $1 FOR UPDATE`, bot.APIKeyID).Scan(&lockedID); err != nil {
+		t.Fatalf("lock credential: %v", err)
+	}
+
+	waitUntilBlocked := func(queryFragment string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			var waiting bool
+			if err := Pool.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM pg_stat_activity
+					WHERE datname = current_database()
+					  AND pid <> pg_backend_pid()
+					  AND wait_event_type = 'Lock'
+					  AND query LIKE '%' || $1 || '%'
+				)`, queryFragment).Scan(&waiting); err != nil {
+				t.Fatalf("observe blocked query %q: %v", queryFragment, err)
+			}
+			if waiting {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("query %q did not block on credential lock", queryFragment)
+	}
+
+	revokeResult := make(chan error, 1)
+	go func() {
+		revokeResult <- DeactivateAPIKey(context.Background(), bot.APIKeyID)
+	}()
+	waitUntilBlocked("UPDATE api_keys SET is_active = false")
+
+	command := PlatformAgentLinkCommand{
+		AccountID:               account.ID,
+		AgentID:                 bot.ID,
+		ControlProof:            proof,
+		ExpectedAccountRevision: capacity.Revision,
+		IdempotencyKey:          "revoke-race-exact-link-command-001",
+	}
+	linkResult := make(chan error, 1)
+	go func() {
+		_, err := LinkPlatformAgent(context.Background(), command)
+		linkResult <- err
+	}()
+	waitUntilBlocked("JOIN platform_agents agents")
+
+	if err := blocker.Commit(ctx); err != nil {
+		t.Fatalf("release credential blocker: %v", err)
+	}
+	if err := <-revokeResult; err != nil {
+		t.Fatalf("DeactivateAPIKey: %v", err)
+	}
+	if err := <-linkResult; !errors.Is(err, ErrPlatformControlProofRejected) {
+		t.Fatalf("link after queued revocation error = %v, want %v", err, ErrPlatformControlProofRejected)
+	}
+
+	var links, events, idempotencyRecords int
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM account_bot_links WHERE bot_id = $1`, bot.ID).Scan(&links); err != nil {
+		t.Fatalf("count links: %v", err)
+	}
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM platform_agent_link_events WHERE agent_id = $1`, bot.ID).Scan(&events); err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	if err := Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM platform_idempotency_records
+		WHERE operation = 'link_platform_agent' AND subject_id = $1`, bot.ID).Scan(&idempotencyRecords); err != nil {
+		t.Fatalf("count idempotency records: %v", err)
+	}
+	if links != 0 || events != 0 || idempotencyRecords != 0 {
+		t.Fatalf("revoked proof wrote links=%d events=%d idempotency=%d", links, events, idempotencyRecords)
+	}
+}
 
 func TestPostgresPlatformAccountMetadataDefaultsToTenAndComputesCurrentAgents(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)

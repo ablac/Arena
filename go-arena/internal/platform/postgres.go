@@ -36,6 +36,10 @@ func (PostgresAuthority) AgentLinkHistory(ctx context.Context, accountID string,
 	return db.ListPlatformAgentLinkEvents(ctx, accountID, afterEventID, limit)
 }
 
+func (PostgresAuthority) LinkAgent(ctx context.Context, command db.PlatformAgentLinkCommand) (*db.PlatformAgentLinkResult, error) {
+	return db.LinkPlatformAgent(ctx, command)
+}
+
 func (PostgresAuthority) PublicCatalog(ctx context.Context) (*db.CosmeticCatalog, error) {
 	if db.Pool == nil {
 		catalog := db.DefaultCosmeticCatalogData()
@@ -80,8 +84,8 @@ func (PostgresAuthority) AccountInventory(ctx context.Context, accountID string)
 	return db.GetCustomerCosmeticsInventory(ctx, accountID)
 }
 
-func (PostgresAuthority) LinkAgent(ctx context.Context, accountID, agentID string) (*db.AccountBot, error) {
-	return db.LinkBotToCustomerAccount(ctx, accountID, agentID)
+func (PostgresAuthority) ClaimArenaAgent(ctx context.Context, accountID, controlProof string) (*db.AccountBot, error) {
+	return db.ClaimArenaAgentWithControlProof(ctx, accountID, controlProof)
 }
 
 func (PostgresAuthority) UnlinkAgent(ctx context.Context, accountID, agentID string) (bool, error) {
