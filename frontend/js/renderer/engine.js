@@ -6,7 +6,7 @@
  */
 
 import { CameraController } from './camera.js?v=20260718a';
-import { BotRenderer } from './bots.js?v=20260718n';
+import { BotRenderer } from './bots.js?v=20260718o';
 import { EnvironmentRenderer } from './environment.js?v=20260718h';
 import { ObstacleRenderer } from './obstacles.js?v=20260718h';
 import { IntermissionDirector } from './intermission-director.js?v=20260718h';

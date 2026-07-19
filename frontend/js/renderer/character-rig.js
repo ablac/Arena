@@ -21,7 +21,7 @@ import {
 } from './forge-weapons.js?v=20260718c';
 import {bodyFormForAsset} from './body-form-roster.js?v=20260714e';
 import {buildBodyFormGeometry, createBodyFormFarProxy} from './body-form-geometry.js?v=20260714e';
-import {createWorldBotHud, disposeWorldBotHud} from './world-hud.js?v=20260718n';
+import {createWorldBotHud, disposeWorldBotHud} from './world-hud.js?v=20260718o';
 import {isEnabled} from '../settings.js';
 
 const _sceneResources = new WeakMap();

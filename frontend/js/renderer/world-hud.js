@@ -97,6 +97,25 @@ function drawLabelTexture(B, scene, name, text, kind = 'name') {
   return texture;
 }
 
+function drawSelectionTexture(texture, lines) {
+  const ctx = texture.getContext();
+  const size = texture.getSize();
+  ctx.clearRect(0, 0, size.width, size.height);
+  ctx.fillStyle = 'rgba(8, 12, 20, 0.92)';
+  ctx.strokeStyle = 'rgba(138, 223, 255, 0.95)';
+  ctx.lineWidth = 4;
+  ctx.fillRect(4, 4, size.width - 8, size.height - 8);
+  ctx.strokeRect(4, 4, size.width - 8, size.height - 8);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.font = '600 30px monospace';
+  for (let index = 0; index < lines.length; index += 1) {
+    ctx.fillStyle = index === 0 ? '#8adfff' : '#ffffff';
+    ctx.fillText(lines[index], 24, 34 + index * 44, size.width - 48);
+  }
+  texture.update(false);
+}
+
 function makeTextureMaterial(B, scene, name, texture) {
   const material = new B.StandardMaterial(name, scene);
   material.diffuseColor = B.Color3.White();
@@ -170,6 +189,10 @@ export function createWorldBotHud(bot, id, root, scene) {
     tauntBubble: null,
     tauntTexture: null,
     tauntMaterial: null,
+    selectionCard: null,
+    selectionTexture: null,
+    selectionMaterial: null,
+    selectionText: '',
   };
   updateWorldBotHudHealth(hud, 1);
   return hud;
@@ -226,6 +249,43 @@ export function hideWorldTaunt(hud, dispose = false) {
   hud.tauntTexture = null;
 }
 
+/** Show selected-bot details without allocating a fullscreen GUI texture. */
+export function showWorldSelection(hud, lines) {
+  if (!hud?.root) return;
+  const B = window.BABYLON;
+  const scene = hud.root.getScene();
+  const cleanLines = (lines || []).slice(0, 5).map(line => String(line).slice(0, 34));
+  const text = cleanLines.join('\n');
+  if (!hud.selectionCard) {
+    const texture = new B.DynamicTexture(`${hud.root.name}-selection-tex`, {
+      width: 512,
+      height: 256,
+    }, scene, false);
+    texture.hasAlpha = true;
+    const material = makeTextureMaterial(B, scene, `${hud.root.name}-selection-mat`, texture);
+    const plane = configurePlane(B.MeshBuilder.CreatePlane(`${hud.root.name}-selection`, {
+      width: 76,
+      height: 38,
+    }, scene));
+    plane.parent = hud.root;
+    plane.position.y = 54;
+    plane.scaling.y = -1;
+    plane.material = material;
+    hud.selectionCard = plane;
+    hud.selectionTexture = texture;
+    hud.selectionMaterial = material;
+  }
+  if (text !== hud.selectionText) {
+    drawSelectionTexture(hud.selectionTexture, cleanLines);
+    hud.selectionText = text;
+  }
+  hud.selectionCard.isVisible = true;
+}
+
+export function hideWorldSelection(hud) {
+  if (hud?.selectionCard) hud.selectionCard.isVisible = false;
+}
+
 export function disposeWorldBotHud(hud) {
   if (!hud) return;
   hideWorldTaunt(hud, true);
@@ -234,5 +294,8 @@ export function disposeWorldBotHud(hud) {
   hud.nameLabel?.dispose();
   hud.nameMaterial?.dispose(false, false);
   hud.nameTexture?.dispose();
+  hud.selectionCard?.dispose();
+  hud.selectionMaterial?.dispose(false, false);
+  hud.selectionTexture?.dispose();
   hud.root?.dispose();
 }

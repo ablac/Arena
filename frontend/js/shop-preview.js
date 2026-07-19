@@ -1,6 +1,6 @@
 'use strict';
 
-import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260718n';
+import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260718o';
 import { applyBotCosmetics, disposeBotCosmetics } from './renderer/cosmetics.js?v=20260714e';
 import { updateForgeCharacter } from './renderer/character-anims.js?v=20260714e';
 import { TrailRenderer } from './renderer/trails.js?v=20260714e';

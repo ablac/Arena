@@ -6,7 +6,7 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry, getGuiTexture } from './bot-body.js?v=20260718n';
+import { createBotEntry, disposeBotEntry } from './bot-body.js?v=20260718o';
 import {
   forgeContactDelay,
   updateForgeCharacter,
@@ -15,17 +15,19 @@ import {
   triggerForgeHit,
   triggerForgeShove,
 } from './character-anims.js?v=20260714e';
-import {setForgeChassisLighting, updateForgeCharacterLOD} from './character-rig.js?v=20260718n';
+import {setForgeChassisLighting, updateForgeCharacterLOD} from './character-rig.js?v=20260718o';
 import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260714e';
 import {bodyFormKeyForBot} from './body-form-roster.js?v=20260714e';
 import {
   hideWorldTaunt,
+  hideWorldSelection,
   scaleWorldBotHud,
   setWorldBotHudVisible,
   showWorldTaunt,
+  showWorldSelection,
   updateWorldBotHudHealth,
   worldHudScaleForRadius,
-} from './world-hud.js?v=20260718n';
+} from './world-hud.js?v=20260718o';
 import { isEnabled } from '../settings.js';
 
 export const BODY_FORM_NEAR_CHARACTER_LIMIT = 64;
@@ -133,42 +135,11 @@ export class BotRenderer {
     this._bodyFormNearIDs = new Set();
     this._bodyFormLODRefreshAt = 0;
     this._bodyFormLODSelectedBotId = '';
-    this._initSelectionPanel();
   }
 
   _disposeTaunt(entry) {
     if (!entry?.worldHud) return;
     hideWorldTaunt(entry.worldHud, true);
-  }
-
-  _initSelectionPanel() {
-    const GUI = window.BABYLON.GUI;
-    const adt = getGuiTexture();
-    const panel = new GUI.Rectangle('bot-summary-panel');
-    panel.width = '220px';
-    panel.height = '122px';
-    panel.thickness = 1;
-    panel.cornerRadius = 12;
-    panel.color = '#8adfff';
-    panel.background = 'rgba(8,12,20,0.9)';
-    panel.isVisible = false;
-    adt.addControl(panel);
-    this.summaryPanel = panel;
-
-    const text = new GUI.TextBlock('bot-summary-text');
-    text.paddingLeft = '10px';
-    text.paddingRight = '10px';
-    text.paddingTop = '8px';
-    text.paddingBottom = '8px';
-    text.textWrapping = true;
-    text.textHorizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-    text.textVerticalAlignment = GUI.Control.VERTICAL_ALIGNMENT_TOP;
-    text.color = 'white';
-    text.fontFamily = 'monospace';
-    text.fontSize = 12;
-    text.lineSpacing = '2px';
-    panel.addControl(text);
-    this.summaryText = text;
   }
 
   update(bots) {
@@ -693,6 +664,9 @@ export class BotRenderer {
   }
 
   selectBot(botId) {
+    if (this.selectedBotId) {
+      hideWorldSelection(this.entries.get(this.selectedBotId)?.worldHud);
+    }
     this.selectedBotId = botId || null;
     this._refreshSelectionPanel();
     if (this.onSelectionChange) this.onSelectionChange(this.selectedBotId);
@@ -703,15 +677,9 @@ export class BotRenderer {
   }
 
   _refreshSelectionPanel() {
-    if (!this.summaryPanel || !this.summaryText) return;
-    if (!this.selectedBotId) {
-      this.summaryPanel.isVisible = false;
-      this.summaryPanel.linkWithMesh(null);
-      return;
-    }
+    if (!this.selectedBotId) return;
     const entry = this.entries.get(this.selectedBotId);
     if (!entry || !entry.botData || !entry.root) {
-      this.summaryPanel.isVisible = false;
       return;
     }
     const bot = entry.botData;
@@ -722,9 +690,7 @@ export class BotRenderer {
       `Shield ${bot.shield_absorb || 0}  CD ${bot.cooldown_remaining || 0}s`,
       `Mines ${bot.mine_count || 0}  Grapple ${bot.grapple_charges || 0}`,
     ];
-    this.summaryText.text = lines.join('\n');
-    this.summaryPanel.linkWithMesh(entry.root);
-    this.summaryPanel.linkOffsetY = -128;
-    this.summaryPanel.isVisible = !!bot.is_alive;
+    if (bot.is_alive) showWorldSelection(entry.worldHud, lines);
+    else hideWorldSelection(entry.worldHud);
   }
 }

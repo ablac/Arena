@@ -5,39 +5,13 @@
  * @module renderer/bot-body
  */
 
-import {createForgeCharacter, disposeForgeCharacter} from './character-rig.js?v=20260718n';
+import {createForgeCharacter, disposeForgeCharacter} from './character-rig.js?v=20260718o';
 
 const SHADOW_RADIUS = 6.5;
 
 /** Shared scene resources, rebuilt when the Arena scene changes. */
 let _shdMat = null;
 let _tplShadow = null;
-
-/** Singleton fullscreen GUI texture for all bot HUD elements. */
-let _guiTexture = null;
-
-/**
- * Get or create the singleton AdvancedDynamicTexture for bot GUI overlays.
- * @returns {BABYLON.GUI.AdvancedDynamicTexture}
- */
-export function getGuiTexture() {
-  // Babylon textures have no `isDisposed` member. Validate the cached
-  // texture through its owning scene so a rebuilt Arena gets a fresh HUD.
-  const guiScene = _guiTexture ? _guiTexture.getScene() : null;
-  if (!_guiTexture || !guiScene || guiScene.isDisposed) {
-    const GUI = window.BABYLON.GUI;
-    _guiTexture = GUI.AdvancedDynamicTexture.CreateFullscreenUI('botUI');
-    // Do NOT set renderScale here as an upload-cost mitigation: without
-    // idealWidth/idealHeight the ADT maps control pixel sizes (fontSize,
-    // "60px" bars, linkOffsetY) onto the scaled-down texture and stretches
-    // it fullscreen, so renderScale 0.5 doubled every label and HP bar on
-    // screen (shipped and reverted, 2026-07-18). The per-frame re-upload
-    // cost is tracked in issue #166; the fix is the world-space billboard
-    // migration (or renderScale paired with ideal dimensions, verified on a
-    // live render).
-  }
-  return _guiTexture;
-}
 
 function getShadowMaterial(scene) {
   if (!_shdMat || _shdMat.getScene() !== scene) {
