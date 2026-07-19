@@ -6,6 +6,7 @@ Start here if you are learning the repo or preparing a contribution.
 
 - [Architecture](architecture.md): major components, runtime flow, and storage model
 - [Build and deploy](build-and-deploy.md): local development, Docker builds, production deployment shape, and regression notes
+- [Frontend performance](frontend-performance.md): Babylon runtime build, transfer budget, caching, and verification
 - [Bot builder guide](../BOT-GUIDE.md): REST and WebSocket protocol for bot authors
 - [SDK guide](../sdk/README.md): Python and Node.js SDK usage
 - [Security policy](../SECURITY.md): vulnerability reporting and operator hardening notes
