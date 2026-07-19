@@ -142,6 +142,35 @@ jobs:
       - name: Check whitespace
         run: git diff --check
 
+  browser-smoke:
+    name: Spectator browser smoke
+    needs: frontend-and-sdks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tests/browser/package-lock.json
+      - name: Install browser test dependencies
+        run: npm ci --prefix tests/browser --ignore-scripts
+      - name: Install functional Chromium runtime
+        run: npm exec --prefix tests/browser -- playwright install --with-deps chromium
+      - name: Run spectator browser smoke
+        run: npm test --prefix tests/browser
+      - name: Retain browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spectator-browser-smoke
+          path: |
+            tests/browser/test-results
+            tests/browser/playwright-report
+          if-no-files-found: warn
+          retention-days: 14
+
   python-sdk-310:
     name: Python SDK (3.10 compatibility)
     runs-on: ubuntu-latest

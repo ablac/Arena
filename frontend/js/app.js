@@ -5,7 +5,7 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260718l';
+import { ArenaEngine } from './renderer/engine.js?v=20260718m';
 import { HudRenderer } from './renderer/hud.js?v=20260711b';
 import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';
@@ -84,6 +84,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     (viewport) => arenaEngine.setSafeViewport(viewport),
   );
   window.addEventListener('pagehide', stopSafeViewport, { once: true });
+
+  // Keep the browser-smoke contract explicit and inert for normal visitors.
+  // The query gate prevents a permanent global debug surface while still
+  // letting deterministic WebGL tests read serializable lifecycle counters.
+  if (new URLSearchParams(window.location.search).get('arena-test') === '1') {
+    Object.defineProperty(window, '__ARENA_TEST__', {
+      configurable: true,
+      value: Object.freeze({ diagnostics: () => arenaEngine.getLifecycleSnapshot() }),
+    });
+  }
 
   // Spectator WebSocket
   const wsUrl = wsURL('/spectator');

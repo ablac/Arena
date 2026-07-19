@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const moduleUrl = new URL('../frontend/js/safe-viewport.js', import.meta.url);
 const { computeSafeViewport, MOBILE_SAFE_VIEWPORT_REGIONS } = await import(moduleUrl);
+const { frameWorldTarget } = await import('../frontend/js/renderer/camera.js');
 
 const canvas = { left: 100, top: 50, right: 1100, bottom: 650, width: 1000, height: 600 };
 
@@ -42,6 +43,13 @@ assert.equal(mobileMinimap.left, 172);
 assert.equal(mobileMinimap.right, 0);
 assert.ok(mobileMinimap.focalOffsetX > 0,
   'opening the left minimap must move the camera focal point right, away from it');
+
+const rightFramed = frameWorldTarget(1000, 1000, 100, 0, 500, -Math.PI / 2);
+assert.ok(rightFramed.x < 1000,
+  'at the authored camera alpha, rightward screen framing moves the target toward world -X');
+const leftFramed = frameWorldTarget(1000, 1000, -100, 0, 500, -Math.PI / 2);
+assert.ok(leftFramed.x > 1000,
+  'leftward screen framing must invert symmetrically');
 
 const cameraSource = readFileSync(new URL('../frontend/js/renderer/camera.js', import.meta.url), 'utf8');
 assert.match(cameraSource, /export function frameWorldTarget/);

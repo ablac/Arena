@@ -16,6 +16,9 @@ const PAN_SPEED = 8;
 /** Translate a desired screen-space focal offset into the camera's XZ target. */
 export function frameWorldTarget(x, z, offsetX, offsetY, radius, alpha) {
   const scale = radius / 500;
+  // ArcRotate's authored view uses the same target-plane mapping as grab-pan:
+  // at alpha=-PI/2 a target move toward world -X places the focal point on
+  // screen-right. Real-browser projection tests lock this non-obvious axis.
   const dx = offsetX * scale;
   const dy = offsetY * scale;
   const cosA = Math.cos(alpha);

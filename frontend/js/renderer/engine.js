@@ -5,7 +5,7 @@
  * @module renderer/engine
  */
 
-import { CameraController } from './camera.js?v=20260718a';
+import { CameraController } from './camera.js?v=20260718b';
 import { BotRenderer } from './bots.js?v=20260718o';
 import { EnvironmentRenderer } from './environment.js?v=20260718h';
 import { ObstacleRenderer } from './obstacles.js?v=20260718h';
@@ -857,6 +857,61 @@ export class ArenaEngine {
   }
   getState() { return this.state; }
   selectBot(id) { if (this.botRenderer) this.botRenderer.selectBot(id); }
+
+  /**
+   * Return a serializable renderer snapshot for browser diagnostics. This is
+   * intentionally a method instead of exposing Babylon objects: smoke tests
+   * and support tooling can compare lifecycle baselines without taking
+   * ownership of scene resources or depending on renderer implementation
+   * details.
+   */
+  getLifecycleSnapshot() {
+    const scene = this.scene;
+    const activeParticles = scene?.getActiveParticles ? scene.getActiveParticles() : null;
+    const activeParticleCount = Number.isFinite(Number(activeParticles))
+      ? Number(activeParticles)
+      : (Number(activeParticles?.length) || 0);
+    const roundNumber = Number(this.state?.round_number);
+    const resources = {
+      meshes: scene?.meshes?.length || 0,
+      materials: scene?.materials?.length || 0,
+      textures: scene?.textures?.length || 0,
+      particleSystems: scene?.particleSystems?.length || 0,
+      transformNodes: scene?.transformNodes?.length || 0,
+      activeParticles: activeParticleCount,
+    };
+    const bots = [];
+    if (this.botRenderer?.entries) {
+      for (const [id, entry] of this.botRenderer.entries) {
+        bots.push({
+          id,
+          x: Number(entry?.root?.position?.x) || 0,
+          y: Number(entry?.root?.position?.y) || 0,
+          z: Number(entry?.root?.position?.z) || 0,
+          enabled: typeof entry?.root?.isEnabled === 'function' ? entry.root.isEnabled() : false,
+          labelVisible: entry?.worldHud?.nameLabel?.isVisible !== false,
+        });
+      }
+    }
+    bots.sort((left, right) => String(left.id).localeCompare(String(right.id)));
+    const bounty = this.gameplayRenderer?.bountyGroup;
+    const ring = bounty?.ring;
+    return {
+      ready: this.ready,
+      roundNumber: Number.isFinite(roundNumber) ? roundNumber : null,
+      roundTransitionActive: this._roundTransitionActive,
+      intermissionActive: this.intermissionDirector?.active === true,
+      arenaSize: [this.arenaWidth, this.arenaHeight],
+      safeViewport: this._safeViewport ? { ...this._safeViewport } : null,
+      resources,
+      bots,
+      bounty: {
+        targetId: this.gameplayRenderer?.bountyTargetId || null,
+        visible: !!(ring && !ring.isDisposed?.() && ring.visibility > 0 && ring.isEnabled()),
+        emitRate: Number(bounty?.sparkle?.emitRate) || 0,
+      },
+    };
+  }
 
   dispose() {
     if (this._resizeHandler) {
