@@ -233,6 +233,27 @@ go test ./internal/api -run TestNoCacheStaticHandler
 
 Frontend script and stylesheet tags use `?v=YYYYMMDDx` query strings for provenance and extra cache safety. When behavior changes in a referenced frontend file, bump the tag on the page or importer that references it.
 
+### Cloudflare Browser Insights
+
+Arena intentionally does not allow `static.cloudflareinsights.com` in its Content Security Policy. Cloudflare Web Analytics must not inject its Browser Insights beacon on the Arena hostname.
+
+The `angel-serv.com` zone owns a hostname-scoped Configuration Rule:
+
+- name: `Disable RUM on Arena`
+- expression: `http.host eq "arena.angel-serv.com"`
+- setting: `Disable Real User Monitoring` enabled (`disable_rum: true`)
+
+Keep this rule scoped to the Arena hostname so analytics on other hosts are unaffected. If a browser reports a CSP violation for `beacon.min.js`, restore the Cloudflare rule; do not widen Arena's CSP to trust another executable-script origin.
+
+After changing the rule, check `/`, `/m/`, `/shop/`, `/dashboard/`, and `/admin/`. None of their HTML responses should contain `beacon.min.js` or `data-cf-beacon`, and the `Content-Security-Policy` header should remain unchanged.
+
+Regression test:
+
+```bash
+cd go-arena
+go test ./internal/api -run TestSecurityHeaders
+```
+
 ## Release Checklist
 
 Before pushing a deployment:
