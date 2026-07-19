@@ -127,8 +127,11 @@ assert.equal(resumedEntry._poseX, 40);
 assert.equal(resumedEntry._poseZ, 55);
 
 assert.match(source,
-  /this\._canvasVisible = entry\.isIntersecting;[\s\S]{0,100}frameSuspended = true;[\s\S]{0,100}resetFrameClock\(\);/,
-  'intersection changes must also reset the frame clock before resuming');
+  /const overlapsViewport = rect\.width > 0 && rect\.height > 0 &&[\s\S]{0,220}this\._canvasVisible = entry\.isIntersecting \|\| overlapsViewport;/,
+  'observer false negatives must be checked against the actual viewport geometry');
+assert.match(source,
+  /if \(!this\._canvasVisible\) frameSuspended = true;[\s\S]{0,100}resetFrameClock\(\);/,
+  'confirmed off-screen intersections must suspend and reset the frame clock');
 assert.match(source,
   /removeEventListener\('visibilitychange', this\._visibilityHandler\)/,
   'visibility listeners must be removed during renderer disposal');

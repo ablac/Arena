@@ -491,8 +491,17 @@ export class ArenaEngine {
       this._canvasVisible = true;
       this._visObserver = new IntersectionObserver((entries) => {
         for (const entry of entries) {
-          this._canvasVisible = entry.isIntersecting;
-          if (!entry.isIntersecting) frameSuspended = true;
+          // Some Chromium/WebGL combinations can transiently report
+          // isIntersecting=false for a full-viewport canvas during layout.
+          // Confirm the element is geometrically outside the viewport before
+          // parking the render loop so one bad observer callback cannot freeze
+          // a live arena. Truly off-screen/zero-size canvases still suspend.
+          const rect = entry.boundingClientRect || this.canvas.getBoundingClientRect();
+          const overlapsViewport = rect.width > 0 && rect.height > 0 &&
+            rect.bottom > 0 && rect.right > 0 &&
+            rect.top < window.innerHeight && rect.left < window.innerWidth;
+          this._canvasVisible = entry.isIntersecting || overlapsViewport;
+          if (!this._canvasVisible) frameSuspended = true;
           resetFrameClock();
         }
       }, { threshold: 0 });
