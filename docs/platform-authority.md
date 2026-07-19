@@ -7,6 +7,10 @@ not copy ownership state, dual-write records, or enable checkout.
 
 ## W1b.1 boundary
 
+W1b.1 merged to Arena `main` in
+[`ablac/Arena#213`](https://github.com/ablac/Arena/pull/213) at merge commit
+`f9207348665f48adfc3e112a36515c4573c8c609`.
+
 `go-arena/internal/platform` defines the first authority facets and a
 `PostgresAuthority` adapter over Arena's existing transactions. Router wiring
 passes the same adapter to:
@@ -46,24 +50,41 @@ the ownership ledger.
 
 ## Required follow-up before service extraction
 
-W1b.1 establishes dependency direction only. The next checkpoints must add and
-prove the operational contract semantics before exposing `/v1` platform
-handlers:
+W1b.1 establishes dependency direction only.
+
+### W1b.2 operational metadata checkpoint
+
+The next checkpoint remains in-process and on the same database. It must add:
 
 1. durable agent and game-profile enrollment metadata while preserving every
    Arena bot ID;
 2. platform-supplied `maximum_agents` and transactionally computed
    `current_agents` (never Arena's API-key limit);
 3. resource revisions, idempotency records, durable link history, and an
-   ordered change feed;
-4. authority-owned control-proof consumption for account-agent linking;
-5. license lifecycle reconciliation that never reactivates a terminal
+   ordered, bounded change feed.
+
+W1b.2 evidence must cover authentic legacy backfill, restart, rollback and
+reconciliation, concurrent mutations, and large irrelevant histories with
+index-compatible bounded reads. It must preserve `cosmetic_entitlements`,
+deterministic legacy-license recovery, and the current single writable
+authority. Migration and reconciliation must prove they never reactivate a
+refunded, revoked, chargeback, or expired license. W1b.2 does not add a second
+ownership store, dual-write records, expose platform HTTP handlers, or
+physically extract a service.
+
+### Later W1b checkpoints
+
+Later checkpoints must add and prove the remaining operational contract before
+service extraction:
+
+1. authority-owned control-proof consumption for account-agent linking;
+2. license lifecycle reconciliation that never reactivates a terminal
    refunded, revoked, chargeback, or expired license;
-6. provider-neutral fulfillment and subscription paths through the same
+3. provider-neutral fulfillment and subscription paths through the same
    authority;
-7. service-bearer authentication and the versioned platform HTTP adapter;
-8. backfill, restart, rollback, and large-history verification before any
-   physical database or service split.
+4. service-bearer authentication and the versioned platform HTTP adapter;
+5. checkpoint-specific backfill, restart, rollback, concurrency, and
+   large-history verification before any physical database or service split.
 
 The native email verification transaction, Stripe order/subscription
 orchestration, and demo-bot legacy entitlement grants are explicit remaining
