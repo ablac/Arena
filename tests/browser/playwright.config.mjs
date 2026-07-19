@@ -10,8 +10,11 @@ const fixturePort = process.env.ARENA_BROWSER_PORT || '42817';
 export default defineConfig({
   testDir: './specs',
   outputDir: './test-results',
-  timeout: 60_000,
-  expect: { timeout: 10_000 },
+  // GitHub's single-core SwiftShader runner is intentionally much slower
+  // than a hardware-backed browser. Keep a firm bound while allowing the
+  // full multi-round lifecycle matrix to finish under software WebGL.
+  timeout: 120_000,
+  expect: { timeout: 30_000 },
   fullyParallel: false,
   workers: process.env.CI ? 1 : undefined,
   retries: process.env.CI ? 1 : 0,

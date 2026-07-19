@@ -164,7 +164,7 @@ test('spectator layout and round lifecycle stay bounded', async ({ page }, testI
   expect(initial.bounty.visible).toBe(true);
   expect(initial.bounty.emitRate).toBeGreaterThan(0);
   diagnostics.lifecycle.push({ phase: 'initial', snapshot: initial });
-  await page.screenshot({ path: testInfo.outputPath('initial.png'), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('initial.png') });
 
   fixture.send(roundEnd(7));
   await expect.poll(async () => (await snapshot(page))?.roundTransitionActive).toBe(true);
@@ -179,7 +179,7 @@ test('spectator layout and round lifecycle stay bounded', async ({ page }, testI
   expect(staleWinner.x).toBeCloseTo(winnerAtRoundEnd.x, 3);
   expect(staleWinner.z).toBeCloseTo(winnerAtRoundEnd.z, 3);
   diagnostics.lifecycle.push({ phase: 'round-end', snapshot: stale });
-  await page.screenshot({ path: testInfo.outputPath('round-end.png'), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('round-end.png') });
 
   fixture.send(lobbyState(8));
   fixture.send(arenaState(8, { bountyTarget: null }));
@@ -227,7 +227,7 @@ test('spectator layout and round lifecycle stay bounded', async ({ page }, testI
       vendor: extension ? gl.getParameter(extension.UNMASKED_VENDOR_WEBGL) : 'unavailable',
     };
   });
-  await page.screenshot({ path: testInfo.outputPath('settled.png'), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('settled.png') });
 
   const targetedWarnings = diagnostics.console.filter(({ text }) =>
     /babylon|highlightlayer|stencil|content security policy|\bcsp\b|webgl warning/i.test(text));
