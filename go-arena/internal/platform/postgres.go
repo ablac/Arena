@@ -20,6 +20,10 @@ func (PostgresAuthority) UpsertVerifiedIdentity(ctx context.Context, email, issu
 	return db.UpsertVerifiedCustomerAccount(ctx, email, issuer, subject, displayName)
 }
 
+func (PostgresAuthority) AccountCapacity(ctx context.Context, accountID string) (*db.PlatformAccountCapacity, error) {
+	return db.GetPlatformAccountCapacity(ctx, accountID)
+}
+
 func (PostgresAuthority) TransitionProfile(ctx context.Context, command db.PlatformProfileTransition) (*db.PlatformProfileTransitionResult, error) {
 	return db.TransitionPlatformProfile(ctx, command)
 }

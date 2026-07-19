@@ -491,6 +491,12 @@ func (h *CosmeticsHandler) LinkAccountBot(w http.ResponseWriter, r *http.Request
 				"history_limit": db.MaxAccountAPIKeyHistory,
 				"support":       "Contact Arena support to review your account's archived API-key history.",
 			})
+		case errors.Is(err, db.ErrPlatformAgentLimit):
+			writePlatformAgentLimit(w, err)
+		case errors.Is(err, db.ErrPlatformAccountInactive):
+			writeJSON(w, http.StatusForbidden, map[string]interface{}{
+				"error": err.Error(), "code": "PLATFORM_ACCOUNT_INACTIVE",
+			})
 		case errors.Is(err, db.ErrCustomerBotKeyInactive):
 			writeError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, db.ErrCustomerAccountUnverified):

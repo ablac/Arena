@@ -19,6 +19,7 @@ const (
 	MaxPlatformChangePageSize     = 100
 	DefaultPlatformLinkPageSize   = 50
 	MaxPlatformLinkPageSize       = 100
+	DefaultPlatformMaximumAgents  = 10
 )
 
 type PlatformChange struct {
@@ -29,6 +30,31 @@ type PlatformChange struct {
 	Revision    int64     `json:"revision"`
 	ChangedAt   time.Time `json:"changed_at"`
 }
+
+type PlatformAccountCapacity struct {
+	AccountID     string    `json:"account_id"`
+	Status        string    `json:"status"`
+	MaximumAgents int       `json:"maximum_agents"`
+	CurrentAgents int       `json:"current_agents"`
+	Revision      int64     `json:"revision"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type PlatformAgentLimitError struct {
+	CurrentAgents int
+	MaximumAgents int
+}
+
+func (err *PlatformAgentLimitError) Error() string {
+	return fmt.Sprintf(
+		"%s: %d current agents and maximum_agents %d",
+		ErrPlatformAgentLimit,
+		err.CurrentAgents,
+		err.MaximumAgents,
+	)
+}
+
+func (err *PlatformAgentLimitError) Unwrap() error { return ErrPlatformAgentLimit }
 
 type PlatformAgentLinkEvent struct {
 	EventID    int64     `json:"event_id"`
@@ -62,6 +88,9 @@ var (
 	ErrPlatformIdempotencyConflict = errors.New("platform idempotency key was already used for a different request")
 	ErrPlatformRevisionConflict    = errors.New("platform resource revision changed")
 	ErrPlatformProfileNotFound     = errors.New("platform game profile was not found")
+	ErrPlatformAccountNotFound     = errors.New("platform account metadata was not found")
+	ErrPlatformAccountInactive     = errors.New("platform account is not active")
+	ErrPlatformAgentLimit          = errors.New("platform account maximum_agents reached")
 )
 
 const insertPlatformAgentSQL = `
@@ -77,6 +106,105 @@ const insertPlatformArenaProfileSQL = `
 const insertPlatformChangeSQL = `
 	INSERT INTO platform_changes (subject_kind, subject_id, transition, revision, changed_at)
 	VALUES ($1, $2, $3, $4, $5)`
+
+func GetPlatformAccountCapacity(ctx context.Context, accountID string) (*PlatformAccountCapacity, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
+	if strings.TrimSpace(accountID) == "" {
+		return nil, errors.New("platform account capacity requires an account")
+	}
+	capacity := &PlatformAccountCapacity{}
+	if err := Pool.QueryRow(ctx, `
+		SELECT metadata.account_id, metadata.status, metadata.maximum_agents,
+		       COUNT(links.bot_id)::INTEGER, metadata.revision, metadata.updated_at
+		FROM platform_account_metadata AS metadata
+		LEFT JOIN account_bot_links AS links ON links.account_id = metadata.account_id
+		WHERE metadata.account_id = $1
+		GROUP BY metadata.account_id, metadata.status, metadata.maximum_agents,
+		         metadata.revision, metadata.updated_at`, accountID).Scan(
+		&capacity.AccountID,
+		&capacity.Status,
+		&capacity.MaximumAgents,
+		&capacity.CurrentAgents,
+		&capacity.Revision,
+		&capacity.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrPlatformAccountNotFound
+		}
+		return nil, fmt.Errorf("GetPlatformAccountCapacity: %w", err)
+	}
+	return capacity, nil
+}
+
+func lockPlatformAccountCapacityTx(ctx context.Context, tx pgx.Tx, accountID string) (*PlatformAccountCapacity, error) {
+	capacity := &PlatformAccountCapacity{AccountID: accountID}
+	if err := tx.QueryRow(ctx, `
+		SELECT status, maximum_agents, revision, updated_at
+		FROM platform_account_metadata
+		WHERE account_id = $1
+		FOR UPDATE`, accountID).Scan(
+		&capacity.Status,
+		&capacity.MaximumAgents,
+		&capacity.Revision,
+		&capacity.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrPlatformAccountNotFound
+		}
+		return nil, fmt.Errorf("lock platform account capacity: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*)::INTEGER
+		FROM account_bot_links
+		WHERE account_id = $1`, accountID).Scan(&capacity.CurrentAgents); err != nil {
+		return nil, fmt.Errorf("count platform account agents: %w", err)
+	}
+	return capacity, nil
+}
+
+func enforcePlatformAgentCapacityTx(ctx context.Context, tx pgx.Tx, accountID string) error {
+	capacity, err := lockPlatformAccountCapacityTx(ctx, tx, accountID)
+	if err != nil {
+		return err
+	}
+	if capacity.Status != "active" {
+		return fmt.Errorf("%w: account %q is %s", ErrPlatformAccountInactive, accountID, capacity.Status)
+	}
+	if capacity.CurrentAgents >= capacity.MaximumAgents {
+		return &PlatformAgentLimitError{
+			CurrentAgents: capacity.CurrentAgents,
+			MaximumAgents: capacity.MaximumAgents,
+		}
+	}
+	return nil
+}
+
+func appendPlatformAccountLinkChangeTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID, status string,
+	changedAt time.Time,
+) error {
+	capacity, err := lockPlatformAccountCapacityTx(ctx, tx, accountID)
+	if err != nil {
+		return err
+	}
+	capacity.Revision++
+	if _, err := tx.Exec(ctx, `
+		UPDATE platform_account_metadata
+		SET revision = $2, updated_at = $3
+		WHERE account_id = $1`, accountID, capacity.Revision, changedAt); err != nil {
+		return fmt.Errorf("platform account revision update: %w", err)
+	}
+	if _, err := tx.Exec(ctx, insertPlatformChangeSQL,
+		"account", accountID, "agent_"+status, capacity.Revision, changedAt,
+	); err != nil {
+		return fmt.Errorf("platform account link change: %w", err)
+	}
+	return nil
+}
 
 func enrollArenaAgentTx(ctx context.Context, tx pgx.Tx, bot *Bot, registrationSource string) error {
 	if _, err := tx.Exec(ctx, insertPlatformAgentSQL,
@@ -229,6 +357,9 @@ func appendPlatformAgentLinkEventTx(
 		reason = "arena_account"
 	}
 	occurredAt = occurredAt.UTC().Truncate(time.Microsecond)
+	if err := appendPlatformAccountLinkChangeTx(ctx, tx, accountID, status, occurredAt); err != nil {
+		return err
+	}
 
 	var agentRevision int64
 	if err := tx.QueryRow(ctx, `
@@ -463,6 +594,47 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("EnsurePlatformAuthoritySchema validate legacy agent IDs: %w", err)
 	}
+	if _, err := tx.Exec(ctx, fmt.Sprintf(`CREATE TABLE IF NOT EXISTS platform_account_metadata (
+		account_id TEXT PRIMARY KEY REFERENCES customer_accounts(id) ON DELETE RESTRICT,
+		status TEXT NOT NULL DEFAULT 'active'
+			CHECK (status IN ('active', 'suspended', 'retired')),
+		maximum_agents INTEGER NOT NULL DEFAULT %d
+			CHECK (maximum_agents BETWEEN 1 AND 1000),
+		revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`, DefaultPlatformMaximumAgents)); err != nil {
+		return fmt.Errorf("EnsurePlatformAuthoritySchema account metadata table: %w", err)
+	}
+
+	var overLimitAccountID string
+	var overLimitCurrent, overLimitMaximum int
+	err = tx.QueryRow(ctx, `
+		SELECT accounts.id,
+		       COUNT(links.bot_id)::INTEGER,
+		       COALESCE(metadata.maximum_agents, $1)::INTEGER
+		FROM customer_accounts AS accounts
+		LEFT JOIN platform_account_metadata AS metadata ON metadata.account_id = accounts.id
+		LEFT JOIN account_bot_links AS links ON links.account_id = accounts.id
+		GROUP BY accounts.id, metadata.maximum_agents
+		HAVING COUNT(links.bot_id) > COALESCE(metadata.maximum_agents, $1)
+		ORDER BY accounts.id
+		LIMIT 1`, DefaultPlatformMaximumAgents).Scan(
+		&overLimitAccountID,
+		&overLimitCurrent,
+		&overLimitMaximum,
+	)
+	if err == nil {
+		return fmt.Errorf(
+			"EnsurePlatformAuthoritySchema account %q has %d current agents, above maximum_agents %d",
+			overLimitAccountID,
+			overLimitCurrent,
+			overLimitMaximum,
+		)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("EnsurePlatformAuthoritySchema validate account agent capacity: %w", err)
+	}
 
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS platform_agents (
@@ -496,6 +668,45 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 			changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE (subject_kind, subject_id, revision)
 		)`,
+		fmt.Sprintf(`INSERT INTO platform_account_metadata (
+			account_id, status, maximum_agents, revision, created_at, updated_at
+		)
+		SELECT accounts.id, 'active', %d, 1, accounts.created_at, accounts.updated_at
+		FROM customer_accounts AS accounts
+		ORDER BY accounts.id
+		ON CONFLICT (account_id) DO NOTHING`, DefaultPlatformMaximumAgents),
+		`INSERT INTO platform_changes (
+			subject_kind, subject_id, transition, revision, changed_at
+		)
+		SELECT 'account', metadata.account_id, 'registered', 1, metadata.updated_at
+		FROM platform_account_metadata AS metadata
+		ORDER BY metadata.account_id
+		ON CONFLICT (subject_kind, subject_id, revision) DO NOTHING`,
+		fmt.Sprintf(`CREATE OR REPLACE FUNCTION insert_platform_account_metadata()
+		RETURNS TRIGGER
+		LANGUAGE plpgsql
+		AS $$
+		BEGIN
+			INSERT INTO platform_account_metadata (
+				account_id, status, maximum_agents, revision, created_at, updated_at
+			) VALUES (NEW.id, 'active', %d, 1, NEW.created_at, NEW.updated_at)
+			ON CONFLICT (account_id) DO NOTHING;
+			INSERT INTO platform_changes (
+				subject_kind, subject_id, transition, revision, changed_at
+			) VALUES ('account', NEW.id, 'registered', 1, NEW.updated_at)
+			ON CONFLICT (subject_kind, subject_id, revision) DO NOTHING;
+			RETURN NEW;
+		END
+		$$`, DefaultPlatformMaximumAgents),
+		`DO $$
+		BEGIN
+			CREATE TRIGGER customer_accounts_platform_metadata
+			AFTER INSERT ON customer_accounts
+			FOR EACH ROW EXECUTE FUNCTION insert_platform_account_metadata();
+		EXCEPTION
+			WHEN duplicate_object THEN NULL;
+		END
+		$$`,
 		`CREATE TABLE IF NOT EXISTS platform_idempotency_records (
 			operation TEXT NOT NULL CHECK (char_length(operation) BETWEEN 1 AND 64),
 			idempotency_key TEXT NOT NULL CHECK (char_length(idempotency_key) BETWEEN 1 AND 128),

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -10,6 +11,196 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestPostgresPlatformAccountMetadataDefaultsToTenAndComputesCurrentAgents(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"platform-capacity@example.com",
+		"https://id.example",
+		"platform-capacity",
+		"Platform Capacity",
+	)
+	if err != nil {
+		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
+	}
+
+	var maximumAgents, revision int
+	var status string
+	if err := Pool.QueryRow(ctx, `
+		SELECT maximum_agents, status, revision
+		FROM platform_account_metadata
+		WHERE account_id = $1`, account.ID).Scan(&maximumAgents, &status, &revision); err != nil {
+		t.Fatalf("load platform account metadata: %v", err)
+	}
+	if maximumAgents != 10 || status != "active" || revision != 1 {
+		t.Fatalf("platform account metadata = (%d, %q, %d), want (10, active, 1)", maximumAgents, status, revision)
+	}
+
+	var storedCurrentAgentsColumn bool
+	if err := Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			  AND table_name = 'platform_account_metadata'
+			  AND column_name = 'current_agents'
+		)`).Scan(&storedCurrentAgentsColumn); err != nil {
+		t.Fatalf("inspect platform account metadata columns: %v", err)
+	}
+	if storedCurrentAgentsColumn {
+		t.Fatal("platform account metadata stores current_agents instead of computing it transactionally")
+	}
+}
+
+func TestPostgresPlatformAgentCapacitySerializesConcurrentLinksIndependentlyOfAPIKeys(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"platform-capacity-race@example.com",
+		"https://id.example",
+		"platform-capacity-race",
+		"Platform Capacity Race",
+	)
+	if err != nil {
+		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
+	}
+
+	bots := make([]*Bot, 13)
+	for index := range bots {
+		bot := accountAPIKeyTestBot(
+			fmt.Sprintf("platform-capacity-key-%02d", index),
+			fmt.Sprintf("platform-capacity-agent-%02d", index),
+		)
+		if err := CreateAPIKeyAndBot(
+			ctx,
+			bot.APIKeyID,
+			fmt.Sprintf("capacity-hash-%02d", index),
+			fmt.Sprintf("arena_cap%02d", index),
+			"127.0.0.1",
+			bot,
+		); err != nil {
+			t.Fatalf("CreateAPIKeyAndBot %d: %v", index, err)
+		}
+		if _, err := Pool.Exec(ctx, `
+			INSERT INTO account_api_keys (account_id, api_key_id, linked_at)
+			VALUES ($1, $2, NOW())`, account.ID, bot.APIKeyID); err != nil {
+			t.Fatalf("seed owned key %d: %v", index, err)
+		}
+		bots[index] = bot
+	}
+
+	for index := range 9 {
+		if _, err := LinkBotToCustomerAccount(ctx, account.ID, bots[index].ID); err != nil {
+			t.Fatalf("seed linked agent %d: %v", index, err)
+		}
+		if _, err := Pool.Exec(ctx, `UPDATE api_keys SET is_active = false WHERE id = $1`, bots[index].APIKeyID); err != nil {
+			t.Fatalf("deactivate linked agent key %d: %v", index, err)
+		}
+	}
+
+	const contenders = 4
+	results := make(chan error, contenders)
+	var wg sync.WaitGroup
+	for index := 9; index < 9+contenders; index++ {
+		botID := bots[index].ID
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := LinkBotToCustomerAccount(context.Background(), account.ID, botID)
+			results <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	var linked, rejected int
+	for err := range results {
+		switch {
+		case err == nil:
+			linked++
+		case strings.Contains(err.Error(), "maximum_agents"):
+			rejected++
+		default:
+			t.Fatalf("concurrent link returned unexpected error: %v", err)
+		}
+	}
+	if linked != 1 || rejected != contenders-1 {
+		t.Fatalf("concurrent capacity results = %d linked, %d rejected; want 1 and %d", linked, rejected, contenders-1)
+	}
+
+	var currentAgents, activeKeys, revision int
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM account_bot_links WHERE account_id = $1`, account.ID).Scan(&currentAgents); err != nil {
+		t.Fatalf("count current agents: %v", err)
+	}
+	if err := Pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM account_api_keys AS owned
+		JOIN api_keys AS keys ON keys.id = owned.api_key_id
+		WHERE owned.account_id = $1 AND keys.is_active`, account.ID).Scan(&activeKeys); err != nil {
+		t.Fatalf("count active API keys: %v", err)
+	}
+	if err := Pool.QueryRow(ctx, `SELECT revision FROM platform_account_metadata WHERE account_id = $1`, account.ID).Scan(&revision); err != nil {
+		t.Fatalf("load account metadata revision: %v", err)
+	}
+	if currentAgents != 10 || activeKeys != 4 || revision != 11 {
+		t.Fatalf("capacity snapshot = %d current agents, %d active keys, revision %d; want 10, 4, 11", currentAgents, activeKeys, revision)
+	}
+
+	contenderIDs := []string{bots[9].ID, bots[10].ID, bots[11].ID, bots[12].ID}
+	var linkedContenderID string
+	if err := Pool.QueryRow(ctx, `
+		SELECT links.bot_id
+		FROM account_bot_links AS links
+		WHERE links.account_id = $1 AND links.bot_id = ANY($2::TEXT[])
+		ORDER BY links.bot_id
+		LIMIT 1`, account.ID, contenderIDs).Scan(&linkedContenderID); err != nil {
+		t.Fatalf("load linked contender: %v", err)
+	}
+	if _, err := LinkBotToCustomerAccount(ctx, account.ID, linkedContenderID); err != nil {
+		t.Fatalf("same-account link replay at capacity: %v", err)
+	}
+	capacity, err := GetPlatformAccountCapacity(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetPlatformAccountCapacity after replay: %v", err)
+	}
+	if capacity.CurrentAgents != 10 || capacity.MaximumAgents != 10 || capacity.Revision != 11 {
+		t.Fatalf("capacity after no-op replay = %+v, want unchanged 10/10 at revision 11", capacity)
+	}
+
+	if unlinked, err := UnlinkBotFromCustomerAccount(ctx, account.ID, bots[0].ID); err != nil || !unlinked {
+		t.Fatalf("UnlinkBotFromCustomerAccount at capacity = (%v, %v)", unlinked, err)
+	}
+	var replacementBotID string
+	if err := Pool.QueryRow(ctx, `
+		SELECT candidates.agent_id
+		FROM unnest($2::TEXT[]) AS candidates(agent_id)
+		WHERE NOT EXISTS (
+			SELECT 1 FROM account_bot_links AS links
+			WHERE links.account_id = $1 AND links.bot_id = candidates.agent_id
+		)
+		ORDER BY candidates.agent_id
+		LIMIT 1`, account.ID, contenderIDs).Scan(&replacementBotID); err != nil {
+		t.Fatalf("load rejected replacement agent: %v", err)
+	}
+	if _, err := LinkBotToCustomerAccount(ctx, account.ID, replacementBotID); err != nil {
+		t.Fatalf("link replacement after freeing capacity: %v", err)
+	}
+	capacity, err = GetPlatformAccountCapacity(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetPlatformAccountCapacity after replacement: %v", err)
+	}
+	if capacity.CurrentAgents != 10 || capacity.MaximumAgents != 10 || capacity.Revision != 13 {
+		t.Fatalf("capacity after unlink/relink = %+v, want 10/10 at revision 13", capacity)
+	}
+}
 
 func TestPostgresPlatformAuthorityBackfillsStableArenaAgentsWithoutTouchingLicenses(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
@@ -68,12 +259,15 @@ func TestPostgresPlatformAuthorityBackfillsStableArenaAgentsWithoutTouchingLicen
 	// Recreate an authentic pre-W1b.2 database: all existing Arena tables and
 	// data are present, but the new platform metadata has not been installed.
 	if _, err := Pool.Exec(ctx, `
+		DROP TRIGGER IF EXISTS customer_accounts_platform_metadata ON customer_accounts;
+		DROP FUNCTION IF EXISTS insert_platform_account_metadata();
 		DROP TABLE IF EXISTS
 			platform_idempotency_records,
 			platform_agent_link_events,
 			platform_changes,
 			platform_game_profiles,
-			platform_agents`); err != nil {
+			platform_agents,
+			platform_account_metadata`); err != nil {
 		t.Fatalf("drop platform metadata fixture: %v", err)
 	}
 	if err := EnsurePlatformAuthoritySchema(ctx); err != nil {
@@ -133,6 +327,13 @@ func TestPostgresPlatformAuthorityBackfillsStableArenaAgentsWithoutTouchingLicen
 			profile.game != "arena" || profile.profileStatus != "active" || profile.profileRevision != 1 {
 			t.Fatalf("imported profile = %+v, want active revision-1 Arena metadata", profile)
 		}
+	}
+	capacity, err := GetPlatformAccountCapacity(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetPlatformAccountCapacity after backfill: %v", err)
+	}
+	if capacity.MaximumAgents != 10 || capacity.CurrentAgents != 1 || capacity.Revision != 2 {
+		t.Fatalf("backfilled account capacity = %+v, want maximum 10, current 1, revision 2", capacity)
 	}
 
 	var profileColumns []string
@@ -217,12 +418,15 @@ func TestPostgresPlatformAuthorityBackfillRollsBackOnInvalidLegacyAgentID(t *tes
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
 	if _, err := Pool.Exec(ctx, `
+		DROP TRIGGER IF EXISTS customer_accounts_platform_metadata ON customer_accounts;
+		DROP FUNCTION IF EXISTS insert_platform_account_metadata();
 		DROP TABLE IF EXISTS
 			platform_idempotency_records,
 			platform_agent_link_events,
 			platform_changes,
 			platform_game_profiles,
-			platform_agents`); err != nil {
+			platform_agents,
+			platform_account_metadata`); err != nil {
 		t.Fatalf("drop platform metadata fixture: %v", err)
 	}
 
@@ -240,12 +444,86 @@ func TestPostgresPlatformAuthorityBackfillRollsBackOnInvalidLegacyAgentID(t *tes
 	if err == nil || !strings.Contains(err.Error(), overlongAgentID) {
 		t.Fatalf("invalid legacy agent error = %v, want offending ID", err)
 	}
-	var installed bool
-	if err := Pool.QueryRow(ctx, `SELECT to_regclass('platform_agents') IS NOT NULL`).Scan(&installed); err != nil {
+	var agentsInstalled, accountsInstalled bool
+	if err := Pool.QueryRow(ctx, `
+		SELECT to_regclass('platform_agents') IS NOT NULL,
+		       to_regclass('platform_account_metadata') IS NOT NULL`).Scan(&agentsInstalled, &accountsInstalled); err != nil {
 		t.Fatalf("inspect rolled-back schema: %v", err)
 	}
-	if installed {
+	if agentsInstalled || accountsInstalled {
 		t.Fatal("platform metadata tables survived a failed transactional backfill")
+	}
+}
+
+func TestPostgresPlatformAuthorityBackfillRollsBackWhenLegacyAccountExceedsMaximumAgents(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"platform-over-capacity@example.com",
+		"https://id.example",
+		"platform-over-capacity",
+		"Platform Over Capacity",
+	)
+	if err != nil {
+		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
+	}
+	for index := range 11 {
+		bot := accountAPIKeyTestBot(
+			fmt.Sprintf("platform-over-capacity-key-%02d", index),
+			fmt.Sprintf("platform-over-capacity-agent-%02d", index),
+		)
+		if err := CreateAPIKeyAndBot(
+			ctx,
+			bot.APIKeyID,
+			fmt.Sprintf("over-capacity-hash-%02d", index),
+			fmt.Sprintf("arena_overcap%02d", index),
+			"127.0.0.1",
+			bot,
+		); err != nil {
+			t.Fatalf("CreateAPIKeyAndBot %d: %v", index, err)
+		}
+		if _, err := Pool.Exec(ctx, `
+			INSERT INTO account_bot_links (account_id, bot_id, linked_at)
+			VALUES ($1, $2, NOW())`, account.ID, bot.ID); err != nil {
+			t.Fatalf("seed legacy agent link %d: %v", index, err)
+		}
+	}
+
+	if _, err := Pool.Exec(ctx, `
+		DROP TRIGGER IF EXISTS customer_accounts_platform_metadata ON customer_accounts;
+		DROP FUNCTION IF EXISTS insert_platform_account_metadata();
+		DROP TABLE IF EXISTS
+			platform_idempotency_records,
+			platform_agent_link_events,
+			platform_changes,
+			platform_game_profiles,
+			platform_agents,
+			platform_account_metadata`); err != nil {
+		t.Fatalf("drop platform metadata fixture: %v", err)
+	}
+
+	err = EnsurePlatformAuthoritySchema(ctx)
+	if err == nil || !strings.Contains(err.Error(), account.ID) ||
+		!strings.Contains(err.Error(), "11 current agents") ||
+		!strings.Contains(err.Error(), "maximum_agents 10") {
+		t.Fatalf("over-capacity migration error = %v, want account, current 11, maximum 10", err)
+	}
+	var metadataInstalled bool
+	if err := Pool.QueryRow(ctx, `SELECT to_regclass('platform_account_metadata') IS NOT NULL`).Scan(&metadataInstalled); err != nil {
+		t.Fatalf("inspect rolled-back account metadata: %v", err)
+	}
+	if metadataInstalled {
+		t.Fatal("platform account metadata survived failed over-capacity backfill")
+	}
+	var preservedLinks int
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM account_bot_links WHERE account_id = $1`, account.ID).Scan(&preservedLinks); err != nil {
+		t.Fatalf("count preserved legacy links: %v", err)
+	}
+	if preservedLinks != 11 {
+		t.Fatalf("legacy links after failed backfill = %d, want 11 preserved", preservedLinks)
 	}
 }
 

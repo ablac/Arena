@@ -332,6 +332,12 @@ func (h *AccountKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeAccountAPIKeyActiveLimit(w, activeCount)
 		case errors.Is(err, db.ErrCustomerAPIKeyHistoryLimit):
 			writeAccountAPIKeyHistoryLimit(w, db.MaxAccountAPIKeyHistory)
+		case errors.Is(err, db.ErrPlatformAgentLimit):
+			writePlatformAgentLimit(w, err)
+		case errors.Is(err, db.ErrPlatformAccountInactive):
+			writeJSON(w, http.StatusForbidden, map[string]interface{}{
+				"error": err.Error(), "code": "PLATFORM_ACCOUNT_INACTIVE",
+			})
 		case errors.Is(err, db.ErrCustomerAccountUnverified):
 			writeError(w, http.StatusForbidden, "a verified customer email is required")
 		case errors.Is(err, db.ErrNoDatabase):
@@ -365,6 +371,22 @@ func writeAccountAPIKeyHistoryLimit(w http.ResponseWriter, historyCount int) {
 		"error": db.ErrCustomerAPIKeyHistoryLimit.Error(), "code": "API_KEY_HISTORY_LIMIT",
 		"history_count": historyCount, "history_limit": db.MaxAccountAPIKeyHistory,
 		"support": "Contact Arena support to review your account's archived API-key history.",
+	})
+}
+
+func writePlatformAgentLimit(w http.ResponseWriter, err error) {
+	currentAgents := 0
+	maximumAgents := db.DefaultPlatformMaximumAgents
+	var limitErr *db.PlatformAgentLimitError
+	if errors.As(err, &limitErr) {
+		currentAgents = limitErr.CurrentAgents
+		maximumAgents = limitErr.MaximumAgents
+	}
+	writeJSON(w, http.StatusConflict, map[string]interface{}{
+		"error":          db.ErrPlatformAgentLimit.Error(),
+		"code":           "AGENT_LIMIT",
+		"current_agents": currentAgents,
+		"maximum_agents": maximumAgents,
 	})
 }
 
