@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const moduleUrl = new URL('../frontend/js/safe-viewport.js', import.meta.url);
-const { computeSafeViewport } = await import(moduleUrl);
+const { computeSafeViewport, MOBILE_SAFE_VIEWPORT_REGIONS } = await import(moduleUrl);
 
 const canvas = { left: 100, top: 50, right: 1100, bottom: 650, width: 1000, height: 600 };
 
@@ -32,6 +32,17 @@ const squeezed = computeSafeViewport(canvas, [
 assert.ok(squeezed.width >= 350, 'horizontal overlays must leave at least 35% of the canvas visible');
 assert.ok(squeezed.height >= 228, 'vertical overlays must leave at least 38% of the canvas visible');
 
+const minimapRegion = MOBILE_SAFE_VIEWPORT_REGIONS.find(region => region.selector === '#minimap-box');
+assert.equal(minimapRegion?.side, 'left', 'the mobile minimap is anchored on the left edge');
+const mobileMinimap = computeSafeViewport(
+  { left: 0, top: 0, right: 390, bottom: 844, width: 390, height: 844 },
+  [{ side: minimapRegion.side, rect: { left: 10, top: 76, right: 160, bottom: 226 } }],
+);
+assert.equal(mobileMinimap.left, 172);
+assert.equal(mobileMinimap.right, 0);
+assert.ok(mobileMinimap.focalOffsetX > 0,
+  'opening the left minimap must move the camera focal point right, away from it');
+
 const cameraSource = readFileSync(new URL('../frontend/js/renderer/camera.js', import.meta.url), 'utf8');
 assert.match(cameraSource, /export function frameWorldTarget/);
 assert.match(cameraSource, /setSafeViewport\(viewport\)/);
@@ -40,6 +51,12 @@ assert.match(cameraSource, /this\._framedTarget\(bot\.position\[0\], bot\.positi
 const engineSource = readFileSync(new URL('../frontend/js/renderer/engine.js', import.meta.url), 'utf8');
 assert.match(engineSource, /this\._safeViewport/);
 assert.match(engineSource, /this\.camera\.setSafeViewport\(this\._safeViewport\)/);
+
+const safeViewportSource = readFileSync(moduleUrl, 'utf8');
+assert.match(safeViewportSource, /addEventListener\('transitionend', schedule\)/,
+  'transform-driven sheets and menus must remeasure after their transition settles');
+assert.match(safeViewportSource, /removeEventListener\('transitionend', schedule\)/,
+  'safe viewport teardown must remove transition listeners');
 
 for (const path of ['../frontend/js/app.js', '../frontend/m/mobile.js']) {
   const source = readFileSync(new URL(path, import.meta.url), 'utf8');

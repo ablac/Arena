@@ -23,8 +23,8 @@ assert.match(mobileHTML, /id="shop-overlay"[\s\S]*?data-src="\/shop\/"/,
 assert.doesNotMatch(appSource, /initCosmeticsPanel|cosmetics-panel\.js/,
   'the live Arena must not retain the replaced embedded catalog');
 
-assert.match(desktopHTML, /js\/app\.js\?v=20260718k/);
-assert.match(mobileHTML, /mobile\.js\?v=20260718k/);
+assert.match(desktopHTML, /js\/app\.js\?v=20260718l/);
+assert.match(mobileHTML, /mobile\.js\?v=20260718l/);
 assert.match(shopHTML, /cosmetics-shop\.js\?v=20260718o/);
 assert.match(appSource, /renderer\/engine\.js\?v=20260718k/);
 assert.match(mobileSource, /renderer\/engine\.js\?v=20260718k/);

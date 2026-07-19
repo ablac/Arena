@@ -114,6 +114,10 @@ export function observeArenaSafeViewport(canvas, onChange, regionSpecs = DESKTOP
       attributes: true,
       attributeFilter: ['class', 'style', 'hidden', 'aria-expanded'],
     });
+    // CSS transforms (the mobile bottom sheet and menu drawers) do not fire
+    // ResizeObserver. Re-measure at the settled position as well as at the
+    // class/style mutation that starts the transition.
+    element.addEventListener('transitionend', schedule);
   }
   view.addEventListener('resize', schedule);
   view.addEventListener('orientationchange', schedule);
@@ -123,6 +127,7 @@ export function observeArenaSafeViewport(canvas, onChange, regionSpecs = DESKTOP
     if (frame) view.cancelAnimationFrame(frame);
     resizeObserver?.disconnect();
     mutationObserver?.disconnect();
+    for (const { element } of elements) element.removeEventListener('transitionend', schedule);
     view.removeEventListener('resize', schedule);
     view.removeEventListener('orientationchange', schedule);
   };
@@ -131,6 +136,6 @@ export function observeArenaSafeViewport(canvas, onChange, regionSpecs = DESKTOP
 export const MOBILE_SAFE_VIEWPORT_REGIONS = [
   { side: 'top', selector: '#topbar' },
   { side: 'right', selector: '#fabs' },
-  { side: 'right', selector: '#minimap-box' },
+  { side: 'left', selector: '#minimap-box' },
   { side: 'bottom', selector: '#sheet' },
 ];

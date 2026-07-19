@@ -15,7 +15,7 @@ import { isEnabled, onSettingsChange } from './settings.js';
 import { initSettingsPanel } from './settings-panel.js';
 import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';
 import { handleServiceStatus } from './service-status.js';
-import { observeArenaSafeViewport } from './safe-viewport.js?v=20260718a';
+import { observeArenaSafeViewport } from './safe-viewport.js?v=20260718b';
 
 const ARENA_WIDTH = 2000;
 const ARENA_HEIGHT = 2000;

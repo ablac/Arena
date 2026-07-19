@@ -3,7 +3,7 @@
 import {
   MOBILE_SAFE_VIEWPORT_REGIONS,
   observeArenaSafeViewport,
-} from '../js/safe-viewport.js?v=20260718a';
+} from '../js/safe-viewport.js?v=20260718b';
 
 /**
  * Mobile spectator shell — full-viewport 3D stage, floating top bar,
