@@ -54,20 +54,37 @@ W1b.1 establishes dependency direction only.
 
 ### W1b.2 operational metadata checkpoint
 
-The next checkpoint remains in-process and on the same database. It must add:
+[`ablac/Arena#216`](https://github.com/ablac/Arena/pull/216) delivered the
+cap-independent W1b.2 agent/profile, revision, history, and change-feed
+foundation. The follow-up account-capacity checkpoint completes W1b.2 while
+remaining in-process on the same PostgreSQL database. Together they add:
 
-1. durable agent and game-profile enrollment metadata while preserving every
+1. durable account, agent, and game-profile metadata while preserving every
    Arena bot ID;
-2. platform-supplied `maximum_agents` and transactionally computed
-   `current_agents` (never Arena's API-key limit);
+2. a platform-owned `maximum_agents` value of 10 per account and a
+   transactionally computed `current_agents` count;
 3. resource revisions, idempotency records, durable link history, and an
    ordered, bounded change feed.
 
-W1b.2 evidence must cover authentic legacy backfill, restart, rollback and
-reconciliation, concurrent mutations, and large irrelevant histories with
-index-compatible bounded reads. It must preserve `cosmetic_entitlements`,
-deterministic legacy-license recovery, and the current single writable
-authority. Migration and reconciliation must prove they never reactivate a
+`current_agents` counts current `account_bot_links`; it is deliberately not a
+stored counter and does not change when an API key is deactivated. The
+platform's 10-agent capacity is independent of Arena's five-active-API-key
+credential limit. Account creation installs the platform metadata in the same
+transaction. Every real link or unlink increments the account revision and
+emits an account change; same-account link replays do neither.
+
+All link writers acquire the customer-account row before checking the derived
+count, so concurrent attempts cannot race past 10. Authentic legacy backfill
+fails and rolls back if an existing account is already over its durable
+capacity; it never silently unlinks an agent or raises the limit. Managed
+deployment preflight requires the account metadata columns before the runtime
+starts.
+
+The evidence covers authentic legacy backfill, restart, rollback and
+reconciliation, concurrent mutations, API-key independence, and large
+irrelevant histories with index-compatible bounded reads. It preserves
+`cosmetic_entitlements`, deterministic legacy-license recovery, and the current
+single writable authority. Migration and reconciliation do not reactivate a
 refunded, revoked, chargeback, or expired license. W1b.2 does not add a second
 ownership store, dual-write records, expose platform HTTP handlers, or
 physically extract a service.
