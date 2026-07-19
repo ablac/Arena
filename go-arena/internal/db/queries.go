@@ -281,6 +281,9 @@ func EnsureCoreSchema(ctx context.Context) error {
 	if err := EnsureCosmeticAdminMembershipsSchema(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema cosmetic admin memberships: %w", err)
 	}
+	if err := EnsurePlatformAuthoritySchema(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema platform authority: %w", err)
+	}
 	// Depends on customer_accounts from the cosmetics schema above.
 	if err := EnsureCustomerSessionsSchema(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema customer sessions: %w", err)
@@ -1112,21 +1115,6 @@ func GetBotByAPIKeyID(ctx context.Context, apiKeyID string) (*Bot, error) {
 		return nil, fmt.Errorf("GetBotByAPIKeyID: %w", err)
 	}
 	return b, nil
-}
-
-// CreateBot inserts a new bot row.
-func CreateBot(ctx context.Context, bot *Bot) error {
-	if Pool == nil {
-		return ErrNoDatabase
-	}
-	_, err := Pool.Exec(ctx, insertBotSQL,
-		bot.ID, bot.APIKeyID, bot.Name, bot.AvatarColor, bot.DefaultWeapon, bot.DefaultStats,
-		bot.DefaultFallback, bot.CreatedAt, bot.UpdatedAt,
-	)
-	if err != nil {
-		return fmt.Errorf("CreateBot: %w", err)
-	}
-	return nil
 }
 
 // UpdateBot updates mutable fields on a bot row.

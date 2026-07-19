@@ -13,14 +13,17 @@ import (
 
 type fakeRegistrationTx struct {
 	pgx.Tx
-	execCalls    int
-	failExecCall int
-	failErr      error
-	commitErr    error
-	committed    bool
-	rolledBack   bool
-	keyExists    bool
-	botExists    bool
+	execCalls     int
+	failExecCall  int
+	failErr       error
+	commitErr     error
+	committed     bool
+	rolledBack    bool
+	keyExists     bool
+	botExists     bool
+	agentExists   bool
+	profileExists bool
+	changeCount   int
 }
 
 func (tx *fakeRegistrationTx) Exec(_ context.Context, _ string, _ ...any) (pgconn.CommandTag, error) {
@@ -33,6 +36,15 @@ func (tx *fakeRegistrationTx) Exec(_ context.Context, _ string, _ ...any) (pgcon
 	}
 	if tx.execCalls == 2 {
 		tx.botExists = true
+	}
+	if tx.execCalls == 3 {
+		tx.agentExists = true
+	}
+	if tx.execCalls == 4 {
+		tx.profileExists = true
+	}
+	if tx.execCalls == 5 || tx.execCalls == 6 {
+		tx.changeCount++
 	}
 	return pgconn.CommandTag{}, nil
 }
@@ -52,6 +64,9 @@ func (tx *fakeRegistrationTx) Rollback(context.Context) error {
 	tx.rolledBack = true
 	tx.keyExists = false
 	tx.botExists = false
+	tx.agentExists = false
+	tx.profileExists = false
+	tx.changeCount = 0
 	return nil
 }
 
@@ -85,8 +100,9 @@ func TestCreateAPIKeyAndBotRollsBackKeyWhenBotInsertFails(t *testing.T) {
 	if !tx.rolledBack {
 		t.Fatal("transaction was not rolled back")
 	}
-	if tx.keyExists || tx.botExists {
-		t.Fatalf("rows survived rollback: key=%v bot=%v", tx.keyExists, tx.botExists)
+	if tx.keyExists || tx.botExists || tx.agentExists || tx.profileExists || tx.changeCount != 0 {
+		t.Fatalf("rows survived rollback: key=%v bot=%v agent=%v profile=%v changes=%d",
+			tx.keyExists, tx.botExists, tx.agentExists, tx.profileExists, tx.changeCount)
 	}
 	if tx.committed {
 		t.Fatal("failed registration was committed")
@@ -104,11 +120,12 @@ func TestCreateAPIKeyAndBotCommitsBothRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createAPIKeyAndBotWithBegin returned error: %v", err)
 	}
-	if !tx.committed || !tx.keyExists || !tx.botExists {
-		t.Fatalf("commit state: committed=%v key=%v bot=%v", tx.committed, tx.keyExists, tx.botExists)
+	if !tx.committed || !tx.keyExists || !tx.botExists || !tx.agentExists || !tx.profileExists || tx.changeCount != 2 {
+		t.Fatalf("commit state: committed=%v key=%v bot=%v agent=%v profile=%v changes=%d",
+			tx.committed, tx.keyExists, tx.botExists, tx.agentExists, tx.profileExists, tx.changeCount)
 	}
-	if tx.execCalls != 2 {
-		t.Fatalf("Exec calls = %d, want 2", tx.execCalls)
+	if tx.execCalls != 6 {
+		t.Fatalf("Exec calls = %d, want 6", tx.execCalls)
 	}
 }
 

@@ -20,6 +20,18 @@ func (PostgresAuthority) UpsertVerifiedIdentity(ctx context.Context, email, issu
 	return db.UpsertVerifiedCustomerAccount(ctx, email, issuer, subject, displayName)
 }
 
+func (PostgresAuthority) TransitionProfile(ctx context.Context, command db.PlatformProfileTransition) (*db.PlatformProfileTransitionResult, error) {
+	return db.TransitionPlatformProfile(ctx, command)
+}
+
+func (PostgresAuthority) Changes(ctx context.Context, afterChangeID int64, limit int) ([]db.PlatformChange, int64, error) {
+	return db.ListPlatformChanges(ctx, afterChangeID, limit)
+}
+
+func (PostgresAuthority) AgentLinkHistory(ctx context.Context, accountID string, afterEventID int64, limit int) ([]db.PlatformAgentLinkEvent, int64, error) {
+	return db.ListPlatformAgentLinkEvents(ctx, accountID, afterEventID, limit)
+}
+
 func (PostgresAuthority) PublicCatalog(ctx context.Context) (*db.CosmeticCatalog, error) {
 	if db.Pool == nil {
 		catalog := db.DefaultCosmeticCatalogData()

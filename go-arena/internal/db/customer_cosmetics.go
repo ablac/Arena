@@ -373,7 +373,8 @@ func LinkBotToCustomerAccount(ctx context.Context, accountID, botID string) (*Ac
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("LinkBotToCustomerAccount existing link: %w", err)
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
+	linkCreated := errors.Is(err, pgx.ErrNoRows)
+	if linkCreated {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO account_bot_links (account_id, bot_id, linked_at)
 			VALUES ($1, $2, NOW())`, accountID, botID); err != nil {
@@ -382,6 +383,11 @@ func LinkBotToCustomerAccount(ctx context.Context, accountID, botID string) (*Ac
 				return nil, ErrCustomerBotAlreadyLinked
 			}
 			return nil, fmt.Errorf("LinkBotToCustomerAccount insert: %w", err)
+		}
+	}
+	if linkCreated {
+		if err := appendPlatformAgentLinkEventTx(ctx, tx, accountID, botID, "linked", "arena_account_link", time.Now()); err != nil {
+			return nil, fmt.Errorf("LinkBotToCustomerAccount platform link: %w", err)
 		}
 	}
 
@@ -501,6 +507,9 @@ func UnlinkBotFromCustomerAccount(ctx context.Context, accountID, botID string) 
 	tag, err := tx.Exec(ctx, `DELETE FROM account_bot_links WHERE account_id = $1 AND bot_id = $2`, accountID, botID)
 	if err != nil {
 		return false, fmt.Errorf("UnlinkBotFromCustomerAccount delete: %w", err)
+	}
+	if err := appendPlatformAgentLinkEventTx(ctx, tx, accountID, botID, "unlinked", "arena_account_unlink", time.Now()); err != nil {
+		return false, fmt.Errorf("UnlinkBotFromCustomerAccount platform link: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("UnlinkBotFromCustomerAccount commit: %w", err)
