@@ -1,3 +1,11 @@
+# Historical Combat Animation Plan
+
+> **Status:** Historical implementation snapshot. File inventories, line counts,
+> gaps, and suggested sequencing below describe the code at the time this plan
+> was written and are not a current roadmap or source of truth. Confirm current
+> behavior in the code and track new work in GitHub Issues before implementing
+> any item from this document.
+
 TOP 5 COMBAT-ANIMATION ENHANCEMENTS (all procedural Babylon.js, no external assets)
 
 1. UNIVERSAL DAMAGE NUMBERS + HIT FLINCH (highest impact, do first)

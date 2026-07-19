@@ -1,6 +1,13 @@
 # Arena Admin Ops Console Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status:** Superseded historical plan. The approved design in
+> [`../specs/2026-07-07-admin-ops-console-design.md`](../specs/2026-07-07-admin-ops-console-design.md)
+> removed public website editing from this pass and is authoritative where the
+> documents differ. The unchecked boxes below record the original proposal; they
+> are not an active implementation queue.
+>
+> **Historical note:** The original execution workflow used checkbox (`- [ ]`)
+> syntax for task tracking. These checkboxes no longer authorize implementation.
 
 **Goal:** Build the approved Arena Admin Ops Console with PR #65 fixes, typed game controls, demo bot builder, map workshop, and editable public content blocks.
 
