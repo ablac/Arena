@@ -21,12 +21,11 @@ for (const match of shopHTML.matchAll(/aria-labelledby="([^"]+)"/g)) {
 
 assert.match(shopHTML, /<main[^>]*id="cosmetic-shop"[^>]*tabindex="-1"/,
   'the skip-link target must accept programmatic focus without joining the normal tab order');
-assert.match(shopHTML, /<script defer src="https:\/\/cdn\.jsdelivr\.net\/npm\/babylonjs@9\.14\.0\/babylon\.min\.js"><\/script>/,
-  'Babylon core must not block parsing the Shop body');
+assert.match(shopHTML, /<link rel="modulepreload" href="\.\.\/assets\/vendor\/babylon-runtime\.[a-f0-9]{12}\.min\.js">/,
+  'Shop should preload the content-hashed local Babylon runtime');
 assert.doesNotMatch(shopHTML, /materialsLibrary/, 'Shop must not load the unused Babylon materials add-on');
-assert.ok(shopHTML.indexOf('babylon.min.js') < shopHTML.indexOf('cosmetic-themes.js')
-  && shopHTML.indexOf('cosmetic-themes.js') < shopHTML.indexOf('cosmetics-shop.js'),
-  'Shop scripts must preserve renderer dependency order');
+assert.match(readFileSync(shopModuleURL, 'utf8'), /import ['"]\.\/babylon-runtime\.js\?v=[^'"]+['"];/,
+  'Shop entry must initialize the local runtime before constructing its preview');
 assert.equal((shopHTML.match(/<canvas\b/g) || []).length, 1, 'Shop must use one shared bot preview canvas');
 assert.match(shopHTML, /id="shop-preview-canvas"/, 'the large bot preview canvas needs a stable hook');
 assert.match(shopHTML, /data-shop-pack-list/, 'Shop needs a pack browser');
@@ -69,6 +68,7 @@ let source = readFileSync(shopModuleURL, 'utf8');
 assert.match(source, /dataset\.shopPackId\s*=/, 'pack hooks must serialize as data-shop-pack-id in real DOM');
 assert.match(source, /dataset\.shopItemId\s*=/, 'item hooks must serialize as data-shop-item-id in real DOM');
 assert.doesNotMatch(source, /dataset\.shop(?:Pack|Item)ID\s*=/, 'dataset acronyms must not split into data-*-i-d attributes');
+source = source.replace(/import ['"]\.\/babylon-runtime\.js[^'"]*['"];\r?\n/, '');
 source = source.replace(/import \{[^}]*\} from '\.\/paths\.js[^']*';\r?\n/, `
   const appPath = (path, pathname = '/') =>
     (pathname === '/arena' || pathname.startsWith('/arena/')) ? '/arena' + path : path;
