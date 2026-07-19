@@ -375,6 +375,9 @@ func LinkBotToCustomerAccount(ctx context.Context, accountID, botID string) (*Ac
 	}
 	linkCreated := errors.Is(err, pgx.ErrNoRows)
 	if linkCreated {
+		if err := enforcePlatformAgentCapacityTx(ctx, tx, accountID); err != nil {
+			return nil, err
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO account_bot_links (account_id, bot_id, linked_at)
 			VALUES ($1, $2, NOW())`, accountID, botID); err != nil {

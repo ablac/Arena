@@ -142,6 +142,9 @@ func CreateAccountAPIKeyAndBot(
 	if totalCount >= MaxAccountAPIKeyHistory {
 		return nil, activeCount, ErrCustomerAPIKeyHistoryLimit
 	}
+	if err := enforcePlatformAgentCapacityTx(ctx, tx, accountID); err != nil {
+		return nil, activeCount, err
+	}
 
 	if _, err := tx.Exec(ctx, insertAPIKeySQL, id, keyHash, keyPrefix, ipCreated); err != nil {
 		return nil, 0, fmt.Errorf("CreateAccountAPIKeyAndBot key insert: %w", err)
