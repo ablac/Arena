@@ -5,7 +5,7 @@
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260718h';
+import { ArenaEngine } from './renderer/engine.js?v=20260718m';
 import { HudRenderer } from './renderer/hud.js?v=20260711b';
 import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';
@@ -15,6 +15,7 @@ import { isEnabled, onSettingsChange } from './settings.js';
 import { initSettingsPanel } from './settings-panel.js';
 import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';
 import { handleServiceStatus } from './service-status.js';
+import { observeArenaSafeViewport } from './safe-viewport.js?v=20260718b';
 
 const ARENA_WIDTH = 2000;
 const ARENA_HEIGHT = 2000;
@@ -77,6 +78,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('[App] Arena engine initialized');
   } catch (err) {
     console.error('[App] Engine init failed:', err);
+  }
+  const stopSafeViewport = observeArenaSafeViewport(
+    canvas,
+    (viewport) => arenaEngine.setSafeViewport(viewport),
+  );
+  window.addEventListener('pagehide', stopSafeViewport, { once: true });
+
+  // Keep the browser-smoke contract explicit and inert for normal visitors.
+  // The query gate prevents a permanent global debug surface while still
+  // letting deterministic WebGL tests read serializable lifecycle counters.
+  if (new URLSearchParams(window.location.search).get('arena-test') === '1') {
+    Object.defineProperty(window, '__ARENA_TEST__', {
+      configurable: true,
+      value: Object.freeze({ diagnostics: () => arenaEngine.getLifecycleSnapshot() }),
+    });
   }
 
   // Spectator WebSocket
@@ -186,9 +202,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (target) target.scrollIntoView({ behavior: 'smooth' });
     });
   });
-
-  // Fetch initial arena status
-  fetchArenaStatus();
 });
 
 /** @private Setup arena controls. */
@@ -268,26 +281,6 @@ function setupArenaTabs() {
       if (panel) panel.classList.add('active');
     });
   });
-}
-
-/** @private Fetch arena status for footer stats. */
-async function fetchArenaStatus() {
-  try {
-    const resp = await fetch(apiPath('/arena/status'));
-    if (!resp.ok) return;
-    const data = await resp.json();
-    const el = document.getElementById('footer-stats');
-    if (el) {
-      el.textContent = `${data.bots_connected} bots connected | Round ${data.round_number}`;
-    }
-    syncHeroSummary({
-      phase: data.status || 'connecting',
-      botsConnected: data.bots_connected,
-      botsAlive: data.bots_alive,
-    });
-  } catch {
-    // ignore
-  }
 }
 
 function updateHeroStatus(state) {

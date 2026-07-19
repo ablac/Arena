@@ -36,6 +36,33 @@ assert.equal(matches(html, /id="arena-canvas"/g).length, 1, 'the shell must own 
 assert.match(html, /css\/site-shell\.css\?v=/, 'responsive shell stylesheet must be loaded');
 assert.match(`${app}\n${js}`, /['"]\.\/service-status\.js['"]/, 'public service-status client must be imported exactly once per module URL');
 assert.match(html, /js\/site-shell\.js\?v=/, 'responsive shell controller must be loaded');
+assert.doesNotMatch(html, /id="footer-stats"|site-round-summary/, 'the header must not repeat bot and round counts already shown in the spectator HUD');
+assert.doesNotMatch(app, /fetchArenaStatus|\/arena\/status|footer-stats/, 'the removed header summary must not leave an orphaned arena-status request');
+assert.match(
+  css,
+  /\.site-header-status\s*\{[^}]*margin-inline-start:\s*auto/,
+  'Spectator live must claim the remaining desktop header space',
+);
+assert.match(
+  css,
+  /\.site-header-status\s*\{[^}]*justify-content:\s*flex-end/,
+  'Spectator live must align to the far-right edge of its header space',
+);
+assert.match(
+  css,
+  /@media \(max-width: 768px\)[\s\S]*--spectator-touch-target:\s*44px/,
+  'touch and responsive layouts must define a 44px spectator target baseline',
+);
+assert.match(
+  css,
+  /\.mobile-command-actions :is\(button, a\)[\s\S]{0,700}min-height:\s*var\(--spectator-touch-target\)/,
+  'mobile header actions must meet the shared touch-target baseline',
+);
+assert.match(
+  css,
+  /\.arena-controls input\[type="range"\][\s\S]{0,700}height:\s*var\(--spectator-touch-target\)/,
+  'the zoom slider must expose a 44px effective touch area',
+);
 assert.match(html, /name="viewport"\s+content="width=device-width, initial-scale=1\.0, viewport-fit=cover"/, 'layout must be viewport and safe-area driven');
 assert.doesNotMatch(html, /mobile-suggest|href="m\/"/, 'the main site must not hand phones to a separate page');
 assert.match(html, /id="fullscreen-btn"[^>]*aria-pressed="false">Cinema Mode<\/button>/, 'shell action must be presented as Cinema Mode before JS boots');
