@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const { GameplayRenderer } = await import('../frontend/js/renderer/gameplay.js');
+const { roundStateReleasesTransition } = await import('../frontend/js/renderer/engine.js');
 const engineSource = readFileSync(new URL('../frontend/js/renderer/engine.js', import.meta.url), 'utf8');
 
 const gameplay = Object.create(GameplayRenderer.prototype);
@@ -22,6 +23,13 @@ assert.equal(gameplay.bountyGroup.sparkle.emitRate, 0, 'round_end must stop crow
 
 gameplay.endRoundTransition();
 assert.equal(gameplay._roundTransitionActive, false, 'the next round must restore bounty rendering');
+
+assert.equal(roundStateReleasesTransition(8, 7), true, 'the next sequential round releases the hold');
+assert.equal(roundStateReleasesTransition(7, 7), false, 'stale same-round snapshots stay frozen');
+assert.equal(roundStateReleasesTransition(0, 7), true,
+  'a reconnect after server restart releases the old high-round hold');
+assert.equal(roundStateReleasesTransition(undefined, 7), false,
+  'an unnumbered snapshot cannot release transition ownership');
 
 assert.match(
   engineSource,

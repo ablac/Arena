@@ -128,6 +128,13 @@ export async function webGPUAvailableWithin(B, timeoutMs = WEBGPU_PROBE_TIMEOUT_
   }
 }
 
+/** A restarted Arena can reset its in-memory round counter to zero. */
+export function roundStateReleasesTransition(stateRound, transitionRound) {
+  const round = Number(stateRound);
+  const heldRound = Number(transitionRound);
+  return Number.isFinite(round) && Number.isFinite(heldRound) && round !== heldRound;
+}
+
 export class ArenaEngine {
   /** @param {HTMLCanvasElement} canvas @param {Object} opts */
   constructor(canvas, opts = {}) {
@@ -621,11 +628,11 @@ export class ArenaEngine {
     if (this.gameplayRenderer) this.gameplayRenderer.beginRoundTransition();
   }
 
-  /** @private Resume normal rendering only for a newer authoritative round. */
+  /** @private Resume only for a different authoritative round. The counter
+   * can reset after a server restart, so strict numeric increase is unsafe. */
   _maybeEndRoundTransition(state) {
     if (!this._roundTransitionActive) return;
-    const round = Number(state && state.round_number);
-    if (!Number.isFinite(round) || round <= this._roundTransitionRound) return;
+    if (!roundStateReleasesTransition(state && state.round_number, this._roundTransitionRound)) return;
     this._roundTransitionActive = false;
     this._roundTransitionRound = null;
     if (this.gameplayRenderer) this.gameplayRenderer.endRoundTransition();
