@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const { GameplayRenderer } = await import('../frontend/js/renderer/gameplay.js');
-const { roundStateReleasesTransition } = await import('../frontend/js/renderer/engine.js');
+const { ArenaEngine, roundStateReleasesTransition } = await import('../frontend/js/renderer/engine.js');
 const engineSource = readFileSync(new URL('../frontend/js/renderer/engine.js', import.meta.url), 'utf8');
 
 const gameplay = Object.create(GameplayRenderer.prototype);
@@ -30,6 +30,54 @@ assert.equal(roundStateReleasesTransition(0, 7), true,
   'a reconnect after server restart releases the old high-round hold');
 assert.equal(roundStateReleasesTransition(undefined, 7), false,
   'an unnumbered snapshot cannot release transition ownership');
+
+globalThis.document = { hidden: false };
+const stalePresentationCalls = [];
+const engine = Object.create(ArenaEngine.prototype);
+Object.assign(engine, {
+  ready: true,
+  state: { round_number: 7 },
+  _roundTransitionActive: true,
+  _roundTransitionRound: 7,
+  _canvasVisible: true,
+  _grading: {
+    setPhase: () => stalePresentationCalls.push('phase'),
+    setSuddenDeath: () => stalePresentationCalls.push('sudden-death'),
+  },
+  intermissionDirector: {
+    handleArenaState: () => {},
+    holdsWorld: () => true,
+    holdsBots: () => true,
+  },
+  envRenderer: {
+    setMapShape: () => stalePresentationCalls.push('map-theme'),
+    update: () => stalePresentationCalls.push('environment'),
+  },
+  obstacleRenderer: { update: () => stalePresentationCalls.push('obstacles') },
+  botRenderer: { update: () => stalePresentationCalls.push('bots') },
+  pickupRenderer: { update: () => stalePresentationCalls.push('pickups') },
+  effectRenderer: { update: () => stalePresentationCalls.push('death-damage-effects') },
+  gameplayRenderer: {
+    update: () => stalePresentationCalls.push('gameplay'),
+    endRoundTransition: () => stalePresentationCalls.push('transition-ended'),
+  },
+  camera: {
+    followId: null,
+    updateBotPositions: () => stalePresentationCalls.push('camera'),
+  },
+  _playArenaEvents: () => stalePresentationCalls.push('combat-events'),
+});
+engine.setState({
+  type: 'arena_state',
+  round_number: 7,
+  bots: [],
+  events: [{ id: 'mine:1', type: 'mine_detonated', position: [10, 20] }],
+  pickups: [],
+});
+assert.equal(engine._roundTransitionActive, true,
+  'same-round spectator state must not release transition ownership');
+assert.deepEqual(stalePresentationCalls, [],
+  'same-round state after round_end must not render invisible combat or other stale presentation');
 
 assert.match(
   engineSource,
