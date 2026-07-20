@@ -2,8 +2,11 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -14,6 +17,68 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type platformV1ConsumerContract struct {
+	Contract       string `json:"contract"`
+	SourceRepo     string `json:"source_repository"`
+	SourcePath     string `json:"source_path"`
+	SourceCommit   string `json:"source_commit"`
+	SourceBlob     string `json:"source_blob"`
+	IdempotencyKey struct {
+		MinimumLength int `json:"minimum_length"`
+		MaximumLength int `json:"maximum_length"`
+	} `json:"idempotency_key"`
+	ProfileTransition struct {
+		ExpectedRevisionResource string `json:"expected_revision_resource"`
+	} `json:"profile_transition"`
+	AgentUnlink struct {
+		ExpectedRevisionResource string `json:"expected_revision_resource"`
+	} `json:"agent_unlink"`
+	PlatformChange struct {
+		ChangeIDType string   `json:"change_id_type"`
+		TimeField    string   `json:"time_field"`
+		SubjectKinds []string `json:"subject_kinds"`
+		Transitions  []string `json:"transitions"`
+	} `json:"platform_change"`
+}
+
+func loadPlatformV1ConsumerContract(t *testing.T) platformV1ConsumerContract {
+	t.Helper()
+	file, err := os.Open("testdata/platform-v1-consumer-contract.json")
+	if err != nil {
+		t.Fatalf("open platform v1 consumer contract: %v", err)
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	var contract platformV1ConsumerContract
+	if err := decoder.Decode(&contract); err != nil {
+		t.Fatalf("decode platform v1 consumer contract: %v", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		t.Fatalf("platform v1 consumer contract must contain exactly one JSON value: %v", err)
+	}
+	return contract
+}
+
+func TestPlatformV1ConsumerContractPinsKingdomGridAuthority(t *testing.T) {
+	contract := loadPlatformV1ConsumerContract(t)
+	if contract.Contract != "angel-serv.platform.v1" || contract.SourceRepo != "ablac/Kingdom-Grid" ||
+		contract.SourcePath != "protocol/platform/openapi.json" ||
+		contract.SourceCommit != "513656ac312115690c7c8cd5638c9e5a86b4eec0" ||
+		contract.SourceBlob != "1b91d3456e1c8fc633580a4165f6e20d23815867" {
+		t.Fatalf("invalid Kingdom Grid contract authority: %+v", contract)
+	}
+	if contract.IdempotencyKey.MinimumLength != platformIdempotencyKeyMinimum || contract.IdempotencyKey.MaximumLength != platformIdempotencyKeyMaximum {
+		t.Fatalf("idempotency contract = %+v, want 8..128", contract.IdempotencyKey)
+	}
+	if contract.ProfileTransition.ExpectedRevisionResource != "agent_identity" || contract.AgentUnlink.ExpectedRevisionResource != "account" {
+		t.Fatalf("revision boundaries = profile %q unlink %q", contract.ProfileTransition.ExpectedRevisionResource, contract.AgentUnlink.ExpectedRevisionResource)
+	}
+	if contract.PlatformChange.ChangeIDType != "string" || contract.PlatformChange.TimeField != "occurred_at" {
+		t.Fatalf("change wire contract = %+v", contract.PlatformChange)
+	}
+}
 
 func TestPostgresArenaAgentClaimVerifiesLockedControlProofAndRejectsInactiveCredentials(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
@@ -1245,11 +1310,28 @@ func TestPostgresPlatformChangeFeedIsOrderedBoundedAndIndexCompatible(t *testing
 	if nextCursor != 0 || len(changes) != 2 {
 		t.Fatalf("registration change page = (%+v, %d), want two terminal-page changes", changes, nextCursor)
 	}
-	if changes[0].SubjectKind != "agent" || changes[0].SubjectID != bot.ID || changes[0].Transition != "registered" || changes[0].Revision != 1 {
+	if changes[0].SubjectKind != "agent_identity" || changes[0].SubjectID != bot.ID || changes[0].Transition != "registered" || changes[0].Revision != 1 {
 		t.Fatalf("agent registration change = %+v", changes[0])
 	}
 	if changes[1].SubjectKind != "game_profile" || changes[1].SubjectID == "" || changes[1].Transition != "enrolled" || changes[1].Revision != 1 {
 		t.Fatalf("profile enrollment change = %+v", changes[1])
+	}
+	wireChange, err := json.Marshal(changes[0])
+	if err != nil {
+		t.Fatalf("marshal platform change: %v", err)
+	}
+	var wireFields map[string]any
+	if err := json.Unmarshal(wireChange, &wireFields); err != nil {
+		t.Fatalf("decode platform change: %v", err)
+	}
+	if _, ok := wireFields["change_id"].(string); !ok {
+		t.Fatalf("wire change_id = %T, want string", wireFields["change_id"])
+	}
+	if _, ok := wireFields["occurred_at"]; !ok {
+		t.Fatalf("wire platform change omits occurred_at: %s", wireChange)
+	}
+	if _, stale := wireFields["changed_at"]; stale {
+		t.Fatalf("wire platform change exposes stale changed_at: %s", wireChange)
 	}
 
 	var baseChangeID int64
@@ -1311,6 +1393,35 @@ func TestPostgresPlatformChangeFeedIsOrderedBoundedAndIndexCompatible(t *testing
 	}
 }
 
+func TestPostgresPlatformChangeFeedRejectsNoncanonicalDurableValues(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	invalidChanges := []struct {
+		subjectKind string
+		transition  string
+	}{
+		{subjectKind: "agent", transition: "future_uncontracted_transition"},
+		{subjectKind: "account", transition: "agent_future_uncontracted_transition"},
+		{subjectKind: "agent", transition: "profile_status_future_uncontracted_transition"},
+		{subjectKind: "game_profile", transition: "status_updated"},
+	}
+	for index, invalid := range invalidChanges {
+		if _, err := Pool.Exec(ctx, `
+			INSERT INTO platform_changes (subject_kind, subject_id, transition, revision, changed_at)
+			VALUES ($1, $2, $3, 1, NOW())`, invalid.subjectKind, fmt.Sprintf("invalid-change-%d", index), invalid.transition); err != nil {
+			t.Fatalf("seed noncanonical platform change %d: %v", index, err)
+		}
+		if _, _, err := ListPlatformChanges(ctx, 0, 10); err == nil || !strings.Contains(err.Error(), "noncanonical platform change") {
+			t.Fatalf("ListPlatformChanges noncanonical error %d = %v", index, err)
+		}
+		if _, err := Pool.Exec(ctx, `DELETE FROM platform_changes WHERE subject_id = $1`, fmt.Sprintf("invalid-change-%d", index)); err != nil {
+			t.Fatalf("delete noncanonical platform change %d: %v", index, err)
+		}
+	}
+}
+
 func TestPostgresPlatformProfileTransitionEnforcesRevisionAndIdempotency(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {
@@ -1341,6 +1452,14 @@ func TestPostgresPlatformProfileTransitionEnforcesRevisionAndIdempotency(t *test
 	}
 	if first.AgentRevision != 2 || first.ProfileRevision != 2 || first.Status != "suspended" {
 		t.Fatalf("suspend result = %+v, want both revisions 2", first)
+	}
+	changes, _, err := ListPlatformChanges(ctx, 0, 10)
+	if err != nil {
+		t.Fatalf("ListPlatformChanges after suspend: %v", err)
+	}
+	if len(changes) != 4 || changes[2].SubjectKind != "game_profile" || changes[2].Transition != "suspended" ||
+		changes[3].SubjectKind != "agent_identity" || changes[3].Transition != "updated" {
+		t.Fatalf("canonical suspend changes = %+v, want game_profile suspended and agent_identity updated", changes)
 	}
 	replayed, err := TransitionPlatformProfile(ctx, suspend)
 	if err != nil {
@@ -1432,6 +1551,71 @@ func TestPostgresPlatformProfileTransitionEnforcesRevisionAndIdempotency(t *test
 	}
 	if idempotencyRecords != 1 || transitionChanges != 2 {
 		t.Fatalf("concurrent persistence = %d idempotency records, %d changes; want 1 and 2", idempotencyRecords, transitionChanges)
+	}
+}
+
+func TestPostgresPlatformProfileTransitionGuardsAgentRevision(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	bot := accountAPIKeyTestBot("platform-agent-revision-key", "platform-agent-revision")
+	if err := CreateAPIKeyAndBot(
+		ctx,
+		bot.APIKeyID,
+		"agent-revision-hash",
+		"arena_platrevision",
+		"127.0.0.1",
+		bot,
+	); err != nil {
+		t.Fatalf("CreateAPIKeyAndBot: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		UPDATE platform_agents SET revision = 2 WHERE agent_id = $1`, bot.ID); err != nil {
+		t.Fatalf("advance agent revision independently: %v", err)
+	}
+
+	result, err := TransitionPlatformProfile(ctx, PlatformProfileTransition{
+		AgentID:          bot.ID,
+		Game:             "arena",
+		Status:           "suspended",
+		ExpectedRevision: 2,
+		IdempotencyKey:   "agent-revision-transition",
+	})
+	if err != nil {
+		t.Fatalf("TransitionPlatformProfile with current agent revision: %v", err)
+	}
+	if result.AgentRevision != 3 || result.ProfileRevision != 2 || result.Status != "suspended" {
+		t.Fatalf("transition result = %+v, want agent revision 3 and profile revision 2", result)
+	}
+}
+
+func TestPostgresPlatformProfileTransitionRejectsShortIdempotencyKey(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	bot := accountAPIKeyTestBot("platform-short-idempotency-key", "platform-short-idempotency")
+	if err := CreateAPIKeyAndBot(
+		ctx,
+		bot.APIKeyID,
+		"short-idempotency-hash",
+		"arena_platshort",
+		"127.0.0.1",
+		bot,
+	); err != nil {
+		t.Fatalf("CreateAPIKeyAndBot: %v", err)
+	}
+
+	_, err := TransitionPlatformProfile(ctx, PlatformProfileTransition{
+		AgentID:          bot.ID,
+		Game:             "arena",
+		Status:           "suspended",
+		ExpectedRevision: 1,
+		IdempotencyKey:   "short",
+	})
+	if err == nil || !strings.Contains(err.Error(), "8-128 character idempotency key") {
+		t.Fatalf("short idempotency key error = %v, want W1a lower-bound rejection", err)
 	}
 }
 
@@ -1581,6 +1765,99 @@ func TestPostgresPlatformAgentLinkHistorySurvivesRelinkAndUsesAccountIndex(t *te
 		!strings.Contains(planText, "Bitmap Index Scan on idx_platform_agent_link_events_account")) ||
 		strings.Contains(planText, "Seq Scan") {
 		t.Fatalf("platform link history plan is not account-index-bounded:\n%s", planText)
+	}
+}
+
+func TestPostgresPlatformAgentUnlinkEnforcesRevisionAndIdempotency(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"platform-unlink@example.com",
+		"https://id.example",
+		"platform-unlink",
+		"Platform Unlink",
+	)
+	if err != nil {
+		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
+	}
+	bot := accountAPIKeyTestBot("platform-unlink-key", "platform-unlink-agent")
+	if _, _, err := CreateAccountAPIKeyAndBot(
+		ctx,
+		account.ID,
+		bot.APIKeyID,
+		"platform-unlink-hash",
+		"arena_platunlink",
+		"127.0.0.1",
+		bot,
+	); err != nil {
+		t.Fatalf("CreateAccountAPIKeyAndBot: %v", err)
+	}
+	capacity, err := GetPlatformAccountCapacity(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetPlatformAccountCapacity: %v", err)
+	}
+	command := PlatformAgentUnlinkCommand{
+		AccountID:               account.ID,
+		AgentID:                 bot.ID,
+		ExpectedAccountRevision: capacity.Revision,
+		Reason:                  "customer_request",
+		IdempotencyKey:          "unlink-platform-agent",
+	}
+	first, err := UnlinkPlatformAgent(ctx, command)
+	if err != nil {
+		t.Fatalf("UnlinkPlatformAgent: %v", err)
+	}
+	if first.Status != "unlinked" || first.Revision != 2 || first.UnlinkedAt == nil || !first.UnlinkedAt.Equal(first.UpdatedAt) {
+		t.Fatalf("unlink result = %+v, want unlinked revision 2", first)
+	}
+	changes, _, err := ListPlatformChanges(ctx, 0, 100)
+	if err != nil {
+		t.Fatalf("ListPlatformChanges after unlink: %v", err)
+	}
+	contract := loadPlatformV1ConsumerContract(t)
+	validSubjectKinds := make(map[string]bool, len(contract.PlatformChange.SubjectKinds))
+	for _, subjectKind := range contract.PlatformChange.SubjectKinds {
+		validSubjectKinds[subjectKind] = true
+	}
+	validTransitions := make(map[string]bool, len(contract.PlatformChange.Transitions))
+	for _, transition := range contract.PlatformChange.Transitions {
+		validTransitions[transition] = true
+	}
+	for _, change := range changes {
+		if !validSubjectKinds[change.SubjectKind] || !validTransitions[change.Transition] {
+			t.Fatalf("noncanonical platform change = %+v", change)
+		}
+	}
+	replayed, err := UnlinkPlatformAgent(ctx, command)
+	if err != nil {
+		t.Fatalf("UnlinkPlatformAgent replay: %v", err)
+	}
+	if !equalPlatformAgentLinkResult(first, replayed) {
+		t.Fatalf("unlink replay = %+v, want exact %+v", replayed, first)
+	}
+	conflicting := command
+	conflicting.Reason = "different_reason"
+	if _, err := UnlinkPlatformAgent(ctx, conflicting); !errors.Is(err, ErrPlatformIdempotencyConflict) {
+		t.Fatalf("conflicting unlink replay error = %v, want %v", err, ErrPlatformIdempotencyConflict)
+	}
+	linked, err := IsBotLinkedToCustomerAccount(ctx, account.ID, bot.ID)
+	if err != nil || linked {
+		t.Fatalf("link after exact unlink = (%v, %v), want false", linked, err)
+	}
+	if _, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID); err != nil {
+		t.Fatalf("relink after exact unlink: %v", err)
+	}
+	stale := command
+	stale.IdempotencyKey = "stale-unlink-platform-agent"
+	if _, err := UnlinkPlatformAgent(ctx, stale); !errors.Is(err, ErrPlatformRevisionConflict) {
+		t.Fatalf("stale unlink error = %v, want %v", err, ErrPlatformRevisionConflict)
+	}
+	linked, err = IsBotLinkedToCustomerAccount(ctx, account.ID, bot.ID)
+	if err != nil || !linked {
+		t.Fatalf("link after stale unlink = (%v, %v), want true", linked, err)
 	}
 }
 

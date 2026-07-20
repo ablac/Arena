@@ -118,6 +118,33 @@ privileged registration-and-initial-link path; it cannot claim an existing
 agent by trusted ID. W1b.3 still does not expose the versioned platform HTTP
 adapter or create a second writable authority.
 
+### W1b.3a cross-repository semantic-conformance checkpoint
+
+Arena consumes the byte-identical Kingdom Grid platform-v1 contract fixture at
+`go-arena/internal/db/testdata/platform-v1-consumer-contract.json`. Kingdom
+Grid derives its authoritative copy from `protocol/platform/openapi.json` and
+pins the exact source blob, so either repository's tests fail when revision
+boundaries, idempotency limits, or ordered-change wire semantics drift.
+
+This checkpoint corrects the four independently audited W1a consumer gaps:
+
+1. game-profile transitions compare `expected_agent_revision` with the stable
+   agent identity revision while incrementing both the agent and profile
+   revisions for a real status change;
+2. exact platform mutations accept only 8-128 character idempotency keys;
+3. a revisioned and idempotent exact unlink command shares the existing Arena
+   assignment-cleanup and link-history transaction, while the public
+   compatibility route keeps its current behavior; and
+4. the ordered projection serializes string change IDs, `occurred_at`,
+   `agent_identity`, and only the canonical W1a transition values, without
+   rewriting the existing durable change table.
+
+The exact unlink replay record, account revision update, license-assignment and
+loadout cleanup, link history, and ordered changes commit atomically. A stale
+revision or conflicting idempotency-key reuse makes no ownership change. This
+checkpoint remains same-database and in-process; it adds no public platform
+HTTP handler, second writable authority, or Kingdom Grid runtime adapter.
+
 ### Later W1b checkpoints
 
 Later checkpoints must add and prove the remaining operational contract before

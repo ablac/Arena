@@ -40,7 +40,7 @@ func LinkPlatformAgent(
 	if command.ExpectedAccountRevision < 0 {
 		return nil, errors.New("platform agent link requires a nonnegative expected account revision")
 	}
-	if strings.TrimSpace(command.IdempotencyKey) != command.IdempotencyKey || utf8.RuneCountInString(command.IdempotencyKey) < 8 || utf8.RuneCountInString(command.IdempotencyKey) > 128 {
+	if strings.TrimSpace(command.IdempotencyKey) != command.IdempotencyKey || utf8.RuneCountInString(command.IdempotencyKey) < platformIdempotencyKeyMinimum || utf8.RuneCountInString(command.IdempotencyKey) > platformIdempotencyKeyMaximum {
 		return nil, errors.New("platform agent link requires an 8-128 character idempotency key without surrounding whitespace")
 	}
 

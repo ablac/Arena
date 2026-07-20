@@ -20,15 +20,17 @@ const (
 	DefaultPlatformLinkPageSize   = 50
 	MaxPlatformLinkPageSize       = 100
 	DefaultPlatformMaximumAgents  = 10
+	platformIdempotencyKeyMinimum = 8
+	platformIdempotencyKeyMaximum = 128
 )
 
 type PlatformChange struct {
-	ChangeID    int64     `json:"change_id"`
+	ChangeID    int64     `json:"change_id,string"`
 	SubjectKind string    `json:"subject_kind"`
 	SubjectID   string    `json:"subject_id"`
 	Transition  string    `json:"transition"`
 	Revision    int64     `json:"revision"`
-	ChangedAt   time.Time `json:"changed_at"`
+	ChangedAt   time.Time `json:"occurred_at"`
 }
 
 type PlatformAccountCapacity struct {
@@ -294,6 +296,9 @@ func ListPlatformChanges(ctx context.Context, afterChangeID int64, limit int) ([
 		); err != nil {
 			return nil, 0, fmt.Errorf("ListPlatformChanges scan: %w", err)
 		}
+		if err := canonicalizePlatformChange(&change); err != nil {
+			return nil, 0, err
+		}
 		changes = append(changes, change)
 	}
 	if err := rows.Err(); err != nil {
@@ -306,6 +311,50 @@ func ListPlatformChanges(ctx context.Context, afterChangeID int64, limit int) ([
 		nextCursor = changes[len(changes)-1].ChangeID
 	}
 	return changes, nextCursor, nil
+}
+
+func canonicalizePlatformChange(change *PlatformChange) error {
+	rawSubjectKind, rawTransition := change.SubjectKind, change.Transition
+	switch change.SubjectKind {
+	case "account":
+		switch change.Transition {
+		case "agent_linked", "agent_unlinked":
+			change.Transition = "updated"
+		}
+		if change.Transition != "created" && change.Transition != "registered" && change.Transition != "updated" {
+			return fmt.Errorf("noncanonical platform change %s/%s", rawSubjectKind, rawTransition)
+		}
+	case "agent":
+		change.SubjectKind = "agent_identity"
+		switch change.Transition {
+		case "profile_status_active", "profile_status_suspended", "profile_status_retired", "link_linked", "link_unlinked":
+			change.Transition = "updated"
+		}
+		if change.Transition != "created" && change.Transition != "registered" && change.Transition != "updated" &&
+			change.Transition != "suspended" && change.Transition != "retired" {
+			return fmt.Errorf("noncanonical platform change %s/%s", rawSubjectKind, rawTransition)
+		}
+	case "game_profile":
+		switch change.Transition {
+		case "status_active":
+			change.Transition = "activated"
+		case "status_suspended":
+			change.Transition = "suspended"
+		case "status_retired":
+			change.Transition = "retired"
+		}
+		if change.Transition != "enrolled" && change.Transition != "activated" && change.Transition != "suspended" &&
+			change.Transition != "retired" && change.Transition != "updated" {
+			return fmt.Errorf("noncanonical platform change %s/%s", rawSubjectKind, rawTransition)
+		}
+	case "agent_link":
+		if change.Transition != "linked" && change.Transition != "unlinked" && change.Transition != "updated" {
+			return fmt.Errorf("noncanonical platform change %s/%s", rawSubjectKind, rawTransition)
+		}
+	default:
+		return fmt.Errorf("noncanonical platform change %s/%s", rawSubjectKind, rawTransition)
+	}
+	return nil
 }
 
 func ListPlatformAgentLinkEvents(ctx context.Context, accountID string, afterEventID int64, limit int) ([]PlatformAgentLinkEvent, int64, error) {
@@ -445,8 +494,9 @@ func TransitionPlatformProfile(ctx context.Context, command PlatformProfileTrans
 	if command.ExpectedRevision < 1 {
 		return nil, errors.New("platform profile transition requires a positive expected revision")
 	}
-	if command.IdempotencyKey == "" || strings.TrimSpace(command.IdempotencyKey) != command.IdempotencyKey || utf8.RuneCountInString(command.IdempotencyKey) > 128 {
-		return nil, errors.New("platform profile transition requires a 1-128 character idempotency key without surrounding whitespace")
+	idempotencyKeyLength := utf8.RuneCountInString(command.IdempotencyKey)
+	if strings.TrimSpace(command.IdempotencyKey) != command.IdempotencyKey || idempotencyKeyLength < platformIdempotencyKeyMinimum || idempotencyKeyLength > platformIdempotencyKeyMaximum {
+		return nil, errors.New("platform profile transition requires an 8-128 character idempotency key without surrounding whitespace")
 	}
 
 	requestJSON, err := json.Marshal(struct {
@@ -522,8 +572,8 @@ func TransitionPlatformProfile(ctx context.Context, command PlatformProfileTrans
 		}
 		return nil, fmt.Errorf("TransitionPlatformProfile load profile: %w", err)
 	}
-	if result.ProfileRevision != command.ExpectedRevision {
-		return nil, fmt.Errorf("%w: expected %d, current %d", ErrPlatformRevisionConflict, command.ExpectedRevision, result.ProfileRevision)
+	if result.AgentRevision != command.ExpectedRevision {
+		return nil, fmt.Errorf("%w: expected %d, current %d", ErrPlatformRevisionConflict, command.ExpectedRevision, result.AgentRevision)
 	}
 
 	if result.Status != command.Status {

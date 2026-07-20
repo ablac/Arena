@@ -40,6 +40,10 @@ func (PostgresAuthority) LinkAgent(ctx context.Context, command db.PlatformAgent
 	return db.LinkPlatformAgent(ctx, command)
 }
 
+func (PostgresAuthority) UnlinkAgentExact(ctx context.Context, command db.PlatformAgentUnlinkCommand) (*db.PlatformAgentLinkResult, error) {
+	return db.UnlinkPlatformAgent(ctx, command)
+}
+
 func (PostgresAuthority) PublicCatalog(ctx context.Context) (*db.CosmeticCatalog, error) {
 	if db.Pool == nil {
 		catalog := db.DefaultCosmeticCatalogData()
