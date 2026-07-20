@@ -1,0 +1,48 @@
+{
+  "contract": "angel-serv.platform.v1",
+  "source_repository": "ablac/Kingdom-Grid",
+  "source_path": "protocol/platform/openapi.json",
+  "source_commit": "513656ac312115690c7c8cd5638c9e5a86b4eec0",
+  "source_blob": "1b91d3456e1c8fc633580a4165f6e20d23815867",
+  "idempotency_key": {
+    "minimum_length": 8,
+    "maximum_length": 128
+  },
+  "profile_transition": {
+    "expected_revision_resource": "agent_identity"
+  },
+  "agent_unlink": {
+    "expected_revision_resource": "account"
+  },
+  "platform_change": {
+    "change_id_type": "string",
+    "time_field": "occurred_at",
+    "subject_kinds": [
+      "account",
+      "agent_identity",
+      "agent_link",
+      "game_profile",
+      "catalog_item",
+      "license",
+      "license_assignment",
+      "fulfillment"
+    ],
+    "transitions": [
+      "created",
+      "updated",
+      "registered",
+      "enrolled",
+      "activated",
+      "suspended",
+      "retired",
+      "linked",
+      "unlinked",
+      "assigned",
+      "unassigned",
+      "refunded",
+      "revoked",
+      "chargeback",
+      "expired"
+    ]
+  }
+}

@@ -26,6 +26,7 @@ type MetadataAuthority interface {
 	Changes(context.Context, int64, int) ([]db.PlatformChange, int64, error)
 	AgentLinkHistory(context.Context, string, int64, int) ([]db.PlatformAgentLinkEvent, int64, error)
 	LinkAgent(context.Context, db.PlatformAgentLinkCommand) (*db.PlatformAgentLinkResult, error)
+	UnlinkAgentExact(context.Context, db.PlatformAgentUnlinkCommand) (*db.PlatformAgentLinkResult, error)
 }
 
 // CosmeticsAuthority owns shared catalog, account-agent links, licenses, and

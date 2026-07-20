@@ -484,14 +484,24 @@ func UnlinkBotFromCustomerAccount(ctx context.Context, accountID, botID string) 
 	if _, err := lockCustomerAccount(ctx, tx, accountID, true); err != nil {
 		return false, err
 	}
-	var marker int
+	if _, err := unlinkBotFromCustomerAccountTx(ctx, tx, accountID, botID, "arena_account_unlink"); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("UnlinkBotFromCustomerAccount commit: %w", err)
+	}
+	return true, nil
+}
+
+func unlinkBotFromCustomerAccountTx(ctx context.Context, tx pgx.Tx, accountID, botID, reason string) (*PlatformAgentLinkResult, error) {
+	var linkedAt time.Time
 	if err := tx.QueryRow(ctx, `
-		SELECT 1 FROM account_bot_links WHERE account_id = $1 AND bot_id = $2 FOR UPDATE`,
-		accountID, botID).Scan(&marker); err != nil {
+		SELECT linked_at FROM account_bot_links WHERE account_id = $1 AND bot_id = $2 FOR UPDATE`,
+		accountID, botID).Scan(&linkedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, ErrCustomerBotNotLinked
+			return nil, ErrCustomerBotNotLinked
 		}
-		return false, fmt.Errorf("UnlinkBotFromCustomerAccount link: %w", err)
+		return nil, fmt.Errorf("unlink bot from customer account link: %w", err)
 	}
 	// The account row above serializes all same-account mutations. License locks
 	// then protect against admin revocation while the assignment is removed.
@@ -501,18 +511,18 @@ func UnlinkBotFromCustomerAccount(ctx context.Context, accountID, botID string) 
 		WHERE cla.account_id = $1 AND cla.bot_id = $2
 		ORDER BY cl.id FOR UPDATE OF cl, cla`, accountID, botID)
 	if err != nil {
-		return false, fmt.Errorf("UnlinkBotFromCustomerAccount license locks: %w", err)
+		return nil, fmt.Errorf("unlink bot from customer account license locks: %w", err)
 	}
 	for rows.Next() {
 		var ignored string
 		if err := rows.Scan(&ignored); err != nil {
 			rows.Close()
-			return false, fmt.Errorf("UnlinkBotFromCustomerAccount license scan: %w", err)
+			return nil, fmt.Errorf("unlink bot from customer account license scan: %w", err)
 		}
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return false, fmt.Errorf("UnlinkBotFromCustomerAccount license rows: %w", err)
+		return nil, fmt.Errorf("unlink bot from customer account license rows: %w", err)
 	}
 	rows.Close()
 	if _, err := tx.Exec(ctx, `
@@ -520,23 +530,35 @@ func UnlinkBotFromCustomerAccount(ctx context.Context, accountID, botID string) 
 		WHERE bot_id = $2 AND license_id IN (
 			SELECT license_id FROM cosmetic_license_assignments WHERE account_id = $1 AND bot_id = $2
 		)`, accountID, botID); err != nil {
-		return false, fmt.Errorf("UnlinkBotFromCustomerAccount loadout: %w", err)
+		return nil, fmt.Errorf("unlink bot from customer account loadout: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		DELETE FROM cosmetic_license_assignments WHERE account_id = $1 AND bot_id = $2`, accountID, botID); err != nil {
-		return false, fmt.Errorf("UnlinkBotFromCustomerAccount assignments: %w", err)
+		return nil, fmt.Errorf("unlink bot from customer account assignments: %w", err)
 	}
-	tag, err := tx.Exec(ctx, `DELETE FROM account_bot_links WHERE account_id = $1 AND bot_id = $2`, accountID, botID)
+	_, err = tx.Exec(ctx, `DELETE FROM account_bot_links WHERE account_id = $1 AND bot_id = $2`, accountID, botID)
 	if err != nil {
-		return false, fmt.Errorf("UnlinkBotFromCustomerAccount delete: %w", err)
+		return nil, fmt.Errorf("unlink bot from customer account delete: %w", err)
 	}
-	if err := appendPlatformAgentLinkEventTx(ctx, tx, accountID, botID, "unlinked", "arena_account_unlink", time.Now()); err != nil {
-		return false, fmt.Errorf("UnlinkBotFromCustomerAccount platform link: %w", err)
+	if err := appendPlatformAgentLinkEventTx(ctx, tx, accountID, botID, "unlinked", reason, time.Now()); err != nil {
+		return nil, fmt.Errorf("unlink bot from customer account platform link: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("UnlinkBotFromCustomerAccount commit: %w", err)
+	result := &PlatformAgentLinkResult{
+		AccountID: accountID,
+		AgentID:   botID,
+		Status:    "unlinked",
+		LinkedAt:  linkedAt,
 	}
-	return tag.RowsAffected() > 0, nil
+	if err := tx.QueryRow(ctx, `
+		SELECT revision, occurred_at
+		FROM platform_agent_link_events
+		WHERE account_id = $1 AND agent_id = $2
+		ORDER BY event_id DESC
+		LIMIT 1`, accountID, botID).Scan(&result.Revision, &result.UpdatedAt); err != nil {
+		return nil, fmt.Errorf("unlink bot from customer account load result: %w", err)
+	}
+	result.UnlinkedAt = &result.UpdatedAt
+	return result, nil
 }
 
 func IsBotLinkedToCustomerAccount(ctx context.Context, accountID, botID string) (bool, error) {
