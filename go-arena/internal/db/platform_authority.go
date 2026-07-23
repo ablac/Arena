@@ -989,29 +989,46 @@ func normalizedPlatformAccountStatusConstraint(definition string) string {
 }
 
 func reconcilePlatformAgentLinks(ctx context.Context) error {
-	tx, err := Pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("reconcile platform agent links begin: %w", err)
+	const maximumAttempts = 5
+	for attempt := 1; attempt <= maximumAttempts; attempt++ {
+		tx, err := Pool.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("reconcile platform agent links begin: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(2026071901::BIGINT)`); err != nil {
+			tx.Rollback(ctx)
+			return fmt.Errorf("reconcile platform agent links migration lock: %w", err)
+		}
+		if err := reconcilePlatformAgentLinksTx(ctx, tx); err != nil {
+			tx.Rollback(ctx)
+			if errors.Is(err, errPlatformAgentLinkReconciliationRetry) {
+				continue
+			}
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("reconcile platform agent links commit: %w", err)
+		}
+		return nil
 	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(2026071901::BIGINT)`); err != nil {
-		return fmt.Errorf("reconcile platform agent links migration lock: %w", err)
-	}
-	if err := reconcilePlatformAgentLinksTx(ctx, tx); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("reconcile platform agent links commit: %w", err)
-	}
-	return nil
+	return fmt.Errorf("reconcile platform agent links: %w after %d attempts",
+		errPlatformAgentLinkReconciliationRetry, maximumAttempts)
 }
 
+var errPlatformAgentLinkReconciliationRetry = errors.New("platform agent link reconciliation changed during repair")
+
 type platformAgentLinkRepair struct {
-	accountID  string
-	agentID    string
-	status     string
-	reason     string
-	occurredAt time.Time
+	accountID       string
+	agentID         string
+	status          string
+	reason          string
+	occurredAt      time.Time
+	expectedEventID int64
+}
+
+type platformAgentLinkIdentity struct {
+	accountID string
+	agentID   string
 }
 
 func reconcilePlatformAgentLinksTx(ctx context.Context, tx pgx.Tx) error {
@@ -1028,37 +1045,55 @@ func reconcilePlatformAgentLinksTx(ctx context.Context, tx pgx.Tx) error {
 func loadPlatformAgentLinkRepairsTx(ctx context.Context, tx pgx.Tx) ([]platformAgentLinkRepair, error) {
 	repairs := make([]platformAgentLinkRepair, 0)
 	rows, err := tx.Query(ctx, `
-		SELECT latest.account_id, links.bot_id, 'unlinked',
-		       'arena_reconciliation_transfer', NOW()
-		FROM account_bot_links AS links
-		JOIN LATERAL (
-			SELECT account_id, status
+		SELECT history.account_id, history.agent_id, 'unlinked',
+		       CASE WHEN current_link.account_id IS NULL
+		            THEN 'arena_reconciliation'
+		            ELSE 'arena_reconciliation_transfer'
+		       END,
+		       NOW(), history.event_id
+		FROM (
+			SELECT DISTINCT ON (account_id, agent_id)
+			       event_id, account_id, agent_id, status
 			FROM platform_agent_link_events
-			WHERE agent_id = links.bot_id
-			ORDER BY event_id DESC
-			LIMIT 1
-		) AS latest ON latest.status = 'linked'
-		WHERE latest.account_id <> links.account_id
-		ORDER BY links.bot_id`)
+			ORDER BY account_id, agent_id, event_id DESC
+		) AS history
+		LEFT JOIN account_bot_links AS current_link
+		  ON current_link.bot_id = history.agent_id
+		WHERE history.status = 'linked'
+		  AND current_link.account_id IS DISTINCT FROM history.account_id
+		ORDER BY history.agent_id, history.account_id`)
 	if err != nil {
-		return nil, fmt.Errorf("load transferred prior links: %w", err)
+		return nil, fmt.Errorf("load stale account link histories: %w", err)
 	}
+	staleAgentSet := make(map[string]struct{})
 	for rows.Next() {
 		var item platformAgentLinkRepair
-		if err := rows.Scan(&item.accountID, &item.agentID, &item.status, &item.reason, &item.occurredAt); err != nil {
+		if err := rows.Scan(
+			&item.accountID,
+			&item.agentID,
+			&item.status,
+			&item.reason,
+			&item.occurredAt,
+			&item.expectedEventID,
+		); err != nil {
 			rows.Close()
-			return nil, fmt.Errorf("scan transferred prior link: %w", err)
+			return nil, fmt.Errorf("scan stale account link history: %w", err)
 		}
 		repairs = append(repairs, item)
+		staleAgentSet[item.agentID] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return nil, fmt.Errorf("iterate transferred prior links: %w", err)
+		return nil, fmt.Errorf("iterate stale account link histories: %w", err)
 	}
 	rows.Close()
 
+	staleAgentIDs := make([]string, 0, len(staleAgentSet))
+	for agentID := range staleAgentSet {
+		staleAgentIDs = append(staleAgentIDs, agentID)
+	}
 	rows, err = tx.Query(ctx, `
-		SELECT links.account_id, links.bot_id, 'linked', 'arena_import', links.linked_at
+		SELECT links.account_id, links.bot_id, 'linked', 'arena_import', links.linked_at, 0::BIGINT
 		FROM account_bot_links AS links
 		LEFT JOIN LATERAL (
 			SELECT account_id, status
@@ -1069,13 +1104,21 @@ func loadPlatformAgentLinkRepairsTx(ctx context.Context, tx pgx.Tx) ([]platformA
 		) AS latest ON true
 		WHERE latest.status IS DISTINCT FROM 'linked'
 		  OR latest.account_id IS DISTINCT FROM links.account_id
-		ORDER BY links.bot_id`)
+		  OR links.bot_id = ANY($1::TEXT[])
+		ORDER BY links.bot_id`, staleAgentIDs)
 	if err != nil {
 		return nil, fmt.Errorf("load missing current links: %w", err)
 	}
 	for rows.Next() {
 		var item platformAgentLinkRepair
-		if err := rows.Scan(&item.accountID, &item.agentID, &item.status, &item.reason, &item.occurredAt); err != nil {
+		if err := rows.Scan(
+			&item.accountID,
+			&item.agentID,
+			&item.status,
+			&item.reason,
+			&item.occurredAt,
+			&item.expectedEventID,
+		); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("scan missing current link: %w", err)
 		}
@@ -1084,39 +1127,6 @@ func loadPlatformAgentLinkRepairsTx(ctx context.Context, tx pgx.Tx) ([]platformA
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return nil, fmt.Errorf("iterate missing current links: %w", err)
-	}
-	rows.Close()
-
-	rows, err = tx.Query(ctx, `
-		SELECT latest.account_id, agents.agent_id, 'unlinked',
-		       'arena_reconciliation', NOW()
-		FROM platform_agents AS agents
-		JOIN LATERAL (
-			SELECT account_id, status
-			FROM platform_agent_link_events
-			WHERE agent_id = agents.agent_id
-			ORDER BY event_id DESC
-			LIMIT 1
-		) AS latest ON latest.status = 'linked'
-		WHERE NOT EXISTS (
-			SELECT 1 FROM account_bot_links AS links
-			WHERE links.bot_id = agents.agent_id
-		  )
-		ORDER BY agents.agent_id`)
-	if err != nil {
-		return nil, fmt.Errorf("load stale durable links: %w", err)
-	}
-	for rows.Next() {
-		var item platformAgentLinkRepair
-		if err := rows.Scan(&item.accountID, &item.agentID, &item.status, &item.reason, &item.occurredAt); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("scan stale durable link: %w", err)
-		}
-		repairs = append(repairs, item)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, fmt.Errorf("iterate stale durable links: %w", err)
 	}
 	rows.Close()
 	return repairs, nil
@@ -1199,13 +1209,24 @@ func lockPlatformAgentLinkRepairsTx(ctx context.Context, tx pgx.Tx, repairs []pl
 }
 
 func applyPlatformAgentLinkRepairsTx(ctx context.Context, tx pgx.Tx, repairs []platformAgentLinkRepair) error {
+	linkedRepairs := make(map[platformAgentLinkIdentity]struct{})
+	for _, item := range repairs {
+		if item.status == "linked" {
+			linkedRepairs[platformAgentLinkIdentity{accountID: item.accountID, agentID: item.agentID}] = struct{}{}
+		}
+	}
 	for _, item := range repairs {
 		// Discovery intentionally precedes the account/agent lock set. Re-read
 		// both projections now so a live link mutation that committed while
 		// reconciliation waited wins instead of being overwritten by a stale
 		// repair. Revalidate each item in sequence because a transfer repair
 		// first unlinks the old account and then links the current account.
-		needed, err := platformAgentLinkRepairStillNeededTx(ctx, tx, item)
+		needed, err := platformAgentLinkRepairStillNeededTx(
+			ctx,
+			tx,
+			item,
+			linkedRepairs,
+		)
 		if err != nil {
 			return err
 		}
@@ -1225,10 +1246,16 @@ func platformAgentLinkRepairStillNeededTx(
 	ctx context.Context,
 	tx pgx.Tx,
 	item platformAgentLinkRepair,
+	linkedRepairs map[platformAgentLinkIdentity]struct{},
 ) (bool, error) {
-	var currentAccountID, latestAccountID, latestStatus *string
+	var currentAccountID, latestAccountID, latestStatus, latestAccountStatus *string
+	var latestAccountEventID *int64
 	if err := tx.QueryRow(ctx, `
-		SELECT current_link.account_id, latest_event.account_id, latest_event.status
+		SELECT current_link.account_id,
+		       latest_event.account_id,
+		       latest_event.status,
+		       latest_account_event.event_id,
+		       latest_account_event.status
 		FROM (VALUES (1)) AS seed(value)
 		LEFT JOIN LATERAL (
 			SELECT account_id
@@ -1242,10 +1269,19 @@ func platformAgentLinkRepairStillNeededTx(
 			WHERE agent_id = $1
 			ORDER BY event_id DESC
 			LIMIT 1
-		) AS latest_event ON true`, item.agentID).Scan(
+		) AS latest_event ON true
+		LEFT JOIN LATERAL (
+			SELECT event_id, status
+			FROM platform_agent_link_events
+			WHERE agent_id = $1 AND account_id = $2
+			ORDER BY event_id DESC
+			LIMIT 1
+		) AS latest_account_event ON true`, item.agentID, item.accountID).Scan(
 		&currentAccountID,
 		&latestAccountID,
 		&latestStatus,
+		&latestAccountEventID,
+		&latestAccountStatus,
 	); err != nil {
 		return false, fmt.Errorf("revalidate platform agent link repair: %w", err)
 	}
@@ -1257,10 +1293,33 @@ func platformAgentLinkRepairStillNeededTx(
 			latestStatus != nil && *latestStatus == "linked"
 		return currentMatches && !latestMatches, nil
 	case "unlinked":
-		latestMatches := latestAccountID != nil && *latestAccountID == item.accountID &&
-			latestStatus != nil && *latestStatus == "linked"
+		if item.expectedEventID <= 0 {
+			return false, errors.New("unlinked platform agent repair requires an expected event")
+		}
+		expectedEventStillOpen := latestAccountEventID != nil &&
+			*latestAccountEventID == item.expectedEventID &&
+			latestAccountStatus != nil &&
+			*latestAccountStatus == "linked"
 		currentMatches := currentAccountID != nil && *currentAccountID == item.accountID
-		return latestMatches && !currentMatches, nil
+		if !expectedEventStillOpen || currentMatches {
+			return false, nil
+		}
+		if currentAccountID == nil {
+			return true, nil
+		}
+		_, paired := linkedRepairs[platformAgentLinkIdentity{
+			accountID: *currentAccountID,
+			agentID:   item.agentID,
+		}]
+		if !paired {
+			// A new current account appeared after discovery. It is absent
+			// from the account-first lock set, so applying this unlink would
+			// make the global latest event falsely unlinked. Roll back the
+			// whole attempt and rediscover in a fresh transaction instead of
+			// expanding the lock set after agent locks are already held.
+			return false, errPlatformAgentLinkReconciliationRetry
+		}
+		return true, nil
 	default:
 		return false, fmt.Errorf("unsupported platform agent link repair status %q", item.status)
 	}
