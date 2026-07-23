@@ -351,6 +351,15 @@ func canonicalizePlatformChange(change *PlatformChange) error {
 		if change.Transition != "linked" && change.Transition != "unlinked" && change.Transition != "updated" {
 			return fmt.Errorf("noncanonical platform change %s/%s", rawSubjectKind, rawTransition)
 		}
+	case "license":
+		if change.Transition != "created" && change.Transition != "updated" && change.Transition != "refunded" &&
+			change.Transition != "revoked" && change.Transition != "chargeback" && change.Transition != "expired" {
+			return fmt.Errorf("noncanonical platform change %s/%s", rawSubjectKind, rawTransition)
+		}
+	case "license_assignment":
+		if change.Transition != "assigned" && change.Transition != "unassigned" && change.Transition != "updated" {
+			return fmt.Errorf("noncanonical platform change %s/%s", rawSubjectKind, rawTransition)
+		}
 	default:
 		return fmt.Errorf("noncanonical platform change %s/%s", rawSubjectKind, rawTransition)
 	}
@@ -765,7 +774,7 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS platform_changes (
 			change_id BIGSERIAL PRIMARY KEY,
 			subject_kind TEXT NOT NULL
-				CHECK (subject_kind IN ('account', 'agent', 'game_profile', 'agent_link')),
+				CHECK (subject_kind IN ('account', 'agent', 'game_profile', 'agent_link', 'license', 'license_assignment')),
 			subject_id TEXT NOT NULL CHECK (char_length(subject_id) BETWEEN 1 AND 256),
 			transition TEXT NOT NULL CHECK (char_length(transition) BETWEEN 1 AND 64),
 			revision BIGINT NOT NULL CHECK (revision >= 1),
@@ -878,6 +887,9 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 		if _, err := tx.Exec(ctx, statement); err != nil {
 			return fmt.Errorf("EnsurePlatformAuthoritySchema exec: %w", err)
 		}
+	}
+	if err := ensurePlatformLicenseLifecycleSchemaTx(ctx, tx); err != nil {
+		return fmt.Errorf("EnsurePlatformAuthoritySchema license lifecycle: %w", err)
 	}
 	if err := reconcilePlatformAgentLinksTx(ctx, tx); err != nil {
 		return fmt.Errorf("EnsurePlatformAuthoritySchema reconcile agent links: %w", err)

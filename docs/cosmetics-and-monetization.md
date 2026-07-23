@@ -23,6 +23,11 @@ An API key is only a one-time proof that the signed-in customer controls a bot.
 - Unassigning, unlinking a bot, fully refunding, charging back, or revoking a
   license removes that exact paid loadout. A partial refund flags the order for
   review without guessing which piece to remove. Other orders are untouched.
+- `refunded`, `revoked`, `chargeback`, and `expired` are terminal per-license
+  states. They are monotonic in provider-truth order (`chargeback > refunded >
+  revoked > expired > active`): a stronger terminal fact may supersede a
+  weaker one, but replay, recovery, startup reconciliation, or a weaker event
+  can never reactivate or downgrade that license.
 - Losing, revoking, or replacing an API key does not delete account ownership.
 - Linking a bot already owned by another account is rejected; possession of a
   leaked key cannot silently steal the existing account link.
@@ -436,6 +441,10 @@ cosmetic_licenses
 cosmetic_license_assignments
   exact license -> exact linked bot; primary key enforces one bot per license
 
+platform_license_lifecycle_events
+  bounded immutable license history with source, reason, provider reference,
+  previous/current status and agent, and revision
+
 bot_cosmetic_loadout
   one equipped cosmetic per bot/slot and the exact paid license when applicable
 
@@ -497,6 +506,8 @@ signature before acting on an event; see [Stripe webhooks](https://docs.stripe.c
   order's mapped licenses and remove their assignments/loadouts.
 - A created dispute immediately revokes only that order's mapped licenses and
   becomes terminal. Late paid events never restore refunded/disputed copies.
+  A chargeback may supersede a weaker terminal state, but no weaker event can
+  overwrite chargeback truth.
 - Failed or canceled refund updates recompute from successful refund records;
   `charge.refunded` cumulative totals do not double-count individual events.
 - Subscription Checkout uses a server-owned recurring `1999 USD/month` amount.
@@ -513,8 +524,10 @@ signature before acting on an event; see [Stripe webhooks](https://docs.stripe.c
   nondeleted item with quantity 1, `1999 USD`, and a one-month recurring interval
   is required. Any plan drift becomes recoverable `billing_mismatch`: access is
   removed while the customer can still open Billing Portal, and a later valid
-  provider state restores access. Provider-observation timestamps order these
-  reconciliations even when Stripe events share a one-second `created` value.
+  provider state restores access by issuing replacement licenses and remapping
+  the subscription. Ended licenses remain terminal. Provider-observation
+  timestamps order these reconciliations even when Stripe events share a
+  one-second `created` value.
 - Signed terminal cancellation/deletion payloads remain directly actionable
   during a transient Stripe API outage. Terminal-state dominance prevents any
   later nonterminal delivery from restoring ended access.

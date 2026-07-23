@@ -200,6 +200,71 @@ func TestPostgresCosmeticSubscriptionLifecycleAndFutureSetSync(t *testing.T) {
 	}
 }
 
+func TestPostgresCosmeticSubscriptionSyncNeverReactivatesTerminalLicense(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+	account, err := UpsertVerifiedCustomerAccount(ctx, "terminal-subscriber@example.com", "https://id.example", "terminal-subscriber", "Terminal Subscriber")
+	if err != nil {
+		t.Fatalf("create subscriber: %v", err)
+	}
+	subscription, err := CreateCosmeticSubscription(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("CreateCosmeticSubscription: %v", err)
+	}
+	if _, err := AttachCosmeticSubscriptionCheckout(ctx, account.ID, subscription.ID, "cs_terminal_subscription"); err != nil {
+		t.Fatalf("AttachCosmeticSubscriptionCheckout: %v", err)
+	}
+
+	started := time.Now().UTC().Truncate(time.Second)
+	periodEnd := started.Add(30 * 24 * time.Hour)
+	active := CosmeticSubscriptionEventInput{
+		Provider: "stripe", EventID: "evt_terminal_subscription_active", EventType: CosmeticStripeSubscriptionCreated,
+		PayloadHash: subscriptionEventHash("f"), SubscriptionID: subscription.ID, AccountID: account.ID,
+		CheckoutSessionID: "cs_terminal_subscription", ProviderSubscriptionID: "sub_terminal_provider", CustomerID: "cus_terminal_provider",
+		Status: CosmeticSubscriptionStatusActive, CurrentPeriodEnd: &periodEnd, ProviderCreatedAt: started,
+	}
+	if result, err := ProcessCosmeticSubscriptionEvent(ctx, active); err != nil || !result.Applied || result.LicensesCreated == 0 {
+		t.Fatalf("activate subscription = (%+v, %v)", result, err)
+	}
+
+	var licenseID string
+	if err := Pool.QueryRow(ctx, `
+		SELECT sl.license_id
+		FROM cosmetic_subscription_licenses sl
+		JOIN cosmetic_licenses l ON l.id = sl.license_id
+		WHERE sl.subscription_id = $1 AND l.cosmetic_id = 'skin-neon-grid'`, subscription.ID).Scan(&licenseID); err != nil {
+		t.Fatalf("load subscription license: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `UPDATE cosmetic_licenses SET status = 'refunded' WHERE id = $1`, licenseID); err != nil {
+		t.Fatalf("mark subscription license refunded: %v", err)
+	}
+
+	tx, err := Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin subscription reconciliation: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	_, reactivated, err := syncCosmeticSubscriptionLicenses(ctx, tx, subscription.ID, account.ID)
+	if err != nil {
+		t.Fatalf("syncCosmeticSubscriptionLicenses: %v", err)
+	}
+	if reactivated != 0 {
+		t.Fatalf("terminal subscription licenses reactivated = %d, want 0", reactivated)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit subscription reconciliation: %v", err)
+	}
+	var status string
+	if err := Pool.QueryRow(ctx, `SELECT status FROM cosmetic_licenses WHERE id = $1`, licenseID).Scan(&status); err != nil {
+		t.Fatalf("load synchronized license: %v", err)
+	}
+	if status != "refunded" {
+		t.Fatalf("terminal subscription license status = %q, want refunded", status)
+	}
+}
+
 func TestPostgresCosmeticSubscriptionAutomaticallyAddsNewlyPublishedTrail(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {
@@ -344,6 +409,35 @@ func TestPostgresCosmeticSubscriptionAuthoritativeBillingMismatchRevokesAndCanRe
 	if err != nil || !active.Subscription.HasAccess || active.LicensesCreated != launchSubscriptionCosmeticCount {
 		t.Fatalf("initial authoritative active = (%+v, %v)", active, err)
 	}
+	initialRows, err := Pool.Query(ctx, `
+		SELECT item_id, license_id, generation
+		FROM cosmetic_subscription_licenses
+		WHERE subscription_id = $1
+		ORDER BY item_id`, subscription.ID)
+	if err != nil {
+		t.Fatalf("load initial generations: %v", err)
+	}
+	initialItemIDs := make([]string, 0)
+	initialLicenseIDs := make([]string, 0)
+	for initialRows.Next() {
+		var itemID, licenseID string
+		var generation int64
+		if err := initialRows.Scan(&itemID, &licenseID, &generation); err != nil {
+			initialRows.Close()
+			t.Fatalf("scan initial generation: %v", err)
+		}
+		if generation != 1 {
+			initialRows.Close()
+			t.Fatalf("initial generation for %s = %d, want 1", itemID, generation)
+		}
+		initialItemIDs = append(initialItemIDs, itemID)
+		initialLicenseIDs = append(initialLicenseIDs, licenseID)
+	}
+	if err := initialRows.Err(); err != nil {
+		initialRows.Close()
+		t.Fatalf("initial generation rows: %v", err)
+	}
+	initialRows.Close()
 
 	// The signed event is older, but its provider observation is newer. The
 	// authoritative billing mismatch must apply and revoke access.
@@ -371,15 +465,24 @@ func TestPostgresCosmeticSubscriptionAuthoritativeBillingMismatchRevokesAndCanRe
 	if err != nil || !recovered.Applied || !recovered.Subscription.HasAccess || !recovered.Subscription.CanManage {
 		t.Fatalf("authoritative billing recovery = (%+v, %v)", recovered, err)
 	}
-	var activeLicenses int
+	var activeLicenses, replacedLicenses, preservedTerminalLicenses int
 	if err := Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM cosmetic_subscription_licenses sl
-		JOIN cosmetic_licenses l ON l.id = sl.license_id
-		WHERE sl.subscription_id = $1 AND l.status = 'active'`, subscription.ID).Scan(&activeLicenses); err != nil {
+		SELECT
+			COUNT(*) FILTER (WHERE current.status = 'active' AND sl.generation = 2),
+			COUNT(*) FILTER (WHERE sl.license_id <> initial.license_id),
+			COUNT(*) FILTER (WHERE original.status = 'revoked')
+		FROM cosmetic_subscription_licenses AS sl
+		JOIN cosmetic_licenses AS current ON current.id = sl.license_id
+		JOIN (SELECT * FROM UNNEST($2::TEXT[], $3::TEXT[]) AS seeded(item_id, license_id)) AS initial
+		  ON initial.item_id = sl.item_id
+		JOIN cosmetic_licenses AS original ON original.id = initial.license_id
+		WHERE sl.subscription_id = $1`, subscription.ID, initialItemIDs, initialLicenseIDs).Scan(
+		&activeLicenses, &replacedLicenses, &preservedTerminalLicenses,
+	); err != nil {
 		t.Fatalf("count recovered licenses: %v", err)
 	}
-	if activeLicenses != launchSubscriptionCosmeticCount {
-		t.Fatalf("recovered active licenses = %d, want %d", activeLicenses, launchSubscriptionCosmeticCount)
+	if activeLicenses != launchSubscriptionCosmeticCount || replacedLicenses != launchSubscriptionCosmeticCount || preservedTerminalLicenses != launchSubscriptionCosmeticCount {
+		t.Fatalf("recovered generations = active %d replaced %d terminal %d, want %d each", activeLicenses, replacedLicenses, preservedTerminalLicenses, launchSubscriptionCosmeticCount)
 	}
 
 	// A slower request whose observation began earlier cannot reverse the newer

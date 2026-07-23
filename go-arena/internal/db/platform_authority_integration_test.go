@@ -905,7 +905,10 @@ func TestPostgresPlatformAuthorityBackfillsStableArenaAgentsWithoutTouchingLicen
 		if err != nil {
 			t.Fatalf("GrantCosmeticLicense %s: %v", status, err)
 		}
-		if _, err := Pool.Exec(ctx, `UPDATE cosmetic_licenses SET status = $2 WHERE id = $1`, license.ID, status); err != nil {
+		if _, err := TransitionPlatformLicense(ctx, PlatformLicenseTransitionCommand{
+			LicenseID: license.ID, TargetStatus: status, ExpectedRevision: license.Revision,
+			Reason: "platform_authority_fixture", IdempotencyKey: "platform-authority-" + status,
+		}); err != nil {
 			t.Fatalf("set %s license status: %v", status, err)
 		}
 	}

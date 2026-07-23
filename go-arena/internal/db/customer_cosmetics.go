@@ -25,6 +25,7 @@ var (
 	ErrCosmeticLicenseNotOwned          = errors.New("cosmetic license is not owned by this account")
 	ErrCosmeticLicenseReferenceRequired = errors.New("external reference is required for provider fulfillment")
 	ErrCosmeticLicenseGrantConflict     = errors.New("external reference already granted a different cosmetic license")
+	ErrCosmeticLicenseAlreadyAssigned   = errors.New("cosmetic license is already assigned to another agent")
 )
 
 // CustomerAccount is the durable owner of purchased cosmetics. API keys are
@@ -62,6 +63,7 @@ type CosmeticLicense struct {
 	Status          string       `json:"status"`
 	Source          string       `json:"source"`
 	ExternalRef     *string      `json:"external_reference,omitempty"`
+	Revision        int64        `json:"revision"`
 	GrantedAt       time.Time    `json:"granted_at"`
 	UpdatedAt       time.Time    `json:"updated_at"`
 	Item            CosmeticItem `json:"item"`
@@ -446,23 +448,14 @@ func linkBotToCustomerAccountTx(
 	}
 	legacyRows.Close()
 	for _, claim := range claims {
-		if _, err := tx.Exec(ctx, `
-			UPDATE cosmetic_licenses
-			SET account_id = $2, legacy_bot_id = NULL, assigned_bot_id = NULL, updated_at = NOW()
-			WHERE id = $1`, claim.licenseID, accountID); err != nil {
-			return nil, false, fmt.Errorf("LinkBotToCustomerAccount claim legacy: %w", err)
-		}
+		var preserveAgentID *string
 		if claim.status == "active" && claim.assigned != nil && *claim.assigned == botID {
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO cosmetic_license_assignments (license_id, account_id, bot_id, assigned_at)
-				VALUES ($1, $2, $3, NOW())`, claim.licenseID, accountID, botID); err != nil {
-				return nil, false, fmt.Errorf("LinkBotToCustomerAccount migrate assignment: %w", err)
-			}
-			if _, err := tx.Exec(ctx, `
-				UPDATE bot_cosmetic_loadout SET account_id = $2, updated_at = NOW()
-				WHERE license_id = $1 AND bot_id = $3`, claim.licenseID, accountID, botID); err != nil {
-				return nil, false, fmt.Errorf("LinkBotToCustomerAccount migrate loadout: %w", err)
-			}
+			preserveAgentID = &botID
+		}
+		if _, err := claimCosmeticLicenseTx(
+			ctx, tx, claim.licenseID, accountID, preserveAgentID, "arena_agent_link_claim",
+		); err != nil {
+			return nil, false, fmt.Errorf("LinkBotToCustomerAccount claim legacy: %w", err)
 		}
 	}
 	if err := tx.QueryRow(ctx, `SELECT linked_at FROM account_bot_links WHERE account_id = $1 AND bot_id = $2`,
@@ -513,28 +506,30 @@ func unlinkBotFromCustomerAccountTx(ctx context.Context, tx pgx.Tx, accountID, b
 	if err != nil {
 		return nil, fmt.Errorf("unlink bot from customer account license locks: %w", err)
 	}
+	licenseIDs := make([]string, 0)
 	for rows.Next() {
-		var ignored string
-		if err := rows.Scan(&ignored); err != nil {
+		var licenseID string
+		if err := rows.Scan(&licenseID); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("unlink bot from customer account license scan: %w", err)
 		}
+		licenseIDs = append(licenseIDs, licenseID)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return nil, fmt.Errorf("unlink bot from customer account license rows: %w", err)
 	}
 	rows.Close()
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM bot_cosmetic_loadout
-		WHERE bot_id = $2 AND license_id IN (
-			SELECT license_id FROM cosmetic_license_assignments WHERE account_id = $1 AND bot_id = $2
-		)`, accountID, botID); err != nil {
-		return nil, fmt.Errorf("unlink bot from customer account loadout: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM cosmetic_license_assignments WHERE account_id = $1 AND bot_id = $2`, accountID, botID); err != nil {
-		return nil, fmt.Errorf("unlink bot from customer account assignments: %w", err)
+	for _, licenseID := range licenseIDs {
+		license, _, err := lockPlatformCosmeticLicenseTx(ctx, tx, licenseID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := applyCosmeticLicenseAssignmentTx(
+			ctx, tx, license, nil, "unassigned", "arena", "arena_agent_unlink",
+		); err != nil {
+			return nil, err
+		}
 	}
 	_, err = tx.Exec(ctx, `DELETE FROM account_bot_links WHERE account_id = $1 AND bot_id = $2`, accountID, botID)
 	if err != nil {
@@ -578,7 +573,7 @@ const cosmeticLicenseSelect = `
 	SELECT cl.id, cl.account_id, cl.legacy_bot_id, cl.cosmetic_id,
 	       COALESCE(cla.bot_id, cl.assigned_bot_id), b.name,
 	       EXISTS (SELECT 1 FROM bot_cosmetic_loadout l WHERE l.license_id = cl.id) AS equipped,
-	       cl.status, cl.source, cl.external_reference,
+	       cl.status, cl.source, cl.external_reference, cl.revision,
 	       cl.granted_at, cl.updated_at,
 	       i.id, i.name, i.description, i.slot, i.asset_key, i.rarity,
 	       i.price_cents, i.currency, i.is_free, i.is_purchasable,
@@ -597,7 +592,7 @@ func scanCosmeticLicense(row rowScanner) (*CosmeticLicense, error) {
 	var license CosmeticLicense
 	err := row.Scan(&license.ID, &license.AccountID, &license.LegacyBotID, &license.CosmeticID,
 		&license.AssignedBotID, &license.AssignedBotName, &license.Equipped,
-		&license.Status, &license.Source, &license.ExternalRef,
+		&license.Status, &license.Source, &license.ExternalRef, &license.Revision,
 		&license.GrantedAt, &license.UpdatedAt,
 		&license.Item.ID, &license.Item.Name, &license.Item.Description, &license.Item.Slot,
 		&license.Item.AssetKey, &license.Item.Rarity, &license.Item.PriceCents,
@@ -721,19 +716,10 @@ func GrantCosmeticLicense(ctx context.Context, rawEmail, cosmeticID, source, ext
 				// claims that exact copy without reactivating its status or creating
 				// a duplicate. Any legacy loadout is removed because the copy is now
 				// account-owned and intentionally unassigned.
-				if _, err := tx.Exec(ctx, `
-					DELETE FROM bot_cosmetic_loadout WHERE license_id = $1`, existingID); err != nil {
-					return nil, false, fmt.Errorf("GrantCosmeticLicense legacy loadout: %w", err)
-				}
-				tag, err := tx.Exec(ctx, `
-					UPDATE cosmetic_licenses
-					SET account_id = $2, legacy_bot_id = NULL, assigned_bot_id = NULL, updated_at = NOW()
-					WHERE id = $1 AND account_id IS NULL`, existingID, account.ID)
-				if err != nil {
+				if _, err := claimCosmeticLicenseTx(
+					ctx, tx, existingID, account.ID, nil, "arena_fulfillment_claim",
+				); err != nil {
 					return nil, false, fmt.Errorf("GrantCosmeticLicense claim legacy: %w", err)
-				}
-				if tag.RowsAffected() != 1 {
-					return nil, false, ErrCosmeticLicenseGrantConflict
 				}
 				if err := tx.Commit(ctx); err != nil {
 					return nil, false, fmt.Errorf("GrantCosmeticLicense claim legacy commit: %w", err)
@@ -771,11 +757,10 @@ func GrantCosmeticLicense(ctx context.Context, rawEmail, cosmeticID, source, ext
 	}
 
 	licenseID := uuid.NewString()
-	_, err = tx.Exec(ctx, `
-		INSERT INTO cosmetic_licenses
-			(id, account_id, cosmetic_id, source, external_reference, granted_at, updated_at)
-		VALUES ($1, $2, $3, $4, NULLIF($5, ''), NOW(), NOW())`,
-		licenseID, account.ID, cosmeticID, source, externalReference)
+	_, err = createCosmeticLicenseTx(ctx, tx, cosmeticLicenseCreate{
+		LicenseID: licenseID, AccountID: &account.ID, CosmeticID: cosmeticID,
+		Source: source, Reason: "arena_license_grant", ExternalReference: externalReference,
+	})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -852,23 +837,18 @@ func AssignCosmeticLicense(ctx context.Context, accountID, licenseID string, bot
 			return nil, ErrCustomerBotKeyInactive
 		}
 	}
-	sameAssignment := previous != nil && normalizedBotID != nil && *previous == *normalizedBotID
-	if !sameAssignment {
-		// Deleting the old assignment cascades only this exact license's
-		// loadout; it never overwrites the destination bot's slot.
-		if _, err := tx.Exec(ctx, `DELETE FROM cosmetic_license_assignments WHERE license_id = $1`, licenseID); err != nil {
-			return nil, fmt.Errorf("AssignCosmeticLicense clear: %w", err)
-		}
-		if normalizedBotID != nil {
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO cosmetic_license_assignments (license_id, account_id, bot_id, assigned_at)
-				VALUES ($1, $2, $3, NOW())`, licenseID, accountID, *normalizedBotID); err != nil {
-				return nil, fmt.Errorf("AssignCosmeticLicense insert: %w", err)
-			}
-		}
+	platformLicense, _, err := lockPlatformCosmeticLicenseTx(ctx, tx, licenseID)
+	if err != nil {
+		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE cosmetic_licenses SET updated_at = NOW() WHERE id = $1`, licenseID); err != nil {
-		return nil, fmt.Errorf("AssignCosmeticLicense touch: %w", err)
+	transition := "assigned"
+	reason := "arena_compatibility_assignment"
+	if normalizedBotID == nil {
+		transition = "unassigned"
+		reason = "arena_compatibility_unassignment"
+	}
+	if _, err := applyCosmeticLicenseAssignmentTx(ctx, tx, platformLicense, normalizedBotID, transition, "arena", reason); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("AssignCosmeticLicense commit: %w", err)
@@ -1027,22 +1007,17 @@ func RevokeCosmeticLicense(ctx context.Context, licenseID string) (*CosmeticAssi
 		if previous == nil {
 			previous = legacyAssigned
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM cosmetic_license_assignments WHERE license_id = $1`, licenseID); err != nil {
-			tx.Rollback(ctx)
-			return nil, false, fmt.Errorf("RevokeCosmeticLicense unassign: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `DELETE FROM bot_cosmetic_loadout WHERE license_id = $1`, licenseID); err != nil {
-			tx.Rollback(ctx)
-			return nil, false, fmt.Errorf("RevokeCosmeticLicense loadout: %w", err)
-		}
-		tag, err := tx.Exec(ctx, `
-			UPDATE cosmetic_licenses
-			SET status = CASE WHEN status = 'active' THEN 'revoked' ELSE status END,
-			    assigned_bot_id = NULL, updated_at = NOW()
-			WHERE id = $1`, licenseID)
+		platformLicense, _, err := lockPlatformCosmeticLicenseTx(ctx, tx, licenseID)
 		if err != nil {
 			tx.Rollback(ctx)
-			return nil, false, fmt.Errorf("RevokeCosmeticLicense update: %w", err)
+			return nil, false, err
+		}
+		transitioned, err := applyCosmeticLicenseTerminalTransitionTx(
+			ctx, tx, platformLicense, "revoked", "arena_admin", "arena_admin_revoke", "",
+		)
+		if err != nil {
+			tx.Rollback(ctx)
+			return nil, false, err
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return nil, false, fmt.Errorf("RevokeCosmeticLicense commit: %w", err)
@@ -1052,7 +1027,7 @@ func RevokeCosmeticLicense(ctx context.Context, licenseID string) (*CosmeticAssi
 			return nil, false, err
 		}
 		return &CosmeticAssignmentChange{License: *license, PreviousBotID: previous},
-			status == "active" && tag.RowsAffected() > 0, nil
+			status == "active" && transitioned, nil
 	}
 	return nil, false, fmt.Errorf("RevokeCosmeticLicense: account ownership changed repeatedly")
 }

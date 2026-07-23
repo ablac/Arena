@@ -108,6 +108,22 @@ func (PostgresAuthority) RevokeLicense(ctx context.Context, licenseID string) (*
 	return db.RevokeCosmeticLicense(ctx, licenseID)
 }
 
+func (PostgresAuthority) AssignLicenseExact(ctx context.Context, command db.PlatformLicenseAssignmentCommand) (*db.PlatformCosmeticLicense, error) {
+	return db.AssignPlatformLicense(ctx, command)
+}
+
+func (PostgresAuthority) UnassignLicenseExact(ctx context.Context, command db.PlatformLicenseUnassignmentCommand) (*db.PlatformCosmeticLicense, error) {
+	return db.UnassignPlatformLicense(ctx, command)
+}
+
+func (PostgresAuthority) TransitionLicense(ctx context.Context, command db.PlatformLicenseTransitionCommand) (*db.PlatformCosmeticLicense, error) {
+	return db.TransitionPlatformLicense(ctx, command)
+}
+
+func (PostgresAuthority) LicenseHistory(ctx context.Context, licenseID string, afterEventID int64, limit int) ([]db.PlatformLicenseLifecycleEvent, int64, error) {
+	return db.ListPlatformLicenseLifecycleEvents(ctx, licenseID, afterEventID, limit)
+}
+
 func (PostgresAuthority) AdminAccess(ctx context.Context, email string) (*db.CosmeticAdminAccess, error) {
 	return db.GetCosmeticAdminAccessByEmail(ctx, email)
 }
