@@ -563,6 +563,182 @@ func TestPostgresPlatformChangeOrderingDoesNotDeadlockRestartReconciliationAndPr
 	}
 }
 
+func TestPostgresPlatformAgentLinkReconciliationDoesNotOverwriteConcurrentUnlink(t *testing.T) {
+	ctx, cancel := context.WithTimeout(useFreshPostgresSchema(t), 15*time.Second)
+	defer cancel()
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	bot := createCustomerCosmeticsTestBot(t, ctx, "reconcile-unlink")
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"reconcile-unlink@example.com",
+		"https://id.example",
+		"reconcile-unlink",
+		"Reconcile Unlink",
+	)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		INSERT INTO account_api_keys (account_id, api_key_id, linked_at)
+		VALUES ($1, $2, NOW())`, account.ID, bot.APIKeyID); err != nil {
+		t.Fatalf("seed unreconciled API key ownership: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		INSERT INTO account_bot_links (account_id, bot_id, linked_at)
+		VALUES ($1, $2, NOW())`, account.ID, bot.ID); err != nil {
+		t.Fatalf("seed unreconciled account link: %v", err)
+	}
+
+	reconcileTx, err := Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin reconciliation transaction: %v", err)
+	}
+	defer reconcileTx.Rollback(ctx)
+	repairs, err := loadPlatformAgentLinkRepairsTx(ctx, reconcileTx)
+	if err != nil {
+		t.Fatalf("discover reconciliation repairs: %v", err)
+	}
+	if len(repairs) != 1 || repairs[0].accountID != account.ID ||
+		repairs[0].agentID != bot.ID || repairs[0].status != "linked" {
+		t.Fatalf("discovered repairs = %+v, want one linked repair", repairs)
+	}
+
+	unlinked, err := UnlinkBotFromCustomerAccount(ctx, account.ID, bot.ID)
+	if err != nil || !unlinked {
+		t.Fatalf("concurrent unlink = (%v, %v), want success", unlinked, err)
+	}
+	if err := lockPlatformAgentLinkRepairsTx(ctx, reconcileTx, repairs); err != nil {
+		t.Fatalf("lock stale reconciliation repairs: %v", err)
+	}
+	if err := applyPlatformAgentLinkRepairsTx(ctx, reconcileTx, repairs); err != nil {
+		t.Fatalf("apply stale reconciliation repairs: %v", err)
+	}
+	if err := reconcileTx.Commit(ctx); err != nil {
+		t.Fatalf("commit reconciliation transaction: %v", err)
+	}
+
+	var authoritativeLinks int
+	if err := Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM account_bot_links
+		WHERE account_id = $1 AND bot_id = $2`, account.ID, bot.ID).Scan(&authoritativeLinks); err != nil {
+		t.Fatalf("count authoritative links: %v", err)
+	}
+	if authoritativeLinks != 0 {
+		t.Fatalf("authoritative links = %d, want 0", authoritativeLinks)
+	}
+	var latestStatus string
+	if err := Pool.QueryRow(ctx, `
+		SELECT status FROM platform_agent_link_events
+		WHERE agent_id = $1
+		ORDER BY event_id DESC
+		LIMIT 1`, bot.ID).Scan(&latestStatus); err != nil {
+		t.Fatalf("load latest durable link status: %v", err)
+	}
+	if latestStatus != "unlinked" {
+		t.Fatalf("latest durable link status = %q, want unlinked", latestStatus)
+	}
+	var linkedEvents int
+	if err := Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM platform_agent_link_events
+		WHERE account_id = $1 AND agent_id = $2 AND status = 'linked'`,
+		account.ID, bot.ID).Scan(&linkedEvents); err != nil {
+		t.Fatalf("count stale linked events: %v", err)
+	}
+	if linkedEvents != 0 {
+		t.Fatalf("stale linked events = %d, want 0", linkedEvents)
+	}
+	var latestChange string
+	if err := Pool.QueryRow(ctx, `
+		SELECT transition FROM platform_changes
+		WHERE subject_kind = 'agent_link' AND subject_id = $1
+		ORDER BY change_id DESC
+		LIMIT 1`, bot.ID).Scan(&latestChange); err != nil {
+		t.Fatalf("load latest link change: %v", err)
+	}
+	if latestChange != "unlinked" {
+		t.Fatalf("latest link change = %q, want unlinked", latestChange)
+	}
+}
+
+func TestPostgresPlatformAgentLinkReconciliationDoesNotOverwriteConcurrentRelink(t *testing.T) {
+	ctx, cancel := context.WithTimeout(useFreshPostgresSchema(t), 15*time.Second)
+	defer cancel()
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	bot := createCustomerCosmeticsTestBot(t, ctx, "reconcile-relink")
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"reconcile-relink@example.com",
+		"https://id.example",
+		"reconcile-relink",
+		"Reconcile Relink",
+	)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if _, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID); err != nil {
+		t.Fatalf("create durable account link: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		DELETE FROM account_bot_links
+		WHERE account_id = $1 AND bot_id = $2`, account.ID, bot.ID); err != nil {
+		t.Fatalf("remove authoritative link without durable event: %v", err)
+	}
+
+	reconcileTx, err := Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin reconciliation transaction: %v", err)
+	}
+	defer reconcileTx.Rollback(ctx)
+	repairs, err := loadPlatformAgentLinkRepairsTx(ctx, reconcileTx)
+	if err != nil {
+		t.Fatalf("discover reconciliation repairs: %v", err)
+	}
+	if len(repairs) != 1 || repairs[0].accountID != account.ID ||
+		repairs[0].agentID != bot.ID || repairs[0].status != "unlinked" {
+		t.Fatalf("discovered repairs = %+v, want one unlinked repair", repairs)
+	}
+
+	if _, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID); err != nil {
+		t.Fatalf("concurrent relink: %v", err)
+	}
+	if err := lockPlatformAgentLinkRepairsTx(ctx, reconcileTx, repairs); err != nil {
+		t.Fatalf("lock stale reconciliation repairs: %v", err)
+	}
+	if err := applyPlatformAgentLinkRepairsTx(ctx, reconcileTx, repairs); err != nil {
+		t.Fatalf("apply stale reconciliation repairs: %v", err)
+	}
+	if err := reconcileTx.Commit(ctx); err != nil {
+		t.Fatalf("commit reconciliation transaction: %v", err)
+	}
+
+	var authoritativeLinks int
+	if err := Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM account_bot_links
+		WHERE account_id = $1 AND bot_id = $2`, account.ID, bot.ID).Scan(&authoritativeLinks); err != nil {
+		t.Fatalf("count authoritative links: %v", err)
+	}
+	if authoritativeLinks != 1 {
+		t.Fatalf("authoritative links = %d, want 1", authoritativeLinks)
+	}
+	var latestStatus string
+	if err := Pool.QueryRow(ctx, `
+		SELECT status FROM platform_agent_link_events
+		WHERE agent_id = $1
+		ORDER BY event_id DESC
+		LIMIT 1`, bot.ID).Scan(&latestStatus); err != nil {
+		t.Fatalf("load latest durable link status: %v", err)
+	}
+	if latestStatus != "linked" {
+		t.Fatalf("latest durable link status = %q, want linked", latestStatus)
+	}
+}
+
 func TestPostgresExactPR69CosmeticsSchemaUpgradeAndLegacyRevoke(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	// Recreate the exact cosmetics-related shape that PR #69 shipped: no

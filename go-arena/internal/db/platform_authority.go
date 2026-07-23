@@ -1006,15 +1006,27 @@ func reconcilePlatformAgentLinks(ctx context.Context) error {
 	return nil
 }
 
+type platformAgentLinkRepair struct {
+	accountID  string
+	agentID    string
+	status     string
+	reason     string
+	occurredAt time.Time
+}
+
 func reconcilePlatformAgentLinksTx(ctx context.Context, tx pgx.Tx) error {
-	type repair struct {
-		accountID  string
-		agentID    string
-		status     string
-		reason     string
-		occurredAt time.Time
+	repairs, err := loadPlatformAgentLinkRepairsTx(ctx, tx)
+	if err != nil {
+		return err
 	}
-	repairs := make([]repair, 0)
+	if err := lockPlatformAgentLinkRepairsTx(ctx, tx, repairs); err != nil {
+		return err
+	}
+	return applyPlatformAgentLinkRepairsTx(ctx, tx, repairs)
+}
+
+func loadPlatformAgentLinkRepairsTx(ctx context.Context, tx pgx.Tx) ([]platformAgentLinkRepair, error) {
+	repairs := make([]platformAgentLinkRepair, 0)
 	rows, err := tx.Query(ctx, `
 		SELECT latest.account_id, links.bot_id, 'unlinked',
 		       'arena_reconciliation_transfer', NOW()
@@ -1029,19 +1041,19 @@ func reconcilePlatformAgentLinksTx(ctx context.Context, tx pgx.Tx) error {
 		WHERE latest.account_id <> links.account_id
 		ORDER BY links.bot_id`)
 	if err != nil {
-		return fmt.Errorf("load transferred prior links: %w", err)
+		return nil, fmt.Errorf("load transferred prior links: %w", err)
 	}
 	for rows.Next() {
-		var item repair
+		var item platformAgentLinkRepair
 		if err := rows.Scan(&item.accountID, &item.agentID, &item.status, &item.reason, &item.occurredAt); err != nil {
 			rows.Close()
-			return fmt.Errorf("scan transferred prior link: %w", err)
+			return nil, fmt.Errorf("scan transferred prior link: %w", err)
 		}
 		repairs = append(repairs, item)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return fmt.Errorf("iterate transferred prior links: %w", err)
+		return nil, fmt.Errorf("iterate transferred prior links: %w", err)
 	}
 	rows.Close()
 
@@ -1056,22 +1068,22 @@ func reconcilePlatformAgentLinksTx(ctx context.Context, tx pgx.Tx) error {
 			LIMIT 1
 		) AS latest ON true
 		WHERE latest.status IS DISTINCT FROM 'linked'
-		   OR latest.account_id IS DISTINCT FROM links.account_id
+		  OR latest.account_id IS DISTINCT FROM links.account_id
 		ORDER BY links.bot_id`)
 	if err != nil {
-		return fmt.Errorf("load missing current links: %w", err)
+		return nil, fmt.Errorf("load missing current links: %w", err)
 	}
 	for rows.Next() {
-		var item repair
+		var item platformAgentLinkRepair
 		if err := rows.Scan(&item.accountID, &item.agentID, &item.status, &item.reason, &item.occurredAt); err != nil {
 			rows.Close()
-			return fmt.Errorf("scan missing current link: %w", err)
+			return nil, fmt.Errorf("scan missing current link: %w", err)
 		}
 		repairs = append(repairs, item)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return fmt.Errorf("iterate missing current links: %w", err)
+		return nil, fmt.Errorf("iterate missing current links: %w", err)
 	}
 	rows.Close()
 
@@ -1092,22 +1104,25 @@ func reconcilePlatformAgentLinksTx(ctx context.Context, tx pgx.Tx) error {
 		  )
 		ORDER BY agents.agent_id`)
 	if err != nil {
-		return fmt.Errorf("load stale durable links: %w", err)
+		return nil, fmt.Errorf("load stale durable links: %w", err)
 	}
 	for rows.Next() {
-		var item repair
+		var item platformAgentLinkRepair
 		if err := rows.Scan(&item.accountID, &item.agentID, &item.status, &item.reason, &item.occurredAt); err != nil {
 			rows.Close()
-			return fmt.Errorf("scan stale durable link: %w", err)
+			return nil, fmt.Errorf("scan stale durable link: %w", err)
 		}
 		repairs = append(repairs, item)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return fmt.Errorf("iterate stale durable links: %w", err)
+		return nil, fmt.Errorf("iterate stale durable links: %w", err)
 	}
 	rows.Close()
+	return repairs, nil
+}
 
+func lockPlatformAgentLinkRepairsTx(ctx context.Context, tx pgx.Tx, repairs []platformAgentLinkRepair) error {
 	accountSet := make(map[string]struct{}, len(repairs))
 	agentSet := make(map[string]struct{}, len(repairs))
 	for _, item := range repairs {
@@ -1125,7 +1140,7 @@ func reconcilePlatformAgentLinksTx(ctx context.Context, tx pgx.Tx) error {
 	// Acquire the full repair set before the first change-feed insertion.
 	// ORDER BY makes concurrent reconciliation use one account/agent order.
 	if len(accountIDs) > 0 {
-		rows, err = tx.Query(ctx, `
+		rows, err := tx.Query(ctx, `
 			SELECT account_id
 			FROM platform_account_metadata
 			WHERE account_id = ANY($1)
@@ -1153,7 +1168,7 @@ func reconcilePlatformAgentLinksTx(ctx context.Context, tx pgx.Tx) error {
 		}
 	}
 	if len(agentIDs) > 0 {
-		rows, err = tx.Query(ctx, `
+		rows, err := tx.Query(ctx, `
 			SELECT agent_id
 			FROM platform_agents
 			WHERE agent_id = ANY($1)
@@ -1180,8 +1195,23 @@ func reconcilePlatformAgentLinksTx(ctx context.Context, tx pgx.Tx) error {
 			return fmt.Errorf("lock reconciliation agents: found %d of %d", locked, len(agentIDs))
 		}
 	}
+	return nil
+}
 
+func applyPlatformAgentLinkRepairsTx(ctx context.Context, tx pgx.Tx, repairs []platformAgentLinkRepair) error {
 	for _, item := range repairs {
+		// Discovery intentionally precedes the account/agent lock set. Re-read
+		// both projections now so a live link mutation that committed while
+		// reconciliation waited wins instead of being overwritten by a stale
+		// repair. Revalidate each item in sequence because a transfer repair
+		// first unlinks the old account and then links the current account.
+		needed, err := platformAgentLinkRepairStillNeededTx(ctx, tx, item)
+		if err != nil {
+			return err
+		}
+		if !needed {
+			continue
+		}
 		if err := appendPlatformAgentLinkEventTx(
 			ctx, tx, item.accountID, item.agentID, item.status, item.reason, item.occurredAt,
 		); err != nil {
@@ -1189,4 +1219,49 @@ func reconcilePlatformAgentLinksTx(ctx context.Context, tx pgx.Tx) error {
 		}
 	}
 	return nil
+}
+
+func platformAgentLinkRepairStillNeededTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	item platformAgentLinkRepair,
+) (bool, error) {
+	var currentAccountID, latestAccountID, latestStatus *string
+	if err := tx.QueryRow(ctx, `
+		SELECT current_link.account_id, latest_event.account_id, latest_event.status
+		FROM (VALUES (1)) AS seed(value)
+		LEFT JOIN LATERAL (
+			SELECT account_id
+			FROM account_bot_links
+			WHERE bot_id = $1
+			LIMIT 1
+		) AS current_link ON true
+		LEFT JOIN LATERAL (
+			SELECT account_id, status
+			FROM platform_agent_link_events
+			WHERE agent_id = $1
+			ORDER BY event_id DESC
+			LIMIT 1
+		) AS latest_event ON true`, item.agentID).Scan(
+		&currentAccountID,
+		&latestAccountID,
+		&latestStatus,
+	); err != nil {
+		return false, fmt.Errorf("revalidate platform agent link repair: %w", err)
+	}
+
+	switch item.status {
+	case "linked":
+		currentMatches := currentAccountID != nil && *currentAccountID == item.accountID
+		latestMatches := latestAccountID != nil && *latestAccountID == item.accountID &&
+			latestStatus != nil && *latestStatus == "linked"
+		return currentMatches && !latestMatches, nil
+	case "unlinked":
+		latestMatches := latestAccountID != nil && *latestAccountID == item.accountID &&
+			latestStatus != nil && *latestStatus == "linked"
+		currentMatches := currentAccountID != nil && *currentAccountID == item.accountID
+		return latestMatches && !currentMatches, nil
+	default:
+		return false, fmt.Errorf("unsupported platform agent link repair status %q", item.status)
+	}
 }
