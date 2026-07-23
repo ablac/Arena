@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestPostgresPlatformLicenseTransitionIsRevisionedIdempotentAndTerminal(t *testing.T) {
@@ -55,6 +56,9 @@ func TestPostgresPlatformLicenseTransitionIsRevisionedIdempotentAndTerminal(t *t
 	if first.LicenseID != license.ID || first.AccountID != account.ID || first.Status != "refunded" ||
 		first.AssignedAgentID != nil || first.Revision != assignedRevision+1 {
 		t.Fatalf("transition result = %+v", first)
+	}
+	if first.CreatedAt.Location() != time.UTC || first.UpdatedAt.Location() != time.UTC {
+		t.Fatalf("transition timestamps are not canonical UTC: created=%v updated=%v", first.CreatedAt.Location(), first.UpdatedAt.Location())
 	}
 	var assignments, loadouts, history, changes, assignmentChanges int
 	var previousAgentID, previousStatus *string
@@ -134,6 +138,9 @@ func TestPostgresPlatformLicenseAssignmentAndUnassignmentAreExactCommands(t *tes
 	}
 	if assigned.AssignedAgentID == nil || *assigned.AssignedAgentID != bot.ID || assigned.Revision != license.Revision+1 {
 		t.Fatalf("assigned license = %+v", assigned)
+	}
+	if assigned.CreatedAt.Location() != time.UTC || assigned.UpdatedAt.Location() != time.UTC {
+		t.Fatalf("assignment timestamps are not canonical UTC: created=%v updated=%v", assigned.CreatedAt.Location(), assigned.UpdatedAt.Location())
 	}
 	replayed, err := AssignPlatformLicense(ctx, assign)
 	if err != nil || !reflect.DeepEqual(replayed, assigned) {
