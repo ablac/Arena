@@ -145,20 +145,62 @@ revision or conflicting idempotency-key reuse makes no ownership change. This
 checkpoint remains same-database and in-process; it adds no public platform
 HTTP handler, second writable authority, or Kingdom Grid runtime adapter.
 
+### W1b.4 terminal-license lifecycle checkpoint
+
+Arena issue [#223](https://github.com/ablac/Arena/issues/223) tracks the
+same-database W1b.4 delivery. The in-process authority now exposes exact
+assignment, explicit unassignment, and terminal lifecycle commands. Each exact
+command binds an 8-128 character idempotency key to its request, compares the
+expected license revision, and returns stable revision and idempotency errors.
+
+One private transactional lifecycle core owns license creation, deterministic
+claim, assignment, unassignment, and terminal cleanup. Existing Arena order,
+subscription, admin-membership, manual grant/revoke, account-link, and legacy
+entitlement handlers remain public compatibility facades over that core. A
+real mutation increments the license revision, appends internal durable
+history with separate source, reason, provider reference, previous/current
+status, and previous/current agent identity, and emits the existing ordered
+platform change in the same
+transaction. History reads are cursor-bounded and use the
+`(license_id,event_id)` index.
+
+`refunded`, `revoked`, `chargeback`, and `expired` are terminal license states
+with deterministic precedence (`chargeback > refunded > revoked > expired >
+active`). Stronger provider truth may supersede a weaker terminal status; no
+transition may reactivate or downgrade the license. Terminal cleanup removes
+the exact assignment and Arena loadout without changing gameplay data. A
+recoverable subscription billing mismatch therefore creates and maps a new
+license generation after valid provider recovery; it never changes the ended
+license back to active. Authentic legacy rows are normalized and projected
+into history and ordered changes during startup without reactivation.
+
+The PostgreSQL evidence covers exact replay and conflicting-key rejection,
+stale revisions, terminal precedence, concurrent terminal races, atomic
+upgrade rollback, all four terminal states, assignment/unassignment,
+subscription generations, demo regrant generations, authentic backfill,
+restart, bounded history, and the existing compatibility journeys.
+The actual W1b.3 binary at `1cee4b6` also completes its migration/startup
+preflight against the additive W1b.4 schema. Its former subscription
+reactivation statement fails closed at the monotonic status guard and leaves
+terminal rows unchanged, so rolling the writer back requires the documented
+license/subscription maintenance window rather than silently resurrecting
+access.
+W1b.4 remains in-process over the existing Arena records and adds no public
+platform HTTP route, provider-neutral purchase API, second writable authority,
+or physical extraction.
+
 ### Later W1b checkpoints
 
 Later checkpoints must add and prove the remaining operational contract before
 service extraction:
 
-1. license lifecycle reconciliation that never reactivates a terminal
-   refunded, revoked, chargeback, or expired license;
-2. provider-neutral fulfillment and subscription paths through the same
+1. provider-neutral fulfillment and subscription paths through the same
    authority;
-3. service-bearer authentication and the versioned platform HTTP adapter;
-4. checkpoint-specific backfill, restart, rollback, concurrency, and
+2. service-bearer authentication and the versioned platform HTTP adapter;
+3. checkpoint-specific backfill, restart, rollback, concurrency, and
    large-history verification before any physical database or service split.
 
 The native email verification transaction, Stripe order/subscription
-orchestration, and demo-bot legacy entitlement grants are explicit remaining
-legacy crossings. They stay on existing records until their authority methods
-can preserve the current transactional safety and recovery behavior.
+orchestration, and provider purchase creation remain explicit later crossings.
+Current Stripe and demo-bot handlers are W1b.4 compatibility callers of the
+private lifecycle core; they are not provider-neutral platform APIs.

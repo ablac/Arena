@@ -54,10 +54,21 @@ type CosmeticsAuthority interface {
 	ExpireAdminMembershipsForEmail(context.Context, string, time.Time) (int, []string, error)
 }
 
+// LicenseLifecycleAuthority exposes the revisioned W1b.4 shared-license
+// boundary without widening the compatibility interface used by Arena's
+// customer cosmetics handlers.
+type LicenseLifecycleAuthority interface {
+	AssignLicenseExact(context.Context, db.PlatformLicenseAssignmentCommand) (*db.PlatformCosmeticLicense, error)
+	UnassignLicenseExact(context.Context, db.PlatformLicenseUnassignmentCommand) (*db.PlatformCosmeticLicense, error)
+	TransitionLicense(context.Context, db.PlatformLicenseTransitionCommand) (*db.PlatformCosmeticLicense, error)
+	LicenseHistory(context.Context, string, int64, int) ([]db.PlatformLicenseLifecycleEvent, int64, error)
+}
+
 // Authority is the one logical shared authority consumed by Arena. Consumer
 // handlers accept the narrow facet they use so tests do not need broad mocks.
 type Authority interface {
 	IdentityAuthority
 	MetadataAuthority
 	CosmeticsAuthority
+	LicenseLifecycleAuthority
 }

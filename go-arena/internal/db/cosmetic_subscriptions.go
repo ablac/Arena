@@ -206,6 +206,7 @@ func EnsureCosmeticSubscriptionsSchema(ctx context.Context) error {
 			subscription_id TEXT NOT NULL REFERENCES cosmetic_subscriptions(id) ON DELETE RESTRICT,
 			item_id TEXT NOT NULL REFERENCES cosmetic_items(id) ON DELETE RESTRICT,
 			license_id TEXT NOT NULL UNIQUE REFERENCES cosmetic_licenses(id) ON DELETE RESTRICT,
+			generation BIGINT NOT NULL DEFAULT 1 CHECK (generation >= 1),
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			PRIMARY KEY (subscription_id, item_id)
 		)`,
@@ -520,85 +521,125 @@ func SyncCustomerCosmeticSubscriptionLicenses(ctx context.Context, accountID str
 }
 
 func syncCosmeticSubscriptionLicenses(ctx context.Context, tx pgx.Tx, subscriptionID, accountID string) (int, int, error) {
-	var created, reactivated int
-	if err := tx.QueryRow(ctx, `
-		WITH candidates AS MATERIALIZED (
-			SELECT DISTINCT i.id AS item_id
-			FROM cosmetic_pack_items pi
-			JOIN cosmetic_packs p ON p.id = pi.pack_id
-			JOIN cosmetic_categories pc ON pc.id = p.category_id
-			JOIN cosmetic_items i ON i.id = pi.item_id
-			JOIN cosmetic_categories ic ON ic.id = i.category_id
-			WHERE p.is_active = true AND p.is_purchasable = true AND p.is_free = false
-			  AND pc.is_active = true AND i.is_active = true AND ic.is_active = true
-		),
-		reactivated AS (
-			UPDATE cosmetic_licenses l
-			SET status = 'active', updated_at = NOW()
-			FROM cosmetic_subscription_licenses sl
-			JOIN candidates c ON c.item_id = sl.item_id
-			WHERE sl.subscription_id = $1 AND sl.license_id = l.id AND l.status <> 'active'
-			RETURNING l.id
-		),
-		missing AS MATERIALIZED (
-			SELECT c.item_id, gen_random_uuid()::TEXT AS license_id
-			FROM candidates c
-			LEFT JOIN cosmetic_subscription_licenses sl
-			  ON sl.subscription_id = $1 AND sl.item_id = c.item_id
-			WHERE sl.item_id IS NULL
-		),
-		inserted_licenses AS (
-			INSERT INTO cosmetic_licenses
-				(id, account_id, cosmetic_id, status, source, external_reference, granted_at, updated_at)
-			SELECT license_id, $2, item_id, 'active', 'stripe_subscription',
-				'cosmetic-subscription:' || $1 || ':item:' || item_id, NOW(), NOW()
-			FROM missing
-			RETURNING id, cosmetic_id
-		),
-		inserted_mappings AS (
-			INSERT INTO cosmetic_subscription_licenses (subscription_id, item_id, license_id, created_at)
-			SELECT $1, cosmetic_id, id, NOW()
-			FROM inserted_licenses
-			RETURNING license_id
-		)
-		SELECT
-			(SELECT COUNT(*) FROM inserted_mappings),
-			(SELECT COUNT(*) FROM reactivated)`, subscriptionID, accountID).Scan(&created, &reactivated); err != nil {
-		return 0, 0, fmt.Errorf("syncCosmeticSubscriptionLicenses set-based sync: %w", err)
+	rows, err := tx.Query(ctx, `
+		SELECT DISTINCT i.id AS item_id, COALESCE(sl.generation, 0)
+		FROM cosmetic_pack_items pi
+		JOIN cosmetic_packs p ON p.id = pi.pack_id
+		JOIN cosmetic_categories pc ON pc.id = p.category_id
+		JOIN cosmetic_items i ON i.id = pi.item_id
+		JOIN cosmetic_categories ic ON ic.id = i.category_id
+		LEFT JOIN cosmetic_subscription_licenses sl
+		  ON sl.subscription_id = $1 AND sl.item_id = i.id
+		LEFT JOIN cosmetic_licenses existing_license ON existing_license.id = sl.license_id
+		WHERE p.is_active = true AND p.is_purchasable = true AND p.is_free = false
+		  AND pc.is_active = true AND i.is_active = true AND ic.is_active = true
+		  AND (sl.item_id IS NULL OR existing_license.status <> 'active')
+		ORDER BY i.id, COALESCE(sl.generation, 0)`, subscriptionID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("syncCosmeticSubscriptionLicenses candidates: %w", err)
 	}
-	return created, reactivated, nil
+	type candidate struct {
+		itemID     string
+		generation int64
+	}
+	candidates := make([]candidate, 0)
+	for rows.Next() {
+		var item candidate
+		if err := rows.Scan(&item.itemID, &item.generation); err != nil {
+			rows.Close()
+			return 0, 0, fmt.Errorf("syncCosmeticSubscriptionLicenses scan: %w", err)
+		}
+		candidates = append(candidates, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, 0, fmt.Errorf("syncCosmeticSubscriptionLicenses rows: %w", err)
+	}
+	rows.Close()
+
+	inputs := make([]cosmeticLicenseCreate, 0, len(candidates))
+	itemIDs := make([]string, 0, len(candidates))
+	licenseIDs := make([]string, 0, len(candidates))
+	generations := make([]int64, 0, len(candidates))
+	for _, candidate := range candidates {
+		licenseID := uuid.NewString()
+		generation := candidate.generation + 1
+		if generation < 1 {
+			generation = 1
+		}
+		externalReference := fmt.Sprintf("cosmetic-subscription:%s:item:%s:generation:%d", subscriptionID, candidate.itemID, generation)
+		inputs = append(inputs, cosmeticLicenseCreate{
+			LicenseID: licenseID, AccountID: &accountID, CosmeticID: candidate.itemID,
+			Source: "stripe_subscription", Reason: "subscription_generation", ExternalReference: externalReference,
+		})
+		itemIDs = append(itemIDs, candidate.itemID)
+		licenseIDs = append(licenseIDs, licenseID)
+		generations = append(generations, generation)
+	}
+	inserted, err := createCosmeticLicensesTx(ctx, tx, inputs)
+	if err != nil {
+		return 0, 0, fmt.Errorf("syncCosmeticSubscriptionLicenses licenses: %w", err)
+	}
+	mappedItemIDs := make([]string, 0, len(itemIDs))
+	mappedLicenseIDs := make([]string, 0, len(itemIDs))
+	mappedGenerations := make([]int64, 0, len(itemIDs))
+	for index, licenseID := range licenseIDs {
+		if inserted[licenseID] {
+			mappedItemIDs = append(mappedItemIDs, itemIDs[index])
+			mappedLicenseIDs = append(mappedLicenseIDs, licenseID)
+			mappedGenerations = append(mappedGenerations, generations[index])
+		}
+	}
+	if len(mappedLicenseIDs) > 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO cosmetic_subscription_licenses (
+				subscription_id, item_id, license_id, generation, created_at
+			)
+			SELECT $1, item_id, license_id, generation, NOW()
+			FROM UNNEST($2::TEXT[], $3::TEXT[], $4::BIGINT[])
+				AS mappings(item_id, license_id, generation)
+			ON CONFLICT (subscription_id, item_id) DO UPDATE
+			SET license_id = EXCLUDED.license_id, generation = EXCLUDED.generation,
+			    created_at = EXCLUDED.created_at`,
+			subscriptionID, mappedItemIDs, mappedLicenseIDs, mappedGenerations); err != nil {
+			return 0, 0, fmt.Errorf("syncCosmeticSubscriptionLicenses mappings: %w", err)
+		}
+	}
+	return len(mappedLicenseIDs), 0, nil
 }
 
 func revokeCosmeticSubscriptionLicenses(ctx context.Context, tx pgx.Tx, subscriptionID string) (int, error) {
-	var active int
-	if err := tx.QueryRow(ctx, `
-		SELECT COUNT(*)
+	rows, err := tx.Query(ctx, `
+		SELECT l.id
 		FROM cosmetic_subscription_licenses sl
 		JOIN cosmetic_licenses l ON l.id = sl.license_id
-		WHERE sl.subscription_id = $1 AND l.status = 'active'`, subscriptionID).Scan(&active); err != nil {
-		return 0, fmt.Errorf("revokeCosmeticSubscriptionLicenses count: %w", err)
+		WHERE sl.subscription_id = $1
+		ORDER BY l.id
+		FOR UPDATE OF l`, subscriptionID)
+	if err != nil {
+		return 0, fmt.Errorf("revokeCosmeticSubscriptionLicenses lock: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM bot_cosmetic_loadout l
-		USING cosmetic_subscription_licenses sl
-		WHERE sl.subscription_id = $1 AND sl.license_id = l.license_id`, subscriptionID); err != nil {
-		return 0, fmt.Errorf("revokeCosmeticSubscriptionLicenses loadouts: %w", err)
+	licenseIDs := make([]string, 0)
+	for rows.Next() {
+		var licenseID string
+		if err := rows.Scan(&licenseID); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("revokeCosmeticSubscriptionLicenses scan: %w", err)
+		}
+		licenseIDs = append(licenseIDs, licenseID)
 	}
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM cosmetic_license_assignments a
-		USING cosmetic_subscription_licenses sl
-		WHERE sl.subscription_id = $1 AND sl.license_id = a.license_id`, subscriptionID); err != nil {
-		return 0, fmt.Errorf("revokeCosmeticSubscriptionLicenses assignments: %w", err)
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("revokeCosmeticSubscriptionLicenses rows: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE cosmetic_licenses l
-		SET status = CASE WHEN l.status = 'active' THEN 'revoked' ELSE l.status END,
-			assigned_bot_id = NULL, updated_at = NOW()
-		FROM cosmetic_subscription_licenses sl
-		WHERE sl.subscription_id = $1 AND sl.license_id = l.id`, subscriptionID); err != nil {
-		return 0, fmt.Errorf("revokeCosmeticSubscriptionLicenses licenses: %w", err)
+	rows.Close()
+	changed, err := applyCosmeticLicenseTerminalBatchTx(
+		ctx, tx, licenseIDs, "revoked", "stripe_subscription", "subscription_ended", subscriptionID,
+	)
+	if err != nil {
+		return 0, err
 	}
-	return active, nil
+	return changed, nil
 }
 
 func normalizeCosmeticSubscriptionEvent(input CosmeticSubscriptionEventInput) CosmeticSubscriptionEventInput {

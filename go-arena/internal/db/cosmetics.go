@@ -7,7 +7,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -482,6 +484,7 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			external_reference TEXT,
 			granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			terminal_at TIMESTAMPTZ,
 			UNIQUE (id, account_id),
 			CHECK (
 				(account_id IS NOT NULL AND legacy_bot_id IS NULL AND assigned_bot_id IS NULL) OR
@@ -1087,10 +1090,11 @@ func GrantCosmeticEntitlement(ctx context.Context, botID, cosmeticID, source, ex
 		return false, ErrCosmeticInactive
 	}
 
+	newLicenseID := uuid.NewString()
 	tag, err := tx.Exec(ctx, `
-		INSERT INTO cosmetic_entitlements (bot_id, cosmetic_id, source, external_reference, granted_at)
-		VALUES ($1, $2, $3, NULLIF($4, ''), NOW())
-		ON CONFLICT DO NOTHING`, botID, cosmeticID, source, externalReference)
+		INSERT INTO cosmetic_entitlements (bot_id, cosmetic_id, source, external_reference, license_id, granted_at)
+		VALUES ($1, $2, $3, NULLIF($4, ''), $5, NOW())
+		ON CONFLICT DO NOTHING`, botID, cosmeticID, source, externalReference, newLicenseID)
 	if err != nil {
 		return false, fmt.Errorf("GrantCosmeticEntitlement: %w", err)
 	}
@@ -1105,14 +1109,59 @@ func GrantCosmeticEntitlement(ctx context.Context, botID, cosmeticID, source, ex
 			return false, ErrCosmeticGrantConflict
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO cosmetic_licenses
-			(id, account_id, legacy_bot_id, cosmetic_id, assigned_bot_id, source, external_reference, granted_at, updated_at)
-		SELECT 'legacy-' || MD5(bot_id || CHR(31) || cosmetic_id),
-		       NULL, bot_id, cosmetic_id, bot_id, source, external_reference, granted_at, NOW()
+	var licenseID, entitlementSource string
+	var entitlementExternalReference *string
+	var grantedAt time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(license_id, 'legacy-' || MD5(bot_id || CHR(31) || cosmetic_id)),
+		       source, external_reference, granted_at
 		FROM cosmetic_entitlements
-		WHERE bot_id = $1 AND cosmetic_id = $2
-		ON CONFLICT (id) DO NOTHING`, botID, cosmeticID); err != nil {
+		WHERE bot_id = $1 AND cosmetic_id = $2`, botID, cosmeticID).Scan(
+		&licenseID, &entitlementSource, &entitlementExternalReference, &grantedAt,
+	); err != nil {
+		return false, fmt.Errorf("GrantCosmeticEntitlement legacy license source: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE cosmetic_entitlements SET license_id = $3
+		WHERE bot_id = $1 AND cosmetic_id = $2 AND license_id IS NULL`, botID, cosmeticID, licenseID); err != nil {
+		return false, fmt.Errorf("GrantCosmeticEntitlement license mapping: %w", err)
+	}
+	reference := ""
+	if entitlementExternalReference != nil {
+		reference = *entitlementExternalReference
+	}
+	if reference != "" {
+		var existingLicenseID, existingCosmeticID, existingStatus string
+		var existingLegacyBotID *string
+		err := tx.QueryRow(ctx, `
+			SELECT id, cosmetic_id, status, legacy_bot_id
+			FROM cosmetic_licenses
+			WHERE source = $1 AND external_reference = $2
+			FOR UPDATE`, entitlementSource, reference).Scan(
+			&existingLicenseID, &existingCosmeticID, &existingStatus, &existingLegacyBotID,
+		)
+		if err == nil {
+			if existingCosmeticID != cosmeticID || existingLegacyBotID == nil || *existingLegacyBotID != botID {
+				return false, ErrCosmeticGrantConflict
+			}
+			if existingStatus != "active" {
+				return false, nil
+			}
+			licenseID = existingLicenseID
+			if _, err := tx.Exec(ctx, `
+				UPDATE cosmetic_entitlements SET license_id = $3
+				WHERE bot_id = $1 AND cosmetic_id = $2`, botID, cosmeticID, licenseID); err != nil {
+				return false, fmt.Errorf("GrantCosmeticEntitlement reconcile license mapping: %w", err)
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return false, fmt.Errorf("GrantCosmeticEntitlement reconcile license: %w", err)
+		}
+	}
+	if _, err := createCosmeticLicenseTx(ctx, tx, cosmeticLicenseCreate{
+		LicenseID: licenseID, LegacyBotID: &botID, CosmeticID: cosmeticID,
+		AssignedAgentID: &botID, Source: entitlementSource, Reason: "legacy_entitlement_granted",
+		ExternalReference: reference, GrantedAt: grantedAt,
+	}); err != nil {
 		return false, fmt.Errorf("GrantCosmeticEntitlement legacy license: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1147,12 +1196,27 @@ func RevokeCosmeticEntitlement(ctx context.Context, botID, cosmeticID string) (b
 	// Serialize with account assignment/equip if this entitlement has not yet
 	// been claimed. Claimed licenses are durable account property and are not
 	// removed by this compatibility-only bot entitlement helper.
-	if _, err := tx.Exec(ctx, `
-		SELECT 1 FROM cosmetic_licenses
+	rows, err := tx.Query(ctx, `
+		SELECT id FROM cosmetic_licenses
 		WHERE legacy_bot_id = $1 AND cosmetic_id = $2
-		FOR UPDATE`, botID, cosmeticID); err != nil {
+		ORDER BY id FOR UPDATE`, botID, cosmeticID)
+	if err != nil {
 		return false, fmt.Errorf("RevokeCosmeticEntitlement license lock: %w", err)
 	}
+	licenseIDs := make([]string, 0)
+	for rows.Next() {
+		var licenseID string
+		if err := rows.Scan(&licenseID); err != nil {
+			rows.Close()
+			return false, fmt.Errorf("RevokeCosmeticEntitlement license scan: %w", err)
+		}
+		licenseIDs = append(licenseIDs, licenseID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return false, fmt.Errorf("RevokeCosmeticEntitlement license rows: %w", err)
+	}
+	rows.Close()
 
 	loadoutTag, err := tx.Exec(ctx, `
 		DELETE FROM bot_cosmetic_loadout
@@ -1172,17 +1236,14 @@ func RevokeCosmeticEntitlement(ctx context.Context, botID, cosmeticID string) (b
 	if err != nil {
 		return false, fmt.Errorf("RevokeCosmeticEntitlement grant: %w", err)
 	}
-	licenseTag, err := tx.Exec(ctx, `
-		UPDATE cosmetic_licenses
-		SET status = CASE WHEN status = 'active' THEN 'revoked' ELSE status END,
-		    assigned_bot_id = NULL, updated_at = NOW()
-		WHERE legacy_bot_id = $1 AND cosmetic_id = $2
-		  AND (status = 'active' OR assigned_bot_id IS NOT NULL)`, botID, cosmeticID)
+	licenseChanges, err := applyCosmeticLicenseTerminalBatchTx(
+		ctx, tx, licenseIDs, "revoked", "legacy_entitlement", "legacy_entitlement_revoked", botID+":"+cosmeticID,
+	)
 	if err != nil {
-		return false, fmt.Errorf("RevokeCosmeticEntitlement license: %w", err)
+		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("RevokeCosmeticEntitlement commit: %w", err)
 	}
-	return loadoutTag.RowsAffected() > 0 || tag.RowsAffected() > 0 || licenseTag.RowsAffected() > 0, nil
+	return loadoutTag.RowsAffected() > 0 || tag.RowsAffected() > 0 || licenseChanges > 0, nil
 }

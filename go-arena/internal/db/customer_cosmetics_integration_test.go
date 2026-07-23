@@ -258,6 +258,23 @@ func TestPostgresExactPR69CosmeticsSchemaUpgradeAndLegacyRevoke(t *testing.T) {
 	if err := EnsureCosmeticsSchema(ctx); err != nil {
 		t.Fatalf("repeat upgraded schema: %v", err)
 	}
+	if err := EnsureCosmeticSubscriptionsSchema(ctx); err != nil {
+		t.Fatalf("install subscription schema for W1b.4: %v", err)
+	}
+	if err := EnsureCosmeticAdminMembershipsSchema(ctx); err != nil {
+		t.Fatalf("install membership schema for W1b.4: %v", err)
+	}
+	// W1b.4 lands after the core bot timestamp migration. The fixture above is
+	// intentionally the older PR #69 cosmetics shape, so add only the
+	// intervening non-cosmetics columns before exercising the platform cutover.
+	if _, err := Pool.Exec(ctx, `
+		ALTER TABLE bots ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+		ALTER TABLE bots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`); err != nil {
+		t.Fatalf("install intervening bot timestamps: %v", err)
+	}
+	if err := EnsurePlatformAuthoritySchema(ctx); err != nil {
+		t.Fatalf("complete W1b.4 authority upgrade: %v", err)
+	}
 	if _, err := Pool.Exec(ctx, `
 		INSERT INTO bot_cosmetic_loadout (bot_id, slot, cosmetic_id)
 		VALUES ('old-bot', 'trail', 'trail-standard')`); err != nil {
@@ -303,25 +320,25 @@ func TestPostgresExactPR69CosmeticsSchemaUpgradeAndLegacyRevoke(t *testing.T) {
 	if terminalStatus != "chargeback" || terminalAssignment != nil {
 		t.Fatalf("legacy replay changed terminal license: status=%q assignment=%v", terminalStatus, terminalAssignment)
 	}
-	// Restore the active pre-recovery fixture for the remaining migration and
-	// account-claim assertions below.
-	if _, err := Pool.Exec(ctx, `
-		UPDATE cosmetic_licenses SET status = 'active', assigned_bot_id = 'old-bot' WHERE id = $1`, licenseID); err != nil {
-		t.Fatalf("restore active legacy fixture: %v", err)
+	// A separate active legacy generation exercises account recovery. The
+	// terminal copy above must remain terminal; W1b.4 deliberately forbids
+	// restoring it to active for test setup or runtime recovery.
+	if created, err := GrantCosmeticEntitlement(ctx, "old-bot", "weapon-solar-flare", "stripe", "old-order-line-2"); err != nil || !created {
+		t.Fatalf("create active legacy recovery generation = (%v, %v)", created, err)
 	}
 	if _, err := Pool.Exec(ctx, `DELETE FROM api_keys WHERE id = 'old-key'`); err != nil {
 		t.Fatalf("delete lost legacy key: %v", err)
 	}
-	recovered, claimed, err := GrantCosmeticLicense(ctx, "recovered@example.com", "skin-neon-grid", "stripe", "old-order-line-1")
-	if err != nil || !claimed || recovered.ID != licenseID || recovered.AccountID == nil || recovered.LegacyBotID != nil {
+	recovered, claimed, err := GrantCosmeticLicense(ctx, "recovered@example.com", "weapon-solar-flare", "stripe", "old-order-line-2")
+	if err != nil || !claimed || recovered.ID == licenseID || recovered.AccountID == nil || recovered.LegacyBotID != nil {
 		t.Fatalf("recover legacy purchase by email/reference = (%+v, %v, %v)", recovered, claimed, err)
 	}
 
-	if _, revoked, err := RevokeCosmeticLicense(ctx, licenseID); err != nil || !revoked {
+	if _, revoked, err := RevokeCosmeticLicense(ctx, recovered.ID); err != nil || !revoked {
 		t.Fatalf("revoke upgraded legacy license = (%v, %v)", revoked, err)
 	}
 	var remaining int
-	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM bot_cosmetic_loadout WHERE license_id = $1`, licenseID).Scan(&remaining); err != nil {
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM bot_cosmetic_loadout WHERE license_id = $1`, recovered.ID).Scan(&remaining); err != nil {
 		t.Fatal(err)
 	}
 	if remaining != 0 {

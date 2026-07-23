@@ -990,11 +990,10 @@ func fulfillCosmeticOrderLicenses(ctx context.Context, tx pgx.Tx, order *Cosmeti
 			}
 			licenseID := uuid.NewString()
 			externalReference := fmt.Sprintf("cosmetic-order:%s:copy:%02d:item:%03d", order.ID, copyIndex, item.Position)
-			_, err = tx.Exec(ctx, `
-				INSERT INTO cosmetic_licenses
-					(id, account_id, cosmetic_id, status, source, external_reference, granted_at, updated_at)
-				VALUES ($1,$2,$3,'active','stripe',$4,NOW(),NOW())`,
-				licenseID, order.AccountID, item.ID, externalReference)
+			_, err = createCosmeticLicenseTx(ctx, tx, cosmeticLicenseCreate{
+				LicenseID: licenseID, AccountID: &order.AccountID, CosmeticID: item.ID,
+				Source: "stripe", Reason: "order_fulfilled", ExternalReference: externalReference,
+			})
 			if err != nil {
 				return 0, fmt.Errorf("fulfillCosmeticOrderLicenses license: %w", err)
 			}
@@ -1087,7 +1086,7 @@ func applyCosmeticRefundEvent(ctx context.Context, tx pgx.Tx, order *CosmeticOrd
 	if tag.RowsAffected() != 1 {
 		return false, ErrCosmeticOrderMismatch
 	}
-	if err := recomputeCosmeticRefundState(ctx, tx, order); err != nil {
+	if err := recomputeCosmeticRefundState(ctx, tx, order, input.EventID); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -1113,13 +1112,13 @@ func applyCosmeticChargeRefundEvent(ctx context.Context, tx pgx.Tx, order *Cosme
 		WHERE id = $1`, order.ID, input.CumulativeRefundedCents); err != nil {
 		return false, fmt.Errorf("applyCosmeticChargeRefundEvent update: %w", err)
 	}
-	if err := recomputeCosmeticRefundState(ctx, tx, order); err != nil {
+	if err := recomputeCosmeticRefundState(ctx, tx, order, input.EventID); err != nil {
 		return false, err
 	}
 	return input.CumulativeRefundedCents > previous, nil
 }
 
-func recomputeCosmeticRefundState(ctx context.Context, tx pgx.Tx, order *CosmeticOrder) error {
+func recomputeCosmeticRefundState(ctx context.Context, tx pgx.Tx, order *CosmeticOrder, providerReference string) error {
 	var individual, cumulative, previous int64
 	var previousStatus string
 	if err := tx.QueryRow(ctx, `
@@ -1157,7 +1156,7 @@ func recomputeCosmeticRefundState(ctx context.Context, tx pgx.Tx, order *Cosmeti
 		return fmt.Errorf("recomputeCosmeticRefundState update: %w", err)
 	}
 	if terminal {
-		return revokeCosmeticOrderLicenses(ctx, tx, order.ID, "refunded")
+		return revokeCosmeticOrderLicenses(ctx, tx, order.ID, "refunded", providerReference)
 	}
 	return nil
 }
@@ -1169,7 +1168,7 @@ func applyCosmeticDisputeEvent(ctx context.Context, tx pgx.Tx, order *CosmeticOr
 	if order.Status == CosmeticOrderStatusDisputed {
 		return false, nil
 	}
-	if err := revokeCosmeticOrderLicenses(ctx, tx, order.ID, "chargeback"); err != nil {
+	if err := revokeCosmeticOrderLicenses(ctx, tx, order.ID, "chargeback", input.EventID); err != nil {
 		return false, err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -1183,7 +1182,8 @@ func applyCosmeticDisputeEvent(ctx context.Context, tx pgx.Tx, order *CosmeticOr
 
 // revokeCosmeticOrderLicenses locks and mutates only rows tied to the immutable
 // order mapping. Manual grants and licenses from other purchases are untouched.
-func revokeCosmeticOrderLicenses(ctx context.Context, tx pgx.Tx, orderID, status string) error {
+func revokeCosmeticOrderLicenses(ctx context.Context, tx pgx.Tx, orderID, status, providerReference string) error {
+	licenseIDs := make([]string, 0)
 	rows, err := tx.Query(ctx, `
 		SELECT l.id
 		FROM cosmetic_order_licenses ol
@@ -1200,30 +1200,22 @@ func revokeCosmeticOrderLicenses(ctx context.Context, tx pgx.Tx, orderID, status
 			rows.Close()
 			return fmt.Errorf("revokeCosmeticOrderLicenses scan: %w", err)
 		}
+		licenseIDs = append(licenseIDs, licenseID)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return fmt.Errorf("revokeCosmeticOrderLicenses rows: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM bot_cosmetic_loadout l
-		USING cosmetic_order_licenses ol
-		WHERE ol.order_id = $1 AND ol.license_id = l.license_id`, orderID); err != nil {
-		return fmt.Errorf("revokeCosmeticOrderLicenses loadouts: %w", err)
+	reason := "order_refund"
+	if status == "chargeback" {
+		reason = "order_chargeback"
 	}
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM cosmetic_license_assignments a
-		USING cosmetic_order_licenses ol
-		WHERE ol.order_id = $1 AND ol.license_id = a.license_id`, orderID); err != nil {
-		return fmt.Errorf("revokeCosmeticOrderLicenses assignments: %w", err)
+	if providerReference == "" {
+		providerReference = orderID
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE cosmetic_licenses l
-		SET status = $2, assigned_bot_id = NULL, updated_at = NOW()
-		FROM cosmetic_order_licenses ol
-		WHERE ol.order_id = $1 AND ol.license_id = l.id AND l.status <> $2`, orderID, status); err != nil {
-		return fmt.Errorf("revokeCosmeticOrderLicenses licenses: %w", err)
+	if _, err := applyCosmeticLicenseTerminalBatchTx(ctx, tx, licenseIDs, status, "stripe", reason, providerReference); err != nil {
+		return err
 	}
 	return nil
 }

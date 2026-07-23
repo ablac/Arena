@@ -214,41 +214,73 @@ func CreateCosmeticAdminMembership(ctx context.Context, rawEmail string, expires
 }
 
 func syncCosmeticAdminMembershipLicenses(ctx context.Context, tx pgx.Tx, membershipID, accountID string) (int, error) {
-	var created int
-	if err := tx.QueryRow(ctx, `
-		WITH candidates AS MATERIALIZED (
-			SELECT DISTINCT i.id AS item_id
-			FROM cosmetic_pack_items pi
-			JOIN cosmetic_packs p ON p.id = pi.pack_id
-			JOIN cosmetic_categories pc ON pc.id = p.category_id
-			JOIN cosmetic_items i ON i.id = pi.item_id
-			JOIN cosmetic_categories ic ON ic.id = i.category_id
-			JOIN cosmetic_admin_memberships m ON m.id = $1
-			WHERE m.account_id = $2 AND m.status = 'active' AND m.expires_at > NOW()
-			  AND p.is_active = true AND p.is_purchasable = true AND p.is_free = false
-			  AND pc.is_active = true AND i.is_active = true AND ic.is_active = true
-		), missing AS MATERIALIZED (
-			SELECT c.item_id, gen_random_uuid()::TEXT AS license_id
-			FROM candidates c
-			LEFT JOIN cosmetic_admin_membership_licenses ml
-			  ON ml.membership_id = $1 AND ml.item_id = c.item_id
-			WHERE ml.item_id IS NULL
-		), inserted_licenses AS (
-			INSERT INTO cosmetic_licenses
-				(id, account_id, cosmetic_id, status, source, external_reference, granted_at, updated_at)
-			SELECT license_id, $2, item_id, 'active', 'admin_membership',
-				'admin-membership:' || $1 || ':item:' || item_id, NOW(), NOW()
-			FROM missing
-			RETURNING id, cosmetic_id
-		), inserted_mappings AS (
-			INSERT INTO cosmetic_admin_membership_licenses (membership_id, item_id, license_id, created_at)
-			SELECT $1, cosmetic_id, id, NOW() FROM inserted_licenses
-			RETURNING license_id
-		)
-		SELECT COUNT(*) FROM inserted_mappings`, membershipID, accountID).Scan(&created); err != nil {
-		return 0, fmt.Errorf("syncCosmeticAdminMembershipLicenses: %w", err)
+	rows, err := tx.Query(ctx, `
+		SELECT DISTINCT i.id AS item_id
+		FROM cosmetic_pack_items pi
+		JOIN cosmetic_packs p ON p.id = pi.pack_id
+		JOIN cosmetic_categories pc ON pc.id = p.category_id
+		JOIN cosmetic_items i ON i.id = pi.item_id
+		JOIN cosmetic_categories ic ON ic.id = i.category_id
+		JOIN cosmetic_admin_memberships m ON m.id = $1
+		LEFT JOIN cosmetic_admin_membership_licenses ml
+		  ON ml.membership_id = $1 AND ml.item_id = i.id
+		WHERE m.account_id = $2 AND m.status = 'active' AND m.expires_at > NOW()
+		  AND p.is_active = true AND p.is_purchasable = true AND p.is_free = false
+		  AND pc.is_active = true AND i.is_active = true AND ic.is_active = true
+		  AND ml.item_id IS NULL
+		ORDER BY i.id`, membershipID, accountID)
+	if err != nil {
+		return 0, fmt.Errorf("syncCosmeticAdminMembershipLicenses candidates: %w", err)
 	}
-	return created, nil
+	itemIDs := make([]string, 0)
+	for rows.Next() {
+		var itemID string
+		if err := rows.Scan(&itemID); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("syncCosmeticAdminMembershipLicenses scan: %w", err)
+		}
+		itemIDs = append(itemIDs, itemID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("syncCosmeticAdminMembershipLicenses rows: %w", err)
+	}
+	rows.Close()
+	inputs := make([]cosmeticLicenseCreate, 0, len(itemIDs))
+	licenseIDs := make([]string, 0, len(itemIDs))
+	for _, itemID := range itemIDs {
+		licenseID := uuid.NewString()
+		externalReference := "admin-membership:" + membershipID + ":item:" + itemID
+		inputs = append(inputs, cosmeticLicenseCreate{
+			LicenseID: licenseID, AccountID: &accountID, CosmeticID: itemID,
+			Source: "admin_membership", Reason: "admin_membership_granted", ExternalReference: externalReference,
+		})
+		licenseIDs = append(licenseIDs, licenseID)
+	}
+	inserted, err := createCosmeticLicensesTx(ctx, tx, inputs)
+	if err != nil {
+		return 0, fmt.Errorf("syncCosmeticAdminMembershipLicenses licenses: %w", err)
+	}
+	mappedItemIDs := make([]string, 0, len(itemIDs))
+	mappedLicenseIDs := make([]string, 0, len(itemIDs))
+	for index, licenseID := range licenseIDs {
+		if inserted[licenseID] {
+			mappedItemIDs = append(mappedItemIDs, itemIDs[index])
+			mappedLicenseIDs = append(mappedLicenseIDs, licenseID)
+		}
+	}
+	if len(mappedLicenseIDs) > 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO cosmetic_admin_membership_licenses (
+				membership_id, item_id, license_id, created_at
+			)
+			SELECT $1, item_id, license_id, NOW()
+			FROM UNNEST($2::TEXT[], $3::TEXT[]) AS mappings(item_id, license_id)`,
+			membershipID, mappedItemIDs, mappedLicenseIDs); err != nil {
+			return 0, fmt.Errorf("syncCosmeticAdminMembershipLicenses mappings: %w", err)
+		}
+	}
+	return len(mappedLicenseIDs), nil
 }
 
 func SyncCustomerCosmeticAdminMembershipLicenses(ctx context.Context, accountID string) (int, error) {
@@ -542,20 +574,34 @@ func transitionCosmeticAdminMembership(ctx context.Context, membershipID, target
 		return nil, nil, false, err
 	}
 	rows.Close()
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM bot_cosmetic_loadout l USING cosmetic_admin_membership_licenses ml
-		WHERE ml.membership_id = $1 AND ml.license_id = l.license_id`, membershipID); err != nil {
+	rows, err = tx.Query(ctx, `
+		SELECT licenses.id
+		FROM cosmetic_admin_membership_licenses AS membership_licenses
+		JOIN cosmetic_licenses AS licenses ON licenses.id = membership_licenses.license_id
+		WHERE membership_licenses.membership_id = $1
+		ORDER BY licenses.id
+		FOR UPDATE OF licenses`, membershipID)
+	if err != nil {
 		return nil, nil, false, err
 	}
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM cosmetic_license_assignments a USING cosmetic_admin_membership_licenses ml
-		WHERE ml.membership_id = $1 AND ml.license_id = a.license_id`, membershipID); err != nil {
+	licenseIDs := make([]string, 0)
+	for rows.Next() {
+		var licenseID string
+		if err := rows.Scan(&licenseID); err != nil {
+			rows.Close()
+			return nil, nil, false, err
+		}
+		licenseIDs = append(licenseIDs, licenseID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, nil, false, err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE cosmetic_licenses l SET status = $2, assigned_bot_id = NULL, updated_at = NOW()
-		FROM cosmetic_admin_membership_licenses ml
-		WHERE ml.membership_id = $1 AND ml.license_id = l.id AND l.status = 'active'`, membershipID, targetStatus); err != nil {
+	rows.Close()
+	lifecycleReason := "admin_membership_" + targetStatus
+	if _, err := applyCosmeticLicenseTerminalBatchTx(
+		ctx, tx, licenseIDs, targetStatus, "admin_membership", lifecycleReason, membershipID,
+	); err != nil {
 		return nil, nil, false, err
 	}
 	if targetStatus == "revoked" {
