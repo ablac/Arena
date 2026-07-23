@@ -67,22 +67,6 @@ func ensurePlatformLicenseLifecycleSchemaTx(ctx context.Context, tx pgx.Tx) erro
 		$$`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_cosmetic_entitlements_license
 			ON cosmetic_entitlements (license_id)`,
-		`DO $$
-		BEGIN
-			IF NOT EXISTS (
-				SELECT 1
-				FROM pg_constraint
-				WHERE conrelid = 'platform_changes'::regclass
-				  AND conname = 'platform_changes_subject_kind_check'
-				  AND pg_get_constraintdef(oid) LIKE '%license_assignment%'
-			) THEN
-				ALTER TABLE platform_changes DROP CONSTRAINT IF EXISTS platform_changes_subject_kind_check;
-				ALTER TABLE platform_changes ADD CONSTRAINT platform_changes_subject_kind_check
-					CHECK (subject_kind IN ('account', 'agent', 'game_profile', 'agent_link', 'license', 'license_assignment')) NOT VALID;
-			END IF;
-		END
-		$$`,
-		`ALTER TABLE platform_changes VALIDATE CONSTRAINT platform_changes_subject_kind_check`,
 		`CREATE TABLE IF NOT EXISTS platform_license_lifecycle_events (
 			event_id BIGSERIAL PRIMARY KEY,
 			license_id TEXT NOT NULL REFERENCES cosmetic_licenses(id) ON DELETE RESTRICT,
@@ -203,6 +187,17 @@ func ensurePlatformLicenseLifecycleSchemaTx(ctx context.Context, tx pgx.Tx) erro
 			END IF;
 		END
 		$$`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(ctx, statement); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func backfillPlatformLicenseChangesTx(ctx context.Context, tx pgx.Tx) error {
+	statements := []string{
 		`INSERT INTO platform_changes (
 			subject_kind, subject_id, transition, revision, changed_at
 		)
