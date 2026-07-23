@@ -30,6 +30,51 @@ func createCustomerCosmeticsTestBot(t *testing.T, ctx context.Context, suffix st
 	return bot
 }
 
+func holdPostgresTestAdvisoryBarrier(t *testing.T, ctx context.Context, classID, objectID int) func() {
+	t.Helper()
+	barrier, err := Pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire advisory barrier connection: %v", err)
+	}
+	if _, err := barrier.Exec(ctx, `SELECT pg_advisory_lock($1, $2)`, classID, objectID); err != nil {
+		barrier.Release()
+		t.Fatalf("hold advisory barrier: %v", err)
+	}
+	held := true
+	release := func() {
+		if !held {
+			return
+		}
+		if _, err := barrier.Exec(context.Background(), `SELECT pg_advisory_unlock($1, $2)`, classID, objectID); err != nil {
+			t.Errorf("release advisory barrier: %v", err)
+		}
+		held = false
+	}
+	t.Cleanup(func() {
+		release()
+		barrier.Release()
+	})
+	return release
+}
+
+func waitForPostgresTestCondition(t *testing.T, ctx context.Context, description string, query string, args ...any) {
+	t.Helper()
+	for {
+		var ready bool
+		if err := Pool.QueryRow(ctx, query, args...).Scan(&ready); err != nil {
+			t.Fatalf("wait for %s: %v", description, err)
+		}
+		if ready {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("wait for %s: %v", description, ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 func TestPostgresCustomerCosmeticsAccountOwnershipAndExclusiveAssignment(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {
@@ -191,6 +236,330 @@ func TestPostgresCustomerCosmeticsAccountOwnershipAndExclusiveAssignment(t *test
 		if err != nil || revoked || change.License.Status != preservedStatus {
 			t.Fatalf("revoke preserved status %s = (%+v, %v, %v)", preservedStatus, change, revoked, err)
 		}
+	}
+}
+
+func TestPostgresPlatformChangeOrderingDoesNotDeadlockLegacyClaimAndRevoke(t *testing.T) {
+	ctx, cancel := context.WithTimeout(useFreshPostgresSchema(t), 15*time.Second)
+	defer cancel()
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	bot := createCustomerCosmeticsTestBot(t, ctx, "change-lock-order")
+	if created, err := GrantCosmeticEntitlement(
+		ctx,
+		bot.ID,
+		"skin-neon-grid",
+		"manual",
+		"change-lock-order-license",
+	); err != nil || !created {
+		t.Fatalf("grant legacy entitlement = (%v, %v)", created, err)
+	}
+	var licenseID string
+	if err := Pool.QueryRow(ctx, `
+		SELECT id FROM cosmetic_licenses
+		WHERE legacy_bot_id = $1 AND cosmetic_id = 'skin-neon-grid'`, bot.ID).Scan(&licenseID); err != nil {
+		t.Fatalf("load legacy license: %v", err)
+	}
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"change-lock-order@example.com",
+		"https://id.example",
+		"change-lock-order",
+		"Change Lock Order",
+	)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	const barrierClassID = 72104
+	const barrierObjectID = 11
+	if _, err := Pool.Exec(ctx, `
+		CREATE FUNCTION test_block_legacy_revoke() RETURNS TRIGGER
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			IF OLD.status = 'active' AND NEW.status = 'revoked' THEN
+				PERFORM pg_advisory_xact_lock(72104, 11);
+			END IF;
+			RETURN NEW;
+		END
+		$$;
+		CREATE TRIGGER test_block_legacy_revoke
+		BEFORE UPDATE OF status ON cosmetic_licenses
+		FOR EACH ROW EXECUTE FUNCTION test_block_legacy_revoke()`); err != nil {
+		t.Fatalf("install revoke barrier: %v", err)
+	}
+	releaseBarrier := holdPostgresTestAdvisoryBarrier(t, ctx, barrierClassID, barrierObjectID)
+
+	type revokeResult struct {
+		revoked bool
+		err     error
+	}
+	revokeDone := make(chan revokeResult, 1)
+	go func() {
+		_, revoked, err := RevokeCosmeticLicense(ctx, licenseID)
+		revokeDone <- revokeResult{revoked: revoked, err: err}
+	}()
+
+	waitForPostgresTestCondition(t, ctx, "legacy revoke barrier", `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_locks
+			WHERE locktype = 'advisory'
+			  AND classid = $1
+			  AND objid = $2
+			  AND NOT granted
+		)`, barrierClassID, barrierObjectID)
+
+	linkDone := make(chan error, 1)
+	go func() {
+		_, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID)
+		linkDone <- err
+	}()
+	waitForPostgresTestCondition(t, ctx, "legacy claim row lock", `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE datname = current_database()
+			  AND pid <> pg_backend_pid()
+			  AND wait_event_type = 'Lock'
+			  AND query LIKE '%FROM cosmetic_licenses%'
+			  AND query LIKE '%legacy_bot_id%'
+		)`)
+
+	releaseBarrier()
+
+	var revoked revokeResult
+	select {
+	case revoked = <-revokeDone:
+	case <-ctx.Done():
+		t.Fatalf("legacy revoke did not finish: %v", ctx.Err())
+	}
+	var linkErr error
+	select {
+	case linkErr = <-linkDone:
+	case <-ctx.Done():
+		t.Fatalf("legacy claim did not finish: %v", ctx.Err())
+	}
+	if revoked.err != nil || !revoked.revoked || linkErr != nil {
+		t.Fatalf("concurrent legacy revoke/link = (revoked %v, revoke error %v, link error %v)", revoked.revoked, revoked.err, linkErr)
+	}
+}
+
+func TestPostgresPlatformChangeOrderingDoesNotDeadlockAgentLinkAndProfileTransition(t *testing.T) {
+	ctx, cancel := context.WithTimeout(useFreshPostgresSchema(t), 15*time.Second)
+	defer cancel()
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	bot := createCustomerCosmeticsTestBot(t, ctx, "profile-lock-order")
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"profile-lock-order@example.com",
+		"https://id.example",
+		"profile-lock-order",
+		"Profile Lock Order",
+	)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	var agentRevision int64
+	if err := Pool.QueryRow(ctx, `SELECT revision FROM platform_agents WHERE agent_id = $1`, bot.ID).Scan(&agentRevision); err != nil {
+		t.Fatalf("load platform agent revision: %v", err)
+	}
+
+	const barrierClassID = 72104
+	const barrierObjectID = 12
+	if _, err := Pool.Exec(ctx, `
+		CREATE FUNCTION test_block_profile_transition() RETURNS TRIGGER
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			IF OLD.status = 'active' AND NEW.status = 'suspended' THEN
+				PERFORM pg_advisory_xact_lock(72104, 12);
+			END IF;
+			RETURN NEW;
+		END
+		$$;
+		CREATE TRIGGER test_block_profile_transition
+		BEFORE UPDATE OF status ON platform_game_profiles
+		FOR EACH ROW EXECUTE FUNCTION test_block_profile_transition()`); err != nil {
+		t.Fatalf("install profile barrier: %v", err)
+	}
+	releaseBarrier := holdPostgresTestAdvisoryBarrier(t, ctx, barrierClassID, barrierObjectID)
+
+	type profileResult struct {
+		result *PlatformProfileTransitionResult
+		err    error
+	}
+	profileDone := make(chan profileResult, 1)
+	go func() {
+		result, err := TransitionPlatformProfile(ctx, PlatformProfileTransition{
+			AgentID:          bot.ID,
+			Game:             "arena",
+			Status:           "suspended",
+			ExpectedRevision: agentRevision,
+			IdempotencyKey:   "profile-link-lock-order",
+		})
+		profileDone <- profileResult{result: result, err: err}
+	}()
+
+	waitForPostgresTestCondition(t, ctx, "profile transition barrier", `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_locks
+			WHERE locktype = 'advisory'
+			  AND classid = $1
+			  AND objid = $2
+			  AND NOT granted
+		)`, barrierClassID, barrierObjectID)
+
+	linkDone := make(chan error, 1)
+	go func() {
+		_, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID)
+		linkDone <- err
+	}()
+	waitForPostgresTestCondition(t, ctx, "platform agent row lock", `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE datname = current_database()
+			  AND pid <> pg_backend_pid()
+			  AND wait_event_type = 'Lock'
+			  AND query LIKE '%SELECT revision FROM platform_agents%'
+		)`)
+
+	releaseBarrier()
+
+	var transitioned profileResult
+	select {
+	case transitioned = <-profileDone:
+	case <-ctx.Done():
+		t.Fatalf("profile transition did not finish: %v", ctx.Err())
+	}
+	var linkErr error
+	select {
+	case linkErr = <-linkDone:
+	case <-ctx.Done():
+		t.Fatalf("agent link did not finish: %v", ctx.Err())
+	}
+	if transitioned.err != nil || transitioned.result == nil || transitioned.result.Status != "suspended" || linkErr != nil {
+		t.Fatalf("concurrent profile transition/link = (result %+v, transition error %v, link error %v)", transitioned.result, transitioned.err, linkErr)
+	}
+}
+
+func TestPostgresPlatformChangeOrderingDoesNotDeadlockRestartReconciliationAndProfileTransition(t *testing.T) {
+	ctx, cancel := context.WithTimeout(useFreshPostgresSchema(t), 20*time.Second)
+	defer cancel()
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	bot := createCustomerCosmeticsTestBot(t, ctx, "restart-lock-order")
+	account, err := UpsertVerifiedCustomerAccount(
+		ctx,
+		"restart-lock-order@example.com",
+		"https://id.example",
+		"restart-lock-order",
+		"Restart Lock Order",
+	)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		INSERT INTO account_api_keys (account_id, api_key_id, linked_at)
+		VALUES ($1, $2, NOW())`, account.ID, bot.APIKeyID); err != nil {
+		t.Fatalf("seed unreconciled API key ownership: %v", err)
+	}
+	if _, err := Pool.Exec(ctx, `
+		INSERT INTO account_bot_links (account_id, bot_id, linked_at)
+		VALUES ($1, $2, NOW())`, account.ID, bot.ID); err != nil {
+		t.Fatalf("seed unreconciled account link: %v", err)
+	}
+	var agentRevision int64
+	if err := Pool.QueryRow(ctx, `SELECT revision FROM platform_agents WHERE agent_id = $1`, bot.ID).Scan(&agentRevision); err != nil {
+		t.Fatalf("load platform agent revision: %v", err)
+	}
+
+	const barrierClassID = 72104
+	const barrierObjectID = 13
+	if _, err := Pool.Exec(ctx, `
+		CREATE FUNCTION test_block_restart_profile_transition() RETURNS TRIGGER
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			IF OLD.status = 'active' AND NEW.status = 'suspended' THEN
+				PERFORM pg_advisory_xact_lock(72104, 13);
+			END IF;
+			RETURN NEW;
+		END
+		$$;
+		CREATE TRIGGER test_block_restart_profile_transition
+		BEFORE UPDATE OF status ON platform_game_profiles
+		FOR EACH ROW EXECUTE FUNCTION test_block_restart_profile_transition()`); err != nil {
+		t.Fatalf("install restart profile barrier: %v", err)
+	}
+	releaseBarrier := holdPostgresTestAdvisoryBarrier(t, ctx, barrierClassID, barrierObjectID)
+
+	type profileResult struct {
+		result *PlatformProfileTransitionResult
+		err    error
+	}
+	profileDone := make(chan profileResult, 1)
+	go func() {
+		result, err := TransitionPlatformProfile(ctx, PlatformProfileTransition{
+			AgentID:          bot.ID,
+			Game:             "arena",
+			Status:           "suspended",
+			ExpectedRevision: agentRevision,
+			IdempotencyKey:   "restart-profile-lock-order",
+		})
+		profileDone <- profileResult{result: result, err: err}
+	}()
+	waitForPostgresTestCondition(t, ctx, "restart profile transition barrier", `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_locks
+			WHERE locktype = 'advisory'
+			  AND classid = $1
+			  AND objid = $2
+			  AND NOT granted
+		)`, barrierClassID, barrierObjectID)
+
+	restartDone := make(chan error, 1)
+	go func() {
+		restartDone <- EnsurePlatformAuthoritySchema(ctx)
+	}()
+	waitForPostgresTestCondition(t, ctx, "restart reconciliation agent lock", `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE datname = current_database()
+			  AND pid <> pg_backend_pid()
+			  AND wait_event_type = 'Lock'
+			  AND query LIKE '%platform_agents%'
+			  AND (query LIKE '%FOR UPDATE%' OR query LIKE '%LOCK TABLE%')
+		)`)
+
+	releaseBarrier()
+
+	var transitioned profileResult
+	select {
+	case transitioned = <-profileDone:
+	case <-ctx.Done():
+		t.Fatalf("profile transition did not finish: %v", ctx.Err())
+	}
+	var restartErr error
+	select {
+	case restartErr = <-restartDone:
+	case <-ctx.Done():
+		t.Fatalf("platform authority restart did not finish: %v", ctx.Err())
+	}
+	if transitioned.err != nil || transitioned.result == nil || transitioned.result.Status != "suspended" || restartErr != nil {
+		t.Fatalf("concurrent profile transition/restart = (result %+v, transition error %v, restart error %v)", transitioned.result, transitioned.err, restartErr)
+	}
+	var linkEvents int
+	if err := Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM platform_agent_link_events
+		WHERE account_id = $1 AND agent_id = $2 AND status = 'linked'`, account.ID, bot.ID).Scan(&linkEvents); err != nil {
+		t.Fatalf("count reconciled link events: %v", err)
+	}
+	if linkEvents != 1 {
+		t.Fatalf("reconciled link events = %d, want 1", linkEvents)
 	}
 }
 

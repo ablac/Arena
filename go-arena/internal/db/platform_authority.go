@@ -204,25 +204,22 @@ func enforcePlatformAgentCapacityTx(ctx context.Context, tx pgx.Tx, accountID st
 	return nil
 }
 
-func appendPlatformAccountLinkChangeTx(
+func appendPlatformAccountLinkChangeLockedTx(
 	ctx context.Context,
 	tx pgx.Tx,
-	accountID, status string,
+	capacity *PlatformAccountCapacity,
+	status string,
 	changedAt time.Time,
 ) error {
-	capacity, err := lockPlatformAccountCapacityTx(ctx, tx, accountID)
-	if err != nil {
-		return err
-	}
 	capacity.Revision++
 	if _, err := tx.Exec(ctx, `
 		UPDATE platform_account_metadata
 		SET revision = $2, updated_at = $3
-		WHERE account_id = $1`, accountID, capacity.Revision, changedAt); err != nil {
+		WHERE account_id = $1`, capacity.AccountID, capacity.Revision, changedAt); err != nil {
 		return fmt.Errorf("platform account revision update: %w", err)
 	}
 	if _, err := tx.Exec(ctx, insertPlatformChangeSQL,
-		"account", accountID, "agent_"+status, capacity.Revision, changedAt,
+		"account", capacity.AccountID, "agent_"+status, capacity.Revision, changedAt,
 	); err != nil {
 		return fmt.Errorf("platform account link change: %w", err)
 	}
@@ -436,14 +433,17 @@ func appendPlatformAgentLinkEventTx(
 		reason = "arena_account"
 	}
 	occurredAt = occurredAt.UTC().Truncate(time.Microsecond)
-	if err := appendPlatformAccountLinkChangeTx(ctx, tx, accountID, status, occurredAt); err != nil {
+	capacity, err := lockPlatformAccountCapacityTx(ctx, tx, accountID)
+	if err != nil {
 		return err
 	}
-
 	var agentRevision int64
 	if err := tx.QueryRow(ctx, `
 		SELECT revision FROM platform_agents WHERE agent_id = $1 FOR UPDATE`, agentID).Scan(&agentRevision); err != nil {
 		return fmt.Errorf("platform agent link lock: %w", err)
+	}
+	if err := appendPlatformAccountLinkChangeLockedTx(ctx, tx, capacity, status, occurredAt); err != nil {
+		return err
 	}
 	var linkRevision int64
 	if err := tx.QueryRow(ctx, `
@@ -771,34 +771,6 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			PRIMARY KEY (agent_id, game)
 		)`,
-		`CREATE TABLE IF NOT EXISTS platform_changes (
-			change_id BIGSERIAL PRIMARY KEY,
-			subject_kind TEXT NOT NULL
-				CHECK (subject_kind IN ('account', 'agent', 'game_profile', 'agent_link', 'license', 'license_assignment')),
-			subject_id TEXT NOT NULL CHECK (char_length(subject_id) BETWEEN 1 AND 256),
-			transition TEXT NOT NULL CHECK (char_length(transition) BETWEEN 1 AND 64),
-			revision BIGINT NOT NULL CHECK (revision >= 1),
-			changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			UNIQUE (subject_kind, subject_id, revision)
-		)`,
-		`CREATE OR REPLACE FUNCTION next_platform_change_id_commit_ordered()
-		RETURNS BIGINT
-		LANGUAGE plpgsql
-		VOLATILE
-		AS $$
-		DECLARE
-			sequence_name TEXT;
-		BEGIN
-			PERFORM pg_advisory_xact_lock(hashtextextended('arena.platform_changes.commit_order', 0));
-			sequence_name := pg_get_serial_sequence('platform_changes', 'change_id');
-			IF sequence_name IS NULL THEN
-				RAISE EXCEPTION 'platform_changes.change_id has no owned sequence';
-			END IF;
-			RETURN nextval(sequence_name);
-		END
-		$$`,
-		`ALTER TABLE platform_changes
-			ALTER COLUMN change_id SET DEFAULT next_platform_change_id_commit_ordered()`,
 		fmt.Sprintf(`INSERT INTO platform_account_metadata (
 			account_id, status, maximum_agents, revision, created_at, updated_at
 		)
@@ -806,13 +778,6 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 		FROM customer_accounts AS accounts
 		ORDER BY accounts.id
 		ON CONFLICT (account_id) DO NOTHING`, DefaultPlatformMaximumAgents),
-		`INSERT INTO platform_changes (
-			subject_kind, subject_id, transition, revision, changed_at
-		)
-		SELECT 'account', metadata.account_id, 'registered', 1, metadata.updated_at
-		FROM platform_account_metadata AS metadata
-		ORDER BY metadata.account_id
-		ON CONFLICT (subject_kind, subject_id, revision) DO NOTHING`,
 		fmt.Sprintf(`CREATE OR REPLACE FUNCTION insert_platform_account_metadata()
 		RETURNS TRIGGER
 		LANGUAGE plpgsql
@@ -882,6 +847,101 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 		JOIN platform_agents AS agents ON agents.agent_id = b.id
 		ORDER BY b.id
 		ON CONFLICT (agent_id, game) DO NOTHING`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(ctx, statement); err != nil {
+			return fmt.Errorf("EnsurePlatformAuthoritySchema exec: %w", err)
+		}
+	}
+	if err := ensurePlatformLicenseLifecycleSchemaTx(ctx, tx); err != nil {
+		return fmt.Errorf("EnsurePlatformAuthoritySchema license lifecycle: %w", err)
+	}
+	if err := ensurePlatformChangeSchemaTx(ctx, tx); err != nil {
+		return fmt.Errorf("EnsurePlatformAuthoritySchema change schema: %w", err)
+	}
+	if err := backfillPlatformAuthorityChangesTx(ctx, tx); err != nil {
+		return fmt.Errorf("EnsurePlatformAuthoritySchema authority changes: %w", err)
+	}
+	if err := backfillPlatformLicenseChangesTx(ctx, tx); err != nil {
+		return fmt.Errorf("EnsurePlatformAuthoritySchema license changes: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("EnsurePlatformAuthoritySchema commit: %w", err)
+	}
+	// Reconciliation is repeatable and runs after schema commit so no
+	// platform_changes relation lock can be held while it waits for an
+	// account or agent row owned by a live authority transaction.
+	if err := reconcilePlatformAgentLinks(ctx); err != nil {
+		return fmt.Errorf("EnsurePlatformAuthoritySchema reconcile agent links: %w", err)
+	}
+	return nil
+}
+
+func ensurePlatformChangeSchemaTx(ctx context.Context, tx pgx.Tx) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS platform_changes (
+			change_id BIGSERIAL PRIMARY KEY,
+			subject_kind TEXT NOT NULL
+				CHECK (subject_kind IN ('account', 'agent', 'game_profile', 'agent_link', 'license', 'license_assignment')),
+			subject_id TEXT NOT NULL CHECK (char_length(subject_id) BETWEEN 1 AND 256),
+			transition TEXT NOT NULL CHECK (char_length(transition) BETWEEN 1 AND 64),
+			revision BIGINT NOT NULL CHECK (revision >= 1),
+			changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (subject_kind, subject_id, revision)
+		)`,
+		`CREATE OR REPLACE FUNCTION next_platform_change_id_commit_ordered()
+		RETURNS BIGINT
+		LANGUAGE plpgsql
+		VOLATILE
+		AS $$
+		DECLARE
+			sequence_name TEXT;
+		BEGIN
+			PERFORM pg_advisory_xact_lock(hashtextextended('arena.platform_changes.commit_order', 0));
+			sequence_name := pg_get_serial_sequence('platform_changes', 'change_id');
+			IF sequence_name IS NULL THEN
+				RAISE EXCEPTION 'platform_changes.change_id has no owned sequence';
+			END IF;
+			RETURN nextval(sequence_name);
+		END
+		$$`,
+		`ALTER TABLE platform_changes
+			ALTER COLUMN change_id SET DEFAULT next_platform_change_id_commit_ordered()`,
+		`DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1
+				FROM pg_constraint
+				WHERE conrelid = 'platform_changes'::regclass
+				  AND conname = 'platform_changes_subject_kind_check'
+				  AND pg_get_constraintdef(oid) LIKE '%license_assignment%'
+			) THEN
+				ALTER TABLE platform_changes DROP CONSTRAINT IF EXISTS platform_changes_subject_kind_check;
+				ALTER TABLE platform_changes ADD CONSTRAINT platform_changes_subject_kind_check
+					CHECK (subject_kind IN ('account', 'agent', 'game_profile', 'agent_link', 'license', 'license_assignment')) NOT VALID;
+			END IF;
+		END
+		$$`,
+		`ALTER TABLE platform_changes VALIDATE CONSTRAINT platform_changes_subject_kind_check`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(ctx, statement); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func backfillPlatformAuthorityChangesTx(ctx context.Context, tx pgx.Tx) error {
+	statements := []string{
+		`INSERT INTO platform_changes (
+			subject_kind, subject_id, transition, revision, changed_at
+		)
+		SELECT 'account', metadata.account_id, 'registered', 1, metadata.updated_at
+		FROM platform_account_metadata AS metadata
+		ORDER BY metadata.account_id
+		ON CONFLICT (subject_kind, subject_id, revision) DO NOTHING`,
 		`INSERT INTO platform_changes (
 			subject_kind, subject_id, transition, revision, changed_at
 		)
@@ -903,18 +963,8 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 	}
 	for _, statement := range statements {
 		if _, err := tx.Exec(ctx, statement); err != nil {
-			return fmt.Errorf("EnsurePlatformAuthoritySchema exec: %w", err)
+			return err
 		}
-	}
-	if err := ensurePlatformLicenseLifecycleSchemaTx(ctx, tx); err != nil {
-		return fmt.Errorf("EnsurePlatformAuthoritySchema license lifecycle: %w", err)
-	}
-	if err := reconcilePlatformAgentLinksTx(ctx, tx); err != nil {
-		return fmt.Errorf("EnsurePlatformAuthoritySchema reconcile agent links: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("EnsurePlatformAuthoritySchema commit: %w", err)
 	}
 	return nil
 }
@@ -936,6 +986,24 @@ func normalizedPlatformAccountStatusConstraint(definition string) string {
 	default:
 		return ""
 	}
+}
+
+func reconcilePlatformAgentLinks(ctx context.Context) error {
+	tx, err := Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("reconcile platform agent links begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(2026071901::BIGINT)`); err != nil {
+		return fmt.Errorf("reconcile platform agent links migration lock: %w", err)
+	}
+	if err := reconcilePlatformAgentLinksTx(ctx, tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("reconcile platform agent links commit: %w", err)
+	}
+	return nil
 }
 
 func reconcilePlatformAgentLinksTx(ctx context.Context, tx pgx.Tx) error {
@@ -1039,6 +1107,79 @@ func reconcilePlatformAgentLinksTx(ctx context.Context, tx pgx.Tx) error {
 		return fmt.Errorf("iterate stale durable links: %w", err)
 	}
 	rows.Close()
+
+	accountSet := make(map[string]struct{}, len(repairs))
+	agentSet := make(map[string]struct{}, len(repairs))
+	for _, item := range repairs {
+		accountSet[item.accountID] = struct{}{}
+		agentSet[item.agentID] = struct{}{}
+	}
+	accountIDs := make([]string, 0, len(accountSet))
+	for accountID := range accountSet {
+		accountIDs = append(accountIDs, accountID)
+	}
+	agentIDs := make([]string, 0, len(agentSet))
+	for agentID := range agentSet {
+		agentIDs = append(agentIDs, agentID)
+	}
+	// Acquire the full repair set before the first change-feed insertion.
+	// ORDER BY makes concurrent reconciliation use one account/agent order.
+	if len(accountIDs) > 0 {
+		rows, err = tx.Query(ctx, `
+			SELECT account_id
+			FROM platform_account_metadata
+			WHERE account_id = ANY($1)
+			ORDER BY account_id
+			FOR UPDATE`, accountIDs)
+		if err != nil {
+			return fmt.Errorf("lock reconciliation accounts: %w", err)
+		}
+		locked := 0
+		for rows.Next() {
+			var accountID string
+			if err := rows.Scan(&accountID); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan reconciliation account lock: %w", err)
+			}
+			locked++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return fmt.Errorf("iterate reconciliation account locks: %w", err)
+		}
+		rows.Close()
+		if locked != len(accountIDs) {
+			return fmt.Errorf("lock reconciliation accounts: found %d of %d", locked, len(accountIDs))
+		}
+	}
+	if len(agentIDs) > 0 {
+		rows, err = tx.Query(ctx, `
+			SELECT agent_id
+			FROM platform_agents
+			WHERE agent_id = ANY($1)
+			ORDER BY agent_id
+			FOR UPDATE`, agentIDs)
+		if err != nil {
+			return fmt.Errorf("lock reconciliation agents: %w", err)
+		}
+		locked := 0
+		for rows.Next() {
+			var agentID string
+			if err := rows.Scan(&agentID); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan reconciliation agent lock: %w", err)
+			}
+			locked++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return fmt.Errorf("iterate reconciliation agent locks: %w", err)
+		}
+		rows.Close()
+		if locked != len(agentIDs) {
+			return fmt.Errorf("lock reconciliation agents: found %d of %d", locked, len(agentIDs))
+		}
+	}
 
 	for _, item := range repairs {
 		if err := appendPlatformAgentLinkEventTx(

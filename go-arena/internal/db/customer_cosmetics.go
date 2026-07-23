@@ -412,12 +412,6 @@ func linkBotToCustomerAccountTx(
 			return nil, false, fmt.Errorf("LinkBotToCustomerAccount insert: %w", err)
 		}
 	}
-	if linkCreated {
-		if err := appendPlatformAgentLinkEventTx(ctx, tx, accountID, botID, "linked", "arena_account_link", time.Now()); err != nil {
-			return nil, false, fmt.Errorf("LinkBotToCustomerAccount platform link: %w", err)
-		}
-	}
-
 	// Claim every pre-account license for this bot. The account assignment is
 	// represented by a composite-FK row, so a future handler bug cannot point a
 	// license at a bot belonging to another account.
@@ -456,6 +450,11 @@ func linkBotToCustomerAccountTx(
 			ctx, tx, claim.licenseID, accountID, preserveAgentID, "arena_agent_link_claim",
 		); err != nil {
 			return nil, false, fmt.Errorf("LinkBotToCustomerAccount claim legacy: %w", err)
+		}
+	}
+	if linkCreated {
+		if err := appendPlatformAgentLinkEventTx(ctx, tx, accountID, botID, "linked", "arena_account_link", time.Now()); err != nil {
+			return nil, false, fmt.Errorf("LinkBotToCustomerAccount platform link: %w", err)
 		}
 	}
 	if err := tx.QueryRow(ctx, `SELECT linked_at FROM account_bot_links WHERE account_id = $1 AND bot_id = $2`,
