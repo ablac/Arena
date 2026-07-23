@@ -1396,6 +1396,142 @@ func TestPostgresPlatformChangeFeedIsOrderedBoundedAndIndexCompatible(t *testing
 	}
 }
 
+func TestPostgresPlatformChangeFeedCannotSkipAnEarlierCommit(t *testing.T) {
+	ctx := useFreshPostgresSchema(t)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("EnsureCoreSchema: %v", err)
+	}
+
+	var baseChangeID int64
+	if err := Pool.QueryRow(ctx, `SELECT COALESCE(MAX(change_id), 0) FROM platform_changes`).Scan(&baseChangeID); err != nil {
+		t.Fatalf("load base change ID: %v", err)
+	}
+
+	first, err := Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin first platform change: %v", err)
+	}
+	t.Cleanup(func() { _ = first.Rollback(context.Background()) })
+	var firstBackendPID int
+	if err := first.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&firstBackendPID); err != nil {
+		t.Fatalf("load first backend PID: %v", err)
+	}
+	var firstChangeID int64
+	if err := first.QueryRow(ctx, `
+		INSERT INTO platform_changes (subject_kind, subject_id, transition, revision, changed_at)
+		VALUES ('agent', 'commit-order-first', 'registered', 1, NOW())
+		RETURNING change_id`).Scan(&firstChangeID); err != nil {
+		t.Fatalf("insert first uncommitted platform change: %v", err)
+	}
+
+	second, err := Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin second platform change: %v", err)
+	}
+	t.Cleanup(func() { _ = second.Rollback(context.Background()) })
+	var secondBackendPID int
+	if err := second.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&secondBackendPID); err != nil {
+		t.Fatalf("load second backend PID: %v", err)
+	}
+	type insertResult struct {
+		changeID int64
+		err      error
+	}
+	secondInsert := make(chan insertResult, 1)
+	go func() {
+		var changeID int64
+		err := second.QueryRow(context.Background(), `
+			INSERT INTO platform_changes (subject_kind, subject_id, transition, revision, changed_at)
+			VALUES ('agent', 'commit-order-second', 'registered', 1, NOW())
+			RETURNING change_id`).Scan(&changeID)
+		secondInsert <- insertResult{changeID: changeID, err: err}
+	}()
+
+	var secondResult insertResult
+	secondAllocatedBeforeFirstCommit := false
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		select {
+		case secondResult = <-secondInsert:
+			if secondResult.err != nil {
+				t.Fatalf("insert second platform change: %v", secondResult.err)
+			}
+			secondAllocatedBeforeFirstCommit = true
+		default:
+		}
+		if secondAllocatedBeforeFirstCommit {
+			break
+		}
+		var blockedByFirst bool
+		if err := Pool.QueryRow(ctx, `SELECT $1 = ANY(pg_blocking_pids($2))`, firstBackendPID, secondBackendPID).Scan(&blockedByFirst); err != nil {
+			t.Fatalf("inspect platform change allocation lock: %v", err)
+		}
+		if blockedByFirst {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("second platform change neither allocated nor blocked behind the first transaction")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if secondAllocatedBeforeFirstCommit {
+		if err := second.Commit(ctx); err != nil {
+			t.Fatalf("commit second platform change first: %v", err)
+		}
+		visible, _, err := ListPlatformChanges(ctx, baseChangeID, MaxPlatformChangePageSize)
+		if err != nil {
+			t.Fatalf("read change feed after inverted commit: %v", err)
+		}
+		if len(visible) != 1 || visible[0].ChangeID != secondResult.changeID {
+			t.Fatalf("visible inverted-commit changes = %+v, want only second change %d", visible, secondResult.changeID)
+		}
+		if err := first.Commit(ctx); err != nil {
+			t.Fatalf("commit earlier allocated platform change last: %v", err)
+		}
+		remaining, _, err := ListPlatformChanges(ctx, secondResult.changeID, MaxPlatformChangePageSize)
+		if err != nil {
+			t.Fatalf("read change feed after advancing cursor: %v", err)
+		}
+		for _, change := range remaining {
+			if change.ChangeID == firstChangeID {
+				t.Fatalf("change %d unexpectedly remained visible after cursor %d", firstChangeID, secondResult.changeID)
+			}
+		}
+		t.Fatalf(
+			"platform change %d committed before earlier allocated change %d; a consumer cursor at %d permanently skips the late commit",
+			secondResult.changeID,
+			firstChangeID,
+			secondResult.changeID,
+		)
+	}
+
+	if err := first.Commit(ctx); err != nil {
+		t.Fatalf("commit first platform change: %v", err)
+	}
+	select {
+	case secondResult = <-secondInsert:
+		if secondResult.err != nil {
+			t.Fatalf("insert second platform change after first commit: %v", secondResult.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("second platform change remained blocked after first commit")
+	}
+	if err := second.Commit(ctx); err != nil {
+		t.Fatalf("commit second platform change: %v", err)
+	}
+
+	changes, _, err := ListPlatformChanges(ctx, baseChangeID, MaxPlatformChangePageSize)
+	if err != nil {
+		t.Fatalf("read commit-ordered platform changes: %v", err)
+	}
+	if len(changes) != 2 ||
+		changes[0].ChangeID != firstChangeID || changes[0].SubjectID != "commit-order-first" ||
+		changes[1].ChangeID != secondResult.changeID || changes[1].SubjectID != "commit-order-second" {
+		t.Fatalf("commit-ordered platform changes = %+v", changes)
+	}
+}
+
 func TestPostgresPlatformChangeFeedRejectsNoncanonicalDurableValues(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {

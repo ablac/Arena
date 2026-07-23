@@ -458,11 +458,17 @@ func lockPlatformCosmeticLicenseTx(ctx context.Context, tx pgx.Tx, licenseID str
 		}
 		return nil, nil, fmt.Errorf("lock platform cosmetic license: %w", err)
 	}
+	normalizePlatformCosmeticLicenseTimes(&result)
 	result.LicenseID = licenseID
 	if owner != nil {
 		result.AccountID = *owner
 	}
 	return &result, owner, nil
+}
+
+func normalizePlatformCosmeticLicenseTimes(result *PlatformCosmeticLicense) {
+	result.CreatedAt = result.CreatedAt.UTC()
+	result.UpdatedAt = result.UpdatedAt.UTC()
 }
 
 func loadPlatformLicenseIdempotencyTx(
@@ -618,6 +624,7 @@ func transitionPlatformLicenseAttempt(
 		}
 		return nil, false, fmt.Errorf("TransitionPlatformLicense lock: %w", err)
 	}
+	normalizePlatformCosmeticLicenseTimes(&result)
 	ownerChanged := (observedOwner == nil) != (actualOwner == nil) ||
 		(observedOwner != nil && actualOwner != nil && *observedOwner != *actualOwner)
 	if ownerChanged {

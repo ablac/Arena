@@ -781,6 +781,24 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 			changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE (subject_kind, subject_id, revision)
 		)`,
+		`CREATE OR REPLACE FUNCTION next_platform_change_id_commit_ordered()
+		RETURNS BIGINT
+		LANGUAGE plpgsql
+		VOLATILE
+		AS $$
+		DECLARE
+			sequence_name TEXT;
+		BEGIN
+			PERFORM pg_advisory_xact_lock(hashtextextended('arena.platform_changes.commit_order', 0));
+			sequence_name := pg_get_serial_sequence('platform_changes', 'change_id');
+			IF sequence_name IS NULL THEN
+				RAISE EXCEPTION 'platform_changes.change_id has no owned sequence';
+			END IF;
+			RETURN nextval(sequence_name);
+		END
+		$$`,
+		`ALTER TABLE platform_changes
+			ALTER COLUMN change_id SET DEFAULT next_platform_change_id_commit_ordered()`,
 		fmt.Sprintf(`INSERT INTO platform_account_metadata (
 			account_id, status, maximum_agents, revision, created_at, updated_at
 		)
