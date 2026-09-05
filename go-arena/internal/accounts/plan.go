@@ -18,7 +18,7 @@ import (
  * would put a second number in the world that can disagree with the card
  * charge, which is exactly what the subscription rewrite removed. So the Shop
  * says what Accounts says, read from the same public catalog a customer sees,
- * and says nothing at all when it does not know.
+ * and marks the price unavailable when it does not know.
  *
  * The read is deliberately off the request path: the catalog endpoint answers
  * from a value refreshed in the background, so a slow or unreachable Accounts
@@ -26,12 +26,32 @@ import (
  * figure — never a Shop that fails to load.
  */
 
+// PlanMaxAge bounds a quote even if the background refresher stops running.
+const PlanMaxAge = 45 * time.Second
+
+// Sale is Accounts' offer. The discount applies to the subscription, not each
+// seat. Redemption dates and discount duration are separate commercial terms.
+type Sale struct {
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	PercentOff     *float64   `json:"percentOff"`
+	AmountOffCents *int       `json:"amountOffCents"`
+	Duration       string     `json:"duration"`
+	DurationMonths *int       `json:"durationMonths"`
+	StartsAt       *time.Time `json:"startsAt"`
+	EndsAt         *time.Time `json:"endsAt"`
+}
+
 // Plan is one product's public subscription plan, as Accounts sells it.
 type Plan struct {
-	Slug       string
-	PriceCents int
-	Currency   string
-	Interval   string
+	Slug          string
+	PriceCents    int
+	Currency      string
+	Interval      string
+	PriceRevision int
+	SeatsIncluded int
+	Sale          *Sale
+	ValidUntil    time.Time
 }
 
 // PlanSource remembers one product's plan from the Accounts catalog.
@@ -40,10 +60,11 @@ type PlanSource struct {
 	productID  string
 	http       *http.Client
 
-	mu     sync.RWMutex
-	plan   Plan
-	known  bool
-	lastAt time.Time
+	refreshMu sync.Mutex
+	mu        sync.RWMutex
+	plan      Plan
+	known     bool
+	now       func() time.Time
 }
 
 // NewPlanSource reads productID's plan from the catalog the issuer publishes.
@@ -61,34 +82,66 @@ func NewPlanSource(issuer, productID string, httpClient *http.Client) *PlanSourc
 		catalogURL: issuer + "/api/v1/catalog",
 		productID:  productID,
 		http:       httpClient,
+		now:        time.Now,
 	}
 }
 
-// Get returns the last known plan without blocking. A nil source, or one that
-// has never had a successful read, reports false — and the caller quotes
-// nothing rather than guessing.
+// Get returns a current quote without blocking. A failed refresh, age limit or
+// sale boundary withdraws it; an old offer must not guide a purchase decision.
 func (s *PlanSource) Get() (Plan, bool) {
 	if s == nil {
 		return Plan{}, false
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.plan, s.known
+	if !s.known || !s.now().Before(s.plan.ValidUntil) {
+		return Plan{}, false
+	}
+	return s.plan, true
 }
 
-// Refresh reads the catalog once. A failure leaves the previous answer in
-// place: a price that was right a minute ago is a better thing to show than
-// nothing, and a price that has genuinely changed is picked up on the next
-// successful read.
-func (s *PlanSource) Refresh(ctx context.Context) error {
+// NextRefresh wakes the background reader at sale boundaries as well as at
+// its capped interval. A price remains unavailable until that read succeeds.
+func (s *PlanSource) NextRefresh(maximum time.Duration) time.Duration {
+	if s == nil {
+		return maximum
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.known {
+		remaining := s.plan.ValidUntil.Sub(s.now())
+		if remaining <= 0 {
+			return time.Second
+		}
+		if remaining < maximum {
+			return remaining
+		}
+	}
+	return maximum
+}
+
+// Refresh reads the public catalog once. Errors immediately withdraw the
+// previous quote; cosmetic access and existing subscriptions are independent.
+func (s *PlanSource) Refresh(ctx context.Context) (refreshErr error) {
 	if s == nil {
 		return nil
 	}
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	defer func() {
+		if refreshErr != nil {
+			s.mu.Lock()
+			s.known = false
+			s.plan = Plan{}
+			s.mu.Unlock()
+		}
+	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.catalogURL, nil)
 	if err != nil {
 		return fmt.Errorf("accounts catalog request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cache-Control", "no-cache, no-store")
 	res, err := s.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("accounts catalog fetch: %w", err)
@@ -107,11 +160,14 @@ func (s *PlanSource) Refresh(ctx context.Context) error {
 			ID    string `json:"id"`
 			Slug  string `json:"slug"`
 			Plans []struct {
-				Slug       string `json:"slug"`
-				PriceCents int    `json:"priceCents"`
-				Currency   string `json:"currency"`
-				Interval   string `json:"interval"`
-				Public     bool   `json:"public"`
+				Slug          string `json:"slug"`
+				PriceCents    int    `json:"priceCents"`
+				Currency      string `json:"currency"`
+				Interval      string `json:"interval"`
+				Public        bool   `json:"public"`
+				PriceRevision int    `json:"priceRevision"`
+				SeatsIncluded *int   `json:"seatsIncluded"`
+				Sale          *Sale  `json:"sale"`
 			} `json:"plans"`
 		} `json:"products"`
 	}
@@ -139,15 +195,44 @@ func (s *PlanSource) Refresh(ctx context.Context) error {
 			if found && plan.PriceCents >= best.PriceCents {
 				continue
 			}
-			currency := strings.TrimSpace(plan.Currency)
+			currency := strings.ToUpper(strings.TrimSpace(plan.Currency))
 			if currency == "" {
+				// Accounts' catalog contract uses USD and historically omitted it.
 				currency = "USD"
 			}
+			seats := 1
+			if plan.SeatsIncluded != nil {
+				seats = *plan.SeatsIncluded
+			}
+			interval := strings.TrimSpace(plan.Interval)
+			if currency != "USD" || seats <= 0 || plan.PriceRevision < 0 || (interval != "month" && interval != "year") {
+				return fmt.Errorf("accounts catalog: invalid commercial terms for %q", plan.Slug)
+			}
+			if err := validateSale(plan.Sale); err != nil {
+				return fmt.Errorf("accounts catalog: %w", err)
+			}
+			now := s.now()
+			sale := plan.Sale
+			if sale != nil && sale.EndsAt != nil && !now.Before(*sale.EndsAt) {
+				sale = nil
+			}
+			validUntil := now.Add(PlanMaxAge)
+			if sale != nil {
+				for _, boundary := range []*time.Time{sale.StartsAt, sale.EndsAt} {
+					if boundary != nil && boundary.After(now) && boundary.Before(validUntil) {
+						validUntil = *boundary
+					}
+				}
+			}
 			best = Plan{
-				Slug:       plan.Slug,
-				PriceCents: plan.PriceCents,
-				Currency:   currency,
-				Interval:   strings.TrimSpace(plan.Interval),
+				Slug:          plan.Slug,
+				PriceCents:    plan.PriceCents,
+				Currency:      currency,
+				Interval:      interval,
+				PriceRevision: plan.PriceRevision,
+				SeatsIncluded: seats,
+				Sale:          sale,
+				ValidUntil:    validUntil,
 			}
 			found = true
 		}
@@ -157,9 +242,39 @@ func (s *PlanSource) Refresh(ctx context.Context) error {
 		s.mu.Lock()
 		s.plan = best
 		s.known = true
-		s.lastAt = time.Now()
 		s.mu.Unlock()
 		return nil
 	}
 	return fmt.Errorf("accounts catalog: no product %q", s.productID)
+}
+
+func validateSale(sale *Sale) error {
+	if sale == nil {
+		return nil
+	}
+	if strings.TrimSpace(sale.ID) == "" || strings.TrimSpace(sale.Name) == "" || (sale.PercentOff == nil) == (sale.AmountOffCents == nil) {
+		return fmt.Errorf("incomplete sale")
+	}
+	if sale.PercentOff != nil && (*sale.PercentOff <= 0 || *sale.PercentOff > 100) {
+		return fmt.Errorf("invalid sale percentage")
+	}
+	if sale.AmountOffCents != nil && *sale.AmountOffCents <= 0 {
+		return fmt.Errorf("invalid sale amount")
+	}
+	switch sale.Duration {
+	case "once", "forever":
+		if sale.DurationMonths != nil {
+			return fmt.Errorf("unexpected sale duration months")
+		}
+	case "repeating":
+		if sale.DurationMonths == nil || *sale.DurationMonths <= 0 {
+			return fmt.Errorf("missing sale duration months")
+		}
+	default:
+		return fmt.Errorf("unknown sale duration")
+	}
+	if sale.StartsAt != nil && sale.EndsAt != nil && !sale.StartsAt.Before(*sale.EndsAt) {
+		return fmt.Errorf("invalid sale redemption dates")
+	}
+	return nil
 }

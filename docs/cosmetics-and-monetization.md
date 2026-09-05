@@ -84,6 +84,66 @@ Accounts webhook outbox is the long-term answer and is not built yet.
   says what unlocks paid cosmetics and flags a missing shop address. There is
   nothing to grant, no membership to time-box and no order to look up.
 
+## Public pricing contract with Accounts
+
+Accounts is the primary source for the subscription's commercial terms. Arena
+reads `GET <ARENA_CUSTOMER_OIDC_ISSUER>/api/v1/catalog` without credentials when
+its Accounts identity integration starts. The response remains `{ "products":
+[...] }`; Arena selects the product whose ID or slug is `arena`, then preserves
+its existing selection of the cheapest public paid plan by base unit price.
+Free/private plans do not replace the subscription quote. This price selection
+does not alter plan IDs, customer entitlements, grants, inventory or loadouts.
+
+The selected plan carries `slug`, `priceCents`, `interval` (`month` or `year`),
+`seatsIncluded`, `priceRevision` and nullable `sale`. Accounts currently defines
+its base amount as USD per billed unit. For older catalog responses, absent
+currency means USD, absent seat quantity means one, and an absent revision is
+reported as zero. Explicit invalid terms make the price unavailable.
+
+A sale carries `id`, `name`, exactly one of `percentOff` / `amountOffCents`,
+`duration` (`once`, `repeating` or `forever`), nullable `durationMonths`, and
+nullable RFC3339 `startsAt` / `endsAt`. Repeating discounts require a positive
+month count. The redemption window is separate from the discount duration:
+`endsAt` closes new redemptions; it does not end an already redeemed repeating
+or continuing discount. End dates are exclusive. Arena displays these terms
+as offer words beside the base total. It does not multiply a fixed discount by
+seat quantity or calculate an authoritative discounted bill. The existing
+Accounts link remains the only subscription action, and Accounts confirms
+final pricing and eligibility there.
+
+The public cosmetics response retains `categories`, `packs`, `items` and
+`subscription`. The latter always includes `product`, `includes_all_cosmetics`
+and `price_available`, plus the configured `url` when present. A current quote
+also includes `plan_slug`, `price_cents`, `currency`, `interval`, `seats_included`,
+`price_revision`, `price_valid_until` (RFC3339 UTC), and `sale` with the same
+camel-case field names as Accounts. Unavailable quotes omit all commercial
+fields; consumers must not reuse the previous quote as a current offer.
+
+Arena refreshes Accounts at most 30 seconds after a completed read and earlier
+at known sale boundaries. A quote expires after 45 seconds or at the next sale
+boundary, whichever comes first. A failed read withdraws it immediately; the
+refresher must obtain a new successful response before it becomes available.
+Expired sale metadata is omitted even if an upstream response still includes
+it. This is bounded propagation, not an instantaneous push of an Accounts edit.
+
+Only the cosmetic content stays in Arena's one-minute in-memory catalog cache.
+The subscription quote is attached after that cache on each request, and the
+complete response uses `Cache-Control: no-store`. The Shop fetches on load,
+focus, page restoration, visibility and a timer capped at 30 seconds or the next
+quote/sale boundary. A returned quote never extends its server expiry. Hidden
+tabs skip network polling and recheck expiry immediately when shown. The Shop
+withdraws an expired quote while a refresh is pending, and a pricing failure
+preserves cosmetic browsing and the known Accounts link while saying
+**Price unavailable**. None of this changes entitlement outage handling, which
+continues to preserve existing access as described above.
+
+Focused regression coverage lives in `go-arena/internal/accounts/plan_test.go`,
+`go-arena/internal/api/subscription_cosmetics_test.go`, and
+`scripts/test-cosmetics-shop.mjs` (already part of frontend CI). Run this
+coverage and the repository's documented validation gate before release.
+Normal change pull requests target `develop`; `main` remains the production
+release branch.
+
 ## Customer registration and authentication
 
 Signing in is Angel Accounts, and only Angel Accounts. Every sign-in control
@@ -203,7 +263,7 @@ Public:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/v1/cosmetics/catalog` | Active categories, packs and items, plus `subscription: {product: "arena", includes_all_cosmetics: true, url}` (`url` only when `ARENA_ACCOUNTS_SHOP_URL` is set). Publishes no checkout fact. |
+| `GET` | `/api/v1/cosmetics/catalog` | Active categories, packs and items, plus the current Accounts subscription quote, availability and optional shop URL; see the public pricing contract above. No Arena checkout action. |
 
 Bot token (`Authorization: Bearer <api_key>`):
 

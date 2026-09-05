@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"arena-server/internal/accounts"
 	"arena-server/internal/config"
 	"arena-server/internal/db"
 	"arena-server/internal/game"
@@ -363,5 +365,70 @@ func TestEntitlementsSyncIsNeverOnThePathToASession(t *testing.T) {
 	result, err := quiet.syncEntitlementsFromAccounts(t.Context(), "account-1", "at_token")
 	if err != nil || result != nil {
 		t.Fatalf("unconfigured sync = (%+v, %v), want a silent no-op", result, err)
+	}
+}
+
+// Prices and offers must not be frozen inside the larger cosmetic-content cache.
+func TestCatalogPublishesFreshAccountsTermsAndWithdrawsFailedQuotes(t *testing.T) {
+	var unavailable atomic.Bool
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Cache-Control") != "no-cache, no-store" {
+			t.Error("catalog reads must bypass provider caches")
+		}
+		if unavailable.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"products":[{"id":"arena","plans":[{"slug":"all-access","priceCents":999,"interval":"month","public":true,"priceRevision":8,"seatsIncluded":3,"sale":{"id":"launch","name":"Launch","amountOffCents":500,"duration":"once"}}]}]}`))
+	}))
+	t.Cleanup(provider.Close)
+	source := accounts.NewPlanSource(provider.URL, "arena", provider.Client())
+	previous := accountsPlan.Swap(source)
+	t.Cleanup(func() { accountsPlan.Store(previous) })
+	withAccountsShop(t, testAccountsShopURL)
+	if err := source.Refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeCosmeticsStore{publicCatalog: &db.CosmeticCatalog{
+		Packs: []db.CosmeticPack{{ID: "existing-pack", IsActive: true}},
+	}}
+	handler := newCosmeticsHandlerWithStore(store)
+	handler.catalogCache = newResponseCache(time.Minute, time.Second, time.Now)
+	read := func() map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.Catalog(rec, httptest.NewRequest(http.MethodGet, "/api/v1/cosmetics/catalog", nil))
+		if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("ETag") != "" {
+			t.Fatalf("catalog status/cache = %d %v", rec.Code, rec.Header())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body["packs"].([]any)) != 1 {
+			t.Fatal("price availability must not remove the existing cosmetics")
+		}
+		return body["subscription"].(map[string]any)
+	}
+	quote := read()
+	if quote["price_available"] != true || quote["price_cents"] != float64(999) || quote["seats_included"] != float64(3) || quote["price_revision"] != float64(8) || quote["plan_slug"] != "all-access" || quote["price_valid_until"] == nil {
+		t.Fatalf("quote = %v", quote)
+	}
+	if offer := quote["sale"].(map[string]any); offer["amountOffCents"] != float64(500) || offer["percentOff"] != nil {
+		t.Fatalf("the fixed offer must pass through without seat multiplication: %v", offer)
+	}
+	unavailable.Store(true)
+	if err := source.Refresh(t.Context()); err == nil {
+		t.Fatal("expected the provider outage")
+	}
+	// This request is still within the minute-long cosmetic cache TTL.
+	quote = read()
+	if quote["price_available"] != false || quote["url"] != testAccountsShopURL || quote["includes_all_cosmetics"] != true {
+		t.Fatalf("unavailable quote lost the unchanged subscription flow: %v", quote)
+	}
+	for _, key := range []string{"price_cents", "sale", "price_revision", "price_valid_until"} {
+		if _, present := quote[key]; present {
+			t.Fatalf("unavailable quote retained %s: %v", key, quote)
+		}
 	}
 }
