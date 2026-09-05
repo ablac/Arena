@@ -392,7 +392,7 @@ func TestCatalogPublishesFreshAccountsTermsAndWithdrawsFailedQuotes(t *testing.T
 	store := &fakeCosmeticsStore{publicCatalog: &db.CosmeticCatalog{
 		Packs: []db.CosmeticPack{{ID: "existing-pack", IsActive: true}},
 	}}
-	handler := newCosmeticsHandlerWithStore(store)
+	handler := newCosmeticsHandlerWithStore(store, nil)
 	handler.catalogCache = newResponseCache(time.Minute, time.Second, time.Now)
 	read := func() map[string]any {
 		t.Helper()

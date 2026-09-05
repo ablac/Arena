@@ -30,7 +30,7 @@ assert.match(desktopHTML, /js\/app\.js\?v=20260903c/);
 assert.match(mobileHTML, /mobile\.js\?v=20260903c/);
 assert.doesNotMatch(desktopHTML + shopHTML, /embedded-checkout/,
   'Arena runs no checkout of its own: the subscription is sold in Angel Accounts');
-assert.match(shopHTML, /cosmetics-shop\.js\?v=20260902a/);
+assert.match(shopHTML, /cosmetics-shop\.js\?v=20260905a/);
 assert.match(appSource, /renderer\/engine\.js\?v=20260903c/);
 assert.match(mobileSource, /renderer\/engine\.js\?v=20260903c/);
 assert.match(shopSource, /shop-preview\.js\?v=20260718o/);
