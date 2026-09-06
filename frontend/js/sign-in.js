@@ -38,9 +38,9 @@
  * @module sign-in
  */
 
-import { fetchAccountSession, startSessionSync } from './account-session.js?v=20260825a';
+import { fetchAccountSession, startSessionSync } from './account-session.js?v=20260905u';
 import { ensureConsent } from './consent-gate.js?v=20260714a';
-import { signInWithAccounts } from './accounts-login.js?v=20260903a';
+import { signInWithAccounts } from './accounts-login.js?v=20260905u';
 
 /** The one sentence Arena says when it cannot reach Angel Accounts at all. */
 export const NOT_CONFIGURED_MESSAGE =
@@ -116,7 +116,7 @@ export function isSignedOut() {
 /**
  * Start a sign-in.
  *
- * @param {{returnTo?: string}} [options]
+ * @param {{returnTo?: string, refresh?: boolean}} [options]
  * @returns {Promise<{status: 'signed-in'|'closed'|'declined'|'unconfigured'|'already-signed-in', message?: string}>}
  */
 export function startSignIn(options = {}) {
@@ -125,7 +125,7 @@ export function startSignIn(options = {}) {
   return inFlight;
 }
 
-async function runSignIn({ returnTo = '' } = {}) {
+async function runSignIn({ returnTo = '', refresh = false } = {}) {
   // Consent first, and before anything opens. `ensureConsent` resolves on a
   // microtask once accepted, so this does not cost the gesture.
   const accepted = await ensureConsent();
@@ -137,7 +137,7 @@ async function runSignIn({ returnTo = '' } = {}) {
   if (signInAvailability() === 'unconfigured') {
     return { status: 'unconfigured', message: NOT_CONFIGURED_MESSAGE };
   }
-  if (signInAvailability() === 'signed-in') {
+  if (signInAvailability() === 'signed-in' && !refresh) {
     return { status: 'already-signed-in' };
   }
 
@@ -146,6 +146,7 @@ async function runSignIn({ returnTo = '' } = {}) {
   // hand, and that window may still have completed the sign-in on its way
   // out — the server is what decides, not the popup.
   known = await fetchAccountSession();
+  listeners.forEach(listener => listener(known));
   if (known?.authenticated) return { status: 'signed-in' };
   return { status: signedIn ? 'signed-in' : 'closed' };
 }

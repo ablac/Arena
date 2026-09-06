@@ -16,7 +16,7 @@
 
   const DEFAULT_AVATAR_COLOR = '#5edfff';
   const BIO_MAX_LENGTH = 280;
-  const DISPLAY_NAME_MAX_LENGTH = 32;
+  const USERNAME_SETUP_URL = 'https://accounts.angel-serv.com/portal/account/details';
   const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 
   // Presets drawn from colors already used elsewhere in the dashboard (accent,
@@ -59,8 +59,7 @@
       : [];
     return {
       account_id: cleanText(source.account_id),
-      display_name: cleanText(source.display_name),
-      chat_handle: cleanText(source.chat_handle),
+      public_username: typeof source.public_username === 'string' && /^[a-z0-9_]{3,24}$/.test(source.public_username) ? source.public_username : null,
       bio: typeof source.bio === 'string' ? source.bio : '',
       avatar_color: cleanText(source.avatar_color) || DEFAULT_AVATAR_COLOR,
       joined_at: cleanText(source.joined_at),
@@ -79,20 +78,8 @@
     return routes[name];
   }
 
-  // chat_handle is "Name#xxxxxxxx" - the suffix after the last "#" is a
-  // stable per-account identifier, independent of display-name edits. This
-  // lets the UI preview the handle live as someone types a new name, before
-  // the save round-trip confirms it.
-  function chatHandleSuffix(chatHandle) {
-    const raw = cleanText(chatHandle);
-    const hashIndex = raw.lastIndexOf('#');
-    return hashIndex >= 0 ? raw.slice(hashIndex) : '';
-  }
-
-  function previewChatHandle(profile, draftName) {
-    const name = cleanText(draftName) || profile.display_name || 'Pilot';
-    const suffix = chatHandleSuffix(profile.chat_handle);
-    return suffix ? `${name}${suffix}` : (profile.chat_handle || name);
+  function previewChatHandle(profile) {
+    return profile.public_username || 'Username unavailable';
   }
 
   function weaponLabel(weapon) {
@@ -131,8 +118,8 @@
       <div class="profile-preview-head">
         <span class="profile-preview-avatar" style="background:${escapeHTML(profile.avatar_color)}" aria-hidden="true"></span>
         <div>
-          <strong>${escapeHTML(profile.display_name || 'Unnamed pilot')}</strong>
-          <div class="profile-chat-handle-preview">Chat handle: <strong>${escapeHTML(profile.chat_handle || previewChatHandle(profile))}</strong></div>
+          <strong>${escapeHTML(previewChatHandle(profile))}</strong>
+          <div class="profile-chat-handle-preview">Chat handle: <strong>${escapeHTML(previewChatHandle(profile))}</strong></div>
           ${joined ? `<div class="profile-chat-handle-preview">Joined ${escapeHTML(joined)}</div>` : ''}
         </div>
       </div>
@@ -148,9 +135,11 @@
 
     return `<form id="profileForm" class="account-profile-form" novalidate>
       <div class="profile-field">
-        <label for="profileDisplayNameInput">Chat username (display name)</label>
-        <input type="text" id="profileDisplayNameInput" name="display_name" maxlength="${DISPLAY_NAME_MAX_LENGTH}" value="${escapeHTML(profile.display_name)}" placeholder="Pilot name" required>
-        <div class="profile-chat-handle-preview" id="profileChatHandlePreview">You'll appear in chat as: <strong>${escapeHTML(previewChatHandle(profile, profile.display_name))}</strong></div>
+        <span class="profile-field-label">Public username</span>
+        <strong>${escapeHTML(previewChatHandle(profile))}</strong>
+        <p>Your username is shared across Angel apps. <a href="${USERNAME_SETUP_URL}" target="_blank" rel="noopener noreferrer">${profile.public_username ? 'Manage username' : 'Choose a username'} in Angel Accounts</a>.</p>
+        <p>After saving in Accounts, refresh here to sign in again and bring your username into Arena.</p>
+        <button type="button" data-profile-refresh-username>Refresh username</button>
       </div>
       <div class="profile-field">
         <label for="profileBioInput">Bio</label>
@@ -178,7 +167,6 @@
   root.ArenaAccountProfile = Object.freeze({
     accountProfileRoute,
     BIO_MAX_LENGTH,
-    DISPLAY_NAME_MAX_LENGTH,
     escapeHTML,
     normalizeProfile,
     previewChatHandle,

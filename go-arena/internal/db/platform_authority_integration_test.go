@@ -90,7 +90,7 @@ func TestPostgresArenaAgentClaimVerifiesLockedControlProofAndRejectsInactiveCred
 		"platform-control-proof@example.com",
 		"https://id.example",
 		"platform-control-proof",
-		"Platform Control Proof",
+		"Platform Control Proof", nil,
 	)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
@@ -206,7 +206,7 @@ func TestPostgresPlatformAgentLinkEnforcesProofRevisionAndProofFreeIdempotency(t
 		"platform-exact-link@example.com",
 		"https://id.example",
 		"platform-exact-link",
-		"Platform Exact Link",
+		"Platform Exact Link", nil,
 	)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
@@ -342,7 +342,7 @@ func TestPostgresPlatformAgentLinkScopesIdempotencyByAccountAndBindsProofToAgent
 			fmt.Sprintf("platform-scoped-link-%d@example.com", index),
 			"https://id.example",
 			fmt.Sprintf("platform-scoped-link-%d", index),
-			fmt.Sprintf("Platform Scoped Link %d", index),
+			fmt.Sprintf("Platform Scoped Link %d", index), nil,
 		)
 		if err != nil {
 			t.Fatalf("UpsertVerifiedCustomerAccount %d: %v", index, err)
@@ -410,7 +410,7 @@ func TestPostgresPlatformAgentLinkConcurrentIdenticalCommandsReplayOneCommit(t *
 		"platform-concurrent-link@example.com",
 		"https://id.example",
 		"platform-concurrent-link",
-		"Platform Concurrent Link",
+		"Platform Concurrent Link", nil,
 	)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
@@ -497,7 +497,7 @@ func TestPostgresPlatformAgentLinkRejectsProofRevokedAheadOfCredentialLock(t *te
 		"platform-revoke-race@example.com",
 		"https://id.example",
 		"platform-revoke-race",
-		"Platform Revoke Race",
+		"Platform Revoke Race", nil,
 	)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
@@ -603,7 +603,7 @@ func TestPostgresPlatformAccountMetadataDefaultsToTenAndComputesCurrentAgents(t 
 		"platform-capacity@example.com",
 		"https://id.example",
 		"platform-capacity",
-		"Platform Capacity",
+		"Platform Capacity", nil,
 	)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
@@ -648,7 +648,7 @@ func TestPostgresPlatformAccountMetadataUpgradesRetiredStatusToClosed(t *testing
 		"platform-account-status-upgrade@example.com",
 		"https://id.example",
 		"platform-account-status-upgrade",
-		"Platform Account Status Upgrade",
+		"Platform Account Status Upgrade", nil,
 	)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
@@ -736,7 +736,7 @@ func TestPostgresPlatformAgentCapacitySerializesConcurrentLinksIndependentlyOfAP
 		"platform-capacity-race@example.com",
 		"https://id.example",
 		"platform-capacity-race",
-		"Platform Capacity Race",
+		"Platform Capacity Race", nil,
 	)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
@@ -884,7 +884,7 @@ func TestPostgresPlatformAuthorityBackfillsStableArenaAgentsWithoutTouchingCosme
 		"platform-owner@example.com",
 		"https://id.example",
 		"platform-owner",
-		"Platform Owner",
+		"Platform Owner", nil,
 	)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
@@ -1112,7 +1112,7 @@ func TestPostgresPlatformAuthorityBackfillRollsBackWhenLegacyAccountExceedsMaxim
 		"platform-over-capacity@example.com",
 		"https://id.example",
 		"platform-over-capacity",
-		"Platform Over Capacity",
+		"Platform Over Capacity", nil,
 	)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
@@ -1198,7 +1198,7 @@ func TestPostgresArenaRegistrationCreatesPlatformEnrollmentAtomically(t *testing
 		"platform-registration@example.com",
 		"https://id.example",
 		"platform-registration",
-		"Platform Registration",
+		"Platform Registration", nil,
 	)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
@@ -1244,7 +1244,7 @@ func TestPostgresArenaRegistrationRollsBackCredentialWhenPlatformEnrollmentFails
 		"platform-rollback@example.com",
 		"https://id.example",
 		"platform-rollback",
-		"Platform Rollback",
+		"Platform Rollback", nil,
 	)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
@@ -1743,7 +1743,7 @@ func TestPostgresPlatformAgentLinkHistorySurvivesRelinkAndUsesAccountIndex(t *te
 		"platform-links@example.com",
 		"https://id.example",
 		"platform-links",
-		"Platform Links",
+		"Platform Links", nil,
 	)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
@@ -1796,7 +1796,7 @@ func TestPostgresPlatformAgentLinkHistorySurvivesRelinkAndUsesAccountIndex(t *te
 		"platform-links-other@example.com",
 		"https://id.example",
 		"platform-links-other",
-		"Platform Links Other",
+		"Platform Links Other", nil,
 	)
 	if err != nil {
 		t.Fatalf("create other link account: %v", err)
@@ -1892,7 +1892,7 @@ func TestPostgresPlatformAgentUnlinkEnforcesRevisionAndIdempotency(t *testing.T)
 		"platform-unlink@example.com",
 		"https://id.example",
 		"platform-unlink",
-		"Platform Unlink",
+		"Platform Unlink", nil,
 	)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)

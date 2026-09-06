@@ -64,6 +64,7 @@ type CustomerSession struct {
 	AccountID       string
 	Email           string
 	Name            string
+	PublicUsername  *string
 	Subject         string
 	EmailVerifiedAt *time.Time
 	CSRFToken       string
@@ -105,7 +106,8 @@ type CustomerOIDCHandler struct {
 	// onSubscriptionSynced is told which linked bots a sign-in's
 	// subscription sync affected, so the ones in the arena can be re-read.
 	// Set by the router, which is where the engine lives.
-	onSubscriptionSynced func(context.Context, []string)
+	onSubscriptionSynced   func(context.Context, []string)
+	onPublicUsernameSynced func(context.Context)
 
 	// issParamRequired mirrors the provider's
 	// authorization_response_iss_parameter_supported. When Accounts says it
@@ -130,8 +132,8 @@ func customerAccountAuthEnabled(handler *CustomerOIDCHandler) bool {
 }
 
 // activeCustomerOIDC is the handler whose session cache serves requests, so
-// plain handlers that change what the cache copies (the profile rename) can
-// reach it without threading the handler through every route constructor.
+// other account handlers can reach it without threading it through every
+// route constructor.
 var (
 	activeCustomerOIDCMu sync.RWMutex
 	activeCustomerOIDC   *CustomerOIDCHandler
@@ -516,10 +518,10 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var claims struct {
-		Email         string `json:"email"`
-		EmailVerified bool   `json:"email_verified"`
-		Name          string `json:"name"`
-		PreferredUser string `json:"preferred_username"`
+		Email         string  `json:"email"`
+		EmailVerified bool    `json:"email_verified"`
+		Name          string  `json:"name"`
+		PreferredUser *string `json:"preferred_username"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		http.Error(w, "invalid identity claims", http.StatusForbidden)
@@ -544,14 +546,11 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	if h.linkLegacyByEmail && claims.EmailVerified {
 		linkEmail = strings.TrimSpace(claims.Email)
 	}
-	if claims.Name == "" {
-		claims.Name = claims.PreferredUser
-	}
 	verifiedIssuer := strings.TrimSpace(idToken.Issuer)
 	if verifiedIssuer == "" {
 		verifiedIssuer = h.issuer
 	}
-	account, err := h.bindVerifiedIdentity(ctx, linkEmail, verifiedIssuer, idToken.Subject, claims.Name)
+	account, err := h.bindVerifiedIdentity(ctx, linkEmail, verifiedIssuer, idToken.Subject, claims.Name, db.NormalizePublicUsername(claims.PreferredUser))
 	if err != nil {
 		slog.Warn("customer account binding failed", "error", err, "subject", idToken.Subject)
 		http.Error(w, "unable to bind customer account", http.StatusConflict)
@@ -567,6 +566,9 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	 * verifier has just accepted and from nowhere else. See platform_admin.go
 	 * for the presence rule and for why the answer is not written down.
 	 */
+	if h.onPublicUsernameSynced != nil {
+		h.onPublicUsernameSynced(ctx)
+	}
 	platformAdmin := platformAdminFromIDToken(idToken)
 	h.establishCustomerSession(w, r, account, idToken.Subject, platformAdmin)
 	/*
@@ -615,8 +617,8 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	http.Redirect(w, r, destination, http.StatusFound)
 }
 
-func (h *CustomerOIDCHandler) bindVerifiedIdentity(ctx context.Context, email, issuer, subject, displayName string) (*db.CustomerAccount, error) {
-	return h.authority.UpsertVerifiedIdentity(ctx, email, issuer, subject, displayName)
+func (h *CustomerOIDCHandler) bindVerifiedIdentity(ctx context.Context, email, issuer, subject, displayName string, publicUsername *string) (*db.CustomerAccount, error) {
+	return h.authority.UpsertVerifiedIdentity(ctx, email, issuer, subject, displayName, publicUsername)
 }
 
 func customerAccountAPIPath(r *http.Request, suffix string) string {
@@ -635,6 +637,7 @@ func (h *CustomerOIDCHandler) establishCustomerSession(w http.ResponseWriter, r 
 		AccountID:       account.ID,
 		Email:           account.Email,
 		Name:            account.DisplayName,
+		PublicUsername:  account.PublicUsername,
 		Subject:         subject,
 		EmailVerifiedAt: account.EmailVerifiedAt,
 		CSRFToken:       generateToken(32),
@@ -744,6 +747,7 @@ func (h *CustomerOIDCHandler) GetSession(r *http.Request) *CustomerSession {
 			AccountID:       row.AccountID,
 			Email:           row.Email,
 			Name:            row.DisplayName,
+			PublicUsername:  row.PublicUsername,
 			EmailVerifiedAt: row.EmailVerifiedAt,
 			CSRFToken:       row.CSRFToken,
 			CreatedAt:       row.CreatedAt,
@@ -760,7 +764,19 @@ func (h *CustomerOIDCHandler) GetSession(r *http.Request) *CustomerSession {
 	}
 
 	h.maybeSlideSessionExpiry(r.Context(), cookie.Value, session)
-	return session
+	// Return a snapshot: refresh only the public label while preserving the
+	// original session-bound, memory-only administrator grant and CSRF token.
+	h.mu.RLock()
+	snapshot := *session
+	h.mu.RUnlock()
+	if db.Pool != nil {
+		usernames, err := db.GetPublicUsernames(r.Context(), []string{session.AccountID})
+		snapshot.PublicUsername = nil // Public posting fails closed on lookup failure.
+		if err == nil {
+			snapshot.PublicUsername = usernames[session.AccountID]
+		}
+	}
+	return &snapshot
 }
 
 // sessionExpiry reads ExpiresAt under the handler lock.
@@ -775,13 +791,9 @@ func (h *CustomerOIDCHandler) sessionExpiry(session *CustomerSession) time.Time 
 	return session.ExpiresAt
 }
 
-// ForgetAccountSessions drops every cached session for an account, so the
-// next request rehydrates it from the database.
-//
-// The cache holds a copy of the display name for the whole sliding thirty-day
-// session, and chat derives its visible handle from that copy; a rename in
-// the dashboard otherwise kept posting under the old name until the process
-// restarted. The durable row is untouched: the cookie stays valid.
+// ForgetAccountSessions evicts cached sessions for explicit cache recovery.
+// Do not use it for public username or profile edits: durable restoration
+// intentionally cannot restore a memory-only administrator grant.
 func (h *CustomerOIDCHandler) ForgetAccountSessions(accountID string) {
 	if h == nil || accountID == "" {
 		return
@@ -867,11 +879,13 @@ func (h *CustomerOIDCHandler) SessionInfoHandler(w http.ResponseWriter, r *http.
 			// Empty for a linked account, which is every account after the
 			// cutover. The key stays so a dashboard that has not reloaded
 			// still finds what it reads; there is simply nothing in it.
-			"email":             session.Email,
-			"display_name":      session.Name,
-			"name":              session.Name,
-			"email_verified":    session.EmailVerifiedAt != nil,
-			"email_verified_at": session.EmailVerifiedAt,
+			"email":              session.Email,
+			"public_username":    session.PublicUsername,
+			"display_name":       db.PublicUsernameLabel(session.PublicUsername),
+			"name":               db.PublicUsernameLabel(session.PublicUsername),
+			"username_setup_url": db.PublicUsernameSetupURL,
+			"email_verified":     session.EmailVerifiedAt != nil,
+			"email_verified_at":  session.EmailVerifiedAt,
 		},
 		"csrf_token":       session.CSRFToken,
 		"created_at":       session.CreatedAt,

@@ -42,14 +42,14 @@ func EnsureCustomerSessionsSchema(ctx context.Context) error {
 }
 
 // CustomerSessionRow is one durable session, joined with the identity fields
-// a freshly-restored in-memory session needs. Reloading email/display_name
-// from customer_accounts on every cache-miss (rather than duplicating them
-// into this table) means a display-name change is picked up immediately
-// rather than only at next login.
+// a freshly-restored in-memory session needs. Identity labels remain on the
+// account row. Cache hits separately refresh public_username without dropping
+// the original session-bound administrator grant.
 type CustomerSessionRow struct {
 	AccountID       string
 	Email           string
 	DisplayName     string
+	PublicUsername  *string
 	EmailVerifiedAt *time.Time
 	CSRFToken       string
 	CreatedAt       time.Time
@@ -85,12 +85,12 @@ func GetCustomerSessionByTokenHash(ctx context.Context, tokenHash []byte) (*Cust
 	}
 	var row CustomerSessionRow
 	err := Pool.QueryRow(ctx,
-		`SELECT s.account_id, a.email, a.display_name, a.email_verified_at,
+		`SELECT s.account_id, COALESCE(a.email, ''), a.display_name, a.public_username, a.email_verified_at,
 		        s.csrf_token, s.created_at, s.expires_at
 		 FROM customer_sessions s
 		 JOIN customer_accounts a ON a.id = s.account_id
 		 WHERE s.token_hash = $1`, tokenHash).
-		Scan(&row.AccountID, &row.Email, &row.DisplayName, &row.EmailVerifiedAt,
+		Scan(&row.AccountID, &row.Email, &row.DisplayName, &row.PublicUsername, &row.EmailVerifiedAt,
 			&row.CSRFToken, &row.CreatedAt, &row.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

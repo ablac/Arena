@@ -21,6 +21,7 @@ import (
 // fakeChatStore is an in-memory ChatStore. Chat tests must not require a
 // live database.
 type fakeChatStore struct {
+	usernames   map[string]*string
 	mu          sync.Mutex
 	messages    []db.ChatMessage
 	nextID      int64
@@ -34,11 +35,21 @@ type fakeChatStore struct {
 
 func newFakeChatStore() *fakeChatStore {
 	return &fakeChatStore{
+		usernames: make(map[string]*string),
 		banUntil:  make(map[string]*time.Time),
 		linkedIDs: make(map[string][]string),
 	}
 }
 
+func (f *fakeChatStore) PublicUsernames(_ context.Context, ids []string) (map[string]*string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]*string{}
+	for _, id := range ids {
+		out[id] = f.usernames[id]
+	}
+	return out, nil
+}
 func (s *fakeChatStore) RecentMessages(ctx context.Context, limit int) ([]db.ChatMessage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -146,7 +157,14 @@ func newChatTestEnv(t *testing.T) *chatTestEnv {
 		if account == "" {
 			return nil
 		}
-		return &ChatIdentity{AccountID: account, Name: r.Header.Get("X-Test-Name")}
+		name := r.Header.Get("X-Test-Name")
+		username := db.NormalizePublicUsername(&name)
+		env.store.mu.Lock()
+		if _, exists := env.store.usernames[account]; !exists {
+			env.store.usernames[account] = username
+		}
+		env.store.mu.Unlock()
+		return &ChatIdentity{AccountID: account, PublicUsername: username}
 	}
 
 	env.server = httptest.NewServer(ChatHandler(game.NewGameEngine(), env.hub, resolver))
@@ -251,8 +269,8 @@ func TestChatPostBroadcastsAndBackfills(t *testing.T) {
 		t.Fatalf("signed-in chat_status: can_post = %v, want true", status["can_post"])
 	}
 	handle, _ := status["handle"].(string)
-	if !strings.HasPrefix(handle, "Lucas#") || len(handle) != len("Lucas#")+8 {
-		t.Fatalf("handle = %q, want Lucas# + 8-hex discriminator", handle)
+	if handle != "lucas" {
+		t.Fatalf("handle = %q, want central username lucas", handle)
 	}
 	readChatMessage(t, poster, "chat_history")
 
@@ -737,5 +755,126 @@ func TestChatRuntimeDisableRejectsPostsAndNotifiesClients(t *testing.T) {
 	msg := readChatMessage(t, poster, "chat_message")
 	if msg["message"] == nil {
 		t.Fatalf("post after re-enable: expected a broadcast message")
+	}
+}
+
+func TestChatCentralUsernameRefreshUpdatesOpenSocketAndWarmHistory(t *testing.T) {
+	withChatConfig(t)
+	env := newChatTestEnv(t)
+	poster := env.dial(t, identityHeaders("acct-public", "original_pilot"))
+	readChatMessage(t, poster, "chat_status")
+	readChatMessage(t, poster, "chat_history")
+	watcher := env.dial(t, nil)
+	readChatMessage(t, watcher, "chat_status")
+	readChatMessage(t, watcher, "chat_history")
+	postChat(t, poster, "original body")
+	readChatMessage(t, poster, "chat_message")
+	readChatMessage(t, watcher, "chat_message")
+	for _, raw := range []string{"renamed_pilot", ""} {
+		alias := db.NormalizePublicUsername(&raw)
+		env.store.mu.Lock()
+		env.store.usernames["acct-public"] = alias
+		env.store.mu.Unlock()
+		env.hub.RefreshPublicUsernames(t.Context())
+		status := readChatMessage(t, poster, "chat_status")
+		if status["can_post"] != (alias != nil) {
+			t.Fatalf("status=%v", status)
+		}
+		if alias == nil && (status["reason"] != "username_required" || status["username_setup_url"] != db.PublicUsernameSetupURL) {
+			t.Fatalf("setup status=%v", status)
+		}
+		changed := readChatMessage(t, watcher, "chat_identity")
+		if changed["account_id"] != "acct-public" || (alias == nil && changed["public_username"] != nil) || (alias != nil && changed["public_username"] != *alias) {
+			t.Fatalf("identity event=%v", changed)
+		}
+		var history chatHistoryMessage
+		if err := json.Unmarshal(env.hub.historyPayload(), &history); err != nil {
+			t.Fatal(err)
+		}
+		if len(history.Messages) != 1 || history.Messages[0].Handle != db.PublicUsernameLabel(alias) || history.Messages[0].Body != "original body" {
+			t.Fatalf("history=%+v", history)
+		}
+	}
+	postChat(t, poster, "must be rejected")
+	refusal := readChatMessage(t, poster, "chat_error")
+	if refusal["code"] != "USERNAME_REQUIRED" {
+		t.Fatalf("removal post=%v", refusal)
+	}
+	late := env.dial(t, nil)
+	readChatMessage(t, late, "chat_status")
+	history := readChatMessage(t, late, "chat_history")
+	raw, _ := json.Marshal(history)
+	if strings.Contains(string(raw), "original_pilot") || strings.Contains(string(raw), "renamed_pilot") {
+		t.Fatalf("reconnect stale history=%s", raw)
+	}
+}
+
+func TestChatMissingUsernameCanReadButCannotPost(t *testing.T) {
+	withChatConfig(t)
+	env := newChatTestEnv(t)
+	conn := env.dial(t, identityHeaders("acct-missing", ""))
+	status := readChatMessage(t, conn, "chat_status")
+	readChatMessage(t, conn, "chat_history")
+	if status["can_post"] != false || status["reason"] != "username_required" {
+		t.Fatalf("status=%v", status)
+	}
+	postChat(t, conn, "hello")
+	if err := readChatMessage(t, conn, "chat_error"); err["code"] != "USERNAME_REQUIRED" {
+		t.Fatalf("post=%v", err)
+	}
+}
+
+type blockedUsernameInsertStore struct {
+	*fakeChatStore
+	inserted chan struct{}
+	release  chan struct{}
+}
+
+func (s *blockedUsernameInsertStore) Insert(ctx context.Context, m *db.ChatMessage) error {
+	if err := s.fakeChatStore.Insert(ctx, m); err != nil {
+		return err
+	}
+	close(s.inserted)
+	<-s.release
+	return nil
+}
+
+func TestChatUsernameRefreshCannotFinishBeforePendingPublication(t *testing.T) {
+	withChatConfig(t)
+	original := "original_pilot"
+	renamed := "renamed_pilot"
+	store := &blockedUsernameInsertStore{fakeChatStore: newFakeChatStore(), inserted: make(chan struct{}), release: make(chan struct{})}
+	store.usernames["acct"] = &original
+	hub := newChatHub(store, nil, func() bool { return false })
+	client := &chatClient{identity: &ChatIdentity{AccountID: "acct", PublicUsername: &original}, handle: original, send: make(chan []byte, 32)}
+	if !hub.register(client, 2) {
+		t.Fatal("register")
+	}
+	postDone := make(chan *chatPostError, 1)
+	go func() { postDone <- hub.post(t.Context(), client, "pending body") }()
+	<-store.inserted
+	store.mu.Lock()
+	store.usernames["acct"] = &renamed
+	store.mu.Unlock()
+	refreshDone := make(chan struct{})
+	go func() { hub.RefreshPublicUsernames(t.Context()); close(refreshDone) }()
+	// A completed refresh here could miss the committed message that has not
+	// reached the ring yet, leaving its older label visible after the callback.
+	select {
+	case <-refreshDone:
+		close(store.release)
+		<-postDone
+		t.Fatal("identity refresh completed before pending message publication")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(store.release)
+	if err := <-postDone; err != nil {
+		t.Fatal(err)
+	}
+	<-refreshDone
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if len(hub.ring) != 1 || hub.ring[0].Handle != renamed {
+		t.Fatalf("post-refresh ring=%+v", hub.ring)
 	}
 }

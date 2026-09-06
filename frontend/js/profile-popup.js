@@ -173,8 +173,8 @@ function renderProfile(container, profile) {
     <div class="prf-head">
       <div class="prf-avatar" style="${avatarStyle(profile.avatar_color)}"></div>
       <div>
-        <div class="prf-name">${escapeHTML(profile.display_name || 'Arena developer')}</div>
-        <div class="prf-handle">${escapeHTML(profile.chat_handle || '')}</div>
+        <div class="prf-name">${escapeHTML(profile.public_username || 'Username unavailable')}</div>
+        <div class="prf-handle">${escapeHTML(profile.public_username || '')}</div>
       </div>
     </div>
     <p class="prf-joined">${escapeHTML(joinedText)}</p>
