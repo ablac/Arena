@@ -259,6 +259,8 @@ const resetView = new FakeElement('button');
 const subscription = new FakeElement('section');
 const subscriptionAction = new FakeElement('a');
 const subscriptionState = new FakeElement('p');
+const subscriptionFigure = new FakeElement('p');
+const subscriptionSale = new FakeElement('p');
 const root = new FakeRoot({
   '#shop-preview-canvas': canvas,
   '[data-shop-status]': status,
@@ -286,13 +288,16 @@ const root = new FakeRoot({
   '[data-shop-subscription]': subscription,
   '[data-shop-subscription-action]': subscriptionAction,
   '[data-shop-subscription-state]': subscriptionState,
+  '[data-shop-subscription-price]': subscriptionFigure,
+  '[data-shop-subscription-sale]': subscriptionSale,
 });
 
-globalThis.document = {
+globalThis.document = Object.assign(new FakeElement('document'), {
   activeElement: null,
+  visibilityState: 'visible',
   body: new FakeElement('body'),
   createElement: tagName => new FakeElement(tagName),
-};
+});
 globalThis.window = Object.assign(new FakeElement('window'), {
   location: {pathname: '/shop/', search: '', href: 'https://arena.example/shop/'},
   ArenaCosmeticThemes: {swatchStyle: () => 'linear-gradient(#000, #fff)'},
@@ -357,7 +362,8 @@ assert.equal(controller.snapshot().subscriptionURL, SUBSCRIBE_AT);
 assert.equal(subscriptionAction.href, SUBSCRIBE_AT, 'the banner leads to where Accounts sells the subscription');
 assert.equal(subscriptionAction.hidden, false);
 assert.match(subscriptionAction.textContent, /Subscribe in your Angel account/);
-assert.match(subscriptionState.textContent, /one subscription/i);
+assert.match(subscriptionState.textContent, /Price unavailable/i,
+  'a catalog without a current Accounts quote must say the price is unavailable');
 assert.equal(subscription.dataset.state, 'available');
 
 category.value = 'season-one';
@@ -495,25 +501,125 @@ assert.match(access.textContent, /Included with an Arena subscription/);
 unlinkedController.dispose();
 
 
-/* ------------------------------------ the price is Accounts', or absent */
+/* --------------------- current Accounts prices and separate offer terms */
 
-/*
- * Arena charges nothing and holds no price. The Shop quotes the figure the
- * catalog carried over from the Accounts product catalog, so the number on
- * this page and the number on the card cannot disagree — and quotes nothing
- * at all when Accounts has not said one, which is the honest answer.
- */
-assert.equal(shop.subscriptionPrice({price_cents: 999, currency: 'USD', interval: 'month'}).amount, '$9.99',
-  'the figure is whatever Accounts sells the plan for');
-assert.equal(shop.subscriptionPrice({price_cents: 999, interval: 'month'}).interval, 'month',
-  'and carries the interval it is charged over');
-assert.equal(shop.subscriptionPrice({price_cents: 1000, currency: 'USD'}).amount, '$10.00',
-  'a round figure still reads as money');
-
-for (const missing of [undefined, null, {}, {price_cents: 0}, {price_cents: -100}, {price_cents: 'free'}]) {
-  assert.equal(shop.subscriptionPrice(missing), null,
+const quoteTime = Date.parse('2026-09-05T12:00:00Z');
+const currentQuote = (overrides = {}) => ({
+  price_available: true, price_cents: 999, currency: 'USD', interval: 'month',
+  seats_included: 1, price_revision: 4,
+  price_valid_until: '2026-09-05T12:00:45Z', ...overrides,
+});
+assert.equal(shop.subscriptionPrice(currentQuote(), quoteTime).amount, '$9.99');
+assert.equal(shop.subscriptionPrice(currentQuote({price_cents: 1000}), quoteTime).amount, '$10.00');
+assert.equal(shop.subscriptionPrice(currentQuote({seats_included: 3}), quoteTime).amount, '$29.97',
+  'the base total includes the actual billed quantity');
+assert.equal(shop.subscriptionPrice(currentQuote(), quoteTime + 45_000), null,
+  'quote expiry is exclusive, even before another fetch finishes');
+for (const missing of [undefined, null, {}, currentQuote({price_available: false}),
+  currentQuote({price_cents: 0}), currentQuote({price_cents: -100}), currentQuote({price_cents: '999'}),
+  currentQuote({seats_included: 0}), currentQuote({price_valid_until: 'invalid'}), currentQuote({currency: 'EUR'})]) {
+  assert.equal(shop.subscriptionPrice(missing, quoteTime), null,
     `no figure must be quoted for ${JSON.stringify(missing)}`);
 }
+const fixedSale = {
+  id: 'launch', name: 'Launch', percentOff: null, amountOffCents: 500,
+  duration: 'repeating', durationMonths: 2, startsAt: null, endsAt: '2026-09-06T12:00:00Z',
+};
+const fixedQuote = currentQuote({seats_included: 3, sale: fixedSale});
+assert.match(shop.subscriptionSale(fixedQuote, quoteTime).text, /\$5\.00 off the subscription for the first 2 months/,
+  'a fixed offer must never be multiplied by seat quantity');
+assert.equal(shop.subscriptionPrice(fixedQuote, quoteTime).amount, '$29.97',
+  'the base total remains separate from offer words');
+assert.match(shop.subscriptionSale(fixedQuote, quoteTime).text, /Redeem until .*UTC/,
+  'redemption expiry is distinct from the discount duration');
+for (const [duration, label] of [['once', /on the first payment/], ['forever', /for the life of the subscription/]]) {
+  const offer = {...fixedSale, percentOff: 25, amountOffCents: null, duration, durationMonths: null};
+  assert.match(shop.subscriptionSale(currentQuote({sale: offer}), quoteTime).text, label);
+}
+const futureQuote = currentQuote({sale: {...fixedSale, startsAt: '2026-09-05T12:00:10Z'}});
+assert.equal(shop.subscriptionSale(futureQuote, quoteTime).upcoming, true);
+assert.equal(shop.subscriptionRefreshDelay(futureQuote, quoteTime), 10_000);
+assert.equal(shop.subscriptionRefreshDelay(currentQuote(), quoteTime), 30_000);
+assert.equal(shop.subscriptionRefreshDelay(currentQuote(), quoteTime + 40_000), 5_000);
+assert.equal(shop.subscriptionSale(currentQuote({sale: {...fixedSale, endsAt: '2026-09-05T12:00:00Z'}}), quoteTime), null);
+
+// The running showroom must update price on focus/visibility and a bounded
+// timer, without rebuilding cosmetic selection or preserving a failed offer.
+let clock = quoteTime;
+let timerSequence = 0;
+const scheduled = new Map();
+const setTimer = (callback, delay) => {
+  const id = ++timerSequence;
+  scheduled.set(id, {callback, delay});
+  return id;
+};
+const clearTimer = id => scheduled.delete(id);
+let quoteResponse = fixedQuote;
+let failQuote = false;
+let requests = 0;
+const pricingController = shop.initCosmeticsShop(root, {
+  pathname: '/shop/', updateURL: false, requestedPackID: 'ember-pack',
+  previewFactory: () => fakePreview, now: () => clock,
+  setTimeoutImpl: setTimer, clearTimeoutImpl: clearTimer,
+  fetchImpl: async (_url, init) => {
+    requests += 1;
+    assert.equal(init.cache, 'no-store');
+    if (failQuote) throw new Error('Accounts temporarily unavailable');
+    return {ok: true, json: async () => ({...catalog, subscription: {...quoteResponse, url: SUBSCRIBE_AT}})};
+  },
+});
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(pricingController.snapshot().priceAvailable, true);
+assert.equal(subscriptionFigure.hidden, false);
+assert.equal(subscriptionFigure.children[0], 'Base price: $29.97');
+assert.match(subscriptionSale.textContent, /\$5\.00 off/);
+const selectedBeforeRefresh = pricingController.snapshot().selectedPackID;
+const selectedButtonBeforeRefresh = packList.children.find(button => button.dataset.shopPackId === selectedBeforeRefresh);
+quoteResponse = currentQuote({price_cents: 1299, price_revision: 5, sale: null});
+window.listeners.get('focus')();
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(requests, 2);
+assert.equal(subscriptionFigure.children[0], 'Base price: $12.99');
+assert.equal(subscriptionSale.hidden, true);
+assert.equal(packList.children.find(button => button.dataset.shopPackId === selectedBeforeRefresh), selectedButtonBeforeRefresh,
+  'a price refresh must preserve the current cosmetic controls and focus');
+failQuote = true;
+document.listeners.get('visibilitychange')();
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(pricingController.snapshot().priceAvailable, false);
+assert.equal(subscriptionFigure.hidden, true);
+assert.equal(subscriptionSale.hidden, true);
+assert.match(subscriptionState.textContent, /Price unavailable/);
+assert.equal(pricingController.snapshot().selectedPackID, selectedBeforeRefresh);
+assert.equal(subscriptionAction.href, SUBSCRIBE_AT);
+// A later periodic read can recover the quote without another page load.
+failQuote = false;
+const periodic = [...scheduled.values()].find(timer => timer.delay === 30_000);
+assert.ok(periodic, 'pricing must keep a capped refresh scheduled');
+periodic.callback();
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(pricingController.snapshot().priceAvailable, true);
+clock += 45_000;
+failQuote = true;
+window.listeners.get('focus')();
+assert.equal(subscriptionFigure.hidden, true, 'focus must withdraw expired pricing before its network read');
+await new Promise(resolve => setTimeout(resolve, 0));
+pricingController.dispose();
+assert.equal(scheduled.size, 0, 'disposing the showroom must cancel all pricing timers');
+
+// A late network completion after disposal cannot resurrect price or timers.
+let resolveDisposedRead;
+const disposedController = shop.initCosmeticsShop(root, {
+  pathname: '/shop/', updateURL: false, previewFactory: () => fakePreview,
+  now: () => quoteTime, setTimeoutImpl: setTimer, clearTimeoutImpl: clearTimer,
+  fetchImpl: () => new Promise(resolve => { resolveDisposedRead = resolve; }),
+});
+await new Promise(resolve => setTimeout(resolve, 0));
+disposedController.dispose();
+resolveDisposedRead({ok: true, json: async () => ({...catalog, subscription: {...fixedQuote, url: SUBSCRIBE_AT}})});
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(disposedController.snapshot().priceAvailable, false);
+assert.equal(scheduled.size, 0);
 
 assert.match(shopHTML, /data-shop-subscription-price/,
   'the Shop needs somewhere to put the price');
