@@ -14,7 +14,7 @@
  */
 
 import { apiPath, wsURL } from './paths.js?v=20260710a';
-import { openProfilePopup } from './profile-popup.js?v=20260905u';
+import { openProfilePopup, updateProfilePopupUsername } from './profile-popup.js?v=20260905p';
 import { startSignIn, watchSignInState } from './sign-in.js?v=20260905u';
 
 const OVERLAY_ID = 'chat-overlay';
@@ -466,6 +466,7 @@ function initChatPanel(cfg) {
           updateComposer();
           break;
         case 'chat_identity':
+          updateProfilePopupUsername(msg.account_id, msg.public_username);
           listEl.querySelectorAll('.chat-handle').forEach(node => {
             if (node.dataset.accountId === msg.account_id) {
               node.textContent = msg.public_username || 'Username unavailable';

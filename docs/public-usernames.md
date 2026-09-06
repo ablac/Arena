@@ -53,7 +53,9 @@ they are not rewritten by an identity refresh.
   account lock when inserting, preserving existing bans and posting limits.
 - `chat_identity` carries `account_id` and nullable `public_username` after a
   local sign-in refresh. Open clients update earlier message labels by account
-  ID. Other replicas refresh public labels on the 10-second heartbeat.
+  ID. An open profile popup updates that same account immediately, and an
+  in-flight profile response cannot restore an older alias. Other replicas
+  refresh public labels on the 10-second heartbeat.
   Warm history, database history and reconnects project current aliases;
   removed/deleted identities show **Username unavailable**. Legacy stored
   handle snapshots are never a public fallback.
