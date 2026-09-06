@@ -14,9 +14,8 @@ import (
 const arenaProductID = "arena"
 
 // accountsPlanRefreshInterval is how often the published price is re-read.
-// A price changes about never; this is a floor under how long a change in
-// Accounts can go unquoted here, not a poll anything depends on.
-const accountsPlanRefreshInterval = 15 * time.Minute
+// Scheduled offers also wake the refresher at their next boundary.
+const accountsPlanRefreshInterval = 30 * time.Second
 
 // accountsPlan holds the last known Arena plan, or nothing.
 //
@@ -44,10 +43,10 @@ func startAccountsPlanRefresh(issuer, productID string) {
 				// show when the price is not known.
 				slog.Debug("could not read the Arena plan from Accounts", "error", err)
 			} else if plan, ok := source.Get(); ok {
-				slog.Info("arena subscription price read from accounts",
+				slog.Debug("arena subscription price read from accounts",
 					"price_cents", plan.PriceCents, "interval", plan.Interval, "plan", plan.Slug)
 			}
-			time.Sleep(accountsPlanRefreshInterval)
+			time.Sleep(source.NextRefresh(accountsPlanRefreshInterval))
 		}
 	}()
 }

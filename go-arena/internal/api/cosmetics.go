@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -54,8 +55,8 @@ type CosmeticsHandler struct {
 	engine                     *game.GameEngine
 	consumeAccountKeyQuota     func(context.Context, string, db.AccountAPIKeyQuotaAction, int) (bool, int, error)
 	checkAccountInventoryQuota func(context.Context, string, int) (bool, error)
-	// catalogCache serves the public catalog (4 DB queries + a 100-250 KB
-	// encode of ~340 items, many embedded twice) from memory with ETag/304s.
+	// catalogCache retains cosmetic content (4 DB queries + a 100-250 KB
+	// encode of ~340 items, many embedded twice). Prices are attached after it.
 	// Per-instance so test handlers with different stores stay isolated.
 	// Admin catalog mutations show up within the TTL; AdminCatalog itself is
 	// deliberately uncached.
@@ -92,10 +93,10 @@ func newCosmeticsHandlerWithStore(store cosmeticsStore, engine *game.GameEngine)
 
 // catalogSubscription is the one commerce fact the public catalog publishes:
 // every paid cosmetic is included with the Arena subscription, and here is
-// where to get one. No prices to pay Arena, no checkout flag, no offer —
-// there is nothing for a browser to start here.
+// where to get one, with current pricing and offer terms quoted from Accounts.
+// There is no Arena checkout or per-item purchase action.
 func catalogSubscription() map[string]any {
-	body := map[string]any{"product": arenaProductID, "includes_all_cosmetics": true}
+	body := map[string]any{"product": arenaProductID, "includes_all_cosmetics": true, "price_available": false}
 	if url := accountsShopURL(); url != "" {
 		body["url"] = url
 	}
@@ -103,12 +104,17 @@ func catalogSubscription() map[string]any {
 	 * What it costs, when Accounts has said so. Still not a price Arena
 	 * charges — it is a quote of somebody else's, published so the Shop can
 	 * answer "how much" without inventing a number that can disagree with the
-	 * card. Absent until a read succeeds, and the Shop says nothing about
-	 * price until it is here.
+	 * card. Unavailable until a read succeeds, after errors, and at expiry.
 	 */
 	if plan, ok := arenaPlanForCatalog(); ok {
+		body["price_available"] = true
+		body["plan_slug"] = plan.Slug
 		body["price_cents"] = plan.PriceCents
 		body["currency"] = plan.Currency
+		body["price_revision"] = plan.PriceRevision
+		body["seats_included"] = plan.SeatsIncluded
+		body["price_valid_until"] = plan.ValidUntil.UTC().Format(time.RFC3339Nano)
+		body["sale"] = plan.Sale
 		if plan.Interval != "" {
 			body["interval"] = plan.Interval
 		}
@@ -117,21 +123,39 @@ func catalogSubscription() map[string]any {
 }
 
 func (h *CosmeticsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
-	h.catalogCache.Serve(w, r, "catalog", func(ctx context.Context) ([]byte, error) {
+	w.Header().Set("Cache-Control", "no-store")
+	body, _, err := h.catalogCache.get(r.Context(), "catalog", func(ctx context.Context) ([]byte, error) {
 		catalog, err := h.authority.PublicCatalog(ctx)
 		if err != nil {
 			return nil, err
 		}
-		// The subscription address comes from a setting read at startup, and
-		// a deploy is what changes it, so baking it into the cached body is
-		// safe.
 		return json.Marshal(map[string]interface{}{
-			"categories":   catalog.Categories,
-			"packs":        catalog.Packs,
-			"items":        catalog.Items,
-			"subscription": catalogSubscription(),
+			"categories": catalog.Categories,
+			"packs":      catalog.Packs,
+			"items":      catalog.Items,
 		})
-	}, "cosmetics catalog is unavailable", http.StatusServiceUnavailable)
+	})
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "cosmetics catalog is unavailable")
+		return
+	}
+	// The expensive cosmetic JSON remains cached. Attach the current quote
+	// only after loading it, so an error or sale boundary cannot leave a live
+	// offer trapped in that cache. Both fragments are produced by json.Marshal.
+	subscription, err := json.Marshal(catalogSubscription())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "subscription information is unavailable")
+		return
+	}
+	response := make([]byte, 0, len(body)+len(subscription)+20)
+	response = append(response, body[:len(body)-1]...)
+	response = append(response, `,"subscription":`...)
+	response = append(response, subscription...)
+	response = append(response, '}')
+	w.Header().Set("Content-Type", "application/json")
+	if _, err := w.Write(response); err != nil {
+		slog.Error("failed to write cosmetics catalog", "error", err)
+	}
 }
 
 func (h *CosmeticsHandler) BotInventory(w http.ResponseWriter, r *http.Request) {
