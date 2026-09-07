@@ -288,6 +288,20 @@ for (const [asset, part] of [
 
 {
   const {entry} = createEntry();
+  entry.cosmeticAnchors = {shoulderY: -4.5};
+  cosmetics.applyBotCosmetics(entry, botWith({attachment: 'test-attachment-fins'}), {}, {forceEnabled: true});
+  const wings = nodes.filter(node => !node.disposed && node.name.includes('set-radiator-wing-'));
+  assert.equal(wings.length, 8, 'twin radiator fins need four wings and their four inlays');
+  for (const wing of wings) {
+    assert.equal(wing.position.y, -4.5,
+      'both the radiator wing and its inlay must follow a low silhouette shoulder-height anchor');
+    assert.ok([entry.mounts.shoulderL, entry.mounts.shoulderR].includes(wing.parent.parent));
+  }
+  disposeChecked(entry);
+}
+
+{
+  const {entry} = createEntry();
   cosmetics.applyBotCosmetics(entry, botWith({attachment: 'test-attachment-reactor'}), {}, {forceEnabled: true});
   assertMounted('set-reactor-casing-', entry.mounts.back, 'reactor must use the semantic back mount');
   disposeChecked(entry);
@@ -327,7 +341,7 @@ for (const [asset, part] of [
     'non-Forge cosmetics must retain the compatibility coordinate root');
   assert.ok(legacyChest.position.y > 0 && legacyChest.position.z < 0,
     'the rebuilt compatibility armor must remain above the floor and forward of the torso');
-  const cuirass = nodes.filter(node => !node.disposed && node.name.includes('set-cuirass-'));
+  const cuirass = nodes.filter(node => !node.disposed && node.name.includes('set-cuirass-') && !node.name.includes('cuirass-seam-'));
   assert.equal(cuirass.length, 2, 'the compatibility root must carry both halves of the split cuirass');
   assert.equal(cuirass[0].position.x, -cuirass[1].position.x,
     'the compatibility armor must preserve symmetric coverage around the torso');

@@ -69,6 +69,7 @@ class FakeVector {
   constructor() { this.x = 0; this.y = 0; this.z = 0; }
   set(x, y, z) { this.x = x; this.y = y; this.z = z; }
 }
+const cosmeticNodes = [];
 class FakeNode {
   constructor(name) {
     this.name = name;
@@ -77,16 +78,23 @@ class FakeNode {
     this.scaling = new FakeVector();
     this.material = null;
     this.disposed = false;
+    cosmeticNodes.push(this);
   }
   isDisposed() { return this.disposed; }
-  dispose() { this.disposed = true; }
+  dispose() {
+    this.disposed = true;
+    for (const child of cosmeticNodes.filter(node => node.parent === this)) child.dispose();
+  }
+}
+class FakeVertexData {
+  applyToMesh(mesh) { mesh.vertexData = this; }
 }
 const fakeMeshBuilder = new Proxy({}, {
   get: (_, name) => name.startsWith('Create') ? (meshName => new FakeNode(meshName)) : undefined,
 });
 
 globalThis.window = {
-  BABYLON: {Color3: FakeColor3, TransformNode: FakeNode, MeshBuilder: fakeMeshBuilder},
+  BABYLON: {Color3: FakeColor3, TransformNode: FakeNode, Mesh: FakeNode, VertexData: FakeVertexData, MeshBuilder: fakeMeshBuilder},
   FakeMaterial,
 };
 const themeSource = readFileSync(new URL('../frontend/js/cosmetic-themes.js', import.meta.url), 'utf8');
@@ -94,6 +102,8 @@ vm.runInThisContext(themeSource, {filename: 'cosmetic-themes.js'});
 window.ArenaCosmeticThemes = globalThis.ArenaCosmeticThemes;
 
 let isolatedCosmeticsSource = cosmeticsSource
+  .replace("from './mech-geometry.js';",
+    `from '${new URL('../frontend/js/renderer/mech-geometry.js', import.meta.url).href}';`)
   .replace("from './forge-surfaces.js';",
     `from '${new URL('../frontend/js/renderer/forge-surfaces.js', import.meta.url).href}';`)
   .replace(/import \{ isEnabled \} from '[^']+';\r?\n/, 'const isEnabled = () => false;\n')
@@ -133,7 +143,21 @@ assert.ok(cosmeticEntry._cosmeticState.groups.length >= 2,
   'shop override must render the skin and attachment despite disabled spectator settings');
 assert.notEqual(weaponMesh.material, originalWeaponMaterial,
   'shop override must render the weapon finish despite disabled spectator settings');
+const previewCosmeticState = cosmeticEntry._cosmeticState;
+const authoredMeshes = cosmeticNodes.filter(node => node.vertexData);
+assert.ok(authoredMeshes.length > 0 && authoredMeshes.length <= 32,
+  'the shop override must render the bounded authored cosmetic geometry');
+for (const mesh of authoredMeshes) {
+  const {positions, normals, indices, uvs} = mesh.vertexData;
+  assert.ok(positions.every(Number.isFinite), 'shop cosmetic geometry must remain finite');
+  assert.equal(normals.length, positions.length, 'shop geometry must retain complete normals');
+  assert.equal(uvs.length, positions.length / 3 * 2, 'shop geometry must retain complete surface UVs');
+  assert.ok(indices.every(index => Number.isInteger(index) && index >= 0 && index < positions.length / 3));
+}
 cosmetics.disposeBotCosmetics(cosmeticEntry);
+assert.equal(weaponMesh.material, originalWeaponMaterial, 'preview cleanup must restore the shared weapon material');
+assert.ok(authoredMeshes.every(mesh => mesh.disposed), 'preview cleanup must dispose authored cosmetic children');
+assert.ok(previewCosmeticState.materials.every(material => material.disposed));
 
 // Exercise the preview lifecycle with its heavy model dependencies replaced by
 // tiny fakes. The production class itself, including observers and teardown, is
