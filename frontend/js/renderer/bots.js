@@ -6,7 +6,7 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry } from './bot-body.js?v=20260718o';
+import { createBotEntry, disposeBotEntry } from './bot-body.js?v=20260907r';
 import {
   forgeContactDelay,
   updateForgeCharacter,
@@ -14,8 +14,8 @@ import {
   triggerForgeDodge,
   triggerForgeHit,
   triggerForgeShove,
-} from './character-anims.js?v=20260714e';
-import {setForgeChassisLighting, updateForgeCharacterLOD} from './character-rig.js?v=20260718o';
+} from './character-anims.js?v=20260907r';
+import {setForgeChassisLighting, updateForgeCharacterLOD} from './character-rig.js?v=20260907r';
 import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260714e';
 import {bodyFormKeyForBot} from './body-form-roster.js?v=20260714e';
 import {
@@ -498,7 +498,8 @@ export class BotRenderer {
       // their state clocks current without rewriting disabled articulated joints.
       const forceFarBodyForm = entry.bodyFormKey !== 'standard' && !this._bodyFormNearIDs.has(id);
       const farLOD = updateForgeCharacterLOD(entry, this.scene.activeCamera, forceFarBodyForm);
-      updateForgeCharacter(entry, dt, this._motionQuery?.matches === true, !farLOD);
+      updateForgeCharacter(entry, dt, this._motionQuery?.matches === true, !farLOD,
+        isEnabled('rendering', 'characterMotion'));
 
       // Damage flinch: Forge leaves root scaling free for this short squash.
       if (entry._flinchT > 0) {

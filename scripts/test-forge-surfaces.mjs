@@ -16,9 +16,8 @@ class Texture {
 }
 globalThis.window = {BABYLON: {DynamicTexture: Texture, Texture: {WRAP_ADDRESSMODE: 1}}};
 const {forgeSurface, applyForgeSurface} = await import('../frontend/js/renderer/forge-surfaces.js');
-const {setEffect, getState} = await import('../frontend/js/settings.js');
-// The coordinator adds the schema entry during integration.
-getState().rendering.effects.surfaceDetail = true;
+const {setEffect, isEnabled} = await import('../frontend/js/settings.js');
+assert.equal(isEnabled('rendering', 'surfaceDetail'), true, 'Surface detail ships enabled');
 const scene = {onDisposeObservable: {addOnce: callback => { scene.dispose = callback; }}};
 const graphite = forgeSurface(scene, 'graphite');
 assert.equal(graphite, forgeSurface(scene, 'graphite'), 'Bots share one texture per surface and scene');

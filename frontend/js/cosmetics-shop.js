@@ -3,7 +3,7 @@
 import './babylon-runtime.js?v=20260810d';
 
 import { apiPath, appPath } from './paths.js?v=20260710a';
-import { CosmeticShopPreview } from './shop-preview.js?v=20260718o';
+import { CosmeticShopPreview } from './shop-preview.js?v=20260907r';
 
 const PAGE_SIZE = 24;
 const SUPPORTED_SLOTS = new Set(['bot_skin', 'weapon_skin', 'attachment', 'trail']);

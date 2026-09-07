@@ -31,11 +31,14 @@ AND, not a synced/indeterminate checkbox. Turning a section's master off
 silences everything in it without touching each effect's own flag, so
 flipping the master back on restores whatever was individually set before.
 
-**All defaults are `true`.** Nothing in `buildDefaults()` should ever default
-to `false` - shipping a new toggle must not change the site's current look
-for anyone who has never opened Settings. If you want a *new* effect to ship
-disabled-by-default, that's a product decision to raise explicitly, not
-something to slip in via this system.
+Effects default to `true` unless their schema entry has `defaultOff: true`.
+Keep those explicit opt-in choices intact: the extra GlowLayer, dynamic
+grading and several ambience passes have intentionally conservative defaults.
+The glass-space visual upgrade enables character lighting for fresh settings;
+existing saved preferences still win. Surface textures, the warm/cool lighting
+pair and secondary bot motion each have a live Rendering toggle. Disabling
+secondary motion retains locomotion and combat, and reduced motion suppresses
+the extra weight shifts too. Structural glass stays visible with ambience off.
 
 The settings panel UI (`frontend/js/settings-panel.js`) renders itself
 entirely from `SETTINGS_SCHEMA` - adding an entry to the schema is enough to

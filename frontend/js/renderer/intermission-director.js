@@ -48,7 +48,7 @@
  */
 
 import { buildBoundaryContours, buildWallGeometry, contourNormals, resolveEarcut, WALL_HEIGHT } from './map-walls.js?v=20260718g';
-import { PILLAR_HEIGHT, composeObstacleLayout, appendObstacleBoxes, appendRoofDetail } from './obstacles.js?v=20260718h';
+import { PILLAR_HEIGHT, composeObstacleLayout, appendObstacleBoxes, appendRoofDetail } from './obstacles.js?v=20260907r';
 import { buildClusterTrimGeometry } from './obstacle-clusters.js?v=20260718g';
 import { parseColor } from './utils.js';
 import { isEnabled, onSettingsChange } from '../settings.js';

@@ -6,10 +6,10 @@
  */
 
 import { CameraController } from './camera.js?v=20260718b';
-import { BotRenderer } from './bots.js?v=20260718o';
-import { EnvironmentRenderer } from './environment.js?v=20260903c';
-import { ObstacleRenderer } from './obstacles.js?v=20260903c';
-import { IntermissionDirector } from './intermission-director.js?v=20260718h';
+import { BotRenderer } from './bots.js?v=20260907r';
+import { EnvironmentRenderer } from './environment.js?v=20260907r';
+import { ObstacleRenderer } from './obstacles.js?v=20260907r';
+import { IntermissionDirector } from './intermission-director.js?v=20260907r';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
 import { TrailRenderer } from './trails.js?v=20260714e';
@@ -349,6 +349,7 @@ export class ArenaEngine {
       applyPipelineFlags();
       applyDepthFog();
       applyWorldTheme();
+      this._applySculptedLighting();
     });
     this.engine = engine;
     // The steady-state form of the bloom bind fault does NOT throw. It arrives
@@ -816,6 +817,27 @@ export class ArenaEngine {
     hemi.diffuse = new B.Color3(0.66, 0.72, 0.88);
     hemi.specular = B.Color3.Black();
     hemi.groundColor = new B.Color3(0.09, 0.1, 0.12);
+    this.fillLight = hemi;
+
+    // A single non-shadowing rim gives alloy edges depth without another
+    // shadow map or post-process pass. The sun remains the only caster light.
+    const rim = new B.DirectionalLight('arenaRim', new B.Vector3(0.65, -0.35, -0.55), this.scene);
+    rim.diffuse = new B.Color3(0.35, 0.62, 1.0);
+    rim.specular = new B.Color3(0.45, 0.68, 1.0);
+    this.rimLight = rim;
+    this._applySculptedLighting();
+  }
+
+  /** Live quality toggle; restore the original two-light look when disabled. */
+  _applySculptedLighting() {
+    if (!this.sunLight || !this.fillLight || !this.rimLight) return;
+    const enabled = isEnabled('rendering', 'sculptedLighting');
+    this.sunLight.intensity = enabled ? 1.08 : 0.82;
+    const specular = enabled ? 0.64 : 0.34;
+    this.sunLight.specular.set(specular, specular, specular);
+    this.fillLight.intensity = enabled ? 0.40 : 0.46;
+    this.rimLight.intensity = enabled ? 0.28 : 0;
+    this.rimLight.setEnabled(enabled);
   }
 
   /**
