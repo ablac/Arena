@@ -16,7 +16,7 @@ assert.match(source, /for \(const botId of this\._buildRenderQueue\(botEntries\)
 assert.doesNotMatch(source, /ribbon\.alwaysSelectAsActiveMesh\s*=\s*true/,
   'dynamic ribbons should retain normal frustum culling');
 assert.match(source,
-  /history\.length < 2[\s\S]{0,120}mesh\.setEnabled\(false\)[\s\S]{0,100}continue;[\s\S]{0,320}mesh\.setEnabled\(true\)/,
+  /history\.length < 2[\s\S]{0,120}mesh\?\.setEnabled\(false\)[\s\S]{0,100}continue;[\s\S]{0,320}mesh\?\.setEnabled\(true\)/,
   'a resume reset must keep stale ribbon geometry hidden until a fresh second sample exists');
 
 console.log('movement trails use server-cadence sampling, culling, and a bounded large-roster budget');

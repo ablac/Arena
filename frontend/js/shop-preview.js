@@ -1,10 +1,11 @@
 'use strict';
 
-import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260718o';
-import { applyBotCosmetics, disposeBotCosmetics } from './renderer/cosmetics.js?v=20260714e';
-import { updateForgeCharacter } from './renderer/character-anims.js?v=20260714e';
-import { TrailRenderer } from './renderer/trails.js?v=20260714e';
+import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260907b';
+import { applyBotCosmetics, disposeBotCosmetics } from './renderer/cosmetics.js?v=20260907b';
+import { updateForgeCharacter } from './renderer/character-anims.js?v=20260907b';
+import { TrailRenderer } from './renderer/trails.js?v=20260907b';
 import {bodyFormKeyForBot} from './renderer/body-form-roster.js?v=20260714e';
+import {isEnabled} from './settings.js';
 
 const DEFAULT_ALPHA = -Math.PI / 2;
 const DEFAULT_BETA = 1.12;
@@ -254,7 +255,8 @@ export class CosmeticShopPreview {
           this._runElapsed = (this._runElapsed + dt * PREVIEW_RUN_RADIANS_PER_SECOND) % (Math.PI * 2);
           this._positionEntryOnRunLoop(this.entry);
         }
-        updateForgeCharacter(this.entry, dt, this._reducedMotion);
+        updateForgeCharacter(this.entry, dt, this._reducedMotion, true,
+          isEnabled('rendering', 'characterMotion'));
       }
       if (this.trailRenderer) this.trailRenderer.render(this._trailEntries, dt);
       this.scene.render();

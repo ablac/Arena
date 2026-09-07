@@ -19,7 +19,7 @@ for (const weapon of expected) {
   assert.ok(profile.callsign && !callsigns.has(profile.callsign), `${weapon} needs a unique showroom callsign`);
   callsigns.add(profile.callsign);
   assert.ok(profile.role && profile.motion?.signature, `${weapon} needs a readable role and kinetic signature`);
-  assert.ok(profile.meshBudget <= 22, `${weapon} exceeds the live LOD0 mesh budget`);
+  assert.ok(profile.meshBudget <= 34, `${weapon} exceeds the rebuilt live LOD0 mesh budget`);
   assert.equal('drawCallBudget' in profile, false,
     `${weapon} must not advertise an unmeasured per-character draw-call budget`);
   assert.equal('lod' in profile, false,

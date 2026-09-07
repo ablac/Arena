@@ -439,7 +439,7 @@ function syncAccountCosmeticsPreviewRenderer(model) {
   }
 
   if (!accountCosmeticsPreviewModulePromise) {
-    accountCosmeticsPreviewModulePromise = import('./cosmetics-preview.js?v=20260823b').catch(error => {
+    accountCosmeticsPreviewModulePromise = import('./cosmetics-preview.js?v=20260907b').catch(error => {
       accountCosmeticsPreviewModulePromise = null;
       throw error;
     });

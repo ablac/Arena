@@ -122,7 +122,7 @@ assert.doesNotMatch(rosterSource, /drawCallBudget|\blod:\s*Object\.freeze/,
   'the roster must not advertise decorative budgets that runtime code does not enforce');
 assert.match(botSource, /updateForgeCharacterLOD\(entry, this\.scene\.activeCamera, forceFarBodyForm\)/,
   'live interpolation must combine camera LOD with the bounded body-form crowd override');
-assert.match(botSource, /updateForgeCharacter\(entry, dt, this\._motionQuery\?\.matches === true, !farLOD\)/,
+assert.match(botSource, /updateForgeCharacter\(entry, dt, this\._motionQuery\?\.matches === true, !farLOD,\s*isEnabled\('rendering', 'characterMotion'\)\)/,
   'far bots must advance state without rewriting every articulated joint');
 
 console.log('Forge far LOD shares proxy geometry while preserving zoom, color, and weapon identity');
