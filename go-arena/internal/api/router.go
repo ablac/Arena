@@ -157,7 +157,10 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		if session == nil {
 			return nil
 		}
-		return &ws.ChatIdentity{AccountID: session.AccountID, Name: session.Name}
+		return &ws.ChatIdentity{AccountID: session.AccountID, PublicUsername: session.PublicUsername}
+	}
+	if customerOIDCHandler != nil {
+		customerOIDCHandler.onPublicUsernameSynced = chatHub.RefreshPublicUsernames
 	}
 	adminHandler.ChatHub = chatHub
 

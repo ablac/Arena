@@ -67,7 +67,8 @@ type CustomerAccount struct {
 	// the cutover is sequenced: a legacy row still carries one until its owner
 	// next signs in, and the straggler report reads exactly this field.
 	Email           string     `json:"email,omitempty"`
-	DisplayName     string     `json:"display_name"`
+	DisplayName     string     `json:"-"` // Private account name; never a public alias.
+	PublicUsername  *string    `json:"public_username"`
 	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
 	// SubscriptionActive is Arena's cache of the one commerce fact it acts
 	// on: Accounts reported an ACTIVE entitlement for the Arena product at
@@ -148,7 +149,7 @@ func scanCustomerAccount(row pgx.Row) (*CustomerAccount, error) {
 	// every caller to handle — it reads as the empty string, which is what
 	// "we do not hold one" has always looked like everywhere above this.
 	var email *string
-	err := row.Scan(&account.ID, &email, &account.DisplayName, &account.EmailVerifiedAt,
+	err := row.Scan(&account.ID, &email, &account.DisplayName, &account.PublicUsername, &account.EmailVerifiedAt,
 		&account.SubscriptionActive, &account.SubscriptionSyncedAt,
 		&account.CreatedAt, &account.UpdatedAt)
 	if err != nil {
@@ -161,7 +162,7 @@ func scanCustomerAccount(row pgx.Row) (*CustomerAccount, error) {
 }
 
 func customerAccountSelect() string {
-	return `SELECT id, email, display_name, email_verified_at, subscription_active, subscription_synced_at,
+	return `SELECT id, email, display_name, public_username, email_verified_at, subscription_active, subscription_synced_at,
 	               created_at, updated_at FROM customer_accounts`
 }
 
@@ -208,7 +209,7 @@ func lockCustomerAccount(ctx context.Context, tx pgx.Tx, accountID string, requi
 // still true, and now attested by Accounts rather than by Arena's own mail. The
 // column's name outlived its meaning; renaming it is a separate change, because
 // three readers and a session cache would move with it.
-func UpsertVerifiedCustomerAccount(ctx context.Context, linkEmail, issuer, subject, displayName string) (*CustomerAccount, error) {
+func UpsertVerifiedCustomerAccount(ctx context.Context, linkEmail, issuer, subject, displayName string, publicUsername *string) (*CustomerAccount, error) {
 	if Pool == nil {
 		return nil, ErrNoDatabase
 	}
@@ -351,6 +352,11 @@ func UpsertVerifiedCustomerAccount(ctx context.Context, linkEmail, issuer, subje
 		return nil, fmt.Errorf("UpsertVerifiedCustomerAccount bind: %w", err)
 	}
 
+	// Identity is locked above. Missing/invalid claims clear the cached public alias;
+	// no private-name or email backfill and no local uniqueness authority.
+	if _, err := tx.Exec(ctx, `UPDATE customer_accounts SET public_username = $2 WHERE id = $1`, accountID, NormalizePublicUsername(publicUsername)); err != nil {
+		return nil, fmt.Errorf("sync public username: %w", err)
+	}
 	account, err := scanCustomerAccount(tx.QueryRow(ctx, customerAccountSelect()+` WHERE id = $1`, accountID))
 	if err != nil {
 		return nil, fmt.Errorf("UpsertVerifiedCustomerAccount load: %w", err)

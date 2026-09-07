@@ -455,6 +455,7 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 		// Public profile fields, editable from the dashboard. show_bots_public
 		// defaults to true so a fresh account's linked bots are visible unless
 		// the owner opts out.
+		`ALTER TABLE customer_accounts ADD COLUMN IF NOT EXISTS public_username TEXT`,
 		`ALTER TABLE customer_accounts ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE customer_accounts ADD COLUMN IF NOT EXISTS avatar_color TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE customer_accounts ADD COLUMN IF NOT EXISTS show_bots_public BOOLEAN NOT NULL DEFAULT true`,

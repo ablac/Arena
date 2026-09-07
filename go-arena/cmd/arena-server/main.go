@@ -73,6 +73,7 @@ const managedSchemaPreflightQuery = `
 			('cosmetic_catalog_audit', 'id'),
 			('cosmetic_entitlements', 'bot_id'),
 			('customer_accounts', 'id'),
+			('customer_accounts', 'public_username'),
 			('customer_accounts', 'subscription_active'),
 			('customer_accounts', 'subscription_synced_at'),
 			('customer_email_verifications', 'email'),

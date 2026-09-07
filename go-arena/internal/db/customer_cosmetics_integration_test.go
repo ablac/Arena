@@ -108,7 +108,7 @@ func TestPostgresArenaSubscriptionUnlocksEveryCosmeticForLinkedBots(t *testing.T
 	botOne := createCustomerCosmeticsTestBot(t, ctx, "one")
 	botTwo := createCustomerCosmeticsTestBot(t, ctx, "two")
 	stranger := createCustomerCosmeticsTestBot(t, ctx, "stranger")
-	account, err := UpsertVerifiedCustomerAccount(ctx, "", "https://id.example", "owner-subject", "Owner")
+	account, err := UpsertVerifiedCustomerAccount(ctx, "", "https://id.example", "owner-subject", "Owner", nil)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestPostgresPlatformChangeOrderingDoesNotDeadlockAgentLinkAndProfileTransit
 		"profile-lock-order@example.com",
 		"https://id.example",
 		"profile-lock-order",
-		"Profile Lock Order",
+		"Profile Lock Order", nil,
 	)
 	if err != nil {
 		t.Fatalf("create account: %v", err)
@@ -392,7 +392,7 @@ func TestPostgresPlatformChangeOrderingDoesNotDeadlockRestartReconciliationAndPr
 		"restart-lock-order@example.com",
 		"https://id.example",
 		"restart-lock-order",
-		"Restart Lock Order",
+		"Restart Lock Order", nil,
 	)
 	if err != nil {
 		t.Fatalf("create account: %v", err)
@@ -510,7 +510,7 @@ func TestPostgresPlatformAgentLinkReconciliationDoesNotOverwriteConcurrentUnlink
 		"reconcile-unlink@example.com",
 		"https://id.example",
 		"reconcile-unlink",
-		"Reconcile Unlink",
+		"Reconcile Unlink", nil,
 	)
 	if err != nil {
 		t.Fatalf("create account: %v", err)
@@ -610,7 +610,7 @@ func TestPostgresPlatformAgentLinkReconciliationDoesNotOverwriteConcurrentRelink
 		"reconcile-relink@example.com",
 		"https://id.example",
 		"reconcile-relink",
-		"Reconcile Relink",
+		"Reconcile Relink", nil,
 	)
 	if err != nil {
 		t.Fatalf("create account: %v", err)
@@ -692,7 +692,7 @@ func TestPostgresPlatformAgentLinkTransferReconciliationPreservesConcurrentCurre
 				"transfer-prior-"+name+"@example.com",
 				"https://id.example",
 				"transfer-prior-"+name,
-				"Transfer Prior "+name,
+				"Transfer Prior "+name, nil,
 			)
 			if err != nil {
 				t.Fatalf("create prior account: %v", err)
@@ -702,7 +702,7 @@ func TestPostgresPlatformAgentLinkTransferReconciliationPreservesConcurrentCurre
 				"transfer-current-"+name+"@example.com",
 				"https://id.example",
 				"transfer-current-"+name,
-				"Transfer Current "+name,
+				"Transfer Current "+name, nil,
 			)
 			if err != nil {
 				t.Fatalf("create current account: %v", err)
@@ -840,7 +840,7 @@ func TestPostgresPlatformAgentLinkReconciliationRestartsForNewCurrentAccount(t *
 		"reconcile-restart-prior@example.com",
 		"https://id.example",
 		"reconcile-restart-prior",
-		"Reconcile Restart Prior",
+		"Reconcile Restart Prior", nil,
 	)
 	if err != nil {
 		t.Fatalf("create prior account: %v", err)
@@ -850,7 +850,7 @@ func TestPostgresPlatformAgentLinkReconciliationRestartsForNewCurrentAccount(t *
 		"reconcile-restart-current@example.com",
 		"https://id.example",
 		"reconcile-restart-current",
-		"Reconcile Restart Current",
+		"Reconcile Restart Current", nil,
 	)
 	if err != nil {
 		t.Fatalf("create current account: %v", err)
@@ -1088,7 +1088,7 @@ func TestPostgresLicenceEraLoadoutColumnsStayNullAndHarmless(t *testing.T) {
 	}
 
 	bot := createCustomerCosmeticsTestBot(t, ctx, "licence-era")
-	account, err := UpsertVerifiedCustomerAccount(ctx, "", "https://id.example", "licence-era", "Licence Era")
+	account, err := UpsertVerifiedCustomerAccount(ctx, "", "https://id.example", "licence-era", "Licence Era", nil)
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
@@ -1157,7 +1157,7 @@ func TestPostgresAccountRowIsFirstEquipLock(t *testing.T) {
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
 	bot := createCustomerCosmeticsTestBot(t, ctx, "lock-order")
-	account, err := UpsertVerifiedCustomerAccount(ctx, "", "https://id.example", "locks-subject", "Locks")
+	account, err := UpsertVerifiedCustomerAccount(ctx, "", "https://id.example", "locks-subject", "Locks", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

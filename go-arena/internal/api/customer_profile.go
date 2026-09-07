@@ -1,8 +1,6 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -17,27 +15,13 @@ import (
 )
 
 const (
-	profileDisplayNameMaxRunes = 32
-	profileBioMaxRunes         = 280
-	profileAvatarColorMaxLen   = 32
+	profileBioMaxRunes       = 280
+	profileAvatarColorMaxLen = 32
 )
 
-// chatDisplayHandle mirrors ws.chatHandle: the sanitized display name plus an
-// 8-hex-char discriminator hashed from the account id. Duplicated (rather
-// than exported from the ws package) to keep the api package from importing
-// ws just for a five-line string formula.
 // profileAvatarColorPattern is a CSS hex colour (#rgb, #rgba, #rrggbb,
 // #rrggbbaa) or empty, which clears the colour.
 var profileAvatarColorPattern = regexp.MustCompile(`^(#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8}))?$`)
-
-func chatDisplayHandle(accountID, name string) string {
-	clean, _ := sanitizeProfileText(name, 24)
-	if clean == "" {
-		clean = "dev"
-	}
-	sum := sha256.Sum256([]byte(accountID))
-	return clean + "#" + hex.EncodeToString(sum[:])[:8]
-}
 
 // sanitizeProfileText strips control/format characters and collapses
 // whitespace, matching the chat body sanitizer's rules so a profile field
@@ -67,14 +51,15 @@ func sanitizeProfileText(raw string, maxRunes int) (string, bool) {
 
 func profileJSON(p *db.PublicProfile) map[string]interface{} {
 	return map[string]interface{}{
-		"account_id":   p.AccountID,
-		"display_name": p.DisplayName,
-		"chat_handle":  chatDisplayHandle(p.AccountID, p.DisplayName),
-		"bio":          p.Bio,
-		"avatar_color": p.AvatarColor,
-		"joined_at":    p.JoinedAt,
-		"shows_bots":   p.ShowsBots,
-		"bots":         p.Bots,
+		"account_id":         p.AccountID,
+		"public_username":    p.PublicUsername,
+		"username_setup_url": db.PublicUsernameSetupURL,
+		"chat_handle":        db.PublicUsernameLabel(p.PublicUsername),
+		"bio":                p.Bio,
+		"avatar_color":       p.AvatarColor,
+		"joined_at":          p.JoinedAt,
+		"shows_bots":         p.ShowsBots,
+		"bots":               p.Bots,
 	}
 }
 
@@ -114,10 +99,13 @@ func UpdateAccountProfileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		DisplayName    *string `json:"display_name"`
-		Bio            *string `json:"bio"`
-		AvatarColor    *string `json:"avatar_color"`
-		ShowBotsPublic *bool   `json:"show_bots_public"`
+		DisplayName    json.RawMessage `json:"display_name"`
+		Name           json.RawMessage `json:"name"`
+		Username       json.RawMessage `json:"username"`
+		PublicUsername json.RawMessage `json:"public_username"`
+		Bio            *string         `json:"bio"`
+		AvatarColor    *string         `json:"avatar_color"`
+		ShowBotsPublic *bool           `json:"show_bots_public"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -125,13 +113,9 @@ func UpdateAccountProfileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	update := db.CustomerProfileUpdate{ShowBotsPublic: req.ShowBotsPublic}
-	if req.DisplayName != nil {
-		clean, ok := sanitizeProfileText(*req.DisplayName, profileDisplayNameMaxRunes)
-		if !ok || clean == "" {
-			writeError(w, http.StatusBadRequest, "display name must be 1-32 characters")
-			return
-		}
-		update.DisplayName = &clean
+	if len(req.DisplayName)+len(req.Name)+len(req.Username)+len(req.PublicUsername) > 0 {
+		writeError(w, http.StatusBadRequest, "Public usernames are managed at "+db.PublicUsernameSetupURL+"; sign in again to refresh Arena.")
+		return
 	}
 	if req.Bio != nil {
 		clean, ok := sanitizeProfileText(*req.Bio, profileBioMaxRunes)
@@ -167,8 +151,5 @@ func UpdateAccountProfileHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update profile")
 		return
 	}
-	// The session cache copied the old display name at sign-in and chat
-	// posts under it; drop the copies so the next request reads the row.
-	activeCustomerOIDCHandler().ForgetAccountSessions(session.AccountID)
 	writeJSON(w, http.StatusOK, profileJSON(profile))
 }

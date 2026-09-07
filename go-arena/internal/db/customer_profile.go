@@ -29,13 +29,13 @@ type PublicProfileBot struct {
 // deliberately omits email: the account id and chat handle are the only
 // identifiers exposed publicly.
 type PublicProfile struct {
-	AccountID   string             `json:"account_id"`
-	DisplayName string             `json:"display_name"`
-	Bio         string             `json:"bio"`
-	AvatarColor string             `json:"avatar_color"`
-	JoinedAt    time.Time          `json:"joined_at"`
-	Bots        []PublicProfileBot `json:"bots"`
-	ShowsBots   bool               `json:"shows_bots"`
+	AccountID      string             `json:"account_id"`
+	PublicUsername *string            `json:"public_username"`
+	Bio            string             `json:"bio"`
+	AvatarColor    string             `json:"avatar_color"`
+	JoinedAt       time.Time          `json:"joined_at"`
+	Bots           []PublicProfileBot `json:"bots"`
+	ShowsBots      bool               `json:"shows_bots"`
 }
 
 // GetPublicProfile loads the public-facing profile for an account. Returns
@@ -48,15 +48,16 @@ func GetPublicProfile(ctx context.Context, accountID string) (*PublicProfile, er
 	var profile PublicProfile
 	var showBots bool
 	err := Pool.QueryRow(ctx,
-		`SELECT id, display_name, bio, avatar_color, show_bots_public, created_at
+		`SELECT id, public_username, bio, avatar_color, show_bots_public, created_at
 		 FROM customer_accounts WHERE id = $1`, accountID).
-		Scan(&profile.AccountID, &profile.DisplayName, &profile.Bio, &profile.AvatarColor, &showBots, &profile.JoinedAt)
+		Scan(&profile.AccountID, &profile.PublicUsername, &profile.Bio, &profile.AvatarColor, &showBots, &profile.JoinedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("GetPublicProfile: %w", err)
 	}
+	profile.PublicUsername = NormalizePublicUsername(profile.PublicUsername)
 	profile.ShowsBots = showBots
 	profile.Bots = []PublicProfileBot{}
 	if !showBots {
@@ -91,7 +92,6 @@ func GetPublicProfile(ctx context.Context, accountID string) (*PublicProfile, er
 // CustomerProfileUpdate carries the partial-update fields for
 // UpdateCustomerProfile; a nil pointer leaves that column unchanged.
 type CustomerProfileUpdate struct {
-	DisplayName    *string
 	Bio            *string
 	AvatarColor    *string
 	ShowBotsPublic *bool
@@ -108,9 +108,6 @@ func UpdateCustomerProfile(ctx context.Context, accountID string, update Custome
 	addSet := func(column string, value interface{}) {
 		args = append(args, value)
 		sets = append(sets, fmt.Sprintf("%s = $%d", column, len(args)))
-	}
-	if update.DisplayName != nil {
-		addSet("display_name", *update.DisplayName)
 	}
 	if update.Bio != nil {
 		addSet("bio", *update.Bio)

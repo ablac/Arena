@@ -16,8 +16,8 @@ var _ Authority = PostgresAuthority{}
 
 func NewPostgresAuthority() PostgresAuthority { return PostgresAuthority{} }
 
-func (PostgresAuthority) UpsertVerifiedIdentity(ctx context.Context, email, issuer, subject, displayName string) (*db.CustomerAccount, error) {
-	return db.UpsertVerifiedCustomerAccount(ctx, email, issuer, subject, displayName)
+func (PostgresAuthority) UpsertVerifiedIdentity(ctx context.Context, email, issuer, subject, displayName string, publicUsername *string) (*db.CustomerAccount, error) {
+	return db.UpsertVerifiedCustomerAccount(ctx, email, issuer, subject, displayName, publicUsername)
 }
 
 func (PostgresAuthority) SetSubscription(ctx context.Context, accountID string, active bool, syncedAt time.Time) (*db.SubscriptionSyncChange, error) {

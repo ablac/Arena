@@ -14,8 +14,8 @@
  */
 
 import { apiPath, wsURL } from './paths.js?v=20260710a';
-import { openProfilePopup } from './profile-popup.js?v=20260714a';
-import { startSignIn, watchSignInState } from './sign-in.js?v=20260825a';
+import { openProfilePopup, updateProfilePopupUsername } from './profile-popup.js?v=20260905p';
+import { startSignIn, watchSignInState } from './sign-in.js?v=20260905u';
 
 const OVERLAY_ID = 'chat-overlay';
 // Discord-style grouping: consecutive messages from the same sender within
@@ -163,14 +163,8 @@ function formatTime(tsMillis) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-// Wire handles are "Name#xxxxxxxx" (see chatHandle in the Go ws package) --
-// the discriminator disambiguates two people who both picked the same name,
-// but is noise in the message log itself. Kept as a title/tooltip instead.
-function shortHandle(handle) {
-  const raw = handle || 'dev';
-  const idx = raw.lastIndexOf('#');
-  return idx > 0 ? raw.slice(0, idx) : raw;
-}
+// Usernames arrive from the central account. Missing labels are explicit.
+function shortHandle(handle) { return handle || 'Username unavailable'; }
 
 async function fetchChatConfig() {
   try {
@@ -300,6 +294,15 @@ function initChatPanel(cfg) {
   if (!overlay || !listEl || !formEl || !inputEl || !sendBtn || !statusEl) return;
 
   const watermark = buildWatermark(listEl);
+  const usernameHelp = document.createElement('div');
+  usernameHelp.className = 'chat-row-notice';
+  usernameHelp.hidden = true;
+  usernameHelp.innerHTML = '<a href="https://accounts.angel-serv.com/portal/account/details" target="_blank" rel="noopener noreferrer">Choose a public username in Angel Accounts</a>. Then <button type="button">Refresh username</button> to sign in again.';
+  formEl.parentElement.insertBefore(usernameHelp, formEl);
+  usernameHelp.querySelector('button').addEventListener('click', async () => {
+    const result = await startSignIn({refresh: true});
+    if (result?.message) setStatus(result.message, 'warn');
+  });
 
   document.body.classList.add('chat-enabled');
   setChatAvailability({ enabled: !!cfg.enabled, overlay, launcherEl, watermark });
@@ -346,7 +349,8 @@ function initChatPanel(cfg) {
   function appendMessage(msg) {
     if (lineIndex.has(msg.id)) return;
     const stick = nearBottom();
-    const key = msg.handle || 'dev';
+    const key = msg.account_id || `unavailable:${msg.id}`;
+    const label = msg.handle || 'Username unavailable';
 
     let groupEl;
     if (lastGroup && lastGroup.key === key && msg.ts - lastGroup.ts < GROUP_WINDOW_MS) {
@@ -359,8 +363,9 @@ function initChatPanel(cfg) {
       meta.className = 'chat-row-meta';
       const handleEl = document.createElement('span');
       handleEl.className = 'chat-handle';
-      handleEl.textContent = shortHandle(key);
-      handleEl.title = key;
+      handleEl.textContent = shortHandle(label);
+      handleEl.title = label;
+      handleEl.dataset.accountId = msg.account_id || '';
       if (msg.account_id) {
         handleEl.classList.add('chat-handle-clickable');
         handleEl.setAttribute('role', 'button');
@@ -435,24 +440,39 @@ function initChatPanel(cfg) {
     (msg) => {
       switch (msg.type) {
         case 'chat_status':
-          // A successful connection is itself proof chat is currently
-          // enabled (the server 404s the upgrade otherwise), so this always
-          // clears any earlier chat_settings-disabled state on (re)connect.
+          // Status updates also arrive on alias refresh; preserve the live
+          // admin switch instead of treating every status as a new upgrade.
+          if (typeof msg.enabled === 'boolean') runtimeEnabled = msg.enabled;
           canPost = !!msg.can_post;
-          runtimeEnabled = true;
           requiresSignIn = !canPost && msg.reason === 'sign_in_required';
-          setChatAvailability({ enabled: true, overlay, launcherEl, watermark });
-          if (canPost) {
+          setChatAvailability({ enabled: runtimeEnabled, overlay, launcherEl, watermark });
+          if (!runtimeEnabled) {
+            setStatus('Chat disabled by an admin', 'warn');
+            watermark.hidden = true;
+          } else if (canPost) {
             setStatus('Chatting as ' + shortHandle(msg.handle), 'ok');
             watermark.hidden = true;
           } else if (requiresSignIn) {
             setStatus('Read-only', 'info');
             watermark.hidden = false;
+          } else if (msg.reason === 'username_required') {
+            setStatus('Choose a public username to post', 'info');
+            watermark.hidden = true;
           } else {
             setStatus('Read-only', 'info');
             watermark.hidden = true;
           }
+          usernameHelp.hidden = msg.reason !== 'username_required';
           updateComposer();
+          break;
+        case 'chat_identity':
+          updateProfilePopupUsername(msg.account_id, msg.public_username);
+          listEl.querySelectorAll('.chat-handle').forEach(node => {
+            if (node.dataset.accountId === msg.account_id) {
+              node.textContent = msg.public_username || 'Username unavailable';
+              node.title = node.textContent;
+            }
+          });
           break;
         case 'chat_settings':
           runtimeEnabled = !!msg.enabled;
@@ -475,7 +495,10 @@ function initChatPanel(cfg) {
           removeMessage(msg.id);
           break;
         case 'chat_error':
-          if (msg.code === 'BOT_ALIVE_LOCK') {
+          if (msg.code === 'USERNAME_REQUIRED') {
+            canPost = false; usernameHelp.hidden = false; updateComposer();
+            appendNotice('Choose a public username in Angel Accounts, then refresh your username.');
+          } else if (msg.code === 'BOT_ALIVE_LOCK') {
             appendNotice('Chat is locked while your bot is alive in the round.');
           } else if (msg.code === 'BLOCKED_KEYWORD') {
             appendNotice('Message blocked: it contains a restricted word.');

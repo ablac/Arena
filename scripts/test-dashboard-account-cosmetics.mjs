@@ -37,12 +37,12 @@ assert.equal(signedOut.email_login_enabled, false);
 assert.equal(signedOut.email_start_url, undefined, 'the retired endpoints are gone from the session shape');
 const postCutoverSession = {
   authenticated: true,
-  account: {id: 'acct-post-cutover', email: '', email_verified: true, display_name: 'Arena Pilot'},
+  account: {id: 'acct-post-cutover', email: '', email_verified: true, display_name: 'Private Name', public_username: 'arena_pilot'},
 };
 const normalizedPostCutoverSession = cosmetics.normalizeSession(postCutoverSession);
 assert.equal(normalizedPostCutoverSession.account.id, 'acct-post-cutover');
 assert.equal(normalizedPostCutoverSession.account.email, '');
-assert.equal(normalizedPostCutoverSession.account.name, 'Arena Pilot');
+assert.equal(normalizedPostCutoverSession.account.name, 'arena_pilot');
 assert.equal(cosmetics.hasVerifiedAccount(postCutoverSession), true,
   'a signed-in verified Angel account with no email must remain eligible');
 assert.equal(cosmetics.hasVerifiedAccount({...postCutoverSession, authenticated:false}), false);
@@ -50,11 +50,11 @@ assert.equal(cosmetics.hasVerifiedAccount({account:{id:'acct-legacy-email', emai
   'a verified legacy email account without explicit authentication must not be eligible');
 assert.equal(cosmetics.hasVerifiedAccount({...postCutoverSession, account:{...postCutoverSession.account, id:''}}), false);
 assert.equal(cosmetics.hasVerifiedAccount({...postCutoverSession, account:{...postCutoverSession.account, email_verified:false}}), false);
-assert.equal(cosmetics.accountLabel(postCutoverSession.account), 'Arena Pilot');
-assert.equal(cosmetics.accountLabel({display_name:'   ', name:'Legacy Name', email:'legacy@example.com'}), 'Legacy Name');
-assert.equal(cosmetics.accountLabel({display_name:'Preferred Name', name:'Legacy Name'}), 'Preferred Name');
-assert.equal(cosmetics.accountLabel({email:' Legacy@Example.COM '}), 'legacy@example.com');
-assert.equal(cosmetics.accountLabel({}), 'Angel account');
+assert.equal(cosmetics.accountLabel(postCutoverSession.account), 'arena_pilot');
+assert.equal(cosmetics.accountLabel({display_name:'   ', name:'Legacy Name', email:'legacy@example.com'}), 'Username unavailable');
+assert.equal(cosmetics.accountLabel({display_name:'Preferred Name', name:'Legacy Name'}), 'Username unavailable');
+assert.equal(cosmetics.accountLabel({email:' Legacy@Example.COM '}), 'Username unavailable');
+assert.equal(cosmetics.accountLabel({}), 'Username unavailable');
 
 // ---- Routes --------------------------------------------------------------
 assert.equal(cosmetics.accountRoute('session'), '/account/session');
@@ -233,7 +233,7 @@ assert.match(linkedBotsHTML, /data-bot-unlink="bot-1"/);
 assert.match(linkedBotsHTML, /Alpha/);
 assert.match(linkedBotsHTML, /Key inactive/, 'an inactive key is labelled on its bot');
 const postCutoverLinkedBotsHTML = cosmetics.renderLinkedBots(cosmetics.normalizeSnapshot({...rawSnapshot, account:postCutoverSession.account}), {});
-assert.match(postCutoverLinkedBotsHTML, /subscription always stays with Arena Pilot/);
+assert.match(postCutoverLinkedBotsHTML, /subscription always stays with arena_pilot/);
 assert.doesNotMatch(postCutoverLinkedBotsHTML, /email/i, 'linked-bot guidance must not depend on an email');
 assert.match(cosmetics.renderLinkedBots(cosmetics.normalizeSnapshot({account:snapshot.account, bots:[]}), {}), /No bots linked yet/);
 
@@ -338,8 +338,8 @@ assert.match(dashboardHTML, /\[data-collection-more\]/);
 assert.match(dashboardHTML, /\[data-collection-slot\]/);
 assert.match(dashboardHTML, /\[data-collection-query\]/);
 assert.match(dashboardHTML, /addEventListener\('input', handleAccountPanelInput\)/, 'typing into the search box must not redraw the input away');
-assert.match(dashboardHTML, /accountCosmetics\.js\?v=20260902a|account-cosmetics\.js\?v=20260902a/);
-assert.match(dashboardHTML, /dashboard\.js\?v=20260902a/);
+assert.match(dashboardHTML, /accountCosmetics\.js\?v=20260905u|account-cosmetics\.js\?v=20260905u/);
+assert.match(dashboardHTML, /dashboard\.js\?v=20260905u/);
 assert.match(dashboardHTML, /dashboard\.css\?v=20260902a/);
 for (const className of ['subscription-card', 'subscription-status', 'subscription-action', 'cosmetic-card', 'cosmetic-card-grid',
   'cosmetic-collection-filter', 'cosmetic-equip-hint', 'cosmetic-show-more', 'ownership-badge.locked']) {
