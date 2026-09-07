@@ -17,7 +17,7 @@ import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from '
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260907r';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260907b';
 import { Minimap } from '../js/renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, appPath, wsURL } from '../js/paths.js?v=20260710a';

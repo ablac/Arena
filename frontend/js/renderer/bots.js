@@ -6,7 +6,7 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry } from './bot-body.js?v=20260907r';
+import { createBotEntry, disposeBotEntry } from './bot-body.js?v=20260907b';
 import {
   forgeContactDelay,
   updateForgeCharacter,
@@ -14,9 +14,9 @@ import {
   triggerForgeDodge,
   triggerForgeHit,
   triggerForgeShove,
-} from './character-anims.js?v=20260907r';
-import {setForgeChassisLighting, updateForgeCharacterLOD} from './character-rig.js?v=20260907r';
-import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260907r';
+} from './character-anims.js?v=20260907b';
+import {setForgeChassisLighting, updateForgeCharacterLOD} from './character-rig.js?v=20260907b';
+import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260907b';
 import {bodyFormKeyForBot} from './body-form-roster.js?v=20260714e';
 import {
   hideWorldTaunt,

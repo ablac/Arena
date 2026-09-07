@@ -369,7 +369,7 @@ function easeInQuad(t) { const u = clamp01(t); return u * u; }
 /* ------------------------------------------------------------------------ */
 
 export class IntermissionDirector {
-  /** @param {import('./engine.js').ArenaEngine} engine */
+  /** @param {import('./engine.js?v=20260907b').ArenaEngine} engine */
   constructor(engine) {
     this.engine = engine;
     /** @type {Object|null} live show state; null = inert */
