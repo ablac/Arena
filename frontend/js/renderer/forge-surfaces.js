@@ -5,6 +5,7 @@ import {isEnabled, onSettingsChange} from '../settings.js';
 // Small scene-owned, seamless surface maps. Neutral values preserve avatar
 // colors and status flashes; the directional lighting supplies the relief.
 const surfaces = new WeakMap();
+const sharedTextures = new WeakSet();
 const SIZE = 128;
 const sceneMaterials = new WeakMap();
 
@@ -52,13 +53,19 @@ export function forgeSurface(scene, finish) {
   texture.anisotropicFilteringLevel = 4;
   texture.update(false);
   cache.set(finish, texture);
+  sharedTextures.add(texture);
   return texture;
 }
 
 export function applyForgeSurface(material, scene, finish) {
   material._forgeSurfaceTexture = forgeSurface(scene, finish);
+  material._forgeSurfaceFinish = finish;
   material.specularPower = finish === 'steel' ? 96 : finish === 'gunmetal' ? 48 : 24;
   syncForgeSurface(material);
+  registerForgeSurface(material, scene);
+}
+
+function registerForgeSurface(material, scene) {
   let materials = sceneMaterials.get(scene);
   if (!materials) {
     materials = new Set();
@@ -74,5 +81,28 @@ export function applyForgeSurface(material, scene, finish) {
       scene.onDisposeObservable.addOnce(() => { unsubscribe(); materials.clear(); });
     }
   }
+  if (materials.has(material)) return;
   materials.add(material);
+  material.onDisposeObservable?.addOnce(() => { materials.delete(material); });
+}
+
+/** Restore shared surface ownership immediately after StandardMaterial.clone. */
+export function inheritForgeSurface(clone, original, scene) {
+  const texture = original?._forgeSurfaceTexture;
+  if (!texture || !clone || clone === original) return clone;
+  // Babylon clones DynamicTextures as part of material cloning. Those copies
+  // are no longer needed after sharing is restored. Protect all scene-owned
+  // maps and any maps retained by the original material.
+  const protectedTextures = new Set([texture, original.diffuseTexture, original.emissiveTexture]);
+  const orphanTextures = new Set([clone.diffuseTexture, clone.emissiveTexture]);
+  for (const orphan of orphanTextures) {
+    if (orphan && !protectedTextures.has(orphan) && !sharedTextures.has(orphan)) {
+      orphan.dispose?.();
+    }
+  }
+  clone._forgeSurfaceTexture = texture;
+  clone._forgeSurfaceFinish = original._forgeSurfaceFinish;
+  syncForgeSurface(clone);
+  registerForgeSurface(clone, scene);
+  return clone;
 }

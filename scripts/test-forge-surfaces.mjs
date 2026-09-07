@@ -15,10 +15,9 @@ class Texture {
   update() { this.uploads = (this.uploads || 0) + 1; }
 }
 globalThis.window = {BABYLON: {DynamicTexture: Texture, Texture: {WRAP_ADDRESSMODE: 1}}};
-const {forgeSurface, applyForgeSurface, syncForgeSurface} = await import('../frontend/js/renderer/forge-surfaces.js');
+const {forgeSurface, applyForgeSurface, syncForgeSurface, inheritForgeSurface} = await import('../frontend/js/renderer/forge-surfaces.js');
 const {setEffect, isEnabled} = await import('../frontend/js/settings.js');
 assert.equal(isEnabled('rendering', 'surfaceDetail'), true, 'Surface detail ships enabled');
-
 const scene = {onDisposeObservable: {addOnce: callback => { scene.dispose = callback; }}};
 const graphite = forgeSurface(scene, 'graphite');
 assert.equal(graphite, forgeSurface(scene, 'graphite'), 'Bots share one texture per surface and scene');
@@ -42,6 +41,34 @@ assert.ok(material.diffuseTexture === null, 'Detail disables diffuse map');
 assert.ok(material.emissiveTexture === null, 'Detail disables emissive map');
 setEffect('rendering', 'surfaceDetail', true);
 assert.equal(material.diffuseTexture, graphite, 'Live toggle restores shared texture');
+// A cloned material may own duplicate DynamicTextures. Dispose duplicates
+// once and ensure frequently replaced cosmetics leave the subscriber set.
+let orphanDisposals = 0;
+const orphan = {dispose() { orphanDisposals++; }};
+let cloneUpdates = 0;
+const clone = {
+  diffuseTexture: orphan, emissiveTexture: orphan,
+  unfreeze() { cloneUpdates++; }, freeze() {},
+  onDisposeObservable: {addOnce(callback) { clone.dispose = callback; }},
+};
+inheritForgeSurface(clone, material, scene);
+assert.equal(orphanDisposals, 1);
+assert.ok(clone.diffuseTexture === graphite);
+assert.ok(clone.emissiveTexture === null);
+setEffect('rendering', 'surfaceDetail', false);
+assert.ok(clone.diffuseTexture === null, 'Clones follow live detail setting');
+setEffect('rendering', 'surfaceDetail', true);
+assert.ok(clone.diffuseTexture === graphite);
+clone.dispose();
+const updateCountAtDisposal = cloneUpdates;
+setEffect('rendering', 'surfaceDetail', false);
+assert.equal(cloneUpdates, updateCountAtDisposal, 'Disposed clones leave settings subscriber set');
+setEffect('rendering', 'surfaceDetail', true);
+let sharedDisposals = 0;
+graphite.dispose = () => { sharedDisposals++; };
+const sharingClone = {diffuseTexture: graphite, emissiveTexture: graphite, unfreeze() {}, freeze() {}};
+inheritForgeSurface(sharingClone, material, scene);
+assert.equal(sharedDisposals, 0, 'Inherited maps never dispose original/shared texture');
 scene.dispose();
 setEffect('rendering', 'surfaceDetail', false);
 assert.equal(material.diffuseTexture, graphite, 'Scene disposal removes settings subscriber');
