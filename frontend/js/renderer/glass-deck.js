@@ -83,6 +83,7 @@ export class GlassDeck {
     this.trim = trim;
     this.materials.push(glass, metal, trim);
     const mats = { glass, metal, trim };
+    const batches = { glass: [], metal: [], trim: [] };
     for (const [i, part] of glassDeckParts(width, depth).entries()) {
       const mesh = B.MeshBuilder.CreateBox(`deck-${part.kind}-${i}`, {
         width: part.width, height: part.height, depth: part.depth,
@@ -91,7 +92,25 @@ export class GlassDeck {
       mesh.material = mats[part.kind];
       mesh.isPickable = false;
       mesh.freezeWorldMatrix();
-      this.meshes.push(mesh);
+      batches[part.kind].push(mesh);
+    }
+    // Bake the fixed transforms into three material batches. Keeping a single
+    // material per mesh avoids submesh draw calls while retaining open geometry.
+    for (const [kind, source] of Object.entries(batches)) {
+      const merged = typeof B.Mesh?.MergeMeshes === 'function'
+        ? B.Mesh.MergeMeshes(source, true, true, undefined, false, false)
+        : null;
+      if (merged) {
+        merged.name = `deck-${kind}`;
+        merged.material = mats[kind];
+        merged.isPickable = false;
+        merged.freezeWorldMatrix();
+        this.meshes.push(merged);
+      } else {
+        // Small test runtimes may not expose the merger. A failed merge leaves
+        // its sources intact, so preserve ownership for rendering and disposal.
+        this.meshes.push(...source);
+      }
     }
     glass.freeze(); metal.freeze(); trim.freeze();
   }
