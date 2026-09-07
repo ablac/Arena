@@ -16,7 +16,7 @@ import (
 // Arena subscription at sign-in. Customer sessions and credentials remain
 // private to Arena.
 type IdentityAuthority interface {
-	UpsertVerifiedIdentity(context.Context, string, string, string, string) (*db.CustomerAccount, error)
+	UpsertVerifiedIdentity(context.Context, string, string, string, string, *string) (*db.CustomerAccount, error)
 	SetSubscription(context.Context, string, bool, time.Time) (*db.SubscriptionSyncChange, error)
 }
 

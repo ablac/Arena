@@ -17,6 +17,13 @@ not copy ownership state, dual-write records, or enable checkout.
 > database, unread, as recorded in that document. The W1b sections are kept
 > as the history of the boundary, not as its current shape.
 
+## Current public identity boundary
+
+`UpsertVerifiedIdentity` accepts the private display name and a separate nullable
+public username. Only verified Accounts claims populate the latter; absent
+claims clear it. Account ownership still follows the OIDC identity pair and
+Arena account ID. See [public-usernames.md](public-usernames.md).
+
 ## W1b.1 boundary
 
 W1b.1 merged to Arena `main` in

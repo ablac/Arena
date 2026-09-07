@@ -20,7 +20,7 @@ func setupVerifiedAccountAPIKeyTest(t *testing.T, email, subject string) (contex
 	if err := EnsureCosmeticsSchema(ctx); err != nil {
 		t.Fatalf("EnsureCosmeticsSchema: %v", err)
 	}
-	account, err := UpsertVerifiedCustomerAccount(ctx, email, "https://accounts.example.test", subject, "Key Owner")
+	account, err := UpsertVerifiedCustomerAccount(ctx, email, "https://accounts.example.test", subject, "Key Owner", nil)
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestAccountAPIKeyConcurrentCreationNeverExceedsFive(t *testing.T) {
 
 func TestLinkingLegacyKeyClaimsDurableOwnershipAndPreventsTransfer(t *testing.T) {
 	ctx, first := setupVerifiedAccountAPIKeyTest(t, "first@example.com", "first")
-	second, err := UpsertVerifiedCustomerAccount(ctx, "second@example.com", "https://accounts.example.test", "second", "Second")
+	second, err := UpsertVerifiedCustomerAccount(ctx, "second@example.com", "https://accounts.example.test", "second", "Second", nil)
 	if err != nil {
 		t.Fatalf("create second account: %v", err)
 	}

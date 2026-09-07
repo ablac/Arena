@@ -122,6 +122,16 @@ For local experiments, `ARENA_DB_OPTIONAL=true` can let the server run in a degr
 - WebSocket and HTTP paths have size and rate controls.
 - Production deployments should terminate TLS at a reverse proxy and pass only the needed routes to the server.
 
+## Public account identity
+
+Angel Accounts supplies an optional public username independently of the
+private account name. Arena caches it by stable OIDC identity and projects it
+into profiles, Dashboard and chat, including earlier message labels. Missing
+usernames block chat posting and link to Accounts setup. Alias refresh reads
+current account data without evicting administrator sessions; no provider
+tokens are retained. See [public-usernames.md](public-usernames.md) for the
+API contract, sign-in flow and schema migration.
+
 ## Bot Protocol
 
 Bots interact with the arena through a small loop:

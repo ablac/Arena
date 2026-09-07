@@ -173,8 +173,8 @@ function renderProfile(container, profile) {
     <div class="prf-head">
       <div class="prf-avatar" style="${avatarStyle(profile.avatar_color)}"></div>
       <div>
-        <div class="prf-name">${escapeHTML(profile.display_name || 'Arena developer')}</div>
-        <div class="prf-handle">${escapeHTML(profile.chat_handle || '')}</div>
+        <div class="prf-name">${escapeHTML(profile.public_username || 'Username unavailable')}</div>
+        <div class="prf-handle">${escapeHTML(profile.public_username || '')}</div>
       </div>
     </div>
     <p class="prf-joined">${escapeHTML(joinedText)}</p>
@@ -187,11 +187,28 @@ function renderProfile(container, profile) {
 // Which open is current. Two handles clicked in quick succession are two
 // fetches in flight, and the first can answer last; only the latest may draw.
 let profileOpenSequence = 0;
+let activeProfileIdentity = null;
+
+/** Apply a live alias update only to the account currently open in this popup. */
+export function updateProfilePopupUsername(accountId, username) {
+  const dialog = document.getElementById(DIALOG_ID);
+  if (!dialog?.open || activeProfileIdentity?.accountId !== accountId) return;
+  const publicUsername = typeof username === 'string' && /^[a-z0-9_]{3,24}$/.test(username) ? username : null;
+  // Keep the update while a profile request is pending too. Its older response
+  // may supply bio/bots, but may not put an obsolete alias back on screen.
+  activeProfileIdentity.publicUsername = publicUsername;
+  const name = dialog.querySelector('.prf-name');
+  const handle = dialog.querySelector('.prf-handle');
+  if (name) name.textContent = publicUsername || 'Username unavailable';
+  if (handle) handle.textContent = publicUsername || '';
+}
 
 /** Fetch and open the profile popup for accountId. No-op for a falsy id (anonymous/dev messages). */
 export async function openProfilePopup(accountId) {
   if (!accountId) return;
   const sequence = ++profileOpenSequence;
+  const identity = {accountId, publicUsername: undefined};
+  activeProfileIdentity = identity;
   const dialog = ensureDialog();
   const content = dialog.querySelector('.prf-content');
   content.innerHTML = '<p class="prf-loading">Loading profile...</p>';
@@ -204,16 +221,18 @@ export async function openProfilePopup(accountId) {
       cache: 'no-store',
       headers: { Accept: 'application/json' },
     });
-    if (sequence !== profileOpenSequence) return;
+    if (sequence !== profileOpenSequence || !dialog.open) return;
     if (!resp.ok) {
       content.innerHTML = '<p class="prf-error">Profile not found.</p>';
       return;
     }
     const profile = await resp.json();
-    if (sequence !== profileOpenSequence) return;
-    renderProfile(content, profile);
+    if (sequence !== profileOpenSequence || !dialog.open) return;
+    renderProfile(content, identity.publicUsername === undefined ? profile : {
+      ...profile, public_username: identity.publicUsername,
+    });
   } catch (err) {
-    if (sequence !== profileOpenSequence) return;
+    if (sequence !== profileOpenSequence || !dialog.open) return;
     content.innerHTML = '<p class="prf-error">Could not load this profile right now.</p>';
   }
 }

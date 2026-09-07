@@ -254,7 +254,7 @@ function openArenaShop() {
 }
 
 function notifyOtherTabsSignedIn() {
-  import('../js/account-session.js?v=20260714a')
+  import('../js/account-session.js?v=20260905u')
     .then(({notifySessionChanged}) => notifySessionChanged())
     .catch(error => console.warn('Could not notify other Arena tabs of sign-in', error));
 }
@@ -266,7 +266,7 @@ function notifyOtherTabsSignedIn() {
 // current session, which initializeAccountMode() already just fetched) and
 // only reacts to an actual account change after that.
 function watchAccountSessionAcrossTabs() {
-  import('../js/account-session.js?v=20260714a').then(({startSessionSync}) => {
+  import('../js/account-session.js?v=20260905u').then(({startSessionSync}) => {
     let first = true;
     startSessionSync(() => {
       if (first) { first = false; return; }
@@ -294,7 +294,7 @@ async function startAccountLogin() {
     button.textContent = 'Waiting for Angel Accounts...';
   }
   try {
-    const {signInWithAccounts} = await import('../js/accounts-login.js?v=20260903a');
+    const {signInWithAccounts} = await import('../js/accounts-login.js?v=20260905u');
     await signInWithAccounts({returnTo: accountReturnPath()});
     // Re-read the session whatever the popup reported. It resolves false for a
     // window closed by hand, and that window may still have completed the
@@ -330,7 +330,7 @@ async function refreshAccountEntitlements() {
   accountEntitlementsBusy = true;
   renderAccountCosmetics();
   try {
-    const {signInWithAccounts} = await import('../js/accounts-login.js?v=20260903a');
+    const {signInWithAccounts} = await import('../js/accounts-login.js?v=20260905u');
     await signInWithAccounts({returnTo: accountReturnPath()});
   } catch (error) {
     accountViewError = error?.message || 'Could not reach Angel Accounts.';
@@ -682,13 +682,12 @@ async function refreshAccountProfile() {
 async function handleAccountProfileSave(event) {
   event.preventDefault();
   const form = document.getElementById('profileForm');
-  const nameInput = document.getElementById('profileDisplayNameInput');
   const bioInput = document.getElementById('profileBioInput');
   const colorInput = document.getElementById('profileAvatarColorInput');
   const showBotsInput = document.getElementById('profileShowBotsInput');
   const submit = document.getElementById('profileSaveBtn');
   const status = document.getElementById('profileFormStatus');
-  if (!form || !nameInput || !bioInput || !colorInput || !showBotsInput || !submit || !status) return;
+  if (!form || !bioInput || !colorInput || !showBotsInput || !submit || !status) return;
   if (!form.reportValidity()) return;
   submit.disabled = true;
   submit.textContent = 'Saving...';
@@ -698,7 +697,6 @@ async function handleAccountProfileSave(event) {
     const payload = await accountRequest(window.ArenaAccountProfile.accountProfileRoute('update'), {
       method: 'PATCH',
       body: JSON.stringify({
-        display_name: nameInput.value.trim(),
         bio: bioInput.value,
         avatar_color: colorInput.value,
         show_bots_public: showBotsInput.checked,
@@ -731,15 +729,32 @@ function handleAccountProfilePanelInput(event) {
     counter.classList.toggle('is-over', remaining < 0);
     return;
   }
-  if (event.target.id === 'profileDisplayNameInput' && accountProfile) {
-    const preview = document.getElementById('profileChatHandlePreview');
-    if (!preview) return;
-    const handle = window.ArenaAccountProfile.previewChatHandle(accountProfile, event.target.value);
-    preview.innerHTML = `You'll appear in chat as: <strong>${esc(handle)}</strong>`;
+}
+
+async function refreshPublicUsername(button) {
+  if (button.disabled) return;
+  button.disabled = true;
+  button.textContent = 'Refreshing...';
+  try {
+    const {signInWithAccounts} = await import('../js/accounts-login.js?v=20260905u');
+    await signInWithAccounts({returnTo: accountReturnPath()});
+    await initializeAccountMode();
+    await refreshAccountProfile();
+  } catch (error) {
+    const status = document.getElementById('profileFormStatus');
+    if (status) status.textContent = error?.message || 'Could not refresh username. Try again.';
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Refresh username';
   }
 }
 
 function handleAccountProfilePanelClick(event) {
+  const refreshButton = event.target.closest('[data-profile-refresh-username]');
+  if (refreshButton) {
+    refreshPublicUsername(refreshButton);
+    return;
+  }
   const retryButton = event.target.closest('[data-account-profile-retry]');
   if (retryButton) {
     accountProfileError = '';

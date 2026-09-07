@@ -7,20 +7,22 @@ const ACCOUNT = {
   id: 'acct-post-cutover',
   email: '',
   email_verified: true,
-  display_name: 'Arena Pilot',
+  display_name: 'Private Real Name',
+  public_username: 'arena_pilot',
 };
 
-async function installDashboardRoutes(page, requested) {
+async function installDashboardRoutes(page, requested, username = ACCOUNT.public_username) {
+  const account = {...ACCOUNT, public_username: username};
   await page.route('https://fonts.googleapis.com/**', (route) => route.fulfill({
     body: '', contentType: 'text/css; charset=utf-8',
   }));
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
-    const path = url.pathname;
-    requested.add(`${path}${url.search}`);
+    const path = url.pathname.replace(/^\/arena(?=\/)/, '');
+    requested.add(`${url.pathname}${url.search}`);
     const payloads = {
-      '/api/v1/account/session': { authenticated: true, csrf_token: 'fixture-csrf', account: ACCOUNT },
-      '/api/v1/account/cosmetics': { account: ACCOUNT, bots: [], licenses: [], subscription: null },
+      '/api/v1/account/session': { authenticated: true, csrf_token: 'fixture-csrf', account },
+      '/api/v1/account/cosmetics': { account, bots: [], licenses: [], subscription: null },
       '/api/v1/cosmetics/catalog': {
         categories: [], items: [], packs: [], checkout_enabled: false, subscription_offer: { enabled: false },
       },
@@ -28,8 +30,7 @@ async function installDashboardRoutes(page, requested) {
       '/api/v1/account/keys': { keys: [] },
       '/api/v1/profile/acct-post-cutover': {
         account_id: ACCOUNT.id,
-        display_name: ACCOUNT.display_name,
-        chat_handle: 'Arena Pilot#postcutover',
+        public_username: account.public_username,
         bio: '',
         avatar_color: '#5edfff',
         shows_bots: false,
@@ -48,21 +49,41 @@ async function installDashboardRoutes(page, requested) {
   });
 }
 
-test('a verified Angel account without an email opens Dashboard account controls', { tag: '@phone-only' }, async ({ page }) => {
+for (const prefix of ['', '/arena']) {
+test(`central public username drives Dashboard controls at ${prefix || '/'}`, async ({ page }) => {
   const requested = new Set();
   await installDashboardRoutes(page, requested);
 
-  await page.goto('/dashboard/', { waitUntil: 'domcontentloaded' });
+  await page.goto(`${prefix}/dashboard/`, { waitUntil: 'domcontentloaded' });
 
   await expect(page.locator('[data-tab="cosmetics"]')).toBeVisible();
   await expect(page.locator('[data-tab="profile"]')).toBeVisible();
   await expect(page.locator('#accountLogoutBtn')).toBeVisible();
-  await expect(page.locator('#accountToolbarIdentity')).toContainText('Arena Pilot');
-  await expect(page.locator('#accountCosmeticsPanel')).toContainText('Arena Pilot');
-  await expect(page.locator('#botSwitcher')).toContainText('Arena Pilot');
-  await expect.poll(() => requested.has('/api/v1/account/cosmetics')).toBe(true);
+  await expect(page.locator('#accountToolbarIdentity')).toContainText('arena_pilot');
+  await expect(page.locator('#accountCosmeticsPanel')).toContainText('arena_pilot');
+  await expect(page.locator('#botSwitcher')).toContainText('arena_pilot');
+  await expect.poll(() => requested.has(`${prefix}/api/v1/account/cosmetics`)).toBe(true);
 
   await page.locator('[data-tab="profile"]').click();
-  await expect(page.locator('#accountProfilePanel')).toContainText('Arena Pilot');
-  await expect.poll(() => requested.has('/api/v1/profile/acct-post-cutover')).toBe(true);
+  await expect(page.locator('#accountProfilePanel')).toContainText('arena_pilot');
+  await expect.poll(() => requested.has(`${prefix}/api/v1/profile/acct-post-cutover`)).toBe(true);
+  await expect(page.locator('#accountProfilePanel')).not.toContainText('Private Real Name');
+  await expect(page.locator('#profileDisplayNameInput')).toHaveCount(0);
+  await expect(page.getByRole('link', {name: 'Manage username in Angel Accounts'})).toHaveAttribute('href', 'https://accounts.angel-serv.com/portal/account/details');
+  await expect(page.getByRole('button', {name: 'Refresh username'})).toBeVisible();
 });
+
+test(`missing public username offers central setup at ${prefix || '/'}`, async ({page}) => {
+  const requested = new Set();
+  await installDashboardRoutes(page, requested, null);
+  await page.goto(`${prefix}/dashboard/`, {waitUntil: 'domcontentloaded'});
+  await expect(page.locator('#accountToolbarIdentity')).toContainText('Username unavailable');
+  await expect(page.locator('#accountToolbarIdentity')).not.toContainText('Private Real Name');
+  await page.locator('[data-tab="profile"]').click();
+  await expect(page.locator('#accountProfilePanel')).toContainText('Username unavailable');
+  await expect(page.getByRole('link', {name:'Choose a username in Angel Accounts'})).toHaveAttribute('href','https://accounts.angel-serv.com/portal/account/details');
+  await expect(page.locator('#profileBioInput')).toBeEditable();
+  await expect(page.getByRole('button', {name:'Save profile'})).toBeEnabled();
+});
+
+}

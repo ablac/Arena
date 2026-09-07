@@ -282,7 +282,7 @@ Customer session (`arena_customer_session` cookie, CSRF on mutations):
 | `POST` | `/api/v1/account/bots` | Claim a bot by proving its token once |
 | `DELETE` | `/api/v1/account/bots/{bot_id}` | Unlink; paid loadout rows for that bot are removed, the key is untouched |
 | `PUT` | `/api/v1/account/bots/{bot_id}/cosmetics` | `{slot, cosmetic_id}`; equips on a linked bot, same `403 SUBSCRIPTION_REQUIRED` for a locked item |
-| `PATCH` | `/api/v1/account/profile` | Display name, bio, avatar colour |
+| `PATCH` | `/api/v1/account/profile` | Bio, avatar colour, public bot visibility; username is managed in Accounts |
 
 Admin (`X-Admin-Token`, or a customer session carrying the `staff` or
 `product_admin` claim):
@@ -373,3 +373,12 @@ Nothing is dropped:
 6. Demonstration bots that must wear paid looks without an account use the
    admin demo-loadout tool, which writes `cosmetic_entitlements` for that bot
    only.
+
+## Public account identity
+
+Customer inventory and the Dashboard use nullable `public_username`, read from
+Angel Accounts at sign-in. The private account name is never a public alias.
+Missing usernames do not affect subscription eligibility or bot ownership,
+but public chat posting requires one. Profile setup and refresh, session
+behavior and the migration are documented in
+[public-usernames.md](public-usernames.md).
