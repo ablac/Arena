@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { arenaState, roundEnd } from '../fixtures/round-cycle.mjs';
+import { arenaState, roundEnd, lobbyState } from '../fixtures/round-cycle.mjs';
 
 const realismEffects = ['sculptedLighting', 'surfaceDetail', 'characterMotion'];
 
@@ -203,6 +203,7 @@ test('glass arena and moving combatants paint at overview and close range', { ta
   ending.intermission_secs = 12;
   ending.next_map.obstacles = [{ x: 850, y: 850, width: 90, height: 90 }];
   fixture.send(ending);
+  fixture.send({ ...lobbyState(8), countdown: 12 });
   await expect.poll(async () => (await cloneState('intermissionRiseBodyMat')).length).toBe(1);
   expect(await cloneState('intermissionRiseBodyMat')).toEqual([
     { shared: true, ready: true, hidden: false, addsEmission: false },
