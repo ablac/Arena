@@ -10,7 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/arena.css?v=20260714g">
   <link rel="stylesheet" href="css/sections.css?v=20260718f">
-  <link rel="stylesheet" href="css/site-shell.css?v=20260718i">
+  <link rel="stylesheet" href="css/site-shell.css?v=20260907a">
   <link rel="stylesheet" href="css/chat.css?v=20260714b">
   <link rel="stylesheet" href="css/brand-lockup.css?v=20260714a">
   <link rel="modulepreload" href="assets/vendor/babylon-runtime.5c31912818a4.min.js">
@@ -20,7 +20,7 @@
        module instance with its own banner controller racing the first. -->
   <script type="module" src="js/accounts.js?v=20260825a"></script>
   <script type="module" src="js/content-blocks.js?v=20260714f"></script>
-  <script type="module" src="js/app.js?v=20260905u"></script>
+  <script type="module" src="js/app.js?v=20260907a"></script>
   <script type="module" src="js/site-shell.js?v=20260810c"></script>
   <script type="module" src="js/chat-panel.js?v=20260905p"></script>
 </head>
@@ -101,6 +101,25 @@
           <div class="arena-container">
             <canvas id="arena-canvas"></canvas>
             <div class="hud-round" id="hud-round">Connecting...</div>
+            <!-- Shown by app.js only when the 3D engine fails to start at all.
+                 Until this existed that failure was silent: a black rectangle
+                 under a live HUD, with nothing to tell the spectator whether
+                 the match, their network or their browser was the problem. -->
+            <div class="arena-render-fallback" id="arena-render-fallback" hidden>
+              <h3>The 3D arena could not start on this device</h3>
+              <p id="arena-render-fallback-detail">
+                The match is still running and the live feed below is up to date.
+              </p>
+              <div class="arena-render-fallback-actions">
+                <a class="arena-render-fallback-action" id="arena-render-fallback-retry"
+                   href="?webgpu=0">Retry in compatibility mode</a>
+              </div>
+              <p class="arena-render-fallback-hint">
+                This usually means hardware acceleration is turned off, or the
+                browser is too old for WebGL. Turning on hardware acceleration
+                and reloading normally fixes it.
+              </p>
+            </div>
           </div>
           <div class="arena-controls">
             <div class="control-group control-group-slider">

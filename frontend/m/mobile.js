@@ -17,12 +17,13 @@ import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from '
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260903c';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260907a';
 import { Minimap } from '../js/renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, appPath, wsURL } from '../js/paths.js?v=20260710a';
 import { handleServiceStatus, initServiceStatus } from '../js/service-status.js?v=20260810c';
 import { installClientErrorReporting } from '../js/client-errors.js?v=20260903c';
+import { reportEngineInitFailure, showArenaRenderFallback } from '../js/render-failure.js?v=20260907a';
 
 // Install before anything else so failures during startup are reported too.
 installClientErrorReporting();
@@ -424,7 +425,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     await engine.init();
     console.log('[Mobile] Arena engine initialized');
   } catch (err) {
+    // Same silent outage as the desktop entrypoint, and this is the shell where
+    // the weakest GPUs actually land: the throw is caught, so window.onerror
+    // never fires and client-errors.js never sees it, while the spectator gets a
+    // black stage under a live sheet with nothing to explain it.
     console.error('[Mobile] Engine init failed:', err);
+    reportEngineInitFailure(err, 'mobile.arenaEngine.init');
+    showArenaRenderFallback(err);
   }
   // engine.canvas, not the element read above: a failed WebGPU init replaces
   // the canvas, because an element that has answered getContext('webgpu') can
