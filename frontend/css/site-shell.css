@@ -189,6 +189,100 @@ summary {
   touch-action: none;
 }
 
+/* Shown only when the 3D engine could not start at all (app.js
+   showArenaRenderFallback). Centred over the dead canvas, under the HUD's
+   z-index so a live round header still reads over the top of it, and with
+   pointer-events limited to the retry link so it cannot swallow drags aimed at
+   the controls beneath. */
+.arena-render-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  /* The backdrop covers the whole dead canvas, but the TEXT has to clear the
+     furniture that .arena-container already positions over its lower half at
+     most widths — the telemetry sidebar and the zoom/follow controls. Reserving
+     the bottom third is what stops the notice reading underneath them. */
+  padding: 24px 24px clamp(96px, 34vh, 340px);
+  text-align: center;
+  pointer-events: none;
+  /* .arena-container is overflow:hidden, so in a short stage the notice would
+     be cut off mid-sentence with no way to reach the rest. Scroll instead of
+     clipping; it stays centred whenever it fits, which is the normal case. */
+  overflow-y: auto;
+  min-height: 0;
+  background: radial-gradient(ellipse at center, rgba(8, 16, 28, 0.92), rgba(3, 7, 12, 0.97));
+  color: #cfe2f5;
+}
+
+/* In a short window the headline, the status line and the retry are what
+   matter; the how-to-fix hint is the first thing that can go. */
+@media (max-height: 640px) {
+  .arena-render-fallback {
+    padding: 12px 12px clamp(64px, 26vh, 140px);
+    gap: 6px;
+  }
+
+  .arena-render-fallback-hint {
+    display: none;
+  }
+}
+
+.arena-render-fallback[hidden] {
+  display: none;
+}
+
+.arena-render-fallback h3 {
+  margin: 0;
+  font-size: clamp(15px, 2.4vw, 20px);
+  letter-spacing: 0.02em;
+  color: #eaf3ff;
+}
+
+.arena-render-fallback p {
+  margin: 0;
+  max-width: 48ch;
+  font-size: clamp(12px, 1.6vw, 14px);
+  line-height: 1.5;
+  color: #9fb6cd;
+}
+
+.arena-render-fallback-hint {
+  opacity: 0.75;
+}
+
+.arena-render-fallback-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.arena-render-fallback-action {
+  pointer-events: auto;
+  display: inline-block;
+  padding: 8px 16px;
+  border: 1px solid rgba(120, 190, 255, 0.45);
+  border-radius: 999px;
+  background: rgba(20, 44, 70, 0.7);
+  color: #dcecff;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.arena-render-fallback-action:hover,
+.arena-render-fallback-action:focus-visible {
+  border-color: rgba(150, 214, 255, 0.8);
+  background: rgba(28, 60, 94, 0.85);
+}
+
+.arena-render-fallback-action[hidden] {
+  display: none;
+}
+
 .arena-shell-head {
   position: absolute;
   top: calc(var(--shell-safe-top) + var(--shell-header-height) + 4px);
