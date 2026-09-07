@@ -3,6 +3,11 @@ import { arenaState, roundEnd, lobbyState } from '../fixtures/round-cycle.mjs';
 
 const realismEffects = ['sculptedLighting', 'surfaceDetail', 'characterMotion'];
 
+// This is a functional rendering/lifecycle check, not a GPU benchmark.
+// Keep the desktop CSS viewport and every quality effect, but rasterize a
+// quarter as many pixels so single-core SwiftShader can finish each frame.
+test.use({ deviceScaleFactor: 0.5 });
+
 async function installFixture(page, errors) {
   let socket;
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ body: '', contentType: 'text/css' }));
