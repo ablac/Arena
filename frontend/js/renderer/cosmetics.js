@@ -301,6 +301,8 @@ function buildAttachment(state, asset, entry, bot, scene) {
   if (attachment.kind === 'fins') {
     // Folded heat-exchanger wings on articulated shoulder mounts, with a
     // central backpack spine on the independent back anchor.
+    const shoulderY = Number.isFinite(entry.cosmeticAnchors?.shoulderY)
+      ? entry.cosmeticAnchors.shoulderY : -th * 0.08;
     for (const side of [-1, 1]) {
       const shoulder = collectionMount(state, entry, side < 0 ? 'shoulderL' : 'shoulderR',
         `cosmetic-attachment-${bot.bot_id}-shoulder-${side}`, scene);
@@ -309,10 +311,10 @@ function buildAttachment(state, asset, entry, bot, scene) {
         const h = th * (variant === 2 ? 0.76 : 0.57);
         const x = side * tw * (0.08 + i * 0.16);
         bladePanel(`cosmetic-set-radiator-wing-${bot.bot_id}-${side}-${i}`, shoulder, scene, mats.shell,
-          tw * 0.25, h, td * 0.22, [x, -th * 0.08, td * (0.33 + i * 0.1)],
+          tw * 0.25, h, td * 0.22, [x, shoulderY, td * (0.33 + i * 0.1)],
           side * (variant === 3 ? -0.7 : -0.28));
         panel(`cosmetic-set-radiator-wing-inlay-${bot.bot_id}-${side}-${i}`, shoulder, scene, mats.edge,
-          [tw * 0.11, h * 0.58, 0.12], [x, -th * 0.08, td * (0.46 + i * 0.1)],
+          [tw * 0.11, h * 0.58, 0.12], [x, shoulderY, td * (0.46 + i * 0.1)],
           side * (variant === 3 ? -0.7 : -0.28));
       }
     }
