@@ -32,7 +32,7 @@ export const POSE_CHANNELS = Object.freeze([
   'armRPitch', 'armRRoll', 'elbowRPitch',
   'legLPitch', 'kneeLPitch', 'legRPitch', 'kneeRPitch',
   'weaponX', 'weaponY', 'weaponZ', 'weaponPitch', 'weaponYaw', 'weaponRoll',
-  'corePulse',
+  'corePulse', 'footLPitch', 'footRPitch', 'hipYaw',
 ]);
 
 const P = Object.freeze(Object.fromEntries(POSE_CHANNELS.map((name, index) => [name, index])));
@@ -98,7 +98,8 @@ export class ForgeAnimState {
 }
 
 function forgeAttackDuration(weapon, durationOverride) {
-  const timing = FORGE_ATTACK_TIMING[weapon] || FORGE_ATTACK_TIMING.sword;
+  const timing = Object.hasOwn(FORGE_ATTACK_TIMING, weapon)
+    ? FORGE_ATTACK_TIMING[weapon] : FORGE_ATTACK_TIMING.sword;
   const override = Number(durationOverride);
   return Number.isFinite(override) && override > 0.16
     ? Math.min(override, 1.4)
@@ -107,7 +108,8 @@ function forgeAttackDuration(weapon, durationOverride) {
 
 /** Delay effects until the Forge pose reaches its visible contact frame. */
 export function forgeContactDelay(weapon, durationOverride) {
-  const timing = FORGE_ATTACK_TIMING[weapon] || FORGE_ATTACK_TIMING.sword;
+  const timing = Object.hasOwn(FORGE_ATTACK_TIMING, weapon)
+    ? FORGE_ATTACK_TIMING[weapon] : FORGE_ATTACK_TIMING.sword;
   return timing.contact * forgeAttackDuration(weapon, durationOverride);
 }
 
@@ -152,202 +154,216 @@ function advance(state, timerKey, durationKey, dt, keepCompleted = false) {
   return clamp01(next / duration);
 }
 
-/**
- * Weapon-specific strike choreography. `strike` sweeps -1 (windup) to +1
- * (follow-through); `fwd` is its forward half, so anticipation and delivery
- * can be shaped independently while `amount` fades the whole action out.
- *
- * Weapon channels are HAND-local. With the arm raised forward by angle a,
- * the hand's -Z axis (forward at rest) tips up toward vertical while its -Y
- * axis (down at rest) tips forward. So: low-arm thrusts ride weaponZ,
- * raised-arm thrusts ride negative weaponY, and weapons that must stay level
- * take roughly -a of weaponPitch to counter the raise.
+/** Authored poses are offsets from each weapon's ready stance. Each score has
+ * anticipation, contact and follow-through; timing is normalized to the same
+ * contact landmark used by effects, including server cooldown overrides.
+ * The seven scores carry their signature actions (cleave, draw, thrust/brace,
+ * backstab, cast, bash and launch). There is no invented special-event clock.
+ * Curves and channel lookup are compiled once, never allocated per bot/frame.
  */
+function score(anticipation, contact, followThrough) {
+  const channels = new Set([
+    ...Object.keys(anticipation), ...Object.keys(contact), ...Object.keys(followThrough),
+  ]);
+  return Object.freeze([...channels].map((name) => Object.freeze([
+    P[name], anticipation[name] || 0, contact[name] || 0, followThrough[name] || 0,
+  ])));
+}
+
+const STRIKES = Object.freeze({
+  // High guard rolls into a diagonal cleave; the hips resist the shoulder turn.
+  sword: score(
+    {
+      bodyYaw: -0.48, hipYaw: 0.18, bodyY: -0.28, armRPitch: 1.52,
+      armRRoll: 0.32, elbowRPitch: 0.7, armLPitch: 0.38, weaponPitch: -0.48,
+      weaponRoll: -0.7, legRPitch: -0.18, kneeRPitch: 0.3,
+    },
+    {
+      bodyYaw: 0.46, hipYaw: -0.16, bodyPitch: 0.23, bodyY: -0.58,
+      armRPitch: 1.18, armRRoll: -0.2, elbowRPitch: 0.08, weaponPitch: -2.28,
+      weaponRoll: 0.56, weaponZ: 0.5, legLPitch: 0.32, legRPitch: -0.32,
+      kneeLPitch: 0.2,
+    },
+    {
+      bodyYaw: 0.62, hipYaw: -0.22, bodyPitch: 0.3, bodyY: -0.42,
+      armRPitch: 0.64, armRRoll: -0.3, weaponPitch: -2.7, weaponRoll: 0.85,
+      legLPitch: 0.24, legRPitch: -0.22,
+    }),
+  // Side-on full draw, release at contact, then a small string-hand recoil.
+  bow: score(
+    {
+      bodyYaw: -0.48, hipYaw: 0.22, armLPitch: 1.4, armRPitch: 1.1,
+      elbowRPitch: -1.1, armRRoll: 0.2, weaponPitch: -1.4, headYaw: 0.26,
+      bodyY: -0.12, legLPitch: 0.16, legRPitch: -0.16,
+    },
+    {
+      bodyYaw: -0.48, hipYaw: 0.22, armLPitch: 1.4, armRPitch: 1.18,
+      elbowRPitch: -1.32, armRRoll: 0.28, weaponPitch: -1.4, headYaw: 0.26,
+      bodyY: -0.16, legLPitch: 0.16, legRPitch: -0.16,
+    },
+    {
+      bodyYaw: -0.39, hipYaw: 0.19, armLPitch: 1.38, armRPitch: 0.76,
+      elbowRPitch: -0.66, armRRoll: 0.48, weaponPitch: -1.38, headYaw: 0.24,
+      bodyPitch: -0.04,
+    }),
+  // Rear-leg load into a level thrust that stays braced before withdrawal.
+  spear: score(
+    {
+      bodyYaw: 0.4, hipYaw: -0.18, bodyY: -0.3, armRPitch: 0.25,
+      elbowRPitch: 0.65, armLPitch: 0.55, weaponPitch: -1.7, weaponZ: -1.2,
+      legLPitch: 0.1, legRPitch: -0.18, kneeRPitch: 0.36,
+    },
+    {
+      bodyYaw: -0.22, hipYaw: 0.12, bodyPitch: 0.26, bodyY: -0.68,
+      armRPitch: 0.62, elbowRPitch: -0.1, armLPitch: 0.7, weaponPitch: -2.2,
+      weaponZ: 3.4, weaponY: -1.1, legLPitch: 0.48, legRPitch: -0.4,
+      kneeLPitch: 0.22,
+    },
+    {
+      bodyYaw: -0.26, hipYaw: 0.13, bodyPitch: 0.29, bodyY: -0.72,
+      armRPitch: 0.65, armLPitch: 0.7, weaponPitch: -2.23, weaponZ: 3.7,
+      weaponY: -1.15, legLPitch: 0.5, legRPitch: -0.43, kneeLPitch: 0.26,
+    }),
+  // Low guard and a single committed crossing jab with the other hand guarding.
+  daggers: score(
+    {
+      bodyY: -0.65, bodyPitch: 0.18, bodyYaw: -0.34, hipYaw: 0.16,
+      armLPitch: 1.1, armRPitch: 0.45, elbowLPitch: 0.4, elbowRPitch: 0.5,
+      armLRoll: -0.2, armRRoll: 0.24, kneeLPitch: 0.25, kneeRPitch: 0.25,
+    },
+    {
+      bodyY: -0.82, bodyPitch: 0.26, bodyYaw: 0.4, hipYaw: -0.18,
+      armLPitch: 0.55, armRPitch: 1.5, elbowLPitch: 0.48, elbowRPitch: -0.08,
+      weaponRoll: 0.44, weaponY: -0.55, legLPitch: 0.34, legRPitch: -0.26,
+    },
+    {
+      bodyY: -0.64, bodyPitch: 0.22, bodyYaw: 0.5, hipYaw: -0.2,
+      armLPitch: 0.66, armRPitch: 1.1, elbowRPitch: 0.1, weaponRoll: 0.75,
+      legLPitch: 0.3, legRPitch: -0.2,
+    }),
+  // Raised focus gathers energy, then the caster drops their weight into the cast.
+  staff: score(
+    {
+      bodyY: 0.3, bodyPitch: -0.08, bodyYaw: -0.28, hipYaw: 0.14,
+      armRPitch: 1.65, armLPitch: 0.8, elbowRPitch: 0.42, armLRoll: -0.48,
+      weaponPitch: -0.8, weaponY: 0.5, corePulse: 0.38,
+    },
+    {
+      bodyY: -0.62, bodyPitch: 0.24, bodyYaw: 0.24, hipYaw: -0.12,
+      armRPitch: 1.1, armLPitch: 1.2, elbowRPitch: 0.08, weaponPitch: -2.12,
+      weaponY: -0.5, corePulse: 0.75, kneeLPitch: 0.27, kneeRPitch: 0.27,
+    },
+    {
+      bodyY: -0.7, bodyPitch: 0.28, bodyYaw: 0.32, hipYaw: -0.16,
+      armRPitch: 0.95, armLPitch: 1.15, weaponPitch: -2.4, corePulse: 0.28,
+      kneeLPitch: 0.3, kneeRPitch: 0.3,
+    }),
+  // Compact brace followed by a shoulder-led bash with the back leg driving.
+  shield: score(
+    {
+      bodyY: -0.58, bodyYaw: -0.22, hipYaw: 0.12, bodyPitch: 0.08,
+      armLPitch: 0.2, elbowLPitch: 0.52, armRPitch: 0.5, kneeLPitch: 0.32,
+      kneeRPitch: 0.32, weaponZ: -0.25,
+    },
+    {
+      bodyY: -0.65, bodyYaw: 0.3, hipYaw: -0.14, bodyPitch: 0.32,
+      armLPitch: 0.65, elbowLPitch: 0.08, armRPitch: 0.65, weaponPitch: -0.65,
+      weaponY: -1.35, weaponZ: 0.9, legLPitch: 0.36, legRPitch: -0.34,
+    },
+    {
+      bodyY: -0.5, bodyYaw: 0.38, hipYaw: -0.18, bodyPitch: 0.34,
+      armLPitch: 0.67, weaponPitch: -0.67, weaponY: -1.45, weaponZ: 1,
+      legLPitch: 0.38, legRPitch: -0.34,
+    }),
+  // Level aim, launch, then the rear knee absorbs the cable launcher recoil.
+  grapple: score(
+    {
+      bodyYaw: -0.22, hipYaw: 0.12, armRPitch: 1.3, elbowRPitch: 0.18,
+      armLPitch: 0.65, weaponPitch: -1.5, bodyY: -0.18, legLPitch: 0.14,
+      legRPitch: -0.14,
+    },
+    {
+      bodyYaw: -0.2, hipYaw: 0.1, armRPitch: 1.35, elbowRPitch: 0.05,
+      armLPitch: 0.7, weaponPitch: -1.55, bodyPitch: 0.08, bodyY: -0.24,
+      corePulse: 0.35,
+    },
+    {
+      bodyYaw: -0.35, hipYaw: 0.18, armRPitch: 1.16, elbowRPitch: 0.38,
+      armLPitch: 0.62, weaponPitch: -1.4, weaponY: 0.65, bodyPitch: -0.16,
+      bodyY: -0.4, kneeRPitch: 0.32,
+    }),
+});
+
+
 function applyAttackPose(pose, weapon, t) {
-  const amount = actionEnvelope(t);
-  if (!amount) return;
-  const strike = t < 0.28 ? -smooth(t / 0.28) : smooth((t - 0.28) / 0.34);
-  const fwd = Math.max(0, strike);
-  const coil = Math.max(0, -strike);
-  switch (weapon) {
-    case 'bow': {
-      // Side-on archer: bow arm levels forward (bow pitch-countered to stay
-      // vertical), string hand folds back to the cheek, snaps on release.
-      const draw = t < 0.62 ? amount : Math.max(0, 1 - (t - 0.62) / 0.08);
-      pose[P.bodyYaw] -= 0.38 * amount;
-      pose[P.bodyRoll] -= 0.10 * draw;
-      pose[P.armLPitch] += 1.45 * amount;
-      pose[P.armRPitch] += 1.15 * amount;
-      pose[P.elbowRPitch] -= 1.35 * draw;
-      pose[P.headPitch] += 0.08 * draw;
-      pose[P.weaponPitch] -= 1.45 * amount;
-      pose[P.weaponY] += 0.25 * draw;
-      pose[P.weaponYaw] += 0.22 * draw;
-      break;
-    }
-    case 'spear': {
-      // Low carry, wrist levels the shaft, then a long flat thrust off the
-      // back foot with the whole body dropping behind it.
-      pose[P.bodyYaw] += (0.34 * coil - 0.16 * fwd) * amount;
-      pose[P.bodyPitch] += 0.30 * fwd * amount;
-      pose[P.bodyY] -= 0.55 * fwd * amount;
-      pose[P.armRPitch] += (0.30 + 0.25 * fwd) * amount;
-      pose[P.elbowRPitch] += 0.30 * coil * amount;
-      pose[P.armLPitch] += 0.45 * fwd * amount;
-      pose[P.weaponPitch] -= (1.90 + 0.40 * fwd) * amount;
-      pose[P.weaponZ] += (4.6 * fwd - 1.0 * coil) * amount;
-      pose[P.weaponY] -= 1.6 * fwd * amount;
-      pose[P.legLPitch] += 0.50 * fwd * amount;
-      pose[P.legRPitch] -= 0.45 * fwd * amount;
-      break;
-    }
-    case 'daggers': {
-      // Three fast alternating reverse-grip jabs; the raised arms already
-      // point the down-bladed daggers forward.
-      const side = Math.sin(Math.max(0, t) * Math.PI * 3);
-      pose[P.bodyYaw] += 0.38 * side * amount;
-      pose[P.bodyPitch] += 0.18 * amount;
-      pose[P.bodyY] -= 0.50 * amount;
-      pose[P.armLPitch] += (0.95 - 0.40 * side) * amount;
-      pose[P.armRPitch] += (0.95 + 0.40 * side) * amount;
-      pose[P.elbowLPitch] += 0.45 * amount;
-      pose[P.elbowRPitch] += 0.45 * amount;
-      pose[P.armLRoll] -= 0.35 * amount;
-      pose[P.armRRoll] += 0.35 * amount;
-      pose[P.weaponRoll] += 1.25 * side * amount;
-      pose[P.weaponY] -= 1.10 * Math.abs(side) * amount;
-      break;
-    }
-    case 'staff': {
-      // Rise while both arms lift the staff overhead, then whip the focus
-      // forward-down as the burst lands.
-      const charge = (t < 0.55 ? smooth(t / 0.55) : 1) * amount;
-      const release = (t < 0.55 ? 0 : smooth((t - 0.55) / 0.18)) * amount;
-      pose[P.bodyY] += 0.45 * charge - 0.90 * release;
-      pose[P.bodyPitch] += 0.28 * release;
-      pose[P.armLPitch] += 0.90 * charge + 0.30 * release;
-      pose[P.armRPitch] += 1.05 * charge + 0.30 * release;
-      pose[P.elbowLPitch] += 0.40 * charge;
-      pose[P.elbowRPitch] += 0.40 * charge;
-      pose[P.weaponY] += 0.60 * charge;
-      pose[P.weaponPitch] -= 0.55 * charge + 1.65 * release;
-      pose[P.corePulse] += 0.50 * charge + 0.50 * release;
-      break;
-    }
-    case 'shield': {
-      // Drop into a brace behind the shield, then drive it forward with the
-      // whole body: a shoulder-led bash, not an arm wave.
-      pose[P.bodyY] -= (0.55 * coil + 0.30 * fwd) * amount;
-      pose[P.bodyYaw] += 0.25 * fwd * amount;
-      pose[P.bodyPitch] += 0.34 * fwd * amount;
-      pose[P.armLPitch] += (0.30 * coil + 0.45 * fwd) * amount;
-      pose[P.elbowLPitch] += 0.50 * coil * amount;
-      pose[P.weaponPitch] -= 0.55 * fwd * amount;
-      pose[P.weaponY] -= 1.8 * fwd * amount;
-      pose[P.weaponZ] += 1.2 * fwd * amount;
-      pose[P.legLPitch] += 0.40 * fwd * amount;
-      pose[P.legRPitch] -= 0.34 * fwd * amount;
-      pose[P.kneeLPitch] += 0.25 * coil * amount;
-      pose[P.kneeRPitch] += 0.25 * coil * amount;
-      break;
-    }
-    case 'grapple': {
-      // Raise and level the launcher, fire, and absorb the recoil backward
-      // through the torso while the launcher kicks back along the arm.
-      const aim = smooth(Math.min(1, t / 0.30));
-      pose[P.armRPitch] += 1.35 * aim * amount;
-      pose[P.elbowRPitch] += 0.10 * amount;
-      pose[P.bodyYaw] -= 0.18 * amount;
-      pose[P.bodyPitch] += (0.12 - 0.34 * fwd) * amount;
-      pose[P.weaponPitch] -= 1.55 * aim * amount;
-      pose[P.weaponY] += 0.90 * fwd * amount;
-      pose[P.corePulse] += 0.35 * fwd * amount;
-      break;
-    }
-    case 'sword':
-    default: {
-      // Overhead cleave: wind the shoulders back, then whip the blade over
-      // the top with a torso twist and a short forward lunge.
-      pose[P.bodyYaw] += 0.55 * strike * amount;
-      pose[P.bodyPitch] += 0.22 * fwd * amount;
-      pose[P.armRPitch] += (0.45 + 0.90 * fwd) * amount;
-      pose[P.armRRoll] += 0.30 * strike * amount;
-      pose[P.elbowRPitch] += 0.30 * coil * amount;
-      pose[P.armLPitch] += 0.25 * amount;
-      pose[P.weaponPitch] -= 2.70 * fwd * amount;
-      pose[P.weaponRoll] += 0.40 * strike * amount;
-      pose[P.weaponZ] += 0.60 * fwd * amount;
-      pose[P.legLPitch] += 0.35 * fwd * amount;
-      pose[P.legRPitch] -= 0.28 * fwd * amount;
-      break;
-    }
+  const key = Object.hasOwn(STRIKES, weapon) ? weapon : 'sword';
+  const contact = FORGE_ATTACK_TIMING[key].contact;
+  const ready = contact * 0.64;
+  const settle = contact + (1 - contact) * 0.24;
+  let from, to, blend;
+  if (t < ready) { from = 0; to = 1; blend = smooth(t / ready); }
+  else if (t < contact) { from = 1; to = 2; blend = smooth((t - ready) / (contact - ready)); }
+  else if (t < settle) { from = 2; to = 3; blend = smooth((t - contact) / (settle - contact)); }
+  else { from = 3; to = 0; blend = smooth((t - settle) / (1 - settle)); }
+  const frames = STRIKES[key];
+  for (const channel of frames) {
+    const start = from ? channel[from] : 0;
+    const end = to ? channel[to] : 0;
+    pose[channel[0]] += start + (end - start) * blend;
   }
 }
 
-/** Body-form movement personality layered over the shared biped gait. */
+/** Secondary body-form personality, restrained enough to preserve footwork. */
 function applyFormFlavor(pose, state, moving, speed) {
   const form = state.formMotion;
   if (!form) return;
   const phase = state.gaitPhase;
+  const pulse = Math.sin(phase);
+  const lift = Math.sin(phase * 2);
+  const amount = moving ? speed : 0.12;
   switch (form.flavor) {
     case 'hop':
-      // Both legs launch together; the body arcs instead of striding.
-      if (moving) {
-        const hop = Math.max(0, Math.sin(phase * 0.5));
-        const tuck = hop * 0.55;
-        pose[P.bodyY] += hop * 2.2 * speed;
-        pose[P.bodyPitch] += hop * 0.12;
-        pose[P.legLPitch] = tuck;
-        pose[P.legRPitch] = tuck;
-        pose[P.kneeLPitch] = tuck * 0.9;
-        pose[P.kneeRPitch] = tuck * 0.9;
-        pose[P.armLPitch] = tuck * 0.4;
-        pose[P.armRPitch] = tuck * 0.4;
-      }
+      pose[P.bodyY] += (1 - Math.cos(phase * 2)) * 0.24 * amount;
+      pose[P.kneeLPitch] += Math.max(0, lift) * 0.22 * amount;
+      pose[P.kneeRPitch] += Math.max(0, lift) * 0.22 * amount;
       break;
-    case 'waddle':
-      pose[P.bodyRoll] += Math.sin(phase) * (moving ? 0.16 : 0.03);
+    case 'waddle': pose[P.bodyRoll] += pulse * 0.095 * amount; break;
+    case 'skitter': pose[P.bodyPitch] += 0.07 * amount; break;
+    case 'squash':
+      pose[P.bodyY] += lift * 0.35 * amount;
+      pose[P.corePulse] += lift * 0.06 * amount;
       break;
-    case 'skitter':
-      if (moving) {
-        pose[P.bodyY] += Math.sin(phase * 2) * 0.22 * speed;
-        pose[P.bodyRoll] += Math.sin(phase * 2.7) * 0.03;
-      }
-      break;
-    case 'squash': {
-      // Slimes travel as a pulse: compress, surge, repeat.
-      const pulse = Math.sin(moving ? phase : state.elapsed * 2.4);
-      pose[P.bodyY] += moving ? Math.abs(pulse) * 1.6 * speed : pulse * 0.25;
-      if (moving) pose[P.bodyPitch] += pulse * 0.05;
-      pose[P.corePulse] += 0.12 * pulse;
-      break;
-    }
     case 'flutter':
-      if (moving) {
-        const flap = Math.sin(phase * 2.4) * 0.50 * speed;
-        pose[P.armLRoll] -= Math.abs(flap);
-        pose[P.armRRoll] += Math.abs(flap);
-        pose[P.bodyY] += Math.sin(phase * 2.4) * 0.18 * speed;
-      }
+      pose[P.armLRoll] -= (0.15 + lift * 0.1) * amount;
+      pose[P.armRRoll] += (0.15 + lift * 0.1) * amount;
       break;
-    case 'lumber':
-      pose[P.bodyYaw] += Math.sin(phase) * (moving ? 0.07 : 0.015);
-      if (moving) pose[P.headPitch] -= Math.abs(Math.cos(phase)) * 0.05;
-      break;
-    case 'prowl':
-      pose[P.bodyY] -= 0.3;
-      if (moving) pose[P.bodyRoll] += Math.sin(phase) * 0.04;
-      break;
-    case 'glide':
-      pose[P.bodyY] += Math.sin(phase * 0.5) * (moving ? 0.15 : 0.05);
-      break;
-    case 'rattle':
-      pose[P.bodyRoll] += Math.sin(state.elapsed * 9) * 0.02;
-      pose[P.headYaw] += Math.sin(state.elapsed * 7.3) * 0.05;
-      break;
-    default:
-      break;
+    case 'lumber': pose[P.hipYaw] += pulse * 0.065 * amount; break;
+    case 'prowl': pose[P.bodyY] -= 0.22; break;
+    case 'glide': pose[P.bodyY] += Math.sin(phase * 0.5) * 0.08 * amount; break;
+    case 'rattle': pose[P.headYaw] += Math.sin(state.elapsed * 3.2) * 0.025; break;
+    default: break;
   }
+}
+
+// A loaded foot traverses the stance at constant speed; only the unloaded
+// foot eases through its return. Heel strike and toe release are brief ankle
+// rotations, not whole-leg kicks. A 62% stance supplies double support.
+function applyStep(pose, phase, scale, left, carry) {
+  const stance = phase < 0.62;
+  const u = stance ? phase / 0.62 : (phase - 0.62) / 0.38;
+  const stride = stance ? 1 - 2 * u : -1 + 2 * smooth(u);
+  const lift = stance ? 0 : Math.sin(Math.PI * u) ** 2;
+  const knee = (stance ? 0.1 * Math.sin(Math.PI * u) : lift * 0.92) * scale;
+  const leg = stride * 0.46 * scale;
+  const ankle = stance
+    ? (-0.2 * (1 - smooth(u / 0.16)) + 0.34 * smooth((u - 0.78) / 0.22)) * scale
+    : (0.34 - 0.54 * smooth(u) - 0.16 * lift) * scale;
+  pose[left ? P.legLPitch : P.legRPitch] += leg;
+  pose[left ? P.kneeLPitch : P.kneeRPitch] += knee;
+  // Counter the shin orientation so the loaded sole stays close to level.
+  pose[left ? P.footLPitch : P.footRPitch] += -leg + knee + ankle;
+  pose[left ? P.armLPitch : P.armRPitch] -= stride * 0.23 * scale * carry;
+  pose[left ? P.elbowLPitch : P.elbowRPitch] += (0.09 + lift * 0.13) * scale * carry;
 }
 
 /**
@@ -377,6 +393,8 @@ export function sampleForgePose(
     state.attackTimer = -1;
     state.dodgeTimer = -1;
     state.shoveTimer = -1;
+    state.hitTimer = -1;
+    state.respawnTimer = -1;
   } else if (alive && !state.wasAlive) {
     state.deathTimer = -1;
     state.respawnTimer = 0;
@@ -403,51 +421,39 @@ export function sampleForgePose(
     const cycle = travelDistance >= 0
       ? travelDistance / (38 * profile.proportions.leg)
       : step * profile.motion.strideHz * (0.55 + speed * 0.65);
-    state.gaitPhase += Math.min(cycle, step * 4) * (form?.stride || 1) * TAU;
+    state.gaitPhase = (state.gaitPhase + Math.min(cycle, step * 4) * (form?.stride || 1) * TAU) % TAU;
   }
 
-  if (!restrained) {
-    pose[P.bodyY] = Math.sin(state.elapsed * (1.1 + profile.motion.weight * 0.25) * TAU)
-      * profile.motion.bob * (form?.bob || 1) * (moving ? 0.28 : 0.14);
-    pose[P.bodyRoll] = Math.sin(state.elapsed * 1.7)
-      * profile.motion.sway * (form?.sway || 1) * 0.18;
-    pose[P.headYaw] = Math.sin(state.elapsed * 0.63) * 0.045;
+  if (secondary) {
+    // Slow expansion and an offset shoulder settle avoid a synchronized idle
+    // metronome. Disabling secondary motion or enabling reduced motion
+    // suppresses this idle layer completely.
+    const breath = Math.sin(state.elapsed * 1.65);
+    const rest = 1 - state.locomotionWeight;
+    pose[P.bodyY] = breath * 0.085 * rest;
+    pose[P.bodyPitch] = breath * 0.008 * rest;
+    pose[P.bodyRoll] = Math.sin(state.elapsed * 0.73) * 0.012 * rest;
+    pose[P.headYaw] = Math.sin(state.elapsed * 0.41) * 0.026 * rest;
+    pose[P.armLPitch] = breath * 0.013 * rest;
+    pose[P.armRPitch] = -breath * 0.009 * rest;
   }
 
   if (state.locomotionWeight > 0.0001) {
-    const phase = (state.gaitPhase / TAU) % 1;
-    // Each foot spends 60% of the cycle pushing against the floor, then
-    // recovers with a bent knee. Zero derivatives at lift-off/contact avoid
-    // the rigid pendulum reversal of a plain sine gait.
-    const leftPhase = phase;
-    const rightPhase = (phase + 0.5) % 1;
-    const leftSwing = leftPhase < 0.6 ? 0 : Math.sin((leftPhase - 0.6) / 0.4 * Math.PI);
-    const rightSwing = rightPhase < 0.6 ? 0 : Math.sin((rightPhase - 0.6) / 0.4 * Math.PI);
-    const leftStride = leftPhase < 0.6
-      ? 1 - 2 * smooth(leftPhase / 0.6) : -1 + 2 * smooth((leftPhase - 0.6) / 0.4);
-    const rightStride = rightPhase < 0.6
-      ? 1 - 2 * smooth(rightPhase / 0.6) : -1 + 2 * smooth((rightPhase - 0.6) / 0.4);
+    const phase = ((state.gaitPhase / TAU) % 1 + 1) % 1;
     const legScale = Number.isFinite(form?.legScale) ? form.legScale : 1;
     const gaitScale = (restrained ? 0.36 : 1)
-      * (0.42 + state.visualSpeed * 0.58) * legScale * state.locomotionWeight;
-    pose[P.legLPitch] += leftStride * 0.58 * gaitScale;
-    pose[P.legRPitch] += rightStride * 0.58 * gaitScale;
-    pose[P.kneeLPitch] += leftSwing * 0.88 * gaitScale;
-    pose[P.kneeRPitch] += rightSwing * 0.88 * gaitScale;
-    // Keep armed upper bodies quieter during a strike; the attack layer
-    // remains the single owner of the actual hand/weapon contact pose.
-    const carry = state.attackTimer >= 0 ? 0.25 : 1;
-    pose[P.armLPitch] -= leftStride * 0.30 * gaitScale * carry;
-    pose[P.armRPitch] -= rightStride * 0.30 * gaitScale * carry;
-    pose[P.elbowLPitch] += leftSwing * 0.12 * gaitScale * carry;
-    pose[P.elbowRPitch] += rightSwing * 0.12 * gaitScale * carry;
+      * (0.35 + state.visualSpeed * 0.65) * legScale * state.locomotionWeight;
+    const carry = state.attackTimer >= 0 ? 0.15 : 1;
+    applyStep(pose, phase, gaitScale, true, carry);
+    applyStep(pose, (phase + 0.5) % 1, gaitScale, false, carry);
     if (secondary) {
-      const weight = profile.motion.weight;
-      pose[P.bodyY] += (Math.cos(state.gaitPhase * 2) * 0.32 - 0.18)
-        * profile.motion.bob * (form?.bob || 1) * gaitScale;
-      pose[P.bodyRoll] += Math.sin(state.gaitPhase) * 0.045 * gaitScale;
-      pose[P.bodyYaw] += Math.sin(state.gaitPhase) * 0.055 * gaitScale;
-      pose[P.bodyPitch] += state.visualSpeed * (0.055 + weight * 0.025);
+      const load = Math.sin(state.gaitPhase);
+      pose[P.bodyY] += (Math.cos(state.gaitPhase * 2) - 1) * 0.16 * gaitScale;
+      pose[P.bodyRoll] += load * 0.036 * gaitScale;
+      pose[P.bodyYaw] -= load * 0.075 * gaitScale * carry;
+      pose[P.hipYaw] += load * 0.13 * gaitScale;
+      pose[P.headYaw] += load * 0.035 * gaitScale * carry;
+      pose[P.bodyPitch] += state.visualSpeed * (0.045 + profile.motion.weight * 0.02);
     }
   }
 
@@ -464,31 +470,48 @@ export function sampleForgePose(
 
   const shoveT = advance(state, 'shoveTimer', 'shoveDuration', step);
   if (shoveT >= 0) {
-    const amount = actionEnvelope(shoveT);
-    pose[P.bodyPitch] += 0.22 * amount;
-    pose[P.armLPitch] += 0.92 * amount;
-    pose[P.armRPitch] += 0.92 * amount;
-    pose[P.elbowLPitch] += 0.20 * amount;
-    pose[P.elbowRPitch] += 0.20 * amount;
-    pose[P.weaponZ] += 1.2 * amount;
+    const brace = actionEnvelope(shoveT);
+    const drive = smooth((shoveT - 0.22) / 0.22) * (1 - smooth((shoveT - 0.56) / 0.44));
+    pose[P.bodyY] -= 0.48 * brace;
+    pose[P.bodyPitch] += 0.3 * drive;
+    pose[P.armLPitch] += 0.45 * brace + 0.7 * drive;
+    pose[P.armRPitch] += 0.45 * brace + 0.7 * drive;
+    pose[P.elbowLPitch] += 0.42 * (brace - drive);
+    pose[P.elbowRPitch] += 0.42 * (brace - drive);
+    pose[P.legLPitch] += 0.28 * drive;
+    pose[P.legRPitch] -= 0.26 * drive;
+    pose[P.kneeLPitch] += 0.2 * brace;
+    pose[P.weaponZ] += 0.75 * drive;
   }
 
   const dodgeT = advance(state, 'dodgeTimer', 'dodgeDuration', step);
   if (dodgeT >= 0) {
-    const amount = Math.sin(dodgeT * Math.PI);
-    pose[P.bodyY] -= 1.0 * amount;
-    pose[P.bodyPitch] += 0.34 * amount;
-    pose[P.bodyRoll] += Math.sin(state.dodgeAngle) * 0.42 * amount;
-    pose[P.legLPitch] -= 0.48 * amount;
-    pose[P.legRPitch] += 0.32 * amount;
+    const load = smooth(dodgeT / 0.18) * (1 - smooth((dodgeT - 0.55) / 0.45));
+    const flight = Math.sin(Math.PI * clamp01((dodgeT - 0.16) / 0.7));
+    const side = Math.sin(state.dodgeAngle);
+    const forward = Math.cos(state.dodgeAngle);
+    pose[P.bodyY] -= 0.8 * load;
+    pose[P.bodyPitch] += (0.16 + 0.14 * forward) * load;
+    pose[P.bodyRoll] += side * 0.36 * flight;
+    pose[P.hipYaw] -= side * 0.12 * flight;
+    pose[P.armLPitch] += 0.3 * load;
+    pose[P.armRPitch] += 0.3 * load;
+    pose[P.legLPitch] += (0.32 * forward - 0.25 * side) * flight;
+    pose[P.legRPitch] -= (0.32 * forward + 0.25 * side) * flight;
+    pose[P.kneeLPitch] += (0.26 + 0.2 * Math.max(0, side)) * load;
+    pose[P.kneeRPitch] += (0.26 + 0.2 * Math.max(0, -side)) * load;
   }
 
   const hitT = advance(state, 'hitTimer', 'hitDuration', step);
   if (hitT >= 0) {
-    // Whiplash: head and torso snap BACKWARD away from the impact.
-    const amount = (1 - hitT) * state.hitStrength;
-    pose[P.headPitch] -= 0.42 * amount;
-    pose[P.bodyPitch] -= 0.24 * amount;
+    const recoil = (1 - smooth(hitT)) * state.hitStrength;
+    const catchWeight = Math.sin(Math.PI * hitT) * state.hitStrength;
+    pose[P.headPitch] -= 0.32 * recoil;
+    pose[P.bodyPitch] -= 0.2 * recoil;
+    pose[P.bodyYaw] += 0.09 * recoil;
+    pose[P.bodyY] -= 0.3 * catchWeight;
+    pose[P.kneeRPitch] += 0.16 * catchWeight;
+    pose[P.elbowRPitch] += 0.15 * recoil;
   }
 
   if (state.woundLevel > 0 && alive) {
@@ -499,18 +522,45 @@ export function sampleForgePose(
 
   const deathT = advance(state, 'deathTimer', 'deathDuration', step, true);
   if (deathT >= 0) {
-    const fall = smooth(deathT);
-    pose[P.bodyY] -= 7.5 * fall;
-    pose[P.bodyPitch] += 0.72 * fall;
-    pose[P.bodyRoll] += 1.20 * fall;
-    pose[P.armLPitch] += 0.55 * fall;
-    pose[P.armRPitch] -= 0.35 * fall;
+    // Knees give first, then the torso tips, then the limbs settle. Death is
+    // an absolute layer: an old stride cannot keep kicking the fallen body.
+    pose.fill(0);
+    const buckle = smooth(deathT / 0.38);
+    const fall = smooth((deathT - 0.2) / 0.63);
+    const settle = smooth((deathT - 0.76) / 0.24);
+    pose[P.bodyY] = -1.1 * buckle - 6.4 * fall;
+    pose[P.bodyPitch] = 0.24 * buckle + 0.38 * fall;
+    pose[P.bodyRoll] = 1.16 * fall;
+    pose[P.headPitch] = 0.18 * buckle + 0.1 * settle;
+    pose[P.hipYaw] = -0.18 * fall;
+    pose[P.kneeLPitch] = 0.65 * buckle - 0.16 * settle;
+    pose[P.kneeRPitch] = 0.85 * buckle - 0.24 * settle;
+    pose[P.legLPitch] = 0.24 * fall;
+    pose[P.legRPitch] = -0.2 * fall;
+    pose[P.armLPitch] = 0.5 * fall - 0.12 * settle;
+    pose[P.armRPitch] = -0.25 * fall;
+    pose[P.armLRoll] = -0.2 * fall;
+    pose[P.elbowRPitch] = 0.35 * fall;
   }
 
   const respawnT = advance(state, 'respawnTimer', 'respawnDuration', step);
-  if (respawnT >= 0) pose[P.bodyY] -= (1 - smooth(respawnT)) * 4.5;
+  if (respawnT >= 0) {
+    const rise = 1 - smooth(respawnT);
+    pose[P.bodyY] -= rise * 3.8;
+    pose[P.bodyPitch] += rise * 0.28;
+    pose[P.kneeLPitch] += rise * 0.65;
+    pose[P.kneeRPitch] += rise * 0.65;
+    pose[P.armLPitch] += rise * 0.38;
+    pose[P.armRPitch] += rise * 0.38;
+  }
 
-  pose[P.corePulse] += restrained ? 0 : Math.sin(state.elapsed * 2.2) * 0.06;
+  if (secondary && alive) pose[P.corePulse] += Math.sin(state.elapsed * 1.65) * 0.035;
+  // Protect the render boundary from non-finite caller data and stacked
+  // reactions. Translation and rotation envelopes are deliberately bounded.
+  for (let index = 0; index < pose.length; index += 1) {
+    const limit = index === P.bodyY ? 10 : (index >= P.weaponX && index <= P.weaponZ ? 8 : 3.2);
+    pose[index] = Number.isFinite(pose[index]) ? Math.max(-limit, Math.min(limit, pose[index])) : 0;
+  }
   return pose;
 }
 
@@ -586,6 +636,9 @@ export function updateForgeCharacter(
   j.leftKnee.rotation.x = -(base.kneePitch + pose[P.kneeLPitch]);
   j.rightLeg.rotation.x = pose[P.legRPitch];
   j.rightKnee.rotation.x = -(base.kneePitch + pose[P.kneeRPitch]);
+  if (j.leftFoot) j.leftFoot.rotation.x = (base.footLPitch || 0) + pose[P.footLPitch];
+  if (j.rightFoot) j.rightFoot.rotation.x = (base.footRPitch || 0) + pose[P.footRPitch];
+  if (j.hips) j.hips.rotation.y = (base.hipYaw || 0) + pose[P.hipYaw];
 
   const weaponNodes = entry.weaponPoseNodes || (entry.weapon ? [entry.weapon] : []);
   const weaponBases = entry.weaponBases || (entry.weaponBase ? [entry.weaponBase] : []);
