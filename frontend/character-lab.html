@@ -2,18 +2,20 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Arena Character Lab</title>
+  <title>Arena · Forge Studio</title>
   <script src="https://cdn.jsdelivr.net/npm/babylonjs@9.14.0/babylon.min.js"></script>
   <style>
     html, body { margin: 0; height: 100%; background: #0a0e18; overflow: hidden; }
     #canvas { width: 100%; height: 100%; display: block; }
     #controls {
       position: fixed; top: 8px; left: 8px; z-index: 10;
-      font-family: monospace; color: #cfe6ff; font-size: 12px;
+      font-family: system-ui, sans-serif; color: #cfe6ff; font-size: 12px;
+      padding: 10px; border-radius: 12px; background: #0a1222dd;
+      border: 1px solid #a9c7ef30; max-width: calc(100vw - 38px);
     }
     #controls button {
       background: #16233b; color: #cfe6ff; border: 1px solid #3a5a8a;
-      margin: 2px; padding: 4px 10px; font-family: monospace; cursor: pointer;
+      margin: 2px; padding: 7px 12px; border-radius: 6px; font: inherit; cursor: pointer;
     }
     #controls button.active { background: #2a4a7a; }
     #legend {
@@ -35,25 +37,34 @@
 <div id="legend"></div>
 <canvas id="canvas"></canvas>
 <script type="module">
-import {createBotEntry} from './js/renderer/bot-body.js?v=20260718o';
+import {createBotEntry} from './js/renderer/bot-body.js?v=20260907b';
 import {
   scaleWorldBotHud, showWorldSelection, showWorldTaunt, updateWorldBotHudHealth,
 } from './js/renderer/world-hud.js?v=20260718o';
 import {
   updateForgeCharacter, triggerForgeAttack, triggerForgeDodge,
   triggerForgeHit, triggerForgeShove,
-} from './js/renderer/character-anims.js?v=20260714e';
-import {FORGE_WEAPONS} from './js/renderer/character-roster.js?v=20260714e';
+} from './js/renderer/character-anims.js?v=20260907b';
+import {FORGE_WEAPONS} from './js/renderer/character-roster.js?v=20260907b';
 import {BODY_FORM_SPECS} from './js/renderer/body-form-roster.js?v=20260714e';
-import {applyBotCosmetics} from './js/renderer/cosmetics.js?v=20260714e';
-import {TrailRenderer} from './js/renderer/trails.js?v=20260714e';
+import {applyBotCosmetics} from './js/renderer/cosmetics.js?v=20260907b';
+import {TrailRenderer} from './js/renderer/trails.js?v=20260907b';
 import './js/cosmetic-themes.js?v=20260713f';
 
 const canvas = document.getElementById('canvas');
 const engine = new BABYLON.Engine(canvas, true);
 const scene = new BABYLON.Scene(engine);
 scene.clearColor = new BABYLON.Color4(0.04, 0.06, 0.10, 1);
-new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0.2, 1, 0.3), scene);
+const fill = new BABYLON.HemisphericLight('studio-fill', new BABYLON.Vector3(0.2, 1, -0.3), scene);
+fill.intensity = 0.65;
+fill.diffuse = new BABYLON.Color3(0.64, 0.77, 1);
+fill.groundColor = new BABYLON.Color3(0.13, 0.17, 0.24);
+const key = new BABYLON.DirectionalLight('studio-key', new BABYLON.Vector3(-0.45, -0.8, 0.65), scene);
+key.diffuse = new BABYLON.Color3(1, 0.88, 0.73);
+key.intensity = 1.25;
+const rim = new BABYLON.DirectionalLight('studio-rim', new BABYLON.Vector3(0.7, -0.3, -0.65), scene);
+rim.diffuse = new BABYLON.Color3(0.36, 0.68, 1);
+rim.intensity = 0.75;
 
 const camera = new BABYLON.ArcRotateCamera('cam', -Math.PI / 2, 1.05, 190,
   new BABYLON.Vector3(0, 8, 30), scene);
@@ -179,7 +190,7 @@ document.getElementById('row-toggle').addEventListener('click', (event) => {
   }
   const targetZ = visibleRow < 0 ? 30 : visibleRow * 34;
   camera.target.z = targetZ;
-  camera.radius = visibleRow < 0 ? 190 : 120;
+  camera.radius = visibleRow < 0 ? 190 : 160;
 });
 
 let speedScale = 1;

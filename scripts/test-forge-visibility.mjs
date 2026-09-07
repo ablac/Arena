@@ -84,7 +84,12 @@ globalThis.window = {
     StandardMaterial: FakeMaterial,
     TransformNode: FakeNode,
     MeshBuilder,
-    Mesh: {CAP_ALL: 3},
+    Mesh: {CAP_ALL: 3, MergeMeshes(parts, disposeSources) {
+      const mesh = new FakeNode('merged', parts[0].scene);
+      mesh.material = parts[0].material;
+      if (disposeSources) parts.forEach(part => part.dispose());
+      return mesh;
+    }},
     Vector3: FakeVector3,
   },
 };
@@ -115,6 +120,10 @@ const entries = weapons.map((weapon, index) => createForgeCharacter({
   avatar_color: avatarColors[index],
   weapon,
 }, scene));
+for (const entry of entries) {
+  assert.ok(entry._visibleMeshCount <= entry.profile.meshBudget,
+    `${entry.profile.weapon}: ${entry._visibleMeshCount} meshes exceed its ${entry.profile.meshBudget} budget`);
+}
 
 const luminance = color => 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
 const guaranteedLuminance = mesh => luminance(mesh.material.emissiveColor);
@@ -150,8 +159,13 @@ if (focus === 'all' || focus === 'body') {
       // rendering.characterLighting toggle.
       assert.equal(mesh.material.disableLighting, false,
         `${mesh.name} must take arena lighting for shading depth (emissive floor covers the dark sectors)`);
-      assert.ok(mesh.material._forgeUnlitEmissive,
-        `${mesh.name} must retain its self-lit emissive fallback for the characterLighting toggle`);
+      if (!entry._forgeStatusMaterials.includes(mesh.material)) {
+        assert.ok(mesh.material._forgeUnlitEmissive,
+          `${mesh.name} must retain its self-lit emissive fallback for the characterLighting toggle`);
+      } else {
+        assert.ok(mesh.material._forgeRestEmissive,
+          `${mesh.name} colored armor must retain its mutable status-feedback baseline`);
+      }
     }
   }
   const torsoMaterials = entries.map(entry => entry.joints.torso.material);

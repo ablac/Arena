@@ -123,7 +123,10 @@ export const SETTINGS_SCHEMA = {
       fxaa: { label: 'Anti-aliasing (FXAA)' },
       sharpen: { label: 'Sharpen' },
       shadows: { label: 'Obstacle shadows' },
-      characterLighting: { label: 'Character lighting & shading', defaultOff: true },
+      characterLighting: { label: 'Character lighting & shading' },
+      sculptedLighting: { label: 'Warm key light & cool rim light' },
+      surfaceDetail: { label: 'Machined metal surface textures' },
+      characterMotion: { label: 'Bot weight, banking & stride settling' },
       dynamicGrading: { label: 'Dynamic mode grading (sudden death, round win)', defaultOff: true },
       // Default-on keeps the current 1x render resolution; unchecking lets
       // HiDPI displays render at native resolution (sharper, more GPU).

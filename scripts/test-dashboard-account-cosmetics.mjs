@@ -339,7 +339,7 @@ assert.match(dashboardHTML, /\[data-collection-slot\]/);
 assert.match(dashboardHTML, /\[data-collection-query\]/);
 assert.match(dashboardHTML, /addEventListener\('input', handleAccountPanelInput\)/, 'typing into the search box must not redraw the input away');
 assert.match(dashboardHTML, /accountCosmetics\.js\?v=20260905u|account-cosmetics\.js\?v=20260905u/);
-assert.match(dashboardHTML, /dashboard\.js\?v=20260905u/);
+assert.match(dashboardHTML, /dashboard\.js\?v=20260907b/);
 assert.match(dashboardHTML, /dashboard\.css\?v=20260902a/);
 for (const className of ['subscription-card', 'subscription-status', 'subscription-action', 'cosmetic-card', 'cosmetic-card-grid',
   'cosmetic-collection-filter', 'cosmetic-equip-hint', 'cosmetic-show-more', 'ownership-badge.locked']) {
