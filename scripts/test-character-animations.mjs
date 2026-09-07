@@ -50,6 +50,53 @@ for (const weapon of FORGE_WEAPONS) {
     `${weapon} reduced-motion idle must not bob`);
 }
 
+// Server cooldown overrides may compress time, but they must not change
+// the visible contact pose or erase the anticipation/recovery landmarks.
+const channel = name => POSE_CHANNELS.indexOf(name);
+function contactPose(weapon, duration) {
+  const profile = getCharacterProfile(weapon);
+  const state = new ForgeAnimState(weapon);
+  triggerForgeAttack(state, weapon, duration);
+  const contact = forgeContactDelay(weapon, duration);
+  for (let frame = 0; frame < 16; frame += 1) {
+    sampleForgePose(profile, state, contact / 16, false, 0, true, false, false);
+  }
+  const pose = Array.from(state.pose);
+  assert.ok(pose.some(value => Math.abs(value) > 0.2), `${weapon} needs a readable contact pose`);
+  for (let frame = 0; frame < 30; frame += 1) {
+    sampleForgePose(profile, state, 0.05, false, 0, true, false, false);
+  }
+  assert.equal(state.attackTimer, -1, `${weapon} must finish recovery`);
+  assert.ok(state.pose.every(value => value === 0), `${weapon} must return to its authored rest offsets`);
+  return pose;
+}
+for (const weapon of FORGE_WEAPONS) {
+  const normal = contactPose(weapon, 0.7);
+  for (const duration of [0.24, 1.2]) {
+    const retimed = contactPose(weapon, duration);
+    retimed.forEach((value, index) => assert.ok(Math.abs(value - normal[index]) < 0.00001,
+      `${weapon} ${POSE_CHANNELS[index]} contact must survive cooldown retiming`));
+  }
+}
+
+// The loaded-foot to swing transition and cycle wrap must stay continuous;
+// discontinuous ankles would visibly snap even when the gait clock is smooth.
+function gaitPose(phase) {
+  const state = new ForgeAnimState('spear');
+  state.gaitPhase = phase * Math.PI * 2;
+  state.locomotionWeight = 1;
+  state.visualSpeed = 1;
+  return sampleForgePose(getCharacterProfile('spear'), state, 0, true, 1, true, false, false, 0);
+}
+for (const boundary of [0.62, 1]) {
+  const before = gaitPose(boundary - 0.000001);
+  const after = gaitPose(boundary + 0.000001);
+  for (const name of ['legLPitch', 'kneeLPitch', 'footLPitch']) {
+    assert.ok(Math.abs(before[channel(name)] - after[channel(name)]) < 0.0001,
+      `${name} must remain continuous across gait boundary ${boundary}`);
+  }
+}
+
 const vector = (x = 0, y = 0, z = 0) => ({
   x, y, z,
   setAll(value) { this.x = value; this.y = value; this.z = value; },
@@ -68,6 +115,7 @@ const daggerEntry = {
     body: joint(), head: joint(), leftArm: joint(), leftElbow: joint(),
     rightArm: joint(), rightElbow: joint(), leftLeg: joint(), leftKnee: joint(),
     rightLeg: joint(), rightKnee: joint(), core: joint(),
+    leftFoot: joint(), rightFoot: joint(), hips: joint(),
   },
   basePose: {
     bodyY: 10,
@@ -84,9 +132,16 @@ const daggerEntry = {
   ],
 };
 triggerForgeAttack(daggerAnim, 'daggers', 0.3);
-updateForgeCharacter(daggerEntry, 0.05, false, true);
+updateForgeCharacter(daggerEntry, 0.05, false, true, false);
+assert.ok(daggerEntry.joints.body.rotation.y < 0,
+  'daggers must coil the torso before the committed jab');
+updateForgeCharacter(daggerEntry, forgeContactDelay('daggers', 0.3) - 0.05, false, true, false);
 assert.ok(leftDagger.rotation.z < 0 && rightDagger.rotation.z > 0,
-  'the two hand-mounted daggers must receive mirrored attack rotations');
+  'the two hand-mounted daggers must receive mirrored rotations at contact');
+assert.equal(leftDagger.rotation.z, -rightDagger.rotation.z,
+  'both dagger mounts must receive the same contact magnitude with opposite handedness');
+assert.ok(daggerEntry.joints.body.rotation.y > 0,
+  'the dagger strike must unwind through the target by contact');
 
 // Rig-space sign conventions: the model faces local -Z, torso content sits
 // above its joint, and limbs hang below theirs. These directions regressed
@@ -103,6 +158,7 @@ const spearEntry = {
     body: joint(), head: joint(), leftArm: joint(), leftElbow: joint(),
     rightArm: joint(), rightElbow: joint(), leftLeg: joint(), leftKnee: joint(),
     rightLeg: joint(), rightKnee: joint(), core: joint(),
+    leftFoot: joint(), rightFoot: joint(), hips: joint(),
   },
   basePose: {
     bodyY: 10, armLRoll: 0, armRRoll: 0, elbowLPitch: 0, elbowRPitch: 0, kneePitch: 0.09,
@@ -117,11 +173,10 @@ assert.ok(spearEntry.joints.leftKnee.rotation.x < 0,
   'the knee pre-bend must tuck the shin backward (negative rig pitch)');
 // Drive the spear to its thrust contact frame and confirm the weapon and
 // striking arm both travel forward, not into the character's own back.
-for (let step = 0; step < 6; step += 1) updateForgeCharacter(spearEntry, 0.058 * 0.62 / 6, false, true);
 assert.equal(spearEntry.anim.attackTimer, -1, 'spear entry starts at rest');
 triggerForgeAttack(spearEntry.anim, 'spear');
-let spearFrames = Math.round((spearEntry.anim.attackDuration * 0.62) / 0.008);
-for (let step = 0; step < spearFrames; step += 1) updateForgeCharacter(spearEntry, 0.008, false, true);
+const spearContact = forgeContactDelay('spear');
+for (let step = 0; step < 8; step += 1) updateForgeCharacter(spearEntry, spearContact / 8, false, true);
 assert.ok(spearWeapon.position.z < -1,
   'the spear thrust must translate the weapon toward -Z (the authored facing)');
 assert.ok(spearEntry.joints.rightArm.rotation.x > 0,
@@ -180,6 +235,14 @@ assert.ok(Math.abs(walk30.anim.gaitPhase - walk120.anim.gaitPhase) < 0.00001,
   'equal travel must produce the same stride phase across refresh rates');
 assert.ok(Math.abs(walk30.anim.locomotionWeight - walk120.anim.locomotionWeight) < 0.00001,
   'locomotion blending must be frame-rate independent');
+assert.ok(walk120.joints.hips.rotation.y * walk120.joints.body.rotation.y < 0,
+  'the hips must counterrotate against the walking torso');
+for (const [jointName, channelName] of [['leftFoot', 'footLPitch'], ['rightFoot', 'footRPitch']]) {
+  assert.equal(walk120.joints[jointName].rotation.x, walk120.anim.pose[channel(channelName)],
+    'optional ankle nodes must receive their sampled foot-roll channels');
+  assert.ok(Math.abs(walk120.joints[jointName].rotation.x) > 0.001,
+    'walking ankles must articulate instead of remaining rigid');
+}
 const beforeStop = walk120.anim.pose[POSE_CHANNELS.indexOf('legLPitch')];
 updateForgeCharacter(walk120, 1 / 120, false, true);
 assert.ok(Math.abs(walk120.anim.pose[POSE_CHANNELS.indexOf('legLPitch')] - beforeStop) < 0.08,
@@ -215,8 +278,17 @@ for (let frame = 0; frame < 120; frame += 1) {
   updateForgeCharacter(slowWalker, 1 / 60);
   updateForgeCharacter(fastWalker, 1 / 60);
 }
-assert.ok(Math.abs(fastWalker.anim.gaitPhase - slowWalker.anim.gaitPhase * 2) < 0.00001,
-  'twice the travel must take twice the steps below the sprint cadence cap');
+const tau = 2 * Math.PI;
+const phaseDistance = (actual, expected) => Math.abs(Math.atan2(
+  Math.sin(actual - expected), Math.cos(actual - expected),
+));
+for (const [entry, distance] of [[slowWalker, 30], [fastWalker, 60]]) {
+  const expectedPhase = distance / (38 * spearProfile.proportions.leg) * tau;
+  assert.ok(phaseDistance(entry.anim.gaitPhase, expectedPhase) < 0.00001,
+    'stride phase must match traveled distance across full cycle wraps');
+}
+assert.ok(phaseDistance(fastWalker.anim.gaitPhase, slowWalker.anim.gaitPhase * 2) < 0.00001,
+  'twice the travel must take twice the steps modulo completed cycles');
 const banked = walkingEntry();
 const unbanked = walkingEntry();
 const restrainedWalker = walkingEntry();
