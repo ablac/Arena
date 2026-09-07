@@ -1,113 +1,114 @@
 'use strict';
 
 /**
- * Movement trail system — bounded cosmetic ribbons and particle wakes.
- * Ribbons reuse one material, one mesh per visible bot, and fixed-size buffers.
- * Particle styles share one procedural texture and have a separate hard cap.
+ * Short, fluid movement wakes. Each bot owns one fine filament and an optional
+ * bounded particle emitter; no floor-wide sheets or persistent path decals.
  * @module renderer/trails
  */
 
 import { isEnabled } from '../settings.js';
 
 const MAX_HISTORY = 24;
-// Spectator positions arrive at 10 Hz. Sampling three times faster rebuilt the
-// same ribbon geometry from interpolated points without adding useful truth.
 const SAMPLE_INTERVAL = 0.1;
 const MAX_RENDERED_TRAILS = 48;
-// Queue selection already carries hysteresis to stay stable between frames, so
-// rebuilding (and double-sorting) it at display rate only reproduced the same
-// result with per-bot string allocations. Mirror the bots.js body-form LOD
-// cadence; membership changes and reset() force an immediate rebuild.
 const RENDER_QUEUE_REBUILD_INTERVAL_MS = 250;
 const MAX_PARTICLE_SYSTEMS = 24;
 const MAX_PARTICLES_PER_TRAIL = 28;
 const TRAIL_SELECTION_HYSTERESIS_SQ = 40 * 40;
-const TRAIL_WIDTH = 7.2;
-const TRAIL_Y = 0.5;
-// Paid ribbons draw a second narrow white-hot core over the wide glow layer.
-const CORE_WIDTH_FRACTION = 0.3;
-const CORE_WHITE_MIX = 0.6;
-
-const STANDARD_STYLE = Object.freeze({
-  key: 'standard',
-  primary: '#63d8ff',
-  secondary: '#b9f3ff',
-  width: 0.72,
-  alpha: 0.22,
-  particles: null,
-});
+const TRAIL_Y = 0.65;
+const MAX_WAKE_LENGTH = 38;
+const MAX_WAKE_AGE = 0.9;
+const GEOMETRY_INTERVAL = 1 / 30;
 
 function particleStyle(emitRate, gravityY, options = {}) {
   return Object.freeze({
-    emitRate,
-    gravityY,
-    minSize: options.minSize ?? 0.45,
-    maxSize: options.maxSize ?? 1.25,
-    minLife: options.minLife ?? 0.24,
-    maxLife: options.maxLife ?? 0.72,
-    spread: options.spread ?? 1.6,
-    rise: options.rise ?? 0,
+    emitRate, gravityY,
+    minSize: options.minSize ?? 0.3,
+    maxSize: options.maxSize ?? 0.9,
+    minLife: options.minLife ?? 0.22,
+    maxLife: options.maxLife ?? 0.65,
+    spread: options.spread ?? 1.1,
+    rise: options.rise ?? 1.4,
+    drag: options.drag ?? 1.8,
+    swirl: options.swirl ?? 0,
+    stretch: options.stretch ?? 1,
+    soft: options.soft === true,
+    motion: options.motion ?? 'drift',
   });
 }
 
-function trailStyle(key, primary, secondary, width, alpha, particles, shape = {}) {
-  // Paid trails must remain identifiable from spectator zoom, not merely tint
-  // the free wake. Scale each authored signature while retaining its relative
-  // width/opacity/emission character and the renderer's existing hard caps.
-  // `shape` adds a per-style motion signature: `pulse` waves the ribbon's
-  // edges, `jitter` staggers the samples into a zigzag arc.
-  const emphasizedParticles = particles && Object.freeze({
-    ...particles,
-    emitRate: Math.max(26, particles.emitRate * 2.2),
-    minSize: particles.minSize * 1.25,
-    maxSize: particles.maxSize * 1.25,
-  });
+function trailStyle(key, primary, secondary, width, alpha, particles, flow = {}) {
   return Object.freeze({
-    key,
-    primary,
-    secondary,
-    width: Math.max(1.35, width * 1.5),
-    alpha: Math.max(0.62, alpha * 1.7),
-    pulse: shape.pulse === true,
-    jitter: shape.jitter === true,
-    particles: emphasizedParticles,
+    key, primary, secondary, width, alpha, particles,
+    // Width is a relative style weight. Actual filaments are sub-unit strokes.
+    curl: flow.curl ?? 0.24,
+    frequency: flow.frequency ?? 2.4,
+    lift: flow.lift ?? 0.35,
+    filament: flow.filament ?? 0.3,
   });
 }
 
-// Every server-provided asset key resolves through this fixed local allowlist.
-// Styles are intentionally data-only so the shop preview and live arena use
-// exactly the same presentation without loading remote scripts or textures.
+const STANDARD_STYLE = trailStyle('standard', '#72bccb', '#c5e8ed', 0.7, 0.22, null,
+  {curl: 0.08, lift: 0.05, filament: 0.18});
+
+// Stable catalog IDs; every signature is authored locally, without remote assets.
+// Hot sparks decelerate and cool; dust expands; droplets arc; plasma curls.
 const TRAIL_STYLES = Object.freeze({
-  ember_sparks: trailStyle('ember_sparks', '#ff5b2e', '#ffd166', 0.86, 0.34, particleStyle(20, 2.8, {minLife: 0.18, maxLife: 0.52})),
-  frost_shards: trailStyle('frost_shards', '#7be7ff', '#e5fbff', 0.92, 0.32, particleStyle(14, -1.8, {minSize: 0.35, maxSize: 0.95})),
-  ion_stream: trailStyle('ion_stream', '#39f5ff', '#4b7cff', 0.72, 0.4, particleStyle(18, 0.4, {spread: 0.75, minLife: 0.3, maxLife: 0.82})),
-  plasma_ribbon: trailStyle('plasma_ribbon', '#ff3fd1', '#7957ff', 1.12, 0.4, particleStyle(12, 0.8, {minSize: 0.7, maxSize: 1.5}), {pulse: true}),
-  void_motes: trailStyle('void_motes', '#6d43c5', '#cc8cff', 1.02, 0.28, particleStyle(10, 1.6, {spread: 2.2, minLife: 0.45, maxLife: 1.05}), {pulse: true}),
-  solar_wake: trailStyle('solar_wake', '#ff9e2c', '#fff4a8', 1.18, 0.4, particleStyle(19, 2.1, {minSize: 0.6, maxSize: 1.55}), {pulse: true}),
-  lunar_dust: trailStyle('lunar_dust', '#aeb9da', '#ffffff', 0.96, 0.3, particleStyle(12, -0.7, {spread: 2.4, minLife: 0.5, maxLife: 1.1})),
-  comet_tail: trailStyle('comet_tail', '#6ee7ff', '#ffffff', 1.3, 0.42, particleStyle(22, -0.35, {spread: 0.7, minLife: 0.24, maxLife: 0.68})),
-  nebula_pulse: trailStyle('nebula_pulse', '#8f63ff', '#ff77cc', 1.18, 0.36, particleStyle(13, 0.9, {spread: 2.1, minSize: 0.75, maxSize: 1.65}), {pulse: true}),
-  storm_arcs: trailStyle('storm_arcs', '#56b7ff', '#e8fbff', 0.84, 0.44, particleStyle(23, -2.4, {minSize: 0.25, maxSize: 0.78, minLife: 0.12, maxLife: 0.34}), {jitter: true}),
-  static_glitch: trailStyle('static_glitch', '#00f0b5', '#f638dc', 0.76, 0.4, particleStyle(21, 0, {spread: 2.8, minSize: 0.25, maxSize: 0.82, minLife: 0.1, maxLife: 0.3}), {jitter: true}),
-  pixel_scatter: trailStyle('pixel_scatter', '#57f287', '#78a7ff', 0.74, 0.34, particleStyle(17, -2.6, {minSize: 0.28, maxSize: 0.72, minLife: 0.28, maxLife: 0.7}), {jitter: true}),
-  data_stream: trailStyle('data_stream', '#39ffb6', '#83f7ff', 0.68, 0.42, particleStyle(20, -1.2, {spread: 0.55, minSize: 0.22, maxSize: 0.58}), {jitter: true}),
-  holo_prism: trailStyle('holo_prism', '#64e6ff', '#ff72d2', 1.02, 0.38, particleStyle(14, 0.5, {minSize: 0.6, maxSize: 1.35}), {pulse: true}),
-  toxic_spores: trailStyle('toxic_spores', '#9bea37', '#e3ff75', 0.98, 0.34, particleStyle(15, 2.3, {spread: 2.7, minLife: 0.55, maxLife: 1.2}), {pulse: true}),
-  verdant_leaves: trailStyle('verdant_leaves', '#35c96f', '#b8f26d', 0.9, 0.32, particleStyle(12, -3.2, {spread: 2.5, minSize: 0.45, maxSize: 1.05, minLife: 0.5, maxLife: 1.15})),
-  sand_wake: trailStyle('sand_wake', '#c99a55', '#f0d58d', 1.14, 0.3, particleStyle(18, -3.6, {spread: 2.9, minLife: 0.38, maxLife: 0.95})),
-  magma_cinders: trailStyle('magma_cinders', '#ff3d20', '#ffbf3f', 1.08, 0.4, particleStyle(19, 3.4, {minSize: 0.3, maxSize: 0.92, minLife: 0.35, maxLife: 0.88})),
-  ocean_spray: trailStyle('ocean_spray', '#23aef3', '#b9fbff', 1.08, 0.36, particleStyle(18, -3, {spread: 2.25, minSize: 0.38, maxSize: 1.08}), {pulse: true}),
-  gilded_dust: trailStyle('gilded_dust', '#dcae36', '#fff0a1', 0.92, 0.4, particleStyle(16, -0.8, {spread: 2.1, minLife: 0.48, maxLife: 1.05})),
-  rune_sparks: trailStyle('rune_sparks', '#9a6cff', '#60e9ff', 0.96, 0.42, particleStyle(13, 1.8, {spread: 1.9, minSize: 0.5, maxSize: 1.1}), {jitter: true}),
-  phantom_smoke: trailStyle('phantom_smoke', '#766b99', '#c8bce8', 1.24, 0.25, particleStyle(10, 2.5, {spread: 2.5, minSize: 0.9, maxSize: 1.85, minLife: 0.7, maxLife: 1.3}), {pulse: true}),
-  gear_sparks: trailStyle('gear_sparks', '#d67b31', '#f7df92', 0.82, 0.38, particleStyle(20, -3.1, {minSize: 0.28, maxSize: 0.82, minLife: 0.2, maxLife: 0.55}), {jitter: true}),
-  bounty_flare: trailStyle('bounty_flare', '#ffca3a', '#ff5a36', 1.16, 0.44, particleStyle(18, 2.7, {spread: 1.4, minSize: 0.6, maxSize: 1.4})),
+  ember_sparks: trailStyle('ember_sparks', '#e65021', '#ffd8a2', 1.3, 0.65,
+    particleStyle(30, 1.8, {motion: 'ember', rise: 2.8, drag: 2.3, stretch: 2.2}), {curl: 0.14, lift: 0.65}),
+  frost_shards: trailStyle('frost_shards', '#8ac4dd', '#e7fbff', 1.2, 0.6,
+    particleStyle(25, -4.2, {motion: 'fall', rise: 2.3, stretch: 2.6, minSize: 0.18, maxSize: 0.55}), {curl: 0.1, filament: 0.2}),
+  ion_stream: trailStyle('ion_stream', '#348ac4', '#9ceff2', 1.25, 0.66,
+    particleStyle(36, 0.2, {motion: 'jet', spread: 0.24, rise: 0.2, stretch: 3.8, drag: 0.8}), {curl: 0.12, frequency: 4, filament: 0.26}),
+  plasma_ribbon: trailStyle('plasma_ribbon', '#8159c9', '#ef9fd7', 1.45, 0.64,
+    particleStyle(30, 0.7, {motion: 'vortex', swirl: 2.2, spread: 0.7, soft: true, maxSize: 1.2}), {curl: 0.65, frequency: 3.2, lift: 0.7}),
+  void_motes: trailStyle('void_motes', '#655190', '#b6a0de', 1.2, 0.58,
+    particleStyle(24, 0.3, {motion: 'orbit', swirl: -1.4, rise: 0.3, drag: 2.6, minLife: 0.55, maxLife: 1.05}), {curl: 0.48, frequency: 1.6, filament: 0.17}),
+  solar_wake: trailStyle('solar_wake', '#e59337', '#fff0c1', 1.5, 0.68,
+    particleStyle(32, 1.3, {motion: 'corona', rise: 2.5, swirl: 0.8, soft: true, maxSize: 1.3}), {curl: 0.38, lift: 0.8, filament: 0.4}),
+  lunar_dust: trailStyle('lunar_dust', '#94a2b6', '#e0e7f1', 1.25, 0.58,
+    particleStyle(24, -0.5, {motion: 'dust', spread: 1.8, rise: 0.65, soft: true, drag: 3, minLife: 0.6, maxLife: 1.15}), {curl: 0.2, lift: 0.15, filament: 0.15}),
+  comet_tail: trailStyle('comet_tail', '#578fae', '#d8f7ff', 1.4, 0.7,
+    particleStyle(38, -0.2, {motion: 'jet', spread: 0.45, rise: 0.4, drag: 0.6, stretch: 4.5, minLife: 0.3, maxLife: 0.8}), {curl: 0.08, filament: 0.4}),
+  nebula_pulse: trailStyle('nebula_pulse', '#836baf', '#dcaec9', 1.4, 0.6,
+    particleStyle(26, 0.4, {motion: 'vortex', swirl: 1, rise: 0.7, soft: true, minSize: 0.6, maxSize: 1.5}), {curl: 0.7, frequency: 1.8, lift: 0.9, filament: 0.24}),
+  storm_arcs: trailStyle('storm_arcs', '#6587c4', '#dcf5ff', 1.25, 0.72,
+    particleStyle(34, -0.5, {motion: 'arc', spread: 1.8, rise: 1, minLife: 0.12, maxLife: 0.3, stretch: 3.2}), {curl: 0.28, frequency: 8, filament: 0.18}),
+  static_glitch: trailStyle('static_glitch', '#51b49f', '#d798c6', 1.2, 0.64,
+    particleStyle(28, 0, {motion: 'step', spread: 1.4, rise: 0.2, minLife: 0.15, maxLife: 0.35, stretch: 2.1}), {curl: 0.32, frequency: 10, filament: 0.15}),
+  pixel_scatter: trailStyle('pixel_scatter', '#76b886', '#a9c8df', 1.2, 0.6,
+    particleStyle(26, -3, {motion: 'step', spread: 2, rise: 2.6, drag: 1.2, minSize: 0.24, maxSize: 0.56}), {curl: 0.18, frequency: 6, filament: 0.17}),
+  data_stream: trailStyle('data_stream', '#43a391', '#b0f1de', 1.2, 0.67,
+    particleStyle(32, 0, {motion: 'jet', spread: 0.18, rise: 0, stretch: 3, minSize: 0.18, maxSize: 0.45}), {curl: 0.04, frequency: 5, filament: 0.22}),
+  holo_prism: trailStyle('holo_prism', '#76b8c7', '#d5a5ce', 1.35, 0.63,
+    particleStyle(27, 0.1, {motion: 'orbit', swirl: 2.7, rise: 0.5, stretch: 1.6, minSize: 0.32, maxSize: 0.8}), {curl: 0.5, frequency: 4.2, lift: 0.55}),
+  toxic_spores: trailStyle('toxic_spores', '#859e39', '#d7e6a0', 1.3, 0.61,
+    particleStyle(25, 0.8, {motion: 'spore', spread: 1.9, rise: 0.7, swirl: 0.8, soft: true, minLife: 0.6, maxLife: 1.2}), {curl: 0.4, frequency: 1.4, lift: 0.6, filament: 0.17}),
+  verdant_leaves: trailStyle('verdant_leaves', '#438e60', '#c4d9a0', 1.25, 0.59,
+    particleStyle(24, -2.5, {motion: 'flutter', spread: 1.7, rise: 2, swirl: 1.9, stretch: 1.8, minLife: 0.5, maxLife: 1}), {curl: 0.25, frequency: 2, filament: 0.17}),
+  sand_wake: trailStyle('sand_wake', '#a78c61', '#e3d3ac', 1.4, 0.59,
+    particleStyle(32, -2.8, {motion: 'dust', spread: 2.6, rise: 1.6, drag: 3.4, soft: true, minSize: 0.4, maxSize: 1.3}), {curl: 0.12, lift: 0.08, filament: 0.17}),
+  magma_cinders: trailStyle('magma_cinders', '#c44424', '#efb564', 1.35, 0.67,
+    particleStyle(29, 3.2, {motion: 'ember', spread: 1.2, rise: 1.3, drag: 1.2, minLife: 0.4, maxLife: 0.9}), {curl: 0.32, lift: 0.8, filament: 0.35}),
+  ocean_spray: trailStyle('ocean_spray', '#4f9cb5', '#d0eeef', 1.35, 0.62,
+    particleStyle(31, -6, {motion: 'droplet', spread: 2, rise: 3.7, stretch: 1.6, drag: 0.35}), {curl: 0.32, frequency: 2.5, lift: 0.15}),
+  gilded_dust: trailStyle('gilded_dust', '#be9a4c', '#f9e8b0', 1.25, 0.66,
+    particleStyle(26, -0.9, {motion: 'glint', spread: 1.5, rise: 1, drag: 2.6, minSize: 0.18, maxSize: 0.6, minLife: 0.5, maxLife: 1}), {curl: 0.15, filament: 0.21}),
+  rune_sparks: trailStyle('rune_sparks', '#8c77b5', '#9be3df', 1.25, 0.66,
+    particleStyle(25, 0.6, {motion: 'orbit', swirl: -3.2, rise: 1.1, stretch: 2, minLife: 0.3, maxLife: 0.7}), {curl: 0.45, frequency: 5, lift: 0.65}),
+  phantom_smoke: trailStyle('phantom_smoke', '#747787', '#bbc3cf', 1.45, 0.58,
+    particleStyle(24, 0.5, {motion: 'smoke', spread: 1.4, rise: 1.1, swirl: 0.6, drag: 3, soft: true, minSize: 0.7, maxSize: 1.8, minLife: 0.6, maxLife: 1.25}), {curl: 0.65, frequency: 1.3, lift: 1, filament: 0.12}),
+  gear_sparks: trailStyle('gear_sparks', '#b97e46', '#f3dcaa', 1.2, 0.66,
+    particleStyle(35, -5.6, {motion: 'spark', spread: 2.2, rise: 3.1, drag: 0.7, stretch: 3.4, minLife: 0.16, maxLife: 0.45}), {curl: 0.1, frequency: 6, filament: 0.19}),
+  bounty_flare: trailStyle('bounty_flare', '#dba044', '#ffe3ba', 1.5, 0.72,
+    particleStyle(34, 1.6, {motion: 'corona', spread: 1.3, rise: 2, swirl: -0.8, stretch: 1.8}), {curl: 0.35, frequency: 3.5, lift: 0.75, filament: 0.4}),
 });
 
 /** Resolve an untrusted cosmetic key to one local, bounded style. */
 export function resolveTrailStyle(assetKey) {
   if (typeof assetKey !== 'string') return STANDARD_STYLE;
-  return TRAIL_STYLES[assetKey.trim().toLowerCase()] || STANDARD_STYLE;
+  const key = assetKey.trim().toLowerCase();
+  return Object.hasOwn(TRAIL_STYLES, key) ? TRAIL_STYLES[key] : STANDARD_STYLE;
 }
 
 function parseColor(B, value, fallback) {
@@ -176,7 +177,8 @@ export class TrailRenderer {
     material.useVertexAlpha = true;
     // Additive blending makes every wake read as light on the near-black
     // arena floor instead of a translucent decal.
-    material.alphaMode = 1;
+    material.alphaMode = B.Engine?.ALPHA_ADD ?? 1;
+    material.disableDepthWrite = true;
     material.freeze();
     this.sharedRibbonMaterial = material;
     return material;
@@ -191,7 +193,8 @@ export class TrailRenderer {
     context.clearRect(0, 0, 16, 16);
     const gradient = context.createRadialGradient(8, 8, 0, 8, 8, 8);
     gradient.addColorStop(0, 'rgba(255,255,255,1)');
-    gradient.addColorStop(0.38, 'rgba(255,255,255,0.9)');
+    gradient.addColorStop(0.16, 'rgba(255,255,255,0.72)');
+    gradient.addColorStop(0.55, 'rgba(255,255,255,0.18)');
     gradient.addColorStop(1, 'rgba(255,255,255,0)');
     context.fillStyle = gradient;
     context.fillRect(0, 0, 16, 16);
@@ -206,15 +209,7 @@ export class TrailRenderer {
     const B = window.BABYLON;
     const primary = parseColor(B, style.primary, STANDARD_STYLE.primary);
     const secondary = parseColor(B, style.secondary, STANDARD_STYLE.secondary);
-    colors = Object.freeze({
-      primary,
-      secondary,
-      core: Object.freeze({
-        r: secondary.r + (1 - secondary.r) * CORE_WHITE_MIX,
-        g: secondary.g + (1 - secondary.g) * CORE_WHITE_MIX,
-        b: secondary.b + (1 - secondary.b) * CORE_WHITE_MIX,
-      }),
-    });
+    colors = Object.freeze({primary, secondary});
     this._styleColors.set(style.key, colors);
     return colors;
   }
@@ -230,20 +225,71 @@ export class TrailRenderer {
     particles.particleTexture = this._getSharedParticleTexture();
     particles.disposeOnStop = false;
     particles.emitter = entry.root;
-    particles.minEmitBox = new B.Vector3(-0.8, 0.8, -1.6);
-    particles.maxEmitBox = new B.Vector3(0.8, 2.8, 1.6);
-    particles.direction1 = new B.Vector3(-style.particles.spread, style.particles.rise, -style.particles.spread);
-    particles.direction2 = new B.Vector3(style.particles.spread, style.particles.rise, style.particles.spread);
-    particles.gravity = new B.Vector3(0, style.particles.gravityY, 0);
-    particles.minSize = style.particles.minSize;
-    particles.maxSize = style.particles.maxSize;
-    particles.minLifeTime = style.particles.minLife;
-    particles.maxLifeTime = style.particles.maxLife;
+    const config = style.particles;
+    particles.minEmitBox = new B.Vector3(-0.7, 0.65, -0.7);
+    particles.maxEmitBox = new B.Vector3(0.7, 1.4, 0.7);
+    particles.direction1 = new B.Vector3(-config.spread, config.rise * 0.6, -config.spread);
+    particles.direction2 = new B.Vector3(config.spread, config.rise, config.spread);
+    particles.gravity = new B.Vector3(0, config.gravityY, 0);
+    particles.minSize = config.minSize;
+    particles.maxSize = config.maxSize;
+    particles.minLifeTime = config.minLife;
+    particles.maxLifeTime = config.maxLife;
+    particles.minScaleX = 0.7;
+    particles.maxScaleX = 1;
+    particles.minScaleY = config.stretch;
+    particles.maxScaleY = config.stretch * 1.25;
     particles.emitRate = 0;
-    particles.minAngularSpeed = -2.4;
-    particles.maxAngularSpeed = 2.4;
-    particles.blendMode = B.ParticleSystem.BLENDMODE_ADD;
-    particles.updateSpeed = 0.012;
+    particles.minEmitPower = 1;
+    particles.maxEmitPower = 1.6;
+    particles.minAngularSpeed = config.soft ? -0.3 : -1.4;
+    particles.maxAngularSpeed = config.soft ? 0.3 : 1.4;
+    particles.blendMode = config.soft
+      ? B.ParticleSystem.BLENDMODE_STANDARD
+      : B.ParticleSystem.BLENDMODE_ADD;
+    // Babylon multiplies updateSpeed by its 60-Hz animation ratio.
+    particles.updateSpeed = 1 / 60;
+    if (typeof particles.addSizeGradient === 'function') {
+      const birth = config.soft ? 0.35 : 0.75;
+      const end = config.soft ? 2.1 : 0.08;
+      // Babylon size gradients are absolute sizes, not min/max multipliers.
+      particles.addSizeGradient(0, config.minSize * birth, config.maxSize * birth);
+      particles.addSizeGradient(0.2, config.minSize, config.maxSize);
+      particles.addSizeGradient(1, config.minSize * end, config.maxSize * end);
+    }
+    if (typeof particles.addVelocityGradient === 'function') {
+      particles.addVelocityGradient(0, 1);
+      particles.addVelocityGradient(1, Math.exp(-config.drag));
+    }
+    // Preserve Babylon's integration/recycling and add a smooth force field.
+    // This keeps pooling, lifetime, color and size gradients engine-owned.
+    const integrate = particles.updateFunction;
+    if (typeof integrate === 'function') {
+      particles.updateFunction = active => {
+        integrate.call(particles, active);
+        const step = Math.min(0.05, particles.updateSpeed * (this.scene.getAnimationRatio?.() ?? 1));
+        for (const particle of active) {
+          const age = particle.age / particle.lifeTime;
+          const phase = particle.position.x * 0.41 + particle.position.z * 0.29;
+          const curl = config.swirl * step;
+          const vx = particle.direction.x;
+          const vz = particle.direction.z;
+          particle.direction.x += -vz * curl;
+          particle.direction.z += vx * curl;
+          if (config.motion === 'flutter' || config.motion === 'spore' || config.motion === 'smoke') {
+            particle.direction.x += Math.sin(age * 9 + phase) * step * 1.8;
+            particle.direction.z += Math.cos(age * 7 + phase) * step * 1.8;
+          } else if (config.motion === 'arc' || config.motion === 'step') {
+            // Brief little changes in direction, never a screen-wide flash.
+            particle.direction.x += Math.sin(age * 28 + phase) * step * 8;
+          } else if (config.motion === 'corona') {
+            particle.direction.y += Math.sin(age * Math.PI) * step * 2;
+          } else if (config.motion === 'glint') {
+            particle.color.a = (1 - age) * (0.45 + 0.3 * Math.sin(age * 16 + phase) ** 2);
+          }
+        }
+      };
+    }
     this._applyParticleColors(particles, style);
     particles.start();
     this.particleSystemCount += 1;
@@ -254,8 +300,8 @@ export class TrailRenderer {
     if (!particles) return;
     const B = window.BABYLON;
     const {primary, secondary} = this._getStyleColors(style);
-    particles.color1 = new B.Color4(primary.r, primary.g, primary.b, 0.92);
-    particles.color2 = new B.Color4(secondary.r, secondary.g, secondary.b, 0.78);
+    particles.color1 = new B.Color4(secondary.r, secondary.g, secondary.b, style.particles.soft ? 0.32 : 0.85);
+    particles.color2 = new B.Color4(primary.r, primary.g, primary.b, style.particles.soft ? 0.2 : 0.6);
     particles.colorDead = new B.Color4(primary.r * 0.3, primary.g * 0.3, primary.b * 0.3, 0);
   }
 
@@ -271,77 +317,54 @@ export class TrailRenderer {
 
   _hideTrail(trail) {
     if (trail.mesh) trail.mesh.setEnabled(false);
-    if (trail.coreMesh) trail.coreMesh.setEnabled(false);
     if (trail.particles) trail.particles.emitRate = 0;
   }
 
-  /** Break every existing ribbon at the latest snapped bot position. */
+  /** Break wakes on snaps, including suspended-tab and preview resets. */
   reset(botEntries) {
-    // Resume-from-hidden must re-rank against fresh positions immediately, not
-    // act on a queue captured up to 250ms before the tab was hidden.
     this._queueRefreshAt = 0;
     for (const [botId, trail] of this.trails) {
       const entry = botEntries?.get(botId);
-      trail.timer = 0;
+      const position = entry?._interpReady ? entryPosition(entry) : null;
       trail.history.length = 0;
-      if (entry?._interpReady) {
-        const position = entryPosition(entry);
-        if (position && this.options.previewPath === true) {
-          trail.history.push({x: position.x - 15, z: position.z}, {x: position.x, z: position.z});
-        } else if (position) {
-          trail.history.push({x: position.x, z: position.z});
-        }
-      }
-      trail.dirty = this.options.previewPath === true;
+      trail.timer = 0;
+      trail.geometryTimer = 0;
       trail.moving = this.options.staticPreview === true;
+      if (position) this._seedHistory(trail.history, position.x, position.z);
+      trail.dirty = true;
+      this._disposeParticleSystem(trail);
       this._hideTrail(trail);
     }
+  }
+
+  _seedHistory(history, x, z) {
+    if (this.options.staticPreview === true || this.options.previewPath === true) {
+      for (let i = 0; i < MAX_HISTORY; i++) {
+        history.push({x: x - 20 * (1 - i / (MAX_HISTORY - 1)), z,
+          t: this._time - 0.65 * (1 - i / (MAX_HISTORY - 1))});
+      }
+    } else history.push({x, z, t: this._time});
   }
 
   _createTrail(botId, entry, x, z, style) {
     const B = window.BABYLON;
     const left = [];
     const right = [];
-    const coreLeft = [];
-    const coreRight = [];
     for (let i = 0; i < MAX_HISTORY; i++) {
       left.push(new B.Vector3(x, TRAIL_Y, z));
       right.push(new B.Vector3(x, TRAIL_Y, z));
-      coreLeft.push(new B.Vector3(x, TRAIL_Y, z));
-      coreRight.push(new B.Vector3(x, TRAIL_Y, z));
     }
-    const seededPreview = this.options.staticPreview === true || this.options.previewPath === true;
-    const history = seededPreview
-      ? [{x: x - 15, z}, {x, z}]
-      : [{x, z}];
-    return {
-      history,
-      mesh: null,
-      coreMesh: null,
-      particles: null,
-      style,
-      timer: 0,
-      left,
-      right,
-      coreLeft,
-      coreRight,
-      colors: null,
-      coreColors: null,
-      dirty: seededPreview,
-      moving: this.options.staticPreview === true,
-      entry,
-      botId,
-    };
+    const history = [];
+    this._seedHistory(history, x, z);
+    return {history, mesh: null, particles: null, style, timer: 0,
+      geometryTimer: 0, left, right, colors: null, dirty: true,
+      moving: this.options.staticPreview === true, entry, botId,
+      flowX: 1, flowZ: 0, speed: 0};
   }
 
   _updateStyle(trail, entry, style) {
     if (trail.style.key === style.key) return;
     this._disposeParticleSystem(trail);
-    if (trail.coreMesh) {
-      trail.coreMesh.dispose();
-      trail.coreMesh = null;
-      trail.coreColors = null;
-    }
     trail.style = style;
     trail.entry = entry;
     trail.dirty = true;
@@ -413,274 +436,188 @@ export class TrailRenderer {
     return queue;
   }
 
-  /**
-   * Called every render frame with the bot renderer's entries map.
-   * @param {Map<string, Object>|null} botEntries
-   * @param {number} dt
-   */
+  /** Advance local cosmetic state; gameplay positions are never modified. */
   render(botEntries, dt) {
     if (!botEntries) return;
-
-    const suspended = pageHidden();
     const reducedMotion = this._reducedMotion();
-    if (!this._enabled() || suspended) {
-      for (const [, trail] of this.trails) this._hideTrail(trail);
-      return;
-    }
-
-    const B = window.BABYLON;
-    const seen = new Set();
-    this._time += Number.isFinite(dt) ? Math.max(0, dt) : 0;
-
-    for (const botId of this._buildRenderQueue(botEntries)) {
-      const entry = botEntries.get(botId);
-      seen.add(botId);
-
-      // Per-frame cosmetic-change detection without per-frame string work:
-      // the resolved style object is cached on the trail keyed by the RAW
-      // server string, so an equipped-trail swap still lands on the very next
-      // frame while the steady state performs zero trim/lowercase allocations.
-      let trail = this.trails.get(botId);
-      const rawStyleKey = entry?.botData?.cosmetics?.trail;
-      const style = trail && trail._styleRaw === rawStyleKey
-        ? trail.style
-        : resolveTrailStyle(cosmeticTrailKey(entry));
-
-      const position = entryPosition(entry);
-      if (!position) continue;
-      const x = position.x;
-      const z = position.z;
-      if (!trail) {
-        trail = this._createTrail(botId, entry, x, z, style);
-        trail._styleRaw = rawStyleKey;
-        this.trails.set(botId, trail);
-      } else if (trail._styleRaw !== rawStyleKey) {
-        this._updateStyle(trail, entry, style);
-        trail._styleRaw = rawStyleKey;
-      }
-
-      trail.timer += Number.isFinite(dt) ? Math.max(0, dt) : 0;
-      if (this.options.staticPreview === true) {
-        trail.moving = true;
-      } else if (trail.timer >= SAMPLE_INTERVAL) {
-        trail.timer %= SAMPLE_INTERVAL;
-        const last = trail.history[trail.history.length - 1];
-        const dx = x - last.x;
-        const dz = z - last.z;
-        const distanceSquared = dx * dx + dz * dz;
-        if (distanceSquared > 150 * 150) {
-          trail.history.length = 0;
-          trail.history.push({x, z});
-          trail.dirty = true;
-          trail.moving = false;
-        } else if (distanceSquared > 0.5) {
-          trail.history.push({x, z});
-          if (trail.history.length > MAX_HISTORY) trail.history.shift();
-          trail.dirty = true;
-          trail.moving = true;
-        } else {
-          trail.moving = false;
+    if (!this._enabled() || pageHidden()) {
+      for (const [id, trail] of this.trails) {
+        this._hideTrail(trail);
+        this._disposeParticleSystem(trail);
+        if (!botEntries.has(id)) {
+          trail.mesh?.dispose();
+          this.trails.delete(id);
         }
       }
-
-      if (style.particles && !reducedMotion && !trail.particles) {
+      this._suspended = true;
+      return;
+    }
+    if (this._suspended) {
+      this.reset(botEntries);
+      this._suspended = false;
+    }
+    // Age uses elapsed seconds, while sampling/upload work stays bounded even
+    // after a slow frame. Never replay an unbounded queue of missed samples.
+    const elapsed = Number.isFinite(dt) ? Math.max(0, dt) : 0;
+    this._time += elapsed;
+    const seen = new Set();
+    for (const botId of this._buildRenderQueue(botEntries)) {
+      const entry = botEntries.get(botId);
+      const position = entryPosition(entry);
+      if (!entry?.isAlive || !entry._interpReady || !Number.isFinite(position?.x)
+          || !Number.isFinite(position?.z)) continue;
+      seen.add(botId);
+      let trail = this.trails.get(botId);
+      const raw = entry?.botData?.cosmetics?.trail;
+      const style = trail && trail._styleRaw === raw ? trail.style : resolveTrailStyle(raw);
+      if (!trail) {
+        trail = this._createTrail(botId, entry, position.x, position.z, style);
+        this.trails.set(botId, trail);
+      } else this._updateStyle(trail, entry, style);
+      trail._styleRaw = raw;
+      const history = trail.history;
+      if (!history.length) this._seedHistory(history, position.x, position.z);
+      trail.timer += elapsed;
+      trail.geometryTimer += elapsed;
+      if (this.options.staticPreview === true) {
+        trail.moving = true;
+        // Keep this explicitly requested display swatch, with no real motion.
+        history.forEach((point, i) => {
+          const fraction = 1 - i / Math.max(1, history.length - 1);
+          point.x = position.x - 20 * fraction;
+          point.z = position.z;
+          point.t = this._time - 0.65 * fraction;
+        });
+      } else if (trail.timer >= SAMPLE_INTERVAL) {
+        trail.timer %= SAMPLE_INTERVAL;
+        const last = history[history.length - 1];
+        const dx = position.x - last.x;
+        const dz = position.z - last.z;
+        const distance = Math.hypot(dx, dz);
+        if (distance > 150) {
+          history.length = 0;
+          history.push({x: position.x, z: position.z, t: this._time});
+          this._disposeParticleSystem(trail);
+          trail.moving = false;
+        } else if (distance > Math.sqrt(0.5)) {
+          trail.flowX = dx / distance;
+          trail.flowZ = dz / distance;
+          trail.speed = Math.min(distance / SAMPLE_INTERVAL, 100);
+          // Subdivide a fresh sample so tight turns do not produce long wedges.
+          const samples = Math.min(8, Math.max(2, Math.ceil(distance / 2)));
+          for (let i = 1; i <= samples; i++) history.push({
+            x: last.x + dx * i / samples, z: last.z + dz * i / samples,
+            t: this._time - SAMPLE_INTERVAL * (1 - i / samples),
+          });
+          while (history.length > MAX_HISTORY) history.shift();
+          trail.moving = true;
+        } else trail.moving = false;
+        trail.dirty = true;
+      }
+      // Bound both elapsed age and world distance, including a stationary bot.
+      while (history.length > 1 && (this._time - history[0].t > MAX_WAKE_AGE
+          || Math.hypot(position.x - history[0].x, position.z - history[0].z) > MAX_WAKE_LENGTH)) {
+        history.shift();
+        trail.dirty = true;
+      }
+      if (reducedMotion) this._disposeParticleSystem(trail);
+      else if (style.particles && !trail.particles) {
         trail.particles = this._createParticleSystem(botId, entry, style);
       }
       if (trail.particles) {
-        trail.particles.emitter = entry.root;
-        trail.particles.emitRate = trail.moving && !reducedMotion
-          ? style.particles.emitRate
-          : 0;
+        const particles = trail.particles;
+        const config = style.particles;
+        // A world-space emitter avoids rotated/scaled chassis distorting wakes.
+        particles.emitter = position;
+        const jet = config.motion === 'jet' ? 5 : Math.min(trail.speed * 0.045, 3);
+        particles.direction1.set(-trail.flowX * jet - config.spread, config.rise * 0.6,
+          -trail.flowZ * jet - config.spread);
+        particles.direction2.set(-trail.flowX * jet + config.spread, config.rise,
+          -trail.flowZ * jet + config.spread);
+        particles.emitRate = trail.moving ? config.emitRate : 0;
       }
-
-      // Animated shape signatures re-evaluate geometry while the bot moves.
-      if ((style.pulse || style.jitter) && trail.moving && !reducedMotion) {
-        trail.dirty = true;
-      }
-
-      if (trail.history.length < 2) {
-        if (trail.mesh) trail.mesh.setEnabled(false);
-        if (trail.coreMesh) trail.coreMesh.setEnabled(false);
+      if (history.length < 2) {
+        trail.mesh?.setEnabled(false);
         continue;
       }
-      if (trail.mesh && !trail.mesh.isEnabled()) trail.mesh.setEnabled(true);
-      if (trail.coreMesh && !trail.coreMesh.isEnabled()) trail.coreMesh.setEnabled(true);
-      if (!trail.dirty && trail.mesh) continue;
-      trail.dirty = false;
-
-      const paid = style.key !== 'standard';
-      const hist = trail.history;
-      const n = hist.length;
-      for (let i = 0; i < n; i++) {
-        let nx;
-        let nz;
-        if (i < n - 1) {
-          nx = hist[i + 1].x - hist[i].x;
-          nz = hist[i + 1].z - hist[i].z;
-        } else {
-          nx = hist[i].x - hist[i - 1].x;
-          nz = hist[i].z - hist[i - 1].z;
-        }
-        const len = Math.sqrt(nx * nx + nz * nz) || 1;
-        const px = -nz / len;
-        const pz = nx / len;
-        const alpha = i / (n - 1);
-        const wave = style.pulse ? 0.72 + 0.28 * Math.sin(i * 1.7 + this._time * 7) : 1;
-        const zig = style.jitter ? (i % 2 ? 1 : -1) * TRAIL_WIDTH * style.width * 0.22 * alpha : 0;
-        const width = TRAIL_WIDTH * style.width * alpha * wave;
-        const cx = hist[i].x + px * zig;
-        const cz = hist[i].z + pz * zig;
-        trail.left[i].set(cx + px * width, TRAIL_Y, cz + pz * width);
-        trail.right[i].set(cx - px * width, TRAIL_Y, cz - pz * width);
-        if (paid) {
-          const coreWidth = width * CORE_WIDTH_FRACTION;
-          trail.coreLeft[i].set(cx + px * coreWidth, TRAIL_Y + 0.05, cz + pz * coreWidth);
-          trail.coreRight[i].set(cx - px * coreWidth, TRAIL_Y + 0.05, cz - pz * coreWidth);
-        }
+      if (trail.dirty || trail.geometryTimer >= GEOMETRY_INTERVAL) {
+        trail.geometryTimer %= GEOMETRY_INTERVAL;
+        this._drawFilament(trail, entry, reducedMotion);
+        trail.dirty = false;
       }
-      for (let i = n; i < MAX_HISTORY; i++) {
-        trail.left[i].copyFrom(trail.left[n - 1]);
-        trail.right[i].copyFrom(trail.right[n - 1]);
-        if (paid) {
-          trail.coreLeft[i].copyFrom(trail.coreLeft[n - 1]);
-          trail.coreRight[i].copyFrom(trail.coreRight[n - 1]);
-        }
-      }
-
-      try {
-        if (!trail.mesh) {
-          const ribbon = B.MeshBuilder.CreateRibbon(`trail-${botId}`, {
-            pathArray: [trail.left, trail.right],
-            updatable: true,
-            sideOrientation: B.Mesh.DOUBLESIDE,
-          }, this.scene);
-          ribbon.material = this._getSharedRibbonMaterial();
-          ribbon.isPickable = false;
-          ribbon.hasVertexAlpha = true;
-          // The shared ribbon material is unlit (disableLighting with
-          // vertex-color emissive output), so normals are never read.
-          // Freezing them lets Babylon's ribbon instance-update path skip
-          // ComputeNormals on every dirty frame.
-          ribbon.freezeNormals();
-          trail.mesh = ribbon;
-          // Create the updatable ColorKind GPU buffer exactly once; dirty
-          // frames then update it in place. (updateVerticesData silently
-          // no-ops while the buffer does not exist, so this creation-time
-          // setVerticesData is load-bearing.) Vertex count never changes:
-          // paths are always padded to MAX_HISTORY.
-          trail.colors = new Float32Array(ribbon.getTotalVertices() * 4);
-          ribbon.setVerticesData(B.VertexBuffer.ColorKind, trail.colors, true);
-          trail._colorSigN = -1;
-        } else {
-          B.MeshBuilder.CreateRibbon(null, {
-            pathArray: [trail.left, trail.right],
-            instance: trail.mesh,
-          });
-        }
-        if (paid && !trail.coreMesh) {
-          const core = B.MeshBuilder.CreateRibbon(`trail-core-${botId}`, {
-            pathArray: [trail.coreLeft, trail.coreRight],
-            updatable: true,
-            sideOrientation: B.Mesh.DOUBLESIDE,
-          }, this.scene);
-          core.material = this._getSharedRibbonMaterial();
-          core.isPickable = false;
-          core.hasVertexAlpha = true;
-          core.freezeNormals();
-          trail.coreMesh = core;
-          trail.coreColors = new Float32Array(core.getTotalVertices() * 4);
-          core.setVerticesData(B.VertexBuffer.ColorKind, trail.coreColors, true);
-          trail._colorSigN = -1;
-        } else if (trail.coreMesh) {
-          B.MeshBuilder.CreateRibbon(null, {
-            pathArray: [trail.coreLeft, trail.coreRight],
-            instance: trail.coreMesh,
-          });
-        }
-
-        const bright = isEnabled('movementTrails', 'trailBrightness');
-        let primary;
-        let secondary;
-        if (style.key === 'standard' && entry.bodyMat?.diffuseColor) {
-          primary = entry.bodyMat.diffuseColor;
-          secondary = entry.bodyMat.diffuseColor;
-        } else {
-          ({primary, secondary} = this._getStyleColors(style));
-        }
-        // A paid trail is an explicit visual entitlement: it never dims
-        // behind the optional free-wake brightness toggle.
-        const brightness = bright || paid || this.options.forceEnabled === true ? 1 : 0.55;
-        // The vertex-color gradient depends only on this signature — not on
-        // the pulse/jitter geometry animation that marks most dirty frames —
-        // so the color loops and GPU upload run only when it changes. Color
-        // VALUES are snapshotted because the standard style reads the live
-        // avatar material reference, which can be recolored in place.
-        const colorsCurrent = trail._colorSigN === n &&
-          trail._colorSigKey === style.key &&
-          trail._colorSigBright === brightness &&
-          trail._colorSigPR === primary.r &&
-          trail._colorSigPG === primary.g &&
-          trail._colorSigPB === primary.b &&
-          trail._colorSigSR === secondary.r &&
-          trail._colorSigSG === secondary.g &&
-          trail._colorSigSB === secondary.b;
-        if (!colorsCurrent) {
-          const vertexCount = trail.mesh.getTotalVertices();
-          for (let vertex = 0; vertex < vertexCount; vertex++) {
-            const index = vertex % MAX_HISTORY;
-            const amount = index < n ? (index / (n - 1)) ** 0.8 : 0;
-            const red = primary.r + (secondary.r - primary.r) * amount;
-            const green = primary.g + (secondary.g - primary.g) * amount;
-            const blue = primary.b + (secondary.b - primary.b) * amount;
-            trail.colors[vertex * 4] = red * brightness;
-            trail.colors[vertex * 4 + 1] = green * brightness;
-            trail.colors[vertex * 4 + 2] = blue * brightness;
-            trail.colors[vertex * 4 + 3] = index < n ? amount * style.alpha : 0;
-          }
-          trail.mesh.updateVerticesData(B.VertexBuffer.ColorKind, trail.colors);
-          if (trail.coreMesh && trail.coreColors) {
-            const core = this._getStyleColors(style).core;
-            const coreCount = trail.coreMesh.getTotalVertices();
-            for (let vertex = 0; vertex < coreCount; vertex++) {
-              const index = vertex % MAX_HISTORY;
-              const amount = index < n ? (index / (n - 1)) ** 0.8 : 0;
-              trail.coreColors[vertex * 4] = core.r;
-              trail.coreColors[vertex * 4 + 1] = core.g;
-              trail.coreColors[vertex * 4 + 2] = core.b;
-              trail.coreColors[vertex * 4 + 3] = index < n ? amount * 0.95 : 0;
-            }
-            trail.coreMesh.updateVerticesData(B.VertexBuffer.ColorKind, trail.coreColors);
-          }
-          trail._colorSigN = n;
-          trail._colorSigKey = style.key;
-          trail._colorSigBright = brightness;
-          trail._colorSigPR = primary.r;
-          trail._colorSigPG = primary.g;
-          trail._colorSigPB = primary.b;
-          trail._colorSigSR = secondary.r;
-          trail._colorSigSG = secondary.g;
-          trail._colorSigSB = secondary.b;
-        }
-      } catch {
-        // A transient degenerate path is safe to skip; the next sample reuses
-        // the same buffers and retries without allocating another mesh.
-      }
+      trail.mesh?.setEnabled(true);
     }
-
     for (const [botId, trail] of this.trails) {
       if (!seen.has(botId)) {
-        if (trail.mesh) trail.mesh.dispose();
-        if (trail.coreMesh) trail.coreMesh.dispose();
+        trail.mesh?.dispose();
         this._disposeParticleSystem(trail);
         this.trails.delete(botId);
       }
     }
   }
 
+  _drawFilament(trail, entry, reducedMotion) {
+    const B = window.BABYLON;
+    const {style, history} = trail;
+    const n = history.length;
+    for (let i = 0; i < MAX_HISTORY; i++) {
+      const index = Math.min(i, n - 1);
+      const point = history[index];
+      const previous = history[Math.max(0, index - 1)];
+      const next = history[Math.min(n - 1, index + 1)];
+      const dx = next.x - previous.x;
+      const dz = next.z - previous.z;
+      const length = Math.hypot(dx, dz) || 1;
+      const px = -dz / length;
+      const pz = dx / length;
+      const age = Math.max(0, this._time - point.t);
+      const fade = Math.max(0, 1 - age / MAX_WAKE_AGE);
+      const taper = Math.sin(Math.PI * index / (n - 1));
+      const curl = reducedMotion ? 0 : Math.sin(age * style.frequency * 5 + point.t * 3)
+        * style.curl * Math.sin(age * Math.PI);
+      const width = i < n ? style.filament * style.width * taper * fade : 0;
+      const y = TRAIL_Y + style.lift * Math.sin(age * Math.PI);
+      trail.left[i].set(point.x + px * (curl + width), y, point.z + pz * (curl + width));
+      trail.right[i].set(point.x + px * (curl - width), y, point.z + pz * (curl - width));
+    }
+    if (!trail.mesh) {
+      const ribbon = B.MeshBuilder.CreateRibbon(`trail-${trail.botId}`, {
+        pathArray: [trail.left, trail.right], updatable: true,
+        sideOrientation: B.Mesh.DOUBLESIDE,
+      }, this.scene);
+      ribbon.material = this._getSharedRibbonMaterial();
+      ribbon.isPickable = false;
+      ribbon.hasVertexAlpha = true;
+      ribbon.freezeNormals();
+      trail.mesh = ribbon;
+      trail.colors = new Float32Array(ribbon.getTotalVertices() * 4);
+      ribbon.setVerticesData(B.VertexBuffer.ColorKind, trail.colors, true);
+    } else B.MeshBuilder.CreateRibbon(null, {
+      pathArray: [trail.left, trail.right], instance: trail.mesh,
+    });
+    let {primary, secondary} = this._getStyleColors(style);
+    if (style.key === 'standard' && entry.bodyMat?.diffuseColor) {
+      primary = secondary = entry.bodyMat.diffuseColor;
+    }
+    const brightness = isEnabled('movementTrails', 'trailBrightness')
+      || style.key !== 'standard' || this.options.forceEnabled === true ? 1 : 0.55;
+    for (let vertex = 0; vertex < trail.mesh.getTotalVertices(); vertex++) {
+      const index = vertex % MAX_HISTORY;
+      const point = history[Math.min(index, n - 1)];
+      const fade = Math.max(0, 1 - (this._time - point.t) / MAX_WAKE_AGE);
+      const amount = fade * fade;
+      const offset = vertex * 4;
+      trail.colors[offset] = (primary.r + (secondary.r - primary.r) * amount) * brightness;
+      trail.colors[offset + 1] = (primary.g + (secondary.g - primary.g) * amount) * brightness;
+      trail.colors[offset + 2] = (primary.b + (secondary.b - primary.b) * amount) * brightness;
+      trail.colors[offset + 3] = index < n ? amount * style.alpha : 0;
+    }
+    trail.mesh.updateVerticesData(B.VertexBuffer.ColorKind, trail.colors);
+  }
+
   dispose() {
     for (const [, trail] of this.trails) {
       if (trail.mesh) trail.mesh.dispose();
-      if (trail.coreMesh) trail.coreMesh.dispose();
       this._disposeParticleSystem(trail);
     }
     this.trails.clear();

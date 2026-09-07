@@ -1,11 +1,12 @@
 'use strict';
 
 /**
- * Arena environment — stone floor, boundary walls, dark void, safe zone ring.
+ * Arena environment — optical glass deck, orbital structure, deep space, safe zone ring.
  * @module renderer/environment
  */
 
 import { makeMat } from './utils.js';
+import { GlassDeck, createGlassPolish, deckRandom } from './glass-deck.js';
 import { isEnabled } from '../settings.js';
 
 const ZONE_RING_SEGMENTS = 64;
@@ -303,6 +304,15 @@ export class EnvironmentRenderer {
         float nebula3 = smoothstep(0.5, 0.8, n3) * 0.08;
         color += vec3(0.12, 0.04, 0.02) * nebula3; // warm red-orange
 
+        // A coherent galactic ribbon gives the void depth and composition.
+        // Reuse the existing noise samples instead of another full-screen fbm.
+        float band = 1.0 - smoothstep(0.04, 0.28,
+          abs(dot(dir, normalize(vec3(0.45, 0.8, -0.28))) + (n1 - 0.5) * 0.2));
+        float dustLane = smoothstep(0.38, 0.7, n2) * band;
+        color += mix(vec3(0.018, 0.035, 0.08), vec3(0.07, 0.027, 0.12), n3)
+          * band * (0.25 + n1 * 0.6);
+        color *= 1.0 - dustLane * 0.35;
+
         // --- Stars at two scales ---
         // (each starField call walks a 3x3x3 cell neighborhood, so the
         // mid 40.0 layer was dropped — dense + sparse covers the range and
@@ -325,6 +335,40 @@ export class EnvironmentRenderer {
         color += vec3(0.15, 0.08, 0.02) * pow(sunDot, 32.0); // tight glow
         color += vec3(0.05, 0.03, 0.01) * pow(sunDot, 4.0);  // wide haze
 
+        // Distant ocean world rendered analytically in the sky. Its curved
+        // terminator, cloud cover and thin atmosphere provide a real scale cue
+        // without a mesh, texture download, depth conflict or extra draw call.
+        vec3 planetCenter = normalize(vec3(0.58, -0.52, 0.76));
+        float alignment = dot(dir, planetCenter);
+        float radius = 0.17;
+        float discriminant = alignment * alignment - 1.0 + radius * radius;
+        float atmosphere = alignment * alignment - 1.0 + 0.177 * 0.177;
+        if (alignment > 0.0 && atmosphere > 0.0) {
+          float rim = 1.0 - smoothstep(0.0, 0.006, max(discriminant, 0.0));
+          float fade = smoothstep(0.0, 0.003, atmosphere);
+          color += vec3(0.06, 0.23, 0.42) * rim * fade * 0.55;
+        }
+        if (alignment > 0.0 && discriminant > 0.0) {
+          vec3 normal = (dir * (alignment - sqrt(discriminant)) - planetCenter) / radius;
+          vec3 lightDir = normalize(vec3(-0.48, 0.7, -0.58));
+          float daylight = max(dot(normal, lightDir), 0.0);
+          // Fractal coastlines and wind-stretched cloud wisps avoid the
+          // hard cellular spots of a single high-frequency noise sample.
+          float continent = fbm(normal * 5.0 + vec3(8.0, 2.0, 5.0));
+          float land = smoothstep(0.49, 0.56, continent);
+          float curl = noise3(normal * 7.0 + vec3(2.0, 9.0, 4.0));
+          vec3 cloudCoord = normal * vec3(26.0, 44.0, 26.0)
+            + vec3(curl * 3.5, 0.0, curl * 2.0);
+          float clouds = smoothstep(0.48, 0.69, fbm(cloudCoord));
+          vec3 ocean = mix(vec3(0.009, 0.032, 0.065), vec3(0.035, 0.064, 0.055), land);
+          vec3 surface = mix(ocean, vec3(0.26, 0.32, 0.37), clouds * 0.65);
+          float limb = pow(1.0 - max(dot(normal, -dir), 0.0), 3.0);
+          vec3 world = surface * (0.08 + daylight * 1.35);
+          float glint = pow(max(dot(reflect(-lightDir, normal), -dir), 0.0), 80.0);
+          world += vec3(0.16, 0.23, 0.28) * glint * daylight * (1.0 - land) * (1.0 - clouds);
+          world += vec3(0.035, 0.14, 0.27) * limb * (0.1 + daylight);
+          color = mix(color, world, smoothstep(0.0, 0.0005, discriminant));
+        }
         gl_FragColor = vec4(color, 1.0);
       }
     `;
@@ -747,6 +791,7 @@ export class EnvironmentRenderer {
       const B = window.BABYLON;
       this._floorGlowMat.setColor3('swirlColor', new B.Color3(...palette.swirl));
     }
+    if (this._glassDeck) this._glassDeck.setAccent(palette.wallTrim);
     this._paintFloor();
   }
 
@@ -760,6 +805,7 @@ export class EnvironmentRenderer {
     if (!this._floorCanvas || !this._floorTex) return;
     const ctx = this._floorCanvas.getContext('2d');
     const palette = this.getPalette();
+    const random = deckRandom();
     ctx.clearRect(0, 0, 1024, 1024);
 
     const [baseCenter, baseMid] = palette.floorBase;
@@ -772,28 +818,45 @@ export class EnvironmentRenderer {
 
     const sp = palette.floorSpeckle;
     for (let i = 0; i < 2600; i++) {
-      const x = Math.random() * 1024;
-      const y = Math.random() * 1024;
-      const r = 0.6 + Math.random() * 2.2;
-      const a = 0.018 + Math.random() * 0.05;
+      const x = random() * 1024;
+      const y = random() * 1024;
+      const r = 0.6 + random() * 2.2;
+      const a = 0.018 + random() * 0.05;
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${Math.min(255, sp[0] + (Math.random() * 50 | 0))},${Math.min(255, sp[1] + (Math.random() * 60 | 0))},${sp[2]},${a.toFixed(3)})`;
+      ctx.fillStyle = `rgba(${Math.min(255, sp[0] + (random() * 50 | 0))},${Math.min(255, sp[1] + (random() * 60 | 0))},${sp[2]},${a.toFixed(3)})`;
       ctx.fill();
     }
 
     const [patchA, patchB] = palette.floorPatch;
     for (let i = 0; i < 26; i++) {
-      const x = Math.random() * 1024;
-      const y = Math.random() * 1024;
-      const w = 80 + Math.random() * 180;
-      const h = 40 + Math.random() * 110;
+      const x = random() * 1024;
+      const y = random() * 1024;
+      const w = 80 + random() * 180;
+      const h = 40 + random() * 110;
       const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(w, h));
       g.addColorStop(0, `rgba(${patchA[0]},${patchA[1]},${patchA[2]},0.08)`);
       g.addColorStop(0.45, `rgba(${patchB[0]},${patchB[1]},${patchB[2]},0.03)`);
       g.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = g;
       ctx.fillRect(x - w, y - h, w * 2, h * 2);
+    }
+
+    // Laminated optical glass: hairline inset machining and sparse corner
+    // registration marks. These are physical surface finish, not a luminous grid.
+    ctx.strokeStyle = 'rgba(145,206,231,0.14)';
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(14, 14, 996, 996);
+    ctx.strokeStyle = 'rgba(145,206,231,0.06)';
+    ctx.strokeRect(21, 21, 982, 982);
+    for (const x of [35, 989]) {
+      for (const y of [35, 989]) {
+        const sx = x < 512 ? 1 : -1, sy = y < 512 ? 1 : -1;
+        ctx.strokeStyle = 'rgba(179,228,247,0.2)';
+        ctx.beginPath();
+        ctx.moveTo(x + sx * 28, y); ctx.lineTo(x, y); ctx.lineTo(x, y + sy * 28);
+        ctx.stroke();
+      }
     }
 
     // Contact shadows (issue #182b): the ground UVs run u with +x and v with
@@ -846,7 +909,11 @@ export class EnvironmentRenderer {
       }
     }
 
-    this._floorTex.getContext().drawImage(this._floorCanvas, 0, 0);
+    // The source is translucent. Clear the destination before repainting so
+    // old obstacle shadows and palette tints cannot accumulate between rounds.
+    const target = this._floorTex.getContext();
+    target.clearRect(0, 0, 1024, 1024);
+    target.drawImage(this._floorCanvas, 0, 0);
     this._floorTex.update();
   }
 
@@ -871,14 +938,21 @@ export class EnvironmentRenderer {
     mat.emissiveTexture = floorTex;
     mat.diffuseColor = new B.Color3(0.12, 0.18, 0.28);
     mat.emissiveColor = new B.Color3(0.08, 0.14, 0.24);
-    mat.specularColor = new B.Color3(0.05, 0.07, 0.1);
-    mat.alpha = 0.34;
+    mat.specularColor = new B.Color3(0.62, 0.76, 0.88);
+    mat.specularPower = 160;
+    this._glassPolish = createGlassPolish(this.scene);
+    mat.specularTexture = this._glassPolish;
+    // Tight directional highlights show the optical polish. This uses the
+    // shipped StandardMaterial runtime; no extra refraction render pass.
+    mat.alpha = 0.29;
     mat.backFaceCulling = false;
 
     ground.material = mat;
     ground.isPickable = false;
     ground.receiveShadows = true;
     markStaticMesh(ground);
+    this._groundMat = mat;
+    this._glassDeck = new GlassDeck(this.scene, this.w, this.h, this.getPalette().wallTrim);
 
     // Add a second layer — very soft ambient energy motion with no grid structure.
     const glow = B.MeshBuilder.CreateGround('floorGlow', {
@@ -1621,6 +1695,8 @@ export class EnvironmentRenderer {
 
   getGlowExcludedMeshes() {
     const meshes = [this._skybox, this._ground, this._floorGlow];
+    // Optical glass and the structural underside must not turn into a halo.
+    if (this._glassDeck) meshes.push(...this._glassDeck.meshes);
     if (this._walls) meshes.push(...this._walls);
     // Light shafts are already additive haze — glowing them doubles it.
     if (this._lightShafts) meshes.push(...this._lightShafts.map((s) => s.plane));
@@ -1934,6 +2010,12 @@ export class EnvironmentRenderer {
 
   /** Dispose all environment resources. */
   dispose() {
+    if (this._glassDeck) { this._glassDeck.dispose(); this._glassDeck = null; }
+    if (this._glassPolish) { this._glassPolish.dispose(); this._glassPolish = null; }
+    if (this._ground) { this._ground.dispose(); this._ground = null; }
+    if (this._groundMat) { this._groundMat.dispose(); this._groundMat = null; }
+    if (this._floorTex) { this._floorTex.dispose(); this._floorTex = null; }
+    this._floorCanvas = null;
     if (this._spaceObjects) {
       for (const obj of this._spaceObjects) {
         obj.plane.dispose(); obj.mat.dispose();

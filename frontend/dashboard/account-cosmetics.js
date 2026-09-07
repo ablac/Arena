@@ -75,8 +75,7 @@
       ? source.account
       : source;
     const email = cleanText(rawAccount.email).toLowerCase();
-    const displayName = cleanText(rawAccount.display_name);
-    const legacyName = cleanText(rawAccount.name);
+    const publicUsername = typeof rawAccount.public_username === 'string' && /^[a-z0-9_]{3,24}$/.test(rawAccount.public_username) ? rawAccount.public_username : null;
     const emailVerified = rawAccount.email_verified === true || Boolean(cleanText(rawAccount.email_verified_at));
     const authenticated = typeof source.authenticated === 'boolean'
       ? source.authenticated
@@ -92,7 +91,8 @@
         id: cleanText(rawAccount.id),
         email,
         email_verified: emailVerified,
-        name: displayName || legacyName,
+        public_username: publicUsername,
+        name: publicUsername || 'Username unavailable',
       },
     };
   }
@@ -110,11 +110,7 @@
 
   function accountLabel(rawAccount) {
     const account = rawAccount && typeof rawAccount === 'object' ? rawAccount : {};
-    const displayName = cleanText(account.display_name);
-    const legacyName = cleanText(account.name);
-    return displayName || legacyName
-      || cleanText(account.email).toLowerCase()
-      || 'Angel account';
+    return typeof account.public_username === 'string' && /^[a-z0-9_]{3,24}$/.test(account.public_username) ? account.public_username : 'Username unavailable';
   }
 
   function normalizeBot(raw) {

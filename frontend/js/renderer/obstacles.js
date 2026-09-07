@@ -23,6 +23,7 @@
  */
 
 import { isEnabled } from '../settings.js';
+import { applyForgeSurface } from './forge-surfaces.js';
 import { MapWallsRenderer, buildWallGeometry, resolveEarcut } from './map-walls.js?v=20260718g';
 import { clusterObstacles, computeClusterOutline, buildClusterTrimGeometry } from './obstacle-clusters.js?v=20260718g';
 
@@ -191,8 +192,8 @@ export class ObstacleRenderer {
     this._mat = new B.StandardMaterial('obsMat', this.scene);
     this._mat.diffuseColor = new B.Color3(0.07, 0.085, 0.11);
     this._mat.emissiveColor = new B.Color3(0.015, 0.03, 0.05);
-    this._mat.specularColor = new B.Color3(0.12, 0.16, 0.24);
-    this._mat.specularPower = 96;
+    this._mat.specularColor = new B.Color3(0.24, 0.30, 0.40);
+    applyForgeSurface(this._mat, this.scene, 'gunmetal');
     this._mat.backFaceCulling = false;
     this._mat.freeze();
 

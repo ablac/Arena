@@ -6,13 +6,13 @@
  */
 
 import { CameraController } from './camera.js?v=20260718b';
-import { BotRenderer } from './bots.js?v=20260718o';
-import { EnvironmentRenderer } from './environment.js?v=20260903c';
-import { ObstacleRenderer } from './obstacles.js?v=20260903c';
-import { IntermissionDirector } from './intermission-director.js?v=20260718h';
+import { BotRenderer } from './bots.js?v=20260907b';
+import { EnvironmentRenderer } from './environment.js?v=20260907r';
+import { ObstacleRenderer } from './obstacles.js?v=20260907r';
+import { IntermissionDirector } from './intermission-director.js?v=20260907b';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
-import { TrailRenderer } from './trails.js?v=20260714e';
+import { TrailRenderer } from './trails.js?v=20260907b';
 import { ProjectileRenderer } from './projectiles.js?v=20260711a';
 import { GameplayRenderer } from './gameplay.js?v=20260718i';
 import { getState, isEnabled, onSettingsChange } from '../settings.js';
@@ -349,6 +349,7 @@ export class ArenaEngine {
       applyPipelineFlags();
       applyDepthFog();
       applyWorldTheme();
+      this._applySculptedLighting();
     });
     this.engine = engine;
     // The steady-state form of the bloom bind fault does NOT throw. It arrives
@@ -361,13 +362,7 @@ export class ArenaEngine {
       const device = engine._device;
       if (device && typeof device.addEventListener === 'function') {
         device.addEventListener('uncapturederror', (ev) => {
-          // Only act while the pass that is known to fail here is actually on.
-          // A healthy device produces none of these, so a small run of them
-          // with bloom enabled is the signal, not one-off noise.
-          if (!this.pipeline || !this.pipeline.bloomEnabled) return;
-          this._gpuErrors = (this._gpuErrors || 0) + 1;
-          if (this._gpuErrors < 3) return;
-          this._containBloomFailure(ev && ev.error ? ev.error : new Error('uncaptured WebGPU error'));
+          this._onUncapturedGPUError(ev && ev.error ? ev.error : new Error('uncaptured WebGPU error'));
         });
       }
     } catch (e) { /* no device to watch; the synchronous path still applies */ }
@@ -700,6 +695,113 @@ export class ArenaEngine {
     }
   }
 
+  /**
+   * The asynchronous half of GPU containment, and the only channel that sees
+   * the steady-state fault: once the bloom pass is dropped the same validation
+   * error keeps arriving as an uncaptured GPUValidationError that never throws
+   * into JS, so `_onRenderLoopError` is never called again.
+   *
+   * The previous form of this listener opened with
+   * `if (!this.pipeline || !this.pipeline.bloomEnabled) return;` and its own
+   * remedy sets `bloomEnabled` false, so it could never fire a second time. If
+   * the failing pass was NOT bloom, the first three errors dropped bloom, the
+   * fault continued, and every later error was discarded by that guard with no
+   * escalation left anywhere: a black canvas at a healthy frame rate, live HUD,
+   * live kill feed, and nothing in the log. That is the exact sequence
+   * scripts/test-bloom-failure-latch.mjs documents at the top of the file.
+   *
+   * So this escalates instead of latching once. Each rung is tried only after
+   * the previous one failed to stop the errors, and the counter resets between
+   * rungs so each is judged on its own evidence:
+   *
+   *   1. bloom          the pass observed to fail on a real WebGPU client
+   *   2. post-process   the fault is elsewhere in the pipeline (imageProcessing,
+   *                     fxaa, sharpen, grading), so drop the whole chain
+   *   3. backend        not post-processing at all, so leave WebGPU for WebGL,
+   *                     which `?webgpu=0` already proves renders this scene
+   *
+   * A healthy device emits none of these events, so no rung can run on a client
+   * that is working. Three errors per rung keeps one-off driver noise from
+   * demoting anyone.
+   * @private
+   */
+  _onUncapturedGPUError(err) {
+    this._gpuErrors = (this._gpuErrors || 0) + 1;
+    if (this._gpuErrors < 3) return;
+    this._gpuErrors = 0;
+
+    // Rung 1: the known-failing pass, while it is actually on.
+    if (this.pipeline && this.pipeline.bloomEnabled) {
+      this._containBloomFailure(err);
+      return;
+    }
+
+    // Rung 2: bloom is already off and the errors continue, so bloom was not
+    // the culprit. Reported because this path is otherwise invisible: only the
+    // synchronous catch calls the reporter, so a fault that never throws leaves
+    // no server-side trace at all.
+    if (this.pipeline) {
+      console.warn('[Arena] GPU errors continue with bloom off; dropping the post-process pipeline', err);
+      globalThis.__arenaReportError?.('gpu-uncaptured', err, {
+        source: 'engine.uncapturederror', stage: 'post-process',
+      });
+      try { this.pipeline.dispose(); } catch (e) { /* already gone */ }
+      this.pipeline = null;
+      return;
+    }
+
+    // Rung 3: nothing is post-processing any more and the device is still
+    // rejecting work, so the WebGPU backend cannot present this scene at all.
+    // Latched: the rebuild below re-enters init(), and without this flag a
+    // failing client would swap back to WebGPU at the next round boundary.
+    if (this._webGPUFallbackPending) return;
+    this._webGPUFallbackPending = true;
+    console.warn('[Arena] GPU errors persist with no post-processing; falling back to WebGL', err);
+    globalThis.__arenaReportError?.('gpu-uncaptured', err, {
+      source: 'engine.uncapturederror', stage: 'backend',
+    });
+    this._fallBackToWebGL();
+  }
+
+  /**
+   * Move a live session off WebGPU without a reload.
+   *
+   * Two things must happen before the rebuild, in this order. `_webGPUUnavailable`
+   * makes init() take the WebGL branch, and the canvas must be swapped because a
+   * canvas element keeps its context type for life: this one was claimed by
+   * 'webgpu' when the engine that is now failing was constructed, and a WebGL
+   * engine attached to it would render into a context the compositor never
+   * reads. That is the same blank arena, so the swap is not optional.
+   *
+   * init()'s own catch cannot do the swap for us here: it only swaps when a
+   * WebGPUEngine was constructed in THAT call, and with the flag set the WebGPU
+   * branch is never entered, so `engine` is undefined and the swap is skipped.
+   *
+   * The rebuild itself reuses `_rebuildForArenaSize` at the current dimensions
+   * rather than a new teardown path, so this inherits the dispose/init sequence
+   * and the camera-state restoration that the between-round resize already
+   * exercises every match.
+   * @private
+   */
+  _fallBackToWebGL() {
+    this._webGPUUnavailable = true;
+    try {
+      // Stop first. _rebuildForArenaSize disposes a moment later and dispose()
+      // would do this anyway, but the swap below detaches the element the live
+      // loop is still drawing into, and a frame aimed at a detached canvas is
+      // pointless work at best.
+      if (this.engine) this.engine.stopRenderLoop();
+      this.canvas = replaceCanvasElement(this.canvas);
+    } catch (e) {
+      console.error('[Arena] could not swap the canvas for the WebGL fallback', e);
+      return;
+    }
+    // Fire and forget: the rebuild is async and has its own error handling, and
+    // there is nothing useful to await inside a device error listener.
+    Promise.resolve(this._rebuildForArenaSize(this.arenaWidth, this.arenaHeight, this.state))
+      .catch((e) => console.error('[Arena] WebGL fallback rebuild failed', e));
+  }
+
   /** @private */
   _addLights() {
     const B = window.BABYLON;
@@ -715,6 +817,27 @@ export class ArenaEngine {
     hemi.diffuse = new B.Color3(0.66, 0.72, 0.88);
     hemi.specular = B.Color3.Black();
     hemi.groundColor = new B.Color3(0.09, 0.1, 0.12);
+    this.fillLight = hemi;
+
+    // A single non-shadowing rim gives alloy edges depth without another
+    // shadow map or post-process pass. The sun remains the only caster light.
+    const rim = new B.DirectionalLight('arenaRim', new B.Vector3(0.65, -0.35, -0.55), this.scene);
+    rim.diffuse = new B.Color3(0.35, 0.62, 1.0);
+    rim.specular = new B.Color3(0.45, 0.68, 1.0);
+    this.rimLight = rim;
+    this._applySculptedLighting();
+  }
+
+  /** Live quality toggle; restore the original two-light look when disabled. */
+  _applySculptedLighting() {
+    if (!this.sunLight || !this.fillLight || !this.rimLight) return;
+    const enabled = isEnabled('rendering', 'sculptedLighting');
+    this.sunLight.intensity = enabled ? 1.08 : 0.82;
+    const specular = enabled ? 0.64 : 0.34;
+    this.sunLight.specular.set(specular, specular, specular);
+    this.fillLight.intensity = enabled ? 0.40 : 0.46;
+    this.rimLight.intensity = enabled ? 0.28 : 0;
+    this.rimLight.setEnabled(enabled);
   }
 
   /**

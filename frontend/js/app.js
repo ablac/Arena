@@ -7,7 +7,7 @@ import './babylon-runtime.js?v=20260810d';
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260903c';
+import { ArenaEngine } from './renderer/engine.js?v=20260907b';
 import { HudRenderer } from './renderer/hud.js?v=20260810c';
 import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';
@@ -22,7 +22,7 @@ import { installClientErrorReporting } from './client-errors.js?v=20260903c';
 // Install before anything else so failures during startup are reported too.
 installClientErrorReporting();
 import { observeArenaSafeViewport } from './safe-viewport.js?v=20260718b';
-import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from './sign-in.js?v=20260825a';
+import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from './sign-in.js?v=20260905u';
 
 const ARENA_WIDTH = 2000;
 const ARENA_HEIGHT = 2000;

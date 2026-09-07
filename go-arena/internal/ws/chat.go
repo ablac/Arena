@@ -2,8 +2,6 @@ package ws
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,10 +52,12 @@ type chatWireMessage struct {
 }
 
 type chatStatusMessage struct {
-	Type    string `json:"type"`
-	Handle  string `json:"handle,omitempty"`
-	CanPost bool   `json:"can_post"`
-	Reason  string `json:"reason,omitempty"`
+	Type             string `json:"type"`
+	Handle           string `json:"handle,omitempty"`
+	CanPost          bool   `json:"can_post"`
+	Enabled          bool   `json:"enabled"`
+	Reason           string `json:"reason,omitempty"`
+	UsernameSetupURL string `json:"username_setup_url,omitempty"`
 }
 
 type chatHistoryMessage struct {
@@ -103,8 +103,8 @@ type ChatPostMessage struct {
 // ChatIdentity is the resolved posting identity for one connection. A nil
 // identity is a read-only (anonymous) connection.
 type ChatIdentity struct {
-	AccountID string
-	Name      string
+	AccountID      string
+	PublicUsername *string
 }
 
 // ChatStore is the persistence surface the hub needs. The default
@@ -114,6 +114,7 @@ type ChatStore interface {
 	Insert(ctx context.Context, m *db.ChatMessage) error
 	ChatBanUntil(ctx context.Context, accountID string) (*time.Time, error)
 	LinkedBotIDs(ctx context.Context, accountID string) ([]string, error)
+	PublicUsernames(context.Context, []string) (map[string]*string, error)
 }
 
 type dbChatStore struct{}
@@ -131,6 +132,10 @@ func (dbChatStore) LinkedBotIDs(ctx context.Context, accountID string) ([]string
 	return db.ListLinkedBotIDs(ctx, accountID)
 }
 
+func (dbChatStore) PublicUsernames(ctx context.Context, ids []string) (map[string]*string, error) {
+	return db.GetPublicUsernames(ctx, ids)
+}
+
 type chatClient struct {
 	conn     *websocket.Conn
 	send     chan []byte
@@ -144,9 +149,11 @@ type chatClient struct {
 // removed from the map under the hub lock), which is what lets broadcasts
 // skip the recover() dance the spectator path needs.
 type ChatHub struct {
-	mu      sync.Mutex
-	clients map[*chatClient]struct{}
-	ring    []db.ChatMessage
+	refreshMu   sync.Mutex
+	lastRefresh time.Time
+	mu          sync.Mutex
+	clients     map[*chatClient]struct{}
+	ring        []db.ChatMessage
 
 	store       ChatStore
 	isBotAlive  func(botID string) bool
@@ -393,6 +400,15 @@ func (h *ChatHub) post(ctx context.Context, c *chatClient, rawBody string) *chat
 		return &chatPostError{"RATE_LIMITED", "slow down: too many messages"}
 	}
 
+	usernames, err := h.store.PublicUsernames(ctx, []string{c.identity.AccountID})
+	if err != nil {
+		return &chatPostError{"POST_FAILED", "public username could not be verified, try again"}
+	}
+	username := db.NormalizePublicUsername(usernames[c.identity.AccountID])
+	if username == nil {
+		return &chatPostError{"USERNAME_REQUIRED", "Choose a public username at " + db.PublicUsernameSetupURL + " and sign in again to refresh Arena."}
+	}
+
 	// Fails CLOSED on a real DB error, matching the alive-lock check below:
 	// a banned poster must not slip through on a transient outage.
 	// db.ErrNoDatabase (dev mode, no ban data) is the one intentional
@@ -433,15 +449,22 @@ func (h *ChatHub) post(ctx context.Context, c *chatClient, rawBody string) *chat
 		}
 	}
 
+	// Keep insertion/publication ordered with identity refresh. A message
+	// committed just before a rename must be in the ring before that refresh
+	// takes its snapshot, so no old label can be appended after the refresh.
+	h.refreshMu.Lock()
+	defer h.refreshMu.Unlock()
 	msg := &db.ChatMessage{
 		AccountID: &c.identity.AccountID,
-		Handle:    c.handle,
+		Handle:    *username,
 		Body:      body,
 		IP:        c.ip,
 		CreatedAt: now,
 	}
 	if err := h.store.Insert(ctx, msg); err != nil {
-		if errors.Is(err, db.ErrNoDatabase) {
+		if errors.Is(err, db.ErrPublicUsernameRequired) {
+			return &chatPostError{"USERNAME_REQUIRED", "Choose a public username at " + db.PublicUsernameSetupURL + " and sign in again to refresh Arena."}
+		} else if errors.Is(err, db.ErrNoDatabase) {
 			msg.ID = h.memID.Add(1)
 		} else {
 			slog.Error("chat message insert failed", "error", err)
@@ -465,6 +488,9 @@ func (h *ChatHub) post(ctx context.Context, c *chatClient, rawBody string) *chat
 }
 
 func (h *ChatHub) historyPayload() []byte {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	h.RefreshPublicUsernames(ctx)
 	h.mu.Lock()
 	msgs := make([]chatWireMessage, 0, len(h.ring))
 	for _, m := range h.ring {
@@ -519,20 +545,110 @@ func sanitizeChatBody(raw string, maxRunes int) (string, bool) {
 	return body, true
 }
 
-// chatHandle derives the spoof-resistant display handle: the sanitized
-// account display name plus a stable discriminator hashed from the account
-// id. The name is user-settable at the IdP, so the discriminator is what
-// distinguishes two people who both call themselves "ADMIN"; hashing the
-// full id (rather than truncating it) avoids leaking the raw id prefix, and
-// 8 hex chars (32 bits) makes a targeted same-name collision impractical.
+// chatHandle uses only the explicit central alias, never a private display name.
 func chatHandle(identity *ChatIdentity) string {
-	name, _ := sanitizeChatBody(identity.Name, 24)
-	if name == "" {
-		name = "dev"
+	if identity == nil {
+		return ""
 	}
-	sum := sha256.Sum256([]byte(identity.AccountID))
-	disc := hex.EncodeToString(sum[:])[:8]
-	return name + "#" + disc
+	if value := db.NormalizePublicUsername(identity.PublicUsername); value != nil {
+		return *value
+	}
+	return ""
+}
+
+// RefreshPublicUsernames updates warm history and every open socket following
+// a local sign-in. Heartbeats also refresh, so other replicas catch changes.
+// Serializing refreshes prevents an older DB snapshot overwriting a newer one.
+func (h *ChatHub) RefreshPublicUsernames(ctx context.Context) { h.refreshPublicUsernames(ctx, false) }
+func (h *ChatHub) refreshPublicUsernames(ctx context.Context, throttled bool) {
+	h.refreshMu.Lock()
+	defer h.refreshMu.Unlock()
+	if throttled && time.Since(h.lastRefresh) < chatHeartbeatInterval {
+		return
+	}
+	h.lastRefresh = time.Now()
+	h.mu.Lock()
+	ids := make([]string, 0, len(h.clients)+len(h.ring))
+	for c := range h.clients {
+		if c.identity != nil {
+			ids = append(ids, c.identity.AccountID)
+		}
+	}
+	for _, m := range h.ring {
+		if m.AccountID != nil {
+			ids = append(ids, *m.AccountID)
+		}
+	}
+	h.mu.Unlock()
+	requested := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		requested[id] = true
+	}
+	usernames, err := h.store.PublicUsernames(ctx, ids)
+	if err != nil {
+		usernames = nil
+	} // Fail closed: no stale/private label during outage.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	changed := make(map[string]*string)
+	for i, m := range h.ring {
+		if m.AccountID != nil && !requested[*m.AccountID] {
+			continue
+		}
+		var username *string
+		if m.AccountID != nil {
+			username = usernames[*m.AccountID]
+		}
+		label := db.PublicUsernameLabel(username)
+		if m.Handle != label {
+			h.ring[i].Handle = label
+			if m.AccountID != nil {
+				changed[*m.AccountID] = username
+			}
+		}
+	}
+	for c := range h.clients {
+		if c.identity == nil || !requested[c.identity.AccountID] {
+			continue
+		}
+		handle := chatHandle(&ChatIdentity{PublicUsername: usernames[c.identity.AccountID]})
+		if c.handle != handle {
+			c.handle = handle
+			payload, _ := json.Marshal(chatStatus(c.identity, handle, h.Enabled()))
+			select {
+			case c.send <- payload:
+			default:
+				if c.conn != nil {
+					_ = c.conn.Close()
+				}
+			}
+			changed[c.identity.AccountID] = usernames[c.identity.AccountID]
+		}
+	}
+	for id, username := range changed {
+		payload, _ := json.Marshal(map[string]any{"type": "chat_identity", "account_id": id, "public_username": username})
+		// A dropped identity update would leave an old label on screen. Close
+		// backlogged sockets so reconnecting obtains current public history.
+		for c := range h.clients {
+			select {
+			case c.send <- payload:
+			default:
+				if c.conn != nil {
+					_ = c.conn.Close()
+				}
+			}
+		}
+	}
+}
+func chatStatus(identity *ChatIdentity, handle string, enabled bool) chatStatusMessage {
+	status := chatStatusMessage{Type: "chat_status", Handle: handle, Enabled: enabled, CanPost: identity != nil && handle != ""}
+	if identity == nil {
+		status.Reason = "sign_in_required"
+	} else if handle == "" {
+		status.Reason = "username_required"
+		status.UsernameSetupURL = db.PublicUsernameSetupURL
+	}
+	return status
 }
 
 // chatSameOrigin reports whether a browser request's Origin header matches
@@ -671,12 +787,15 @@ func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*htt
 		// signed in. An admin disabling chat mid-session reaches already
 		// registered clients through the chat_settings broadcast instead (see
 		// SetEnabled), not through this initial status.
-		status := chatStatusMessage{Type: "chat_status", CanPost: identity != nil}
+		// Re-resolve the cached alias before advertising posting ability.
 		if identity != nil {
-			status.Handle = client.handle
-		} else {
-			status.Reason = "sign_in_required"
+			usernames, err := hub.store.PublicUsernames(r.Context(), []string{identity.AccountID})
+			client.handle = ""
+			if err == nil {
+				client.handle = chatHandle(&ChatIdentity{PublicUsername: usernames[identity.AccountID]})
+			}
 		}
+		status := chatStatus(identity, client.handle, hub.Enabled())
 		statusPayload, _ := json.Marshal(status)
 		client.send <- statusPayload
 		client.send <- hub.historyPayload()
@@ -701,7 +820,7 @@ func ChatHandler(engine *game.GameEngine, hub *ChatHub, resolveSession func(*htt
 			hub.remove(client)
 		}()
 
-		go chatWriter(ctx, client)
+		go chatWriter(ctx, client, hub)
 
 		chatReader(r.Context(), hub, client)
 	}
@@ -787,7 +906,7 @@ func sendChatError(c *chatClient, code, message string) {
 // chatWriter drains the send channel, keeps the connection alive with ping
 // frames, and emits app-level heartbeats (browser JS cannot see ping frames,
 // and the frontend's stale-stream timer needs periodic application data).
-func chatWriter(ctx context.Context, c *chatClient) {
+func chatWriter(ctx context.Context, c *chatClient, hub *ChatHub) {
 	pingTicker := time.NewTicker(chatPingInterval)
 	heartbeatTicker := time.NewTicker(chatHeartbeatInterval)
 	defer pingTicker.Stop()
@@ -807,6 +926,9 @@ func chatWriter(ctx context.Context, c *chatClient) {
 			}
 
 		case now := <-heartbeatTicker.C:
+			refreshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			hub.refreshPublicUsernames(refreshCtx, true)
+			cancel()
 			payload, _ := json.Marshal(chatHeartbeat{
 				Type:       "heartbeat",
 				ServerTime: now.UnixMilli(),

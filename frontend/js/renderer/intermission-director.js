@@ -48,9 +48,10 @@
  */
 
 import { buildBoundaryContours, buildWallGeometry, contourNormals, resolveEarcut, WALL_HEIGHT } from './map-walls.js?v=20260718g';
-import { PILLAR_HEIGHT, composeObstacleLayout, appendObstacleBoxes, appendRoofDetail } from './obstacles.js?v=20260718h';
+import { PILLAR_HEIGHT, composeObstacleLayout, appendObstacleBoxes, appendRoofDetail } from './obstacles.js?v=20260907r';
 import { buildClusterTrimGeometry } from './obstacle-clusters.js?v=20260718g';
 import { parseColor } from './utils.js';
+import { inheritForgeSurface } from './forge-surfaces.js';
 import { isEnabled, onSettingsChange } from '../settings.js';
 
 /* ------------------------------------------------------------------------ */
@@ -368,7 +369,7 @@ function easeInQuad(t) { const u = clamp01(t); return u * u; }
 /* ------------------------------------------------------------------------ */
 
 export class IntermissionDirector {
-  /** @param {import('./engine.js').ArenaEngine} engine */
+  /** @param {import('./engine.js?v=20260907b').ArenaEngine} engine */
   constructor(engine) {
     this.engine = engine;
     /** @type {Object|null} live show state; null = inert */
@@ -1009,6 +1010,7 @@ export class IntermissionDirector {
       this._riseBodyMat = source.body.clone('intermissionRiseBodyMat');
     }
     this._riseBodyMat.unfreeze();
+    inheritForgeSurface(this._riseBodyMat, source.body, this.engine.scene);
     if (palette) {
       this._riseBodyMat.diffuseColor.set(...palette.obstacleBody.diffuse);
       this._riseBodyMat.emissiveColor.set(...palette.obstacleBody.emissive);

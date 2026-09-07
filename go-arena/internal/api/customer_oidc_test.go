@@ -20,11 +20,12 @@ import (
 )
 
 type fakeIdentityAuthority struct {
-	account     *db.CustomerAccount
-	email       string
-	issuer      string
-	subject     string
-	displayName string
+	account        *db.CustomerAccount
+	email          string
+	issuer         string
+	subject        string
+	displayName    string
+	publicUsername *string
 
 	// What the subscription sync recorded, in order. The fake plays the
 	// account row: a sync that repeats the current flag is not a change.
@@ -37,8 +38,12 @@ type fakeSubscriptionCall struct {
 	active    bool
 }
 
-func (f *fakeIdentityAuthority) UpsertVerifiedIdentity(_ context.Context, email, issuer, subject, displayName string) (*db.CustomerAccount, error) {
+func (f *fakeIdentityAuthority) UpsertVerifiedIdentity(_ context.Context, email, issuer, subject, displayName string, publicUsername *string) (*db.CustomerAccount, error) {
 	f.email, f.issuer, f.subject, f.displayName = email, issuer, subject, displayName
+	f.publicUsername = publicUsername
+	if f.account != nil {
+		f.account.PublicUsername = publicUsername
+	}
 	return f.account, nil
 }
 
@@ -156,7 +161,7 @@ func TestCustomerVerifiedIdentityUsesPlatformAuthority(t *testing.T) {
 	handler := newTestCustomerOIDCHandler()
 	handler.authority = authority
 
-	account, err := handler.bindVerifiedIdentity(t.Context(), "owner@example.com", "https://identity.example", "subject-1", "Owner")
+	account, err := handler.bindVerifiedIdentity(t.Context(), "owner@example.com", "https://identity.example", "subject-1", "Owner", nil)
 	if err != nil {
 		t.Fatalf("bind verified identity: %v", err)
 	}

@@ -301,6 +301,12 @@ for (const [name, source] of [['dashboard.js', read('frontend/dashboard/dashboar
     `${name} must not describe current behaviour in terms of a retired feature`);
 }
 
+reset(SIGNED_IN);
+const refresh = await load('public-username-refresh');
+refresh.watchSignInState();
+assert.equal((await refresh.startSignIn({refresh: true})).status, 'signed-in');
+assert.deepEqual(state.calls, ['consent', 'open', 'fetch'], 'Refresh username must repeat the existing verified sign-in even while authenticated');
+
 rmSync(dir, {recursive: true, force: true});
 
 console.log('one-click sign-in: ok');
