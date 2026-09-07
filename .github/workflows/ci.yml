@@ -213,6 +213,9 @@ jobs:
           node scripts/test-engine-webgpu-fallback.mjs
           node scripts/test-rendering-safety-guardrails.mjs
           node scripts/test-bloom-failure-latch.mjs
+          node scripts/test-gpu-error-escalation.mjs
+          node scripts/test-glsl-transpiler-timeout.mjs
+          node scripts/test-engine-init-failure-surface.mjs
           node scripts/test-spectator-startup-budget.mjs
           node scripts/test-trail-budget.mjs
           node scripts/test-cosmetic-trails.mjs

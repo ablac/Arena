@@ -9,13 +9,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="mobile.css?v=20260718f">
+  <link rel="stylesheet" href="mobile.css?v=20260907a">
   <link rel="stylesheet" href="../css/chat.css?v=20260714b">
   <link rel="stylesheet" href="mobile-chat-dashboard.css?v=20260714a">
   <link rel="stylesheet" href="../css/brand-lockup.css?v=20260714a">
   <link rel="modulepreload" href="../assets/vendor/babylon-runtime.5c31912818a4.min.js">
   <script defer src="../js/cosmetic-themes.js?v=20260713f"></script>
-  <script type="module" src="mobile.js?v=20260905u"></script>
+  <script type="module" src="mobile.js?v=20260907a"></script>
   <script type="module" src="../js/chat-panel.js?v=20260905p"></script>
 </head>
 <body>
@@ -28,6 +28,19 @@
   <!-- Full-viewport 3D stage -->
   <div id="stage">
     <canvas id="arena-canvas" aria-label="Live arena 3D view"></canvas>
+    <!-- Shown by mobile.js only when the 3D engine fails to start at all.
+         Until this existed that failure was silent: a black stage under a live
+         sheet, with nothing to tell the spectator what had gone wrong. -->
+    <div class="arena-render-fallback" id="arena-render-fallback" hidden>
+      <h3>The 3D arena could not start on this device</h3>
+      <p id="arena-render-fallback-detail">
+        The match is still running and the live feed is up to date.
+      </p>
+      <div class="arena-render-fallback-actions">
+        <a class="arena-render-fallback-action" id="arena-render-fallback-retry"
+           href="?webgpu=0">Retry in compatibility mode</a>
+      </div>
+    </div>
   </div>
 
   <!-- Slim floating top bar -->
