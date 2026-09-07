@@ -84,6 +84,10 @@ export class ForgeAnimState {
     this.respawnDuration = 0.55;
     this.elapsed = 0;
     this.gaitPhase = 0;
+    this.locomotionWeight = 0;
+    this.visualSpeed = 0;
+    this.accelerationLean = 0;
+    this.turnLean = 0;
     this.woundLevel = 0;
     this.targetRotY = 0;
     this.moveAngle = 0;
@@ -355,10 +359,13 @@ function applyFormFlavor(pose, state, moving, speed) {
  * @param {number} speedNow normalized visual speed
  * @param {boolean} alive
  * @param {boolean} reducedMotion
+ * @param {boolean} secondaryMotion optional weight shifts and form flavor
+ * @param {number} travelDistance rendered world distance, or -1 for preview cadence
  */
 export function sampleForgePose(
   profile, state, dt,
   movingNow = false, speedNow = 0, alive = true, reducedMotion = false,
+  secondaryMotion = true, travelDistance = -1,
 ) {
   const step = Math.max(0, Math.min(Number.isFinite(dt) ? dt : 0, 0.1));
   const pose = state.pose;
@@ -380,9 +387,23 @@ export function sampleForgePose(
   const speed = clamp01(speedNow);
   const moving = movingNow === true && speed > 0.01;
   const restrained = reducedMotion === true;
+  const secondary = !restrained && secondaryMotion;
+  const blend = 1 - Math.exp(-step * 12);
+  state.locomotionWeight += ((moving ? 1 : 0) - state.locomotionWeight) * blend;
+  const previousSpeed = state.visualSpeed;
+  state.visualSpeed += (speed - state.visualSpeed) * blend;
+  // Weight shifts into acceleration and back over the heels on braking.
+  // Filtered speed keeps snapshot jitter from shaking the torso.
+  const acceleration = step > 0 ? (state.visualSpeed - previousSpeed) / step : 0;
+  state.accelerationLean += (Math.max(-0.12, Math.min(0.16, acceleration * 0.045))
+    - state.accelerationLean) * (1 - Math.exp(-step * 9));
   if (moving) {
-    state.gaitPhase += step * profile.motion.strideHz * (form?.stride || 1)
-      * TAU * (0.55 + speed * 0.65);
+    // Real-world travel drives live gait. Preview samplers which have no
+    // position input retain a speed-driven cycle with the same class flavor.
+    const cycle = travelDistance >= 0
+      ? travelDistance / (38 * profile.proportions.leg)
+      : step * profile.motion.strideHz * (0.55 + speed * 0.65);
+    state.gaitPhase += Math.min(cycle, step * 4) * (form?.stride || 1) * TAU;
   }
 
   if (!restrained) {
@@ -393,23 +414,49 @@ export function sampleForgePose(
     pose[P.headYaw] = Math.sin(state.elapsed * 0.63) * 0.045;
   }
 
-  if (moving) {
-    const gait = Math.sin(state.gaitPhase);
+  if (state.locomotionWeight > 0.0001) {
+    const phase = (state.gaitPhase / TAU) % 1;
+    // Each foot spends 60% of the cycle pushing against the floor, then
+    // recovers with a bent knee. Zero derivatives at lift-off/contact avoid
+    // the rigid pendulum reversal of a plain sine gait.
+    const leftPhase = phase;
+    const rightPhase = (phase + 0.5) % 1;
+    const leftSwing = leftPhase < 0.6 ? 0 : Math.sin((leftPhase - 0.6) / 0.4 * Math.PI);
+    const rightSwing = rightPhase < 0.6 ? 0 : Math.sin((rightPhase - 0.6) / 0.4 * Math.PI);
+    const leftStride = leftPhase < 0.6
+      ? 1 - 2 * smooth(leftPhase / 0.6) : -1 + 2 * smooth((leftPhase - 0.6) / 0.4);
+    const rightStride = rightPhase < 0.6
+      ? 1 - 2 * smooth(rightPhase / 0.6) : -1 + 2 * smooth((rightPhase - 0.6) / 0.4);
     const legScale = Number.isFinite(form?.legScale) ? form.legScale : 1;
-    const gaitScale = (restrained ? 0.36 : 1) * (0.42 + speed * 0.58) * legScale;
-    pose[P.legLPitch] += gait * 0.62 * gaitScale;
-    pose[P.legRPitch] -= gait * 0.62 * gaitScale;
-    pose[P.kneeLPitch] += Math.max(0, -gait) * 0.52 * gaitScale;
-    pose[P.kneeRPitch] += Math.max(0, gait) * 0.52 * gaitScale;
-    pose[P.armLPitch] -= gait * 0.34 * gaitScale;
-    pose[P.armRPitch] += gait * 0.34 * gaitScale;
-    if (!restrained) {
-      pose[P.bodyY] += Math.abs(Math.cos(state.gaitPhase))
-        * profile.motion.bob * (form?.bob || 1) * 0.46 * gaitScale;
+    const gaitScale = (restrained ? 0.36 : 1)
+      * (0.42 + state.visualSpeed * 0.58) * legScale * state.locomotionWeight;
+    pose[P.legLPitch] += leftStride * 0.58 * gaitScale;
+    pose[P.legRPitch] += rightStride * 0.58 * gaitScale;
+    pose[P.kneeLPitch] += leftSwing * 0.88 * gaitScale;
+    pose[P.kneeRPitch] += rightSwing * 0.88 * gaitScale;
+    // Keep armed upper bodies quieter during a strike; the attack layer
+    // remains the single owner of the actual hand/weapon contact pose.
+    const carry = state.attackTimer >= 0 ? 0.25 : 1;
+    pose[P.armLPitch] -= leftStride * 0.30 * gaitScale * carry;
+    pose[P.armRPitch] -= rightStride * 0.30 * gaitScale * carry;
+    pose[P.elbowLPitch] += leftSwing * 0.12 * gaitScale * carry;
+    pose[P.elbowRPitch] += rightSwing * 0.12 * gaitScale * carry;
+    if (secondary) {
+      const weight = profile.motion.weight;
+      pose[P.bodyY] += (Math.cos(state.gaitPhase * 2) * 0.32 - 0.18)
+        * profile.motion.bob * (form?.bob || 1) * gaitScale;
+      pose[P.bodyRoll] += Math.sin(state.gaitPhase) * 0.045 * gaitScale;
+      pose[P.bodyYaw] += Math.sin(state.gaitPhase) * 0.055 * gaitScale;
+      pose[P.bodyPitch] += state.visualSpeed * (0.055 + weight * 0.025);
     }
   }
 
-  if (!restrained) applyFormFlavor(pose, state, moving, speed);
+  if (secondary) {
+    pose[P.bodyPitch] += state.accelerationLean;
+    pose[P.bodyRoll] += state.turnLean;
+    pose[P.headYaw] -= state.turnLean * 0.65;
+    applyFormFlavor(pose, state, moving, speed * state.locomotionWeight);
+  }
   if (form?.posture) pose[P.bodyPitch] += form.posture;
 
   const attackT = advance(state, 'attackTimer', 'attackDuration', step);
@@ -481,8 +528,11 @@ function shortestAngle(from, to) {
  * thrust channels are negated exactly once here because the articulated
  * model's face points down local -Z.
  */
-export function updateForgeCharacter(entry, dt, reducedMotion = false, highDetail = true) {
+export function updateForgeCharacter(
+  entry, dt, reducedMotion = false, highDetail = true, secondaryMotion = true,
+) {
   if (!entry?.joints || !entry.anim) return;
+  const step = Math.max(0, Math.min(Number.isFinite(dt) ? dt : 0, 0.1));
   const root = entry.root;
   const lastX = Number.isFinite(entry._poseX) ? entry._poseX : root.position.x;
   const lastZ = Number.isFinite(entry._poseZ) ? entry._poseZ : root.position.z;
@@ -490,17 +540,26 @@ export function updateForgeCharacter(entry, dt, reducedMotion = false, highDetai
   const dz = root.position.z - lastZ;
   entry._poseX = root.position.x;
   entry._poseZ = root.position.z;
-  const speed = Math.min(1, Math.hypot(dx, dz) / Math.max(0.001, dt * 14));
-  const moving = dx * dx + dz * dz > 0.0004;
+  const distance = Math.hypot(dx, dz);
+  // A teleport/respawn moves the gameplay root without producing a sprint.
+  // Also consume position changes on a paused frame without turning them
+  // into a velocity spike when rendering resumes.
+  const travel = step > 0 && Number.isFinite(distance) && distance <= Math.max(12, step * 600)
+    ? distance : 0;
+  const speed = Math.min(1, travel / Math.max(0.001, step * 100));
+  const moving = travel > step * 0.25;
   if (moving && entry.anim.attackTimer < 0) {
     entry.anim.targetRotY = Math.atan2(dx, dz);
     entry.anim.moveAngle = entry.anim.targetRotY;
   }
-  root.rotation.y += shortestAngle(root.rotation.y, entry.anim.targetRotY) * Math.min(1, dt * 10);
+  const turn = shortestAngle(root.rotation.y, entry.anim.targetRotY);
+  root.rotation.y += turn * (1 - Math.exp(-step * 10));
+  const turnTarget = moving ? Math.max(-0.13, Math.min(0.13, turn * speed * 0.18)) : 0;
+  entry.anim.turnLean += (turnTarget - entry.anim.turnLean) * (1 - Math.exp(-step * 9));
 
   const pose = sampleForgePose(
-    entry.profile, entry.anim, dt,
-    moving, speed, entry.isAlive, reducedMotion,
+    entry.profile, entry.anim, step,
+    moving, speed, entry.isAlive, reducedMotion, secondaryMotion, travel,
   );
   // Distant bots still advance action/death clocks and facing, but their
   // articulated meshes are disabled, so rewriting every joint is wasted work.

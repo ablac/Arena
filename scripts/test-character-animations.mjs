@@ -154,3 +154,91 @@ assert.doesNotMatch(botSource, /value:\s*new B\.Vector3\(1,\s*1,\s*1\)/,
   'the impact squash must never end on an absolute unit scale');
 
 console.log('all Forge-class motion states are allocation-stable, finite, reduced-motion aware, and return to rest');
+
+
+// Locomotion is driven by actual travel, so a 120 Hz display cannot make a
+// bot take more steps than a 30 Hz display following the same trajectory.
+function walkingEntry() {
+  return {
+    ...spearEntry, root: joint(), anim: new ForgeAnimState('spear'),
+    joints: Object.fromEntries(Object.keys(spearEntry.joints).map(key => [key, joint()])),
+    weaponPoseNodes: [], weaponBases: [],
+  };
+}
+function travelAt(fps) {
+  const entry = walkingEntry();
+  updateForgeCharacter(entry, 0, false, true);
+  for (let frame = 0; frame < fps * 2; frame += 1) {
+    entry.root.position.z += 50 / fps;
+    updateForgeCharacter(entry, 1 / fps, false, true);
+  }
+  return entry;
+}
+const walk30 = travelAt(30);
+const walk120 = travelAt(120);
+assert.ok(Math.abs(walk30.anim.gaitPhase - walk120.anim.gaitPhase) < 0.00001,
+  'equal travel must produce the same stride phase across refresh rates');
+assert.ok(Math.abs(walk30.anim.locomotionWeight - walk120.anim.locomotionWeight) < 0.00001,
+  'locomotion blending must be frame-rate independent');
+const beforeStop = walk120.anim.pose[POSE_CHANNELS.indexOf('legLPitch')];
+updateForgeCharacter(walk120, 1 / 120, false, true);
+assert.ok(Math.abs(walk120.anim.pose[POSE_CHANNELS.indexOf('legLPitch')] - beforeStop) < 0.08,
+  'stopping must settle the legs rather than snap them to rest');
+for (let frame = 0; frame < 240; frame += 1) updateForgeCharacter(walk120, 1 / 120, false, true);
+assert.ok(Math.abs(walk120.anim.pose[POSE_CHANNELS.indexOf('legLPitch')]) < 0.001,
+  'stationary legs must settle to rest');
+const preTeleportPhase = walk120.anim.gaitPhase;
+walk120.root.position.x += 4000;
+updateForgeCharacter(walk120, 1 / 60, false, true);
+assert.equal(walk120.anim.gaitPhase, preTeleportPhase,
+  'teleport discontinuities must not count as thousands of running steps');
+for (const invalidDt of [NaN, Infinity, -1, 0]) {
+  updateForgeCharacter(walk120, invalidDt, false, true);
+  for (const node of [walk120.root, ...Object.values(walk120.joints)]) {
+    for (const axis of ['x', 'y', 'z']) assert.ok(Number.isFinite(node.rotation[axis]));
+  }
+}
+const farWalk = walkingEntry();
+updateForgeCharacter(farWalk, 0, false, false);
+farWalk.root.position.z = 1;
+updateForgeCharacter(farWalk, 1 / 60, false, false);
+assert.ok(farWalk.anim.gaitPhase > 0, 'far LOD must keep stride state current');
+assert.equal(farWalk.joints.body.position.y, 0, 'far LOD must not rewrite disabled joints');
+
+const slowWalker = walkingEntry();
+const fastWalker = walkingEntry();
+updateForgeCharacter(slowWalker, 0);
+updateForgeCharacter(fastWalker, 0);
+for (let frame = 0; frame < 120; frame += 1) {
+  slowWalker.root.position.z += 0.25;
+  fastWalker.root.position.z += 0.5;
+  updateForgeCharacter(slowWalker, 1 / 60);
+  updateForgeCharacter(fastWalker, 1 / 60);
+}
+assert.ok(Math.abs(fastWalker.anim.gaitPhase - slowWalker.anim.gaitPhase * 2) < 0.00001,
+  'twice the travel must take twice the steps below the sprint cadence cap');
+const banked = walkingEntry();
+const unbanked = walkingEntry();
+const restrainedWalker = walkingEntry();
+for (const entry of [banked, unbanked, restrainedWalker]) updateForgeCharacter(entry, 0);
+for (let frame = 0; frame < 15; frame += 1) {
+  for (const entry of [banked, unbanked, restrainedWalker]) entry.root.position.x += 1;
+  updateForgeCharacter(banked, 1 / 60, false, true, true);
+  updateForgeCharacter(unbanked, 1 / 60, false, true, false);
+  updateForgeCharacter(restrainedWalker, 1 / 60, true, true, true);
+}
+assert.ok(Math.abs(banked.joints.body.rotation.x - unbanked.joints.body.rotation.x) > 0.025,
+  'secondary motion must visibly shift body weight during acceleration');
+assert.equal(restrainedWalker.joints.body.rotation.z, 0,
+  'reduced motion must suppress turn banking and lateral weight shift');
+assert.equal(unbanked.anim.gaitPhase, banked.anim.gaitPhase,
+  'disabling secondary motion must preserve locomotion state');
+assert.equal(unbanked.root.rotation.y, banked.root.rotation.y,
+  'disabling secondary motion must preserve gameplay facing');
+for (let frame = 0; frame < 180; frame += 1) {
+  updateForgeCharacter(banked, 1 / 60, false, true, false);
+}
+assert.ok(Math.abs(banked.anim.accelerationLean) < 0.0001 && Math.abs(banked.anim.turnLean) < 0.0001,
+  'hidden secondary state must keep settling instead of freezing until re-enabled');
+
+console.log('Forge locomotion preserves cadence, blends stops, rejects teleport spikes, and respects motion controls');
