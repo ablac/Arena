@@ -117,14 +117,35 @@ func InsertChatMessage(ctx context.Context, m *ChatMessage) error {
 	if Pool == nil {
 		return ErrNoDatabase
 	}
-	err := Pool.QueryRow(ctx,
-		`INSERT INTO chat_messages (account_id, handle, body, ip)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, created_at`,
-		m.AccountID, m.Handle, m.Body, m.IP,
-	).Scan(&m.ID, &m.CreatedAt)
+	// Read under the account lock also used by identity sync. This closes
+	// removal/rename races between the WebSocket posting check and insertion.
+	tx, err := Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var username *string
+	if m.AccountID == nil {
+		return ErrPublicUsernameRequired
+	}
+	err = tx.QueryRow(ctx, `SELECT public_username FROM customer_accounts WHERE id=$1 FOR SHARE`, *m.AccountID).Scan(&username)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrPublicUsernameRequired
+	}
+	if err != nil {
+		return err
+	}
+	username = NormalizePublicUsername(username)
+	if username == nil {
+		return ErrPublicUsernameRequired
+	}
+	m.Handle = *username
+	err = tx.QueryRow(ctx, `INSERT INTO chat_messages (account_id,handle,body,ip) VALUES($1,$2,$3,$4) RETURNING id,created_at`, m.AccountID, m.Handle, m.Body, m.IP).Scan(&m.ID, &m.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("InsertChatMessage: %w", err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return err
 	}
 	if err := pruneChatMessages(ctx, config.C.ChatHistorySize); err != nil {
 		// The message itself is already durably saved; a failed prune just
@@ -166,10 +187,10 @@ func ListRecentChatMessages(ctx context.Context, limit int) ([]ChatMessage, erro
 		return nil, nil
 	}
 	rows, err := Pool.Query(ctx,
-		`SELECT id, account_id, handle, body, created_at
-		 FROM chat_messages
-		 WHERE hidden = false
-		 ORDER BY id DESC
+		`SELECT m.id, m.account_id, COALESCE(a.public_username, 'Username unavailable'), m.body, m.created_at
+		 FROM chat_messages m LEFT JOIN customer_accounts a ON a.id = m.account_id
+		 WHERE m.hidden = false
+		 ORDER BY m.id DESC
 		 LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("ListRecentChatMessages: %w", err)
@@ -182,6 +203,7 @@ func ListRecentChatMessages(ctx context.Context, limit int) ([]ChatMessage, erro
 		if err := rows.Scan(&m.ID, &m.AccountID, &m.Handle, &m.Body, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("ListRecentChatMessages scan: %w", err)
 		}
+		m.Handle = PublicUsernameLabel(&m.Handle)
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {

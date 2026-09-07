@@ -37,9 +37,9 @@ const css = readFileSync(new URL('../frontend/css/chat.css', import.meta.url), '
 assert.match(css, /\.chat-bubble\.is-disabled::after[\s\S]*\.fab-chat\.is-disabled::after/, 'disabled chat launchers need the visual strike');
 source = source
   .replace("import { apiPath, wsURL } from './paths.js?v=20260710a';", "const apiPath = (path) => path; const wsURL = (path) => path;")
-  .replace("import { openProfilePopup } from './profile-popup.js?v=20260714a';", 'const openProfilePopup = () => {};')
+  .replace("import { openProfilePopup, updateProfilePopupUsername } from './profile-popup.js?v=20260905p';", 'const openProfilePopup = () => {}; const updateProfilePopupUsername = () => {};')
   .replace(
-    "import { startSignIn, watchSignInState } from './sign-in.js?v=20260825a';",
+    "import { startSignIn, watchSignInState } from './sign-in.js?v=20260905u';",
     'const startSignIn = async () => ({status: \'closed\'}); const watchSignInState = () => {};',
   );
 

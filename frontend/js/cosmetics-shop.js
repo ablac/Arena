@@ -82,44 +82,81 @@ export function dashboardCosmeticsPath(pathname = window.location.pathname) {
   return appPath('/?dash_open=1&dash_tab=cosmetics', pathname);
 }
 
-/**
- * Where subscribing goes: the Angel account, never Arena.
- *
- * The catalog carries an absolute https URL or nothing at all, and this
- * refuses anything else. Not a defence against a hostile catalog -- it comes
- * from Arena's own API -- but a floor under a misconfigured deployment: a
- * Subscribe control that falls back to the Dashboard beats one that
- * navigates somewhere unintended.
- */
-/**
- * What the subscription costs, exactly as Accounts sells it.
- *
- * Arena charges nothing and holds no price: this formats a figure the catalog
- * quoted from the Accounts product catalog, and returns nothing at all when
- * there is no figure to quote. Saying "how much" from a number of our own
- * would put a second price in the world that can disagree with the card.
- */
-export function subscriptionPrice(subscription) {
-  const cents = Number(subscription?.price_cents);
-  if (!Number.isFinite(cents) || cents <= 0) return null;
-  const currency = typeof subscription?.currency === 'string' && subscription.currency.trim()
-    ? subscription.currency.trim().toUpperCase()
-    : 'USD';
-  let amount;
-  try {
-    amount = new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency,
-      minimumFractionDigits: cents % 100 === 0 ? 2 : 2,
-    }).format(cents / 100);
-  } catch (err) {
-    // An unrecognised currency code is not a reason to show nothing.
-    amount = `${(cents / 100).toFixed(2)} ${currency}`;
-  }
-  const interval = typeof subscription?.interval === 'string' ? subscription.interval.trim() : '';
-  return {amount, interval};
+const PRICE_REFRESH_MS = 30_000;
+
+function money(cents, currency) {
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency', currency, minimumFractionDigits: 2,
+  }).format(cents / 100);
 }
 
+/** A current Accounts base quote, including its billed seat quantity. */
+export function subscriptionPrice(subscription, now = Date.now()) {
+  const cents = subscription?.price_cents;
+  const quantity = subscription?.seats_included;
+  const validUntil = Date.parse(subscription?.price_valid_until);
+  const currency = String(subscription?.currency || '').trim().toUpperCase();
+  const interval = subscription?.interval;
+  if (subscription?.price_available !== true || !Number.isFinite(validUntil) || now >= validUntil
+      || !Number.isSafeInteger(cents) || cents <= 0
+      || !Number.isSafeInteger(quantity) || quantity <= 0 || !Number.isSafeInteger(cents * quantity)
+      || currency !== 'USD' || !['month', 'year'].includes(interval)) return null;
+  return {
+    amount: money(cents * quantity, currency),
+    unitAmount: money(cents, currency),
+    quantity, interval, validUntil,
+  };
+}
+
+/** Offer words stay separate from the base total: a fixed discount is not per seat. */
+export function subscriptionSale(subscription, now = Date.now()) {
+  if (!subscriptionPrice(subscription, now)) return null;
+  const sale = subscription?.sale;
+  if (!sale || typeof sale.id !== 'string' || typeof sale.name !== 'string') return null;
+  const startsAt = sale.startsAt == null ? null : Date.parse(sale.startsAt);
+  const endsAt = sale.endsAt == null ? null : Date.parse(sale.endsAt);
+  if ((startsAt !== null && !Number.isFinite(startsAt)) || (endsAt !== null && !Number.isFinite(endsAt))
+      || (startsAt !== null && endsAt !== null && startsAt >= endsAt)
+      || (endsAt !== null && now >= endsAt)) return null;
+  const percent = sale.percentOff;
+  const fixed = sale.amountOffCents;
+  if ((percent == null) === (fixed == null)) return null;
+  let discount;
+  if (percent != null && typeof percent === 'number' && percent > 0 && percent <= 100) {
+    discount = `${percent}% off the subscription`;
+  } else if (fixed != null && Number.isSafeInteger(fixed) && fixed > 0) {
+    discount = `${money(fixed, 'USD')} off the subscription`;
+  } else {
+    return null;
+  }
+  let duration;
+  if (sale.duration === 'once') duration = 'on the first payment';
+  else if (sale.duration === 'forever') duration = 'for the life of the subscription';
+  else if (sale.duration === 'repeating' && Number.isSafeInteger(sale.durationMonths) && sale.durationMonths > 0) {
+    duration = `for the first ${sale.durationMonths} month${sale.durationMonths === 1 ? '' : 's'}`;
+  } else return null;
+  const dateLabel = value => new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC',
+  }).format(value) + ' UTC';
+  const upcoming = startsAt !== null && now < startsAt;
+  const redemption = startsAt !== null && endsAt !== null
+    ? `Redeem from ${dateLabel(startsAt)} until ${dateLabel(endsAt)}.`
+    : startsAt !== null ? `Redeem from ${dateLabel(startsAt)}.`
+      : endsAt !== null ? `Redeem until ${dateLabel(endsAt)}.` : 'Redeem in your Angel account.';
+  return {
+    text: `${upcoming ? 'Upcoming offer' : 'Offer'} — ${sale.name}: ${discount} ${duration}. ${redemption}`,
+    upcoming,
+  };
+}
+
+/** Refresh at a sale boundary or quote expiry, with a 30-second upper bound. */
+export function subscriptionRefreshDelay(subscription, now = Date.now()) {
+  const boundaries = [subscription?.price_valid_until, subscription?.sale?.startsAt, subscription?.sale?.endsAt]
+    .map(value => Date.parse(value)).filter(value => Number.isFinite(value) && value > now);
+  return Math.max(100, Math.min(PRICE_REFRESH_MS, ...boundaries.map(value => value - now)));
+}
+
+/** Where subscribing goes: the configured Angel account URL, never Arena. */
 export function subscriptionURL(value) {
   const raw = typeof value === 'string' ? value.trim() : '';
   if (!raw.startsWith('https://') || raw.length <= 'https://'.length) return '';
@@ -172,6 +209,9 @@ export function initCosmeticsShop(root, options = {}) {
 
   const pathname = options.pathname || window.location.pathname;
   const fetchImpl = options.fetchImpl || window.fetch.bind(window);
+  const now = options.now || Date.now;
+  const setTimer = options.setTimeoutImpl || globalThis.setTimeout.bind(globalThis);
+  const clearTimer = options.clearTimeoutImpl || globalThis.clearTimeout.bind(globalThis);
   const previewFactory = options.previewFactory || (canvas => new CosmeticShopPreview(canvas));
   const requestedPackID = options.requestedPackID
     ?? new URLSearchParams(window.location.search).get('pack')
@@ -209,6 +249,7 @@ export function initCosmeticsShop(root, options = {}) {
     subscriptionAction: root.querySelector('[data-shop-subscription-action]'),
     subscriptionState: root.querySelector('[data-shop-subscription-state]'),
     subscriptionPrice: root.querySelector('[data-shop-subscription-price]'),
+    subscriptionSale: root.querySelector('[data-shop-subscription-sale]'),
   };
 
   if (!elements.canvas || !elements.packList || !elements.detail || !elements.itemList) return null;
@@ -219,7 +260,7 @@ export function initCosmeticsShop(root, options = {}) {
     // the catalog arrives or when the operator has not configured one, in
     // which case the controls point at the Dashboard, which says so.
     subscriptionURL: '',
-    subscriptionPrice: null,
+    subscriptionQuote: null,
     query: '',
     category: 'all',
     kind: 'all',
@@ -234,6 +275,9 @@ export function initCosmeticsShop(root, options = {}) {
     destroyed: false,
   };
   const cleanups = [];
+  let refreshTimer = null;
+  let catalogRequest = null;
+  let requestAbort = null;
 
   const listen = (target, type, handler, settings) => {
     if (!target) return;
@@ -286,22 +330,34 @@ export function initCosmeticsShop(root, options = {}) {
       elements.subscriptionAction.setAttribute('aria-disabled', 'false');
     }
     if (elements.subscriptionPrice) {
-      const price = state.subscriptionPrice;
+      const price = subscriptionPrice(state.subscriptionQuote, now());
       elements.subscriptionPrice.hidden = !price;
       elements.subscriptionPrice.replaceChildren();
       if (price) {
-        elements.subscriptionPrice.append(price.amount);
+        elements.subscriptionPrice.append(`Base price: ${price.amount}`);
         if (price.interval) {
           const per = document.createElement('span');
           per.className = 'shop-subscription-interval';
           per.textContent = ` / ${price.interval}`;
           elements.subscriptionPrice.append(per);
         }
+        if (price.quantity > 1) {
+          const seats = createElement('span', 'shop-subscription-interval',
+            ` (${price.quantity} seats at ${price.unitAmount} each)`);
+          elements.subscriptionPrice.append(seats);
+        }
       }
+    }
+    if (elements.subscriptionSale) {
+      const sale = subscriptionSale(state.subscriptionQuote, now());
+      elements.subscriptionSale.hidden = !sale;
+      elements.subscriptionSale.textContent = sale?.text || '';
     }
     if (elements.subscriptionState) {
       elements.subscriptionState.textContent = url
-        ? 'Every set, full-body skin and trail, for every bot you link, with one subscription.'
+        ? subscriptionPrice(state.subscriptionQuote, now())
+          ? 'Final price and offer eligibility are confirmed in your Angel account.'
+          : 'Price unavailable. Check your Angel account for current pricing.'
         : 'Every set, full-body skin and trail is included with an Arena subscription. Where to subscribe is not published yet; your Dashboard will say when it is.';
     }
     if (elements.subscription) elements.subscription.dataset.state = url ? 'available' : 'unlinked';
@@ -634,53 +690,96 @@ export function initCosmeticsShop(root, options = {}) {
     renderPackList({revealSelected: true});
   };
 
-  const loadCatalog = async () => {
-    setStatus('Loading cosmetic packs...', 'loading');
-    elements.packList.setAttribute('aria-busy', 'true');
-    try {
-      const response = await fetchImpl(catalogPath(pathname), {
-        headers: {Accept: 'application/json'},
-        cache: 'no-store',
-      });
-      const data = await readJSON(response);
-      state.catalog = {
-        categories: Array.isArray(data.categories) ? data.categories : [],
-        packs: Array.isArray(data.packs) ? data.packs.filter(pack => pack?.is_active !== false) : [],
-      };
-      state.subscriptionURL = subscriptionURL(data.subscription?.url);
-      state.subscriptionPrice = subscriptionPrice(data.subscription);
+  const schedulePriceRefresh = () => {
+    clearTimer(refreshTimer);
+    if (state.destroyed) return;
+    refreshTimer = setTimer(() => {
+      // Even a request still in flight cannot keep an expired quote visible.
       renderSubscription();
-      populateCategories();
-      const matches = filteredPacks();
-      const requested = matches.find(pack => pack.id === requestedPackID);
-      const initial = requested || matches[0] || null;
-      state.selectedPackID = initial?.id || '';
-      state.selectedItemID = '';
-      renderPackList();
-      renderDetail();
-      if (initial) {
-        previewCurrentSelection();
-        updateURL(initial.id);
-        setStatus(`${allPacks().length} cosmetic packs ready to preview.`, 'success');
-      } else {
-        setStatus('No cosmetic packs are published yet.', 'empty');
-      }
-    } catch (error) {
-      state.catalog = {categories: [], packs: []};
-      state.subscriptionURL = '';
-      state.subscriptionPrice = null;
-      renderSubscription();
-      state.selectedPackID = '';
-      renderPackList();
-      renderDetail();
-      previewCurrentSelection();
-      setStatus(`Catalog unavailable: ${error.message}`, 'error');
-      const retry = createElement('button', 'shop-retry', 'Retry catalog');
-      retry.type = 'button';
-      retry.addEventListener('click', loadCatalog, {once: true});
-      elements.packList.replaceChildren(retry);
-    }
+      if (document.visibilityState !== 'hidden') loadCatalog(true);
+      schedulePriceRefresh();
+    }, subscriptionRefreshDelay(state.subscriptionQuote, now()));
   };
+
+  const loadCatalog = (priceOnly = false) => {
+    if (state.destroyed || catalogRequest) return catalogRequest;
+    if (!priceOnly) {
+      setStatus('Loading cosmetic packs...', 'loading');
+      elements.packList.setAttribute('aria-busy', 'true');
+    }
+    requestAbort = new AbortController();
+    const timeout = setTimer(() => requestAbort?.abort(), 10_000);
+    catalogRequest = Promise.resolve().then(async () => {
+      try {
+        const response = await fetchImpl(catalogPath(pathname), {
+          headers: {Accept: 'application/json'},
+          cache: 'no-store',
+          signal: requestAbort.signal,
+        });
+        const data = await readJSON(response);
+        if (state.destroyed) return;
+        const previousURL = state.subscriptionURL;
+        state.subscriptionURL = subscriptionURL(data.subscription?.url);
+        state.subscriptionQuote = data.subscription || null;
+        renderSubscription();
+        if (priceOnly) {
+          if (previousURL !== state.subscriptionURL) renderDetail();
+          return;
+        }
+        state.catalog = {
+          categories: Array.isArray(data.categories) ? data.categories : [],
+          packs: Array.isArray(data.packs) ? data.packs.filter(pack => pack?.is_active !== false) : [],
+        };
+        populateCategories();
+        const matches = filteredPacks();
+        const requested = matches.find(pack => pack.id === requestedPackID);
+        const initial = requested || matches[0] || null;
+        state.selectedPackID = initial?.id || '';
+        state.selectedItemID = '';
+        renderPackList();
+        renderDetail();
+        if (initial) {
+          previewCurrentSelection();
+          updateURL(initial.id);
+          setStatus(`${allPacks().length} cosmetic packs ready to preview.`, 'success');
+        } else {
+          setStatus('No cosmetic packs are published yet.', 'empty');
+        }
+      } catch (error) {
+        if (state.destroyed) return;
+        // A pricing outage does not remove packs, selections or the known
+        // account link; it only withdraws the price and offer.
+        state.subscriptionQuote = null;
+        renderSubscription();
+        if (priceOnly) return;
+        state.catalog = {categories: [], packs: []};
+        state.selectedPackID = '';
+        renderPackList();
+        renderDetail();
+        previewCurrentSelection();
+        setStatus(`Catalog unavailable: ${error.message}`, 'error');
+        const retry = createElement('button', 'shop-retry', 'Retry catalog');
+        retry.type = 'button';
+        retry.addEventListener('click', () => loadCatalog(), {once: true});
+        elements.packList.replaceChildren(retry);
+      } finally {
+        clearTimer(timeout);
+        requestAbort = null;
+        catalogRequest = null;
+        schedulePriceRefresh();
+      }
+    });
+    return catalogRequest;
+  };
+
+  const refreshPrice = () => {
+    if (document.visibilityState === 'hidden' || state.destroyed) return;
+    renderSubscription();
+    loadCatalog(true);
+  };
+  listen(window, 'focus', refreshPrice);
+  listen(window, 'pageshow', refreshPrice);
+  listen(document, 'visibilitychange', refreshPrice);
 
   listen(elements.search, 'input', event => {
     state.query = String(event.currentTarget.value || '').trim();
@@ -721,6 +820,8 @@ export function initCosmeticsShop(root, options = {}) {
   const dispose = () => {
     if (state.destroyed) return;
     state.destroyed = true;
+    clearTimer(refreshTimer);
+    requestAbort?.abort();
     state.previewGeneration += 1;
     for (const cleanup of cleanups.splice(0)) cleanup();
     state.preview?.dispose?.();
@@ -734,7 +835,9 @@ export function initCosmeticsShop(root, options = {}) {
     if (!event.persisted) dispose();
   });
 
+  renderSubscription();
   loadCatalog();
+  schedulePriceRefresh();
   for (const input of elements.chassisPicker?.querySelectorAll('input[type="radio"]') || []) {
     input.checked = input.value === state.weapon;
   }
@@ -754,6 +857,7 @@ export function initCosmeticsShop(root, options = {}) {
       weapon: state.weapon,
       previewSignature: elements.canvas.dataset.previewSignature || '',
       subscriptionURL: state.subscriptionURL,
+      priceAvailable: !!subscriptionPrice(state.subscriptionQuote, now()),
     }),
   };
 }

@@ -50,7 +50,7 @@ export function notifySessionChanged() {
 
 function sessionSignature(session) {
   if (!session || !session.authenticated) return 'anon';
-  return session.account?.id || 'anon';
+  return JSON.stringify([session.account?.id || '', session.account?.public_username ?? null]);
 }
 
 /**

@@ -39,7 +39,7 @@
  */
 
 import { apiPath } from './paths.js?v=20260710a';
-import { notifySessionChanged } from './account-session.js?v=20260823a';
+import { notifySessionChanged } from './account-session.js?v=20260905u';
 
 /** The message `dashboard/signed-in.js` sends. Kept in step with that file. */
 const SIGNED_IN_MESSAGE = 'arena:accounts-signed-in';

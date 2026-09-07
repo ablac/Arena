@@ -100,7 +100,7 @@ func TestPostgresInactiveCosmeticCategorySuspendsEquipAndRendering(t *testing.T)
 	if created, err := GrantCosmeticEntitlement(ctx, demoBot.ID, item.ID, "demo", "inactive-demo-grant"); err != nil || !created {
 		t.Fatalf("grant demo entitlement = (%v, %v), want created", created, err)
 	}
-	account, err := UpsertVerifiedCustomerAccount(ctx, "", "https://id.example", "inactive-owner", "Inactive Owner")
+	account, err := UpsertVerifiedCustomerAccount(ctx, "", "https://id.example", "inactive-owner", "Inactive Owner", nil)
 	if err != nil {
 		t.Fatalf("verify owner: %v", err)
 	}
