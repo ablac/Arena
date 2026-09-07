@@ -62,6 +62,20 @@ class FakeNode {
   setEnabled(enabled) { this.enabled = enabled; }
 }
 
+// Keep real mech geometry active: a box-only mock would miss malformed
+// authored vertices while still satisfying every semantic mount assertion.
+class FakeVertexData {
+  applyToMesh(mesh) {
+    mesh.vertexData = this;
+    const positions = this.positions;
+    const extent = axis => {
+      const values = positions.filter((_, index) => index % 3 === axis);
+      return Math.max(...values) - Math.min(...values);
+    };
+    mesh.geometryOptions = {width: extent(0), height: extent(1), depth: extent(2)};
+  }
+}
+
 const MeshBuilder = new Proxy({}, {
   get: (_, method) => method.startsWith('Create')
     ? ((name, options) => {
@@ -85,13 +99,15 @@ function proceduralTheme(key) {
 }
 
 globalThis.window = {
-  BABYLON: {Color3: FakeColor3, TransformNode: FakeNode, MeshBuilder},
+  BABYLON: {Color3: FakeColor3, TransformNode: FakeNode, Mesh: FakeNode, VertexData: FakeVertexData, MeshBuilder},
   ArenaCosmeticThemes: {themeFor: proceduralTheme},
   FakeMaterial,
 };
 
 let source = readFileSync(new URL('../frontend/js/renderer/cosmetics.js', import.meta.url), 'utf8');
 source = source
+  .replace("from './mech-geometry.js';",
+    `from '${new URL('../frontend/js/renderer/mech-geometry.js', import.meta.url).href}';`)
   .replace("from './forge-surfaces.js';",
     `from '${new URL('../frontend/js/renderer/forge-surfaces.js', import.meta.url).href}';`)
   .replace(/import \{ isEnabled \} from '[^']+';\r?\n/, 'const isEnabled = () => true;\n')
@@ -111,6 +127,32 @@ source = source
     `from '${bodyFormRosterURL}';`,
   );
 const cosmetics = await import(dataModule(source));
+
+function disposeChecked(entry) {
+  const state = entry._cosmeticState;
+  const belongsToState = node => {
+    for (let parent = node.parent; parent; parent = parent.parent) {
+      if (state.groups.includes(parent)) return true;
+    }
+    return false;
+  };
+  const meshes = nodes.filter(node => !node.disposed && node.vertexData && belongsToState(node));
+  assert.ok(state.groups.length <= 6, 'one cosmetic loadout must retain a bounded mount group count');
+  assert.ok(state.materials.length <= 9, 'one cosmetic loadout must share a bounded material palette');
+  assert.ok(meshes.length <= 32, 'cosmetic detail must stay within the per-bot mesh budget');
+  for (const mesh of meshes) {
+    const {positions, normals, indices, uvs} = mesh.vertexData;
+    assert.ok(positions.length >= 24 && positions.every(Number.isFinite), `${mesh.name} needs finite authored vertices`);
+    assert.equal(normals.length, positions.length, `${mesh.name} needs one normal per vertex`);
+    assert.ok(normals.every(Number.isFinite));
+    assert.equal(uvs.length, positions.length / 3 * 2, `${mesh.name} needs complete surface UVs`);
+    assert.ok(indices.every(index => Number.isInteger(index) && index >= 0 && index < positions.length / 3));
+  }
+  cosmetics.disposeBotCosmetics(entry);
+  assert.ok(meshes.every(mesh => mesh.disposed), 'disposing cosmetic groups must dispose all authored child meshes');
+  assert.ok(state.materials.every(material => material.disposed), 'all owned cosmetic materials must be disposed');
+  assert.ok(state.weaponSwaps.every(swap => swap.clone.disposed), 'weapon finish clones must be disposed');
+}
 
 const METRICS = {
   daggers: {
@@ -175,71 +217,80 @@ for (const pattern of ['bands', 'plates', 'chevrons', 'core']) {
   const {entry} = createEntry();
   cosmetics.applyBotCosmetics(entry, botWith({bot_skin: `test-skin-${pattern}`}), {}, {forceEnabled: true});
   if (pattern === 'bands') {
-    assertMounted('set-band', entry.mounts.chest,
-      'procedural bands must scale around the semantic chest mount');
+    assertMounted('set-radiator-frame', entry.mounts.chest,
+      'procedural radiator armor must scale around the semantic chest mount');
   } else if (pattern === 'plates') {
-    assertMounted('set-plate', entry.mounts.shoulderL,
+    assertMounted('set-pauldron', entry.mounts.shoulderL,
       'the left procedural plate must follow the articulated left shoulder');
-    const plates = nodes.filter(node => !node.disposed && node.name.includes('set-plate'));
+    const plates = nodes.filter(node => !node.disposed && node.name.includes('set-pauldron'));
     assert.ok(plates.some(node => node.parent?.parent === entry.mounts.shoulderR),
       'the right procedural plate must follow the articulated right shoulder');
   } else {
-    assertMounted(`set-${pattern === 'core' ? 'core-' : 'chevron'}`, entry.mounts.chest,
+    assertMounted(`set-${pattern === 'core' ? 'power-socket' : 'harness-coupler'}`, entry.mounts.chest,
       `${pattern} skin geometry must use chest-local coordinates`);
   }
   assert.equal(entry.lodRefreshes, 1, 'cosmetic refresh must reapply the current Forge LOD');
-  cosmetics.disposeBotCosmetics(entry);
+  disposeChecked(entry);
 }
 
 {
   const {entry} = createEntry();
   cosmetics.applyBotCosmetics(entry, botWith({bot_skin: 'neon_grid'}), {}, {forceEnabled: true});
-  assertMounted('neon-ring', entry.mounts.chest, 'Forge neon rings must use chest-local coordinates');
-  cosmetics.disposeBotCosmetics(entry);
+  assertMounted('set-radiator-frame', entry.mounts.chest, 'Forge neon radiator armor must use chest-local coordinates');
+  disposeChecked(entry);
 }
 
 {
   const {entry} = createEntry();
   cosmetics.applyBotCosmetics(entry, botWith({bot_skin: 'carbon_armor'}), {}, {forceEnabled: true});
-  assertMounted('carbon-chest', entry.mounts.chest, 'Forge carbon armor must attach to the chest mount');
-  const shoulders = nodes.filter(node => !node.disposed && node.name.includes('carbon-shoulder'));
+  assertMounted('set-cuirass-', entry.mounts.chest, 'Forge carbon armor must attach to the chest mount');
+  const shoulders = nodes.filter(node => !node.disposed && node.name.includes('set-pauldron-'));
   assert.ok(shoulders.some(node => node.parent?.parent === entry.mounts.shoulderL));
   assert.ok(shoulders.some(node => node.parent?.parent === entry.mounts.shoulderR));
-  cosmetics.disposeBotCosmetics(entry);
+  disposeChecked(entry);
 }
 
 for (const kind of ['halo', 'antenna', 'crown', 'orbitals']) {
   const {entry} = createEntry();
   cosmetics.applyBotCosmetics(entry, botWith({attachment: `test-attachment-${kind}`}), {}, {forceEnabled: true});
-  const part = {halo: 'set-halo', antenna: 'set-mast', crown: 'set-crown', orbitals: 'set-orbit'}[kind];
+  const part = {halo: 'set-halo-segment', antenna: 'set-scanner-mast', crown: 'set-crest-vane', orbitals: 'set-nav-pod'}[kind];
   assertMounted(part, entry.mounts.head, `${kind} must follow the semantic head mount`);
-  cosmetics.disposeBotCosmetics(entry);
+  disposeChecked(entry);
+}
+
+{
+  const {entry} = createEntry();
+  entry.mounts.headTop = new FakeNode('mount-headTop');
+  cosmetics.applyBotCosmetics(entry, botWith({attachment: 'test-attachment-crown'}), {}, {forceEnabled: true});
+  assertMounted('set-crest-vane', entry.mounts.headTop,
+    'a silhouette head-top anchor must take precedence over the raw head mount');
+  disposeChecked(entry);
 }
 
 for (const [asset, part] of [
-  ['signal_antenna', 'antenna-mast'],
-  ['orbital_halo', 'halo-ring'],
+  ['signal_antenna', 'set-scanner-mast'],
+  ['orbital_halo', 'set-halo-segment'],
 ]) {
   const {entry} = createEntry();
   cosmetics.applyBotCosmetics(entry, botWith({attachment: asset}), {}, {forceEnabled: true});
   assertMounted(part, entry.mounts.head, `legacy ${asset} must follow the semantic head mount on Forge`);
-  cosmetics.disposeBotCosmetics(entry);
+  disposeChecked(entry);
 }
 
 {
   const {entry} = createEntry();
   cosmetics.applyBotCosmetics(entry, botWith({attachment: 'test-attachment-fins'}), {}, {forceEnabled: true});
-  const fins = nodes.filter(node => !node.disposed && node.name.includes('set-fin'));
+  const fins = nodes.filter(node => !node.disposed && node.name.includes('set-radiator-wing-'));
   assert.ok(fins.some(node => node.parent?.parent === entry.mounts.shoulderL));
   assert.ok(fins.some(node => node.parent?.parent === entry.mounts.shoulderR));
-  cosmetics.disposeBotCosmetics(entry);
+  disposeChecked(entry);
 }
 
 {
   const {entry} = createEntry();
   cosmetics.applyBotCosmetics(entry, botWith({attachment: 'test-attachment-reactor'}), {}, {forceEnabled: true});
-  assertMounted('set-reactor-', entry.mounts.back, 'reactor must use the semantic back mount');
-  cosmetics.disposeBotCosmetics(entry);
+  assertMounted('set-reactor-casing-', entry.mounts.back, 'reactor must use the semantic back mount');
+  disposeChecked(entry);
 }
 
 {
@@ -249,7 +300,7 @@ for (const [asset, part] of [
   cosmetics.applyBotCosmetics(entry, botWith({weapon_skin: 'test-weapon-ion'}), {}, {forceEnabled: true});
   assert.notEqual(leftDagger.material, leftOriginal, 'detached left dagger must receive the finish');
   assert.notEqual(rightDagger.material, rightOriginal, 'detached right dagger must receive the finish');
-  cosmetics.disposeBotCosmetics(entry);
+  disposeChecked(entry);
   assert.equal(leftDagger.material, leftOriginal);
   assert.equal(rightDagger.material, rightOriginal);
 }
@@ -257,29 +308,32 @@ for (const [asset, part] of [
 {
   const dagger = createEntry(METRICS.daggers);
   cosmetics.applyBotCosmetics(dagger.entry, botWith({bot_skin: 'carbon_armor'}), {}, {forceEnabled: true});
-  const daggerChest = mesh('carbon-chest');
+  const daggerChest = mesh('set-cuirass-');
   const daggerWidth = daggerChest.geometryOptions.width;
-  cosmetics.disposeBotCosmetics(dagger.entry);
+  disposeChecked(dagger.entry);
 
   const shield = createEntry(METRICS.shield);
   cosmetics.applyBotCosmetics(shield.entry, botWith({bot_skin: 'carbon_armor'}), {}, {forceEnabled: true});
-  const shieldChest = mesh('carbon-chest');
+  const shieldChest = mesh('set-cuirass-');
   assert.ok(shieldChest.geometryOptions.width > daggerWidth * 1.4,
     'carbon armor geometry must scale from each chassis profile instead of one world-space size');
-  cosmetics.disposeBotCosmetics(shield.entry);
+  disposeChecked(shield.entry);
 }
 
 {
   const {entry} = createEntry(METRICS.daggers, false);
   cosmetics.applyBotCosmetics(entry, botWith({bot_skin: 'carbon_armor'}), {}, {forceEnabled: true});
-  const legacyChest = assertMounted('carbon-chest', entry.mounts.cosmeticRoot,
+  const legacyChest = assertMounted('set-cuirass-', entry.mounts.cosmeticRoot,
     'non-Forge cosmetics must retain the compatibility coordinate root');
-  assert.deepEqual(
-    {x: legacyChest.position.x, y: legacyChest.position.y, z: legacyChest.position.z},
-    {x: 0, y: 8.2, z: -4.3},
-    'legacy carbon armor coordinates must remain byte-for-byte compatible',
-  );
-  cosmetics.disposeBotCosmetics(entry);
+  assert.ok(legacyChest.position.y > 0 && legacyChest.position.z < 0,
+    'the rebuilt compatibility armor must remain above the floor and forward of the torso');
+  const cuirass = nodes.filter(node => !node.disposed && node.name.includes('set-cuirass-'));
+  assert.equal(cuirass.length, 2, 'the compatibility root must carry both halves of the split cuirass');
+  assert.equal(cuirass[0].position.x, -cuirass[1].position.x,
+    'the compatibility armor must preserve symmetric coverage around the torso');
+  assert.ok(cuirass.every(node => node.parent.parent === entry.mounts.cosmeticRoot),
+    'both compatibility armor halves must stay on the compatibility root');
+  disposeChecked(entry);
 }
 
-console.log('Forge cosmetics use semantic profile-local mounts, tint detached daggers, and preserve legacy coordinates');
+console.log('Forge cosmetics use authored bounded geometry and semantic mounts, tint detached daggers, and preserve compatibility roots');
