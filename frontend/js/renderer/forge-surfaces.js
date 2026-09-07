@@ -11,7 +11,11 @@ const sceneMaterials = new WeakMap();
 export function syncForgeSurface(material) {
   const texture = isEnabled('rendering', 'surfaceDetail') ? material._forgeSurfaceTexture : null;
   material.diffuseTexture = texture || null;
-  material.emissiveTexture = texture || null;
+  // StandardMaterial adds emissiveTexture RGB to emissiveColor; a neutral
+  // map there becomes a white light source. The default fragment shader
+  // already multiplies (lighting + emissiveColor) by diffuseTexture, so this
+  // single map gives grain in both lit and legacy self-lit modes.
+  material.emissiveTexture = null;
 }
 
 

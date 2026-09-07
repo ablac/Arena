@@ -15,9 +15,10 @@ class Texture {
   update() { this.uploads = (this.uploads || 0) + 1; }
 }
 globalThis.window = {BABYLON: {DynamicTexture: Texture, Texture: {WRAP_ADDRESSMODE: 1}}};
-const {forgeSurface, applyForgeSurface} = await import('../frontend/js/renderer/forge-surfaces.js');
+const {forgeSurface, applyForgeSurface, syncForgeSurface} = await import('../frontend/js/renderer/forge-surfaces.js');
 const {setEffect, isEnabled} = await import('../frontend/js/settings.js');
 assert.equal(isEnabled('rendering', 'surfaceDetail'), true, 'Surface detail ships enabled');
+
 const scene = {onDisposeObservable: {addOnce: callback => { scene.dispose = callback; }}};
 const graphite = forgeSurface(scene, 'graphite');
 assert.equal(graphite, forgeSurface(scene, 'graphite'), 'Bots share one texture per surface and scene');
@@ -27,10 +28,15 @@ assert.equal(graphite.uploads, 1, 'Surface uploads once, with no frame updates')
 const secondScene = {};
 assert.deepEqual(forgeSurface(secondScene, 'graphite').pixels, graphite.pixels, 'Surface is deterministic across scenes');
 assert.notDeepEqual(forgeSurface(scene, 'steel').pixels, graphite.pixels);
-const material = {unfreeze() {}, freeze() {}};
+const material = {unfreeze() {}, freeze() {}, disableLighting: true, emissiveColor: {r: 0.18, g: 0.24, b: 0.36}};
 applyForgeSurface(material, scene, 'graphite');
 assert.equal(material.diffuseTexture, graphite);
-assert.equal(material.emissiveTexture, graphite, 'Default unlit chassis still receive surface detail');
+assert.ok(material.emissiveTexture === null, 'Grayscale detail must not add white emission');
+assert.deepEqual(material.emissiveColor, {r: 0.18, g: 0.24, b: 0.36}, 'Authored dark-sector color stays intact');
+material.disableLighting = false;
+syncForgeSurface(material);
+assert.ok(material.diffuseTexture === graphite, 'Lit mode keeps diffuse grain');
+assert.ok(material.emissiveTexture === null, 'Lit mode must not add white emission');
 setEffect('rendering', 'surfaceDetail', false);
 assert.ok(material.diffuseTexture === null, 'Detail disables diffuse map');
 assert.ok(material.emissiveTexture === null, 'Detail disables emissive map');
