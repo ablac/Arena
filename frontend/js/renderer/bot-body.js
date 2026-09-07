@@ -22,6 +22,28 @@ function getShadowMaterial(scene) {
     _shdMat.emissiveColor = B.Color3.Black();
     _shdMat.disableLighting = true;
     _shdMat.alpha = 0.3;
+    // One feathered opacity map serves every instance and fades before the
+    // disc edge, avoiding a hard polygon stamped onto the glass deck.
+    if (typeof B.DynamicTexture === 'function') {
+      const texture = new B.DynamicTexture('forge-contact-shadow', 64, scene, false);
+      const ctx = texture.getContext();
+      if (typeof ctx?.createRadialGradient === 'function') {
+        const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 29);
+        gradient.addColorStop(0, 'rgba(255,255,255,0.95)');
+        gradient.addColorStop(0.3, 'rgba(255,255,255,0.65)');
+        gradient.addColorStop(0.7, 'rgba(255,255,255,0.18)');
+        gradient.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.clearRect(0, 0, 64, 64);
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, 64, 64);
+        texture.hasAlpha = true;
+        texture.getAlphaFromRGB = false;
+        texture.update(false);
+        _shdMat.opacityTexture = texture;
+      } else {
+        texture.dispose();
+      }
+    }
     _shdMat.backFaceCulling = false;
     _shdMat.freeze();
   }
@@ -34,7 +56,7 @@ export function _getTplShadow(scene) {
     const B = window.BABYLON;
     _tplShadow = B.MeshBuilder.CreateDisc('tpl-shadow', {
       radius: SHADOW_RADIUS,
-      tessellation: 6,
+      tessellation: 24,
     }, scene);
     _tplShadow.rotation.x = Math.PI / 2;
     _tplShadow.setEnabled(false);

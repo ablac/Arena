@@ -11,6 +11,7 @@
  */
 
 import {parseColor, makeMat} from './utils.js';
+import {applyForgeSurface} from './forge-surfaces.js';
 import {getCharacterProfile} from './character-roster.js?v=20260714e';
 import {ForgeAnimState} from './character-anims.js?v=20260714e';
 import {
@@ -83,6 +84,7 @@ function litChassisMaterial(scene, name, diffuse, unlitEmissive, specular) {
     diffuse.b * LIT_EMISSIVE_FLOOR,
   );
   material._forgeUnlitEmissive = unlitEmissive;
+  applyForgeSurface(material, scene, name.includes('graphite') ? 'graphite' : 'gunmetal');
   applyForgeLightingMode(material, isEnabled('rendering', 'characterLighting'));
   material.freeze();
   return material;

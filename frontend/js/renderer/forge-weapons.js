@@ -10,6 +10,7 @@
  */
 
 import { isEnabled } from '../settings.js';
+import {applyForgeSurface, syncForgeSurface} from './forge-surfaces.js';
 
 const _sceneResources = new WeakMap();
 
@@ -28,6 +29,7 @@ const LIT_EMISSIVE_FLOOR = 0.45;
  */
 export function applyForgeLightingMode(material, lit) {
   material.disableLighting = !lit;
+  syncForgeSurface(material);
   material.emissiveColor.copyFrom(
     lit ? material._forgeLitEmissive : material._forgeUnlitEmissive);
 }
@@ -49,6 +51,8 @@ function sharedMaterial(scene, name, diffuse, unlitEmissive, specular) {
     diffuse.b * LIT_EMISSIVE_FLOOR,
   );
   material._forgeUnlitEmissive = unlitEmissive;
+  applyForgeSurface(material, scene, name.endsWith('steel') ? 'steel'
+    : name.endsWith('cable') ? 'graphite' : 'gunmetal');
   applyForgeLightingMode(material, isEnabled('rendering', 'characterLighting'));
   material.freeze();
   return material;
