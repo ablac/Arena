@@ -92,6 +92,8 @@ globalThis.window = {
 
 let source = readFileSync(new URL('../frontend/js/renderer/cosmetics.js', import.meta.url), 'utf8');
 source = source
+  .replace("from './forge-surfaces.js';",
+    `from '${new URL('../frontend/js/renderer/forge-surfaces.js', import.meta.url).href}';`)
   .replace(/import \{ isEnabled \} from '[^']+';\r?\n/, 'const isEnabled = () => true;\n')
   .replace(/import \{ makeMat, parseColor \} from '[^']+';\r?\n/, `
     const parseColor = value => {

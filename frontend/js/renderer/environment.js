@@ -340,9 +340,9 @@ export class EnvironmentRenderer {
         // without a mesh, texture download, depth conflict or extra draw call.
         vec3 planetCenter = normalize(vec3(0.58, -0.52, 0.76));
         float alignment = dot(dir, planetCenter);
-        float radius = 0.235;
+        float radius = 0.17;
         float discriminant = alignment * alignment - 1.0 + radius * radius;
-        float atmosphere = alignment * alignment - 1.0 + 0.247 * 0.247;
+        float atmosphere = alignment * alignment - 1.0 + 0.177 * 0.177;
         if (alignment > 0.0 && atmosphere > 0.0) {
           float rim = 1.0 - smoothstep(0.0, 0.006, max(discriminant, 0.0));
           float fade = smoothstep(0.0, 0.003, atmosphere);
@@ -352,14 +352,20 @@ export class EnvironmentRenderer {
           vec3 normal = (dir * (alignment - sqrt(discriminant)) - planetCenter) / radius;
           vec3 lightDir = normalize(vec3(-0.48, 0.7, -0.58));
           float daylight = max(dot(normal, lightDir), 0.0);
-          float continent = noise3(normal * 9.0 + vec3(8.0, 2.0, 5.0));
-          float clouds = smoothstep(0.49, 0.7,
-            noise3(normal * 23.0 + vec3(4.0, 7.0, 2.0)));
-          vec3 ocean = mix(vec3(0.009, 0.034, 0.067), vec3(0.026, 0.1, 0.14),
-            smoothstep(0.5, 0.7, continent));
-          vec3 surface = mix(ocean, vec3(0.27, 0.36, 0.43), clouds * 0.72);
+          // Fractal coastlines and wind-stretched cloud wisps avoid the
+          // hard cellular spots of a single high-frequency noise sample.
+          float continent = fbm(normal * 5.0 + vec3(8.0, 2.0, 5.0));
+          float land = smoothstep(0.49, 0.56, continent);
+          float curl = noise3(normal * 7.0 + vec3(2.0, 9.0, 4.0));
+          vec3 cloudCoord = normal * vec3(26.0, 44.0, 26.0)
+            + vec3(curl * 3.5, 0.0, curl * 2.0);
+          float clouds = smoothstep(0.48, 0.69, fbm(cloudCoord));
+          vec3 ocean = mix(vec3(0.009, 0.032, 0.065), vec3(0.035, 0.064, 0.055), land);
+          vec3 surface = mix(ocean, vec3(0.26, 0.32, 0.37), clouds * 0.65);
           float limb = pow(1.0 - max(dot(normal, -dir), 0.0), 3.0);
           vec3 world = surface * (0.08 + daylight * 1.35);
+          float glint = pow(max(dot(reflect(-lightDir, normal), -dir), 0.0), 80.0);
+          world += vec3(0.16, 0.23, 0.28) * glint * daylight * (1.0 - land) * (1.0 - clouds);
           world += vec3(0.035, 0.14, 0.27) * limb * (0.1 + daylight);
           color = mix(color, world, smoothstep(0.0, 0.0005, discriminant));
         }

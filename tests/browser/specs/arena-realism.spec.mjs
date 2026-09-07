@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { arenaState } from '../fixtures/round-cycle.mjs';
+import { arenaState, roundEnd } from '../fixtures/round-cycle.mjs';
 
 const realismEffects = ['sculptedLighting', 'surfaceDetail', 'characterMotion'];
 
@@ -178,6 +178,39 @@ test('glass arena and moving combatants paint at overview and close range', { ta
   expect(restored.invalid).toEqual([]);
   expect(restored.textures).toBeLessThanOrEqual(baseline.textures);
   await capture(page, testInfo, 'realism-close-quality-restored');
+
+  // Exercise the production material-clone paths with actual GPU textures.
+  // Babylon's DynamicTexture.clone creates an empty canvas: cosmetic finishes
+  // and next-map construction must keep the ready shared surface instead.
+  const dressed = arenaState(7, { tickOffset: 10, winnerPosition: [968, 1016], bountyTarget: null });
+  dressed.bots[0].cosmetics = { weapon_skin: 'solar_flare' };
+  fixture.send(dressed);
+  const cloneState = prefix => page.evaluate(prefix => {
+    const scene = window.BABYLON.EngineStore.LastCreatedScene;
+    return scene.materials.filter(material => material.name.startsWith(prefix) && material._forgeSurfaceTexture)
+      .map(material => ({
+        shared: material.diffuseTexture === material._forgeSurfaceTexture,
+        ready: material._forgeSurfaceTexture.isReady(),
+        hidden: material.diffuseTexture === null,
+        addsEmission: material.emissiveTexture !== null,
+      }));
+  }, prefix);
+  await expect.poll(async () => (await cloneState('cosmetic-weapon-solar_flare')).length).toBeGreaterThan(0);
+  for (const state of await cloneState('cosmetic-weapon-solar_flare')) {
+    expect(state).toEqual({ shared: true, ready: true, hidden: false, addsEmission: false });
+  }
+  const ending = roundEnd(7);
+  ending.intermission_secs = 12;
+  ending.next_map.obstacles = [{ x: 850, y: 850, width: 90, height: 90 }];
+  fixture.send(ending);
+  await expect.poll(async () => (await cloneState('intermissionRiseBodyMat')).length).toBe(1);
+  expect(await cloneState('intermissionRiseBodyMat')).toEqual([
+    { shared: true, ready: true, hidden: false, addsEmission: false },
+  ]);
+  await setQuality(page, false);
+  expect((await cloneState('intermissionRiseBodyMat'))[0].hidden).toBe(true);
+  await setQuality(page, true);
+  expect((await cloneState('intermissionRiseBodyMat'))[0].shared).toBe(true);
   expect(errors).toEqual([]);
   await testInfo.attach('realism-scene-health', {
     body: Buffer.from(JSON.stringify({ baseline, restored }, null, 2)),

@@ -16,7 +16,7 @@ import {
   triggerForgeShove,
 } from './character-anims.js?v=20260907r';
 import {setForgeChassisLighting, updateForgeCharacterLOD} from './character-rig.js?v=20260907r';
-import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260714e';
+import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260907r';
 import {bodyFormKeyForBot} from './body-form-roster.js?v=20260714e';
 import {
   hideWorldTaunt,

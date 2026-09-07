@@ -9,6 +9,7 @@
 
 import { isEnabled } from '../settings.js';
 import { makeMat, parseColor } from './utils.js';
+import { inheritForgeSurface } from './forge-surfaces.js';
 import {bodyFormForAsset} from './body-form-roster.js?v=20260714e';
 
 const ALLOWED = {
@@ -784,6 +785,7 @@ function applyWeaponFinish(state, asset, entry, bot, scene) {
       continue;
     }
     if (typeof clone.unfreeze === 'function') clone.unfreeze();
+    inheritForgeSurface(clone, original, scene);
     clone.diffuseColor = tint.clone();
     clone.emissiveColor = glow.scale(emissiveFactor);
     clone.specularColor = specular.clone();

@@ -26,7 +26,7 @@ assert.match(cosmeticsSource, /forceEnabled/,
 assert.doesNotMatch(botBodySource, /swordsman-body\.js|weapons\.js|animations\.js/,
   'the Shop entry path must not load retired character systems');
 assert.match(previewSource, /bot-body\.js\?v=20260907r/);
-assert.match(previewSource, /cosmetics\.js\?v=20260714e/);
+assert.match(previewSource, /cosmetics\.js\?v=20260907r/);
 assert.doesNotMatch(previewSource, /swordsman-anims\.js|updateSwordsmanAnim|isSwordsman/,
   'preview must execute only the Forge presentation path');
 assert.match(previewSource, /character-anims\.js\?v=20260907r/,
@@ -94,6 +94,8 @@ vm.runInThisContext(themeSource, {filename: 'cosmetic-themes.js'});
 window.ArenaCosmeticThemes = globalThis.ArenaCosmeticThemes;
 
 let isolatedCosmeticsSource = cosmeticsSource
+  .replace("from './forge-surfaces.js';",
+    `from '${new URL('../frontend/js/renderer/forge-surfaces.js', import.meta.url).href}';`)
   .replace(/import \{ isEnabled \} from '[^']+';\r?\n/, 'const isEnabled = () => false;\n')
   .replace(/import \{ makeMat, parseColor \} from '[^']+';\r?\n/, `
     const parseColor = value => {
@@ -167,6 +169,8 @@ globalThis.__previewTrailOptions = null;
 globalThis.__previewCreateError = false;
 
 let isolatedPreviewSource = previewSource
+  .replace("from './settings.js';",
+    `from '${new URL('../frontend/js/settings.js', import.meta.url).href}';`)
   .replace(/import \{ createBotEntry, disposeBotEntry \} from '[^']+';\r?\n/, '')
   .replace(/import \{ applyBotCosmetics, disposeBotCosmetics \} from '[^']+';\r?\n/, previewDependencies)
   .replace(/import \{ updateForgeCharacter \} from '[^']+';\r?\n/,

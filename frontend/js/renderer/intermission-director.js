@@ -51,6 +51,7 @@ import { buildBoundaryContours, buildWallGeometry, contourNormals, resolveEarcut
 import { PILLAR_HEIGHT, composeObstacleLayout, appendObstacleBoxes, appendRoofDetail } from './obstacles.js?v=20260907r';
 import { buildClusterTrimGeometry } from './obstacle-clusters.js?v=20260718g';
 import { parseColor } from './utils.js';
+import { inheritForgeSurface } from './forge-surfaces.js';
 import { isEnabled, onSettingsChange } from '../settings.js';
 
 /* ------------------------------------------------------------------------ */
@@ -1009,6 +1010,7 @@ export class IntermissionDirector {
       this._riseBodyMat = source.body.clone('intermissionRiseBodyMat');
     }
     this._riseBodyMat.unfreeze();
+    inheritForgeSurface(this._riseBodyMat, source.body, this.engine.scene);
     if (palette) {
       this._riseBodyMat.diffuseColor.set(...palette.obstacleBody.diffuse);
       this._riseBodyMat.emissiveColor.set(...palette.obstacleBody.emissive);

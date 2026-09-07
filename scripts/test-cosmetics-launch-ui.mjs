@@ -38,7 +38,7 @@ assert.match(engineSource, /bots\.js\?v=20260907r/);
 assert.match(engineSource, /trails\.js\?v=20260714e/);
 assert.match(botsSource, /bot-body\.js\?v=20260907r/);
 assert.match(botsSource, /character-rig\.js\?v=20260907r/);
-assert.match(botsSource, /cosmetics\.js\?v=20260714e/);
+assert.match(botsSource, /cosmetics\.js\?v=20260907r/);
 assert.match(botBodySource, /character-rig\.js\?v=20260907r/);
 assert.match(rigSource, /forge-weapons\.js\?v=20260907r/);
 assert.doesNotMatch(botsSource, /swordsman-anims\.js|animations\.js/,
