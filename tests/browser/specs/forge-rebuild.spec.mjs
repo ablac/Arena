@@ -12,8 +12,18 @@ test('rebuilt roster renders and all cosmetic sets survive repeated replacement'
   await page.goto('/character-lab.html');
   await expect.poll(()=>page.evaluate(()=>window._lab?.entries.length||0)).toBe(25);
   await page.evaluate(()=>window._lab.scene.whenReadyAsync());
+  const budgets=await page.evaluate(()=>window._lab.entries.slice(0,7).map(entry=>({
+    weapon:entry.profile.weapon,count:entry._visibleMeshCount,budget:entry.profile.meshBudget,
+  })));
+  for(const row of budgets) expect(row.count,`${row.weapon} mesh budget`).toBeLessThanOrEqual(row.budget);
   await page.locator('#row-toggle').click();
   await page.screenshot({path:testInfo.outputPath('rebuilt-seven-chassis.png')});
+  for(let row=1;row<=3;row++) {
+    await page.locator('#row-toggle').click();
+    await page.screenshot({path:testInfo.outputPath(`rebuilt-body-forms-${row}.png`)});
+  }
+  await page.locator('#row-toggle').click();
+  await page.locator('#row-toggle').click();
   for(const mode of ['walk','attack','hit','dodge','death','idle']) {
     await page.locator(`[data-mode="${mode}"]`).click();
     await page.evaluate(()=>new Promise(resolve=>{

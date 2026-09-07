@@ -50,6 +50,7 @@ export const CHARACTER_ROSTER = Object.freeze({
     stance: {bodyYaw: 0.10, armR: 0.25, elbowR: 0.35, armL: 0.08},
   }),
   bow: profile({
+    meshBudget: 33,
     weapon: 'bow', callsign: 'Ranger', role: 'precision hunter', armor: 'swept sensor cowl and narrow scout chassis',
     proportions: {shoulders: 0.82, torso: 0.84, hips: 0.74, leg: 1.12, posture: -0.08, head: 0.90},
     motion: {signature: 'quiet stalking coil', strideHz: 1.45, bob: 0.20, sway: 0.05, weight: 0.42},
@@ -64,6 +65,7 @@ export const CHARACTER_ROSTER = Object.freeze({
     stance: {bodyYaw: 0.24, armR: 0.45, elbowR: 0.20, armL: -0.06, crouch: 0.3, knee: 0.08},
   }),
   daggers: profile({
+    meshBudget: 33,
     weapon: 'daggers', callsign: 'Skirmisher', role: 'close-range disruptor', armor: 'low prow helmet and swept scapular blades',
     proportions: {shoulders: 0.93, torso: 0.70, hips: 0.87, leg: 0.86, posture: 0.12, head: 0.86},
     motion: {signature: 'rapid lateral feint', strideHz: 2.55, bob: 0.28, sway: 0.16, weight: 0.30},
@@ -71,6 +73,7 @@ export const CHARACTER_ROSTER = Object.freeze({
     stance: {crouch: 0.9, knee: 0.22, armL: 0.35, armR: 0.35, elbowL: 0.85, elbowR: 0.85, bodyYaw: 0.06},
   }),
   staff: profile({
+    meshBudget: 34,
     weapon: 'staff', callsign: 'Arcanist', role: 'area caster', armor: 'slender oracle mask and split reactor mantle',
     proportions: {shoulders: 0.76, torso: 1.10, hips: 0.66, leg: 1.12, posture: -0.04, head: 1.00},
     motion: {signature: 'staff-planted pulse', strideHz: 1.20, bob: 0.16, sway: 0.10, weight: 0.52},
