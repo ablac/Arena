@@ -4,7 +4,7 @@ Keith's follow-up: "I like the start! But we can do better!" followed by "Overal
 
 ## Observed starting point
 
-Live screenshots in `outputs/next-visual-direction-20260907` outside the checkout show that the floor almost disappears at normal and close camera distances, cover looks like floating dark boxes, the planet has a repetitive cloud texture, and a large overhead selection ring competes with a small bot. The UI is very dark and occupies much of the visible action area. The seven chassis have useful silhouettes but pastel armor and dark structure do not yet convey convincing metal.
+Live screenshots in `outputs/next-visual-direction-20260907` outside the checkout show that the floor almost disappears at normal and close camera distances, cover looks like floating dark boxes, the planet has a repetitive cloud texture, and a large overhead bounty crown competes with a small bot. The UI is very dark and occupies much of the visible action area. The seven chassis have useful silhouettes but pastel armor and dark structure do not yet convey convincing metal.
 
 ## Acceptance
 
