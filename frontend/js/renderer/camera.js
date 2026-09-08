@@ -6,6 +6,8 @@
  * @module renderer/camera
  */
 
+import { chooseCombatFrame, combatFrameRadius } from './camera-framing.js';
+
 const DEFAULT_ALPHA = -Math.PI / 2;
 const DEFAULT_BETA = 1.0;
 const BASE_RADIUS = 800;
@@ -37,11 +39,16 @@ export class CameraController {
     this.arenaHeight = h;
     this.zoom = 1.0;
     this.followId = null;
-    this.autoPan = false;
+    this._motionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    this.autoPan = this._motionQuery?.matches !== true;
+    this._autoZoom = this.autoPan;
+    this._actionFocus = null;
+    this._clock = 0;
     this.targetX = w / 2;
     this.targetZ = h / 2;
     this.bots = [];
     this.onZoomChange = null;
+    this.onNavigationChange = null;
     this._safeViewport = null;
 
     // Track held keys
@@ -109,6 +116,8 @@ export class CameraController {
   _takeManualControl() {
     this.followId = null;
     this.autoPan = false;
+    this._autoZoom = false;
+    this._notifyNavigation();
   }
 
   _setupInput(canvas) {
@@ -139,10 +148,10 @@ export class CameraController {
 
       if (e.button === 0 || e.button === 1 || e.button === 2) {
         mouseButton = e.button;
+        this._takeManualControl();
         if (e.button !== 0) {
           // Right/middle-drag pan; otherwise auto-pan rewrites the target
           // every frame mid-drag (matching WASD behavior).
-          this._takeManualControl();
           e.preventDefault();
         }
       }
@@ -248,6 +257,9 @@ export class CameraController {
   }
 
   _tick() {
+    const elapsed = this.scene.getEngine().getDeltaTime() / 1000;
+    const dt = Number.isFinite(elapsed) ? Math.max(0, Math.min(elapsed, 0.1)) : 0;
+    this._clock += dt;
     // WASD / arrow key movement relative to camera facing
     if (this._keys.size > 0) {
       // Scale by dt (relative to a 60fps baseline) so pan speed doesn't
@@ -280,13 +292,13 @@ export class CameraController {
     // Follow / auto-pan
     if (this.followId && this.bots.length > 0) {
       const bot = this.bots.find(b => b.bot_id === this.followId);
-      if (bot && bot.position) {
+      if (bot && bot.position && Number.isFinite(bot.position[0]) && Number.isFinite(bot.position[1])) {
         const target = this._framedTarget(bot.position[0], bot.position[1]);
         this.targetX = target.x;
         this.targetZ = target.z;
       }
     } else if (this.autoPan && this.bots.length > 0) {
-      this._autoPanToAction();
+      this._autoPanToAction(dt);
     }
 
     // Clamp target to stay near the arena (with some margin)
@@ -295,7 +307,6 @@ export class CameraController {
     this.targetZ = Math.max(-margin, Math.min(this.arenaHeight + margin, this.targetZ));
 
     // dt-based smoothing so follow/pan speed is framerate-independent.
-    const dt = this.scene.getEngine().getDeltaTime() / 1000;
     const lerp = 1 - Math.exp(-5 * Math.min(dt, 0.1));
     const t = this.camera.target;
     t.x += (this.targetX - t.x) * lerp;
@@ -303,23 +314,75 @@ export class CameraController {
     t.y = 0;
   }
 
-  _autoPanToAction() {
-    const alive = this.bots.filter(b => b.is_alive);
-    if (alive.length === 0) return;
-    let ax = 0, az = 0;
-    alive.forEach(b => { ax += b.position[0]; az += b.position[1]; });
-    const target = this._framedTarget(ax / alive.length, az / alive.length);
+  _autoPanToAction(dt) {
+    const focus = this._actionFocus;
+    if (!focus) return;
+    if (this._autoZoom && this._motionQuery?.matches !== true) {
+      const desired = combatFrameRadius(focus.span, this._safeViewport, this.camera.fov);
+      const easing = 1 - Math.exp(-1.4 * dt);
+      this.camera.radius += (desired - this.camera.radius) * easing;
+      this.zoom = BASE_RADIUS / this.camera.radius;
+      // Report meaningful changes, avoiding a DOM update on every tiny ease.
+      if (Math.abs(this.zoom - (this._reportedZoom || 0)) > 0.02) {
+        this._reportedZoom = this.zoom;
+        this.onZoomChange?.(this.zoom);
+      }
+    }
+    const target = this._framedTarget(focus.x, focus.z);
     this.targetX = target.x;
     this.targetZ = target.z;
   }
 
   setZoom(zoom) {
+    if (!Number.isFinite(zoom)) return;
+    this._autoZoom = false;
     this.zoom = Math.max(0.3, Math.min(6.0, zoom));
     this.camera.radius = BASE_RADIUS / this.zoom;
     if (this.onZoomChange) this.onZoomChange(this.zoom);
   }
 
-  followBot(botId) { this.followId = botId; }
-  setAutoPan(enabled) { this.autoPan = enabled; if (enabled) this.followId = null; }
-  updateBotPositions(bots) { this.bots = bots || []; }
+  followBot(botId) {
+    this.followId = botId || null;
+    if (this.followId) this.autoPan = false;
+    this._notifyNavigation();
+  }
+
+  setAutoPan(enabled) {
+    this.autoPan = Boolean(enabled);
+    this._autoZoom = this.autoPan;
+    if (enabled) this.followId = null;
+    this._notifyNavigation();
+  }
+
+  _notifyNavigation() {
+    this.onNavigationChange?.({ autoPan: this.autoPan, followId: this.followId });
+  }
+
+  updateBotPositions(bots) {
+    this.bots = Array.isArray(bots) ? bots : [];
+    this._actionFocus = chooseCombatFrame(this.bots, this._actionFocus, this._clock);
+  }
+
+  getNavigationState() {
+    return { zoom: this.zoom, followId: this.followId, autoPan: this.autoPan,
+      autoZoom: this._autoZoom, alpha: this.camera.alpha, beta: this.camera.beta,
+      targetX: this.targetX, targetZ: this.targetZ };
+  }
+
+  restoreNavigationState(state) {
+    if (!state) return;
+    this.setZoom(state.zoom);
+    this.followId = state.followId || null;
+    this.autoPan = state.autoPan === true;
+    this._autoZoom = state.autoZoom === true;
+    for (const key of ['alpha', 'beta']) {
+      if (Number.isFinite(state[key])) this.camera[key] = state[key];
+    }
+    for (const key of ['targetX', 'targetZ']) {
+      if (Number.isFinite(state[key])) this[key] = state[key];
+    }
+    this.camera.target.x = this.targetX;
+    this.camera.target.z = this.targetZ;
+    this._notifyNavigation();
+  }
 }

@@ -16,6 +16,7 @@ import { TrailRenderer } from './trails.js?v=20260907b';
 import { ProjectileRenderer } from './projectiles.js?v=20260711a';
 import { GameplayRenderer } from './gameplay.js?v=20260718i';
 import { getState, isEnabled, onSettingsChange } from '../settings.js';
+import { ARENA_GRADE, applyArenaGrade } from './scene-look.js';
 
 // Bot positions are smoothed via exponential lerp each frame,
 // so no tick-interval-based alpha is needed.
@@ -70,14 +71,7 @@ class GradingController {
   damagePulse() { this._damageT = 0.4; }
 
   _reset(ip) {
-    ip.exposure = 1.0;
-    ip.contrast = 1.1;
-    ip.vignetteWeight = 1.6;
-    if (ip.vignetteColor) {
-      ip.vignetteColor.r = 0;
-      ip.vignetteColor.g = 0;
-      ip.vignetteColor.b = 0.05;
-    }
+    applyArenaGrade(ip);
     this._active = false;
   }
 
@@ -103,16 +97,16 @@ class GradingController {
       return;
     }
     this._active = true;
-    ip.exposure = 1.0 - 0.05 * this._sd - 0.04 * this._lobby + this._winBoost;
-    ip.contrast = 1.1 + 0.08 * this._sd - 0.05 * this._lobby;
-    ip.vignetteWeight = 1.6 + 0.4 * this._sd + 0.5 * damage;
+    ip.exposure = ARENA_GRADE.exposure - 0.05 * this._sd - 0.04 * this._lobby + this._winBoost;
+    ip.contrast = ARENA_GRADE.contrast + 0.08 * this._sd - 0.05 * this._lobby;
+    ip.vignetteWeight = ARENA_GRADE.vignetteWeight + 0.4 * this._sd + 0.5 * damage;
     if (ip.vignetteColor) {
       // Base (0,0,0.05) -> sudden-death red (0.25,0.02,0.04); the damage
       // pulse borrows the same red so both reads stay coherent.
       const red = Math.min(1, this._sd + damage * 0.8);
-      ip.vignetteColor.r = 0.25 * red;
-      ip.vignetteColor.g = 0.02 * red;
-      ip.vignetteColor.b = 0.05 + (0.04 - 0.05) * red;
+      ip.vignetteColor.r = 0.008 + 0.242 * red;
+      ip.vignetteColor.g = 0.015 + 0.005 * red;
+      ip.vignetteColor.b = 0.035 + 0.005 * red;
     }
   }
 }
@@ -567,8 +561,7 @@ export class ArenaEngine {
       pipeline.imageProcessingEnabled = true;
       pipeline.imageProcessing.toneMappingEnabled = true;
       pipeline.imageProcessing.toneMappingType = B.ImageProcessingConfiguration.TONEMAPPING_ACES;
-      pipeline.imageProcessing.exposure = 1.0;
-      pipeline.imageProcessing.contrast = 1.1;
+      applyArenaGrade(pipeline.imageProcessing);
       // Bloom: the scene is built almost entirely from emissive materials and
       // additive particles (trims, rings, trails, explosions) but nothing glowed.
       // High threshold so only genuine highlights bloom; ACES keeps them controlled.
@@ -578,13 +571,12 @@ export class ArenaEngine {
       // contained failure come straight back at the next round boundary.
       pipeline.bloomEnabled = !this._bloomBroken;
       pipeline.bloomThreshold = 0.75;
-      pipeline.bloomWeight = 0.3;
+      pipeline.bloomWeight = 0.22;
       pipeline.bloomKernel = 48;
       pipeline.bloomScale = 0.5;
       // Subtle vignette frames the arena on a big screen.
       pipeline.imageProcessing.vignetteEnabled = true;
-      pipeline.imageProcessing.vignetteWeight = 1.6;
-      pipeline.imageProcessing.vignetteColor = new B.Color4(0, 0, 0.05, 0);
+      pipeline.imageProcessing.vignetteColor = new B.Color4(0.008, 0.015, 0.035, 0);
     }
     this.pipeline = pipeline;
 
@@ -912,7 +904,7 @@ export class ArenaEngine {
   /** @private */
   _addLights() {
     const B = window.BABYLON;
-    const dir = new B.DirectionalLight('sun', new B.Vector3(-0.4, -1, 0.3), this.scene);
+    const dir = new B.DirectionalLight('sun', new B.Vector3(-0.45, -0.85, 0.6), this.scene);
     dir.position = new B.Vector3(0, 80, -40);
     dir.intensity = 0.82;
     dir.diffuse = new B.Color3(1, 0.95, 0.85);
@@ -928,7 +920,7 @@ export class ArenaEngine {
 
     // A single non-shadowing rim gives alloy edges depth without another
     // shadow map or post-process pass. The sun remains the only caster light.
-    const rim = new B.DirectionalLight('arenaRim', new B.Vector3(0.65, -0.35, -0.55), this.scene);
+    const rim = new B.DirectionalLight('arenaRim', new B.Vector3(0.7, -0.45, -0.5), this.scene);
     rim.diffuse = new B.Color3(0.35, 0.62, 1.0);
     rim.specular = new B.Color3(0.45, 0.68, 1.0);
     this.rimLight = rim;
@@ -939,11 +931,14 @@ export class ArenaEngine {
   _applySculptedLighting() {
     if (!this.sunLight || !this.fillLight || !this.rimLight) return;
     const enabled = isEnabled('rendering', 'sculptedLighting');
-    this.sunLight.intensity = enabled ? 1.08 : 0.82;
-    const specular = enabled ? 0.64 : 0.34;
+    this.sunLight.intensity = enabled ? 1.35 : 0.82;
+    this.sunLight.diffuse.set(1, enabled ? 0.91 : 0.95, enabled ? 0.78 : 0.85);
+    const specular = enabled ? 0.86 : 0.34;
     this.sunLight.specular.set(specular, specular, specular);
-    this.fillLight.intensity = enabled ? 0.40 : 0.46;
-    this.rimLight.intensity = enabled ? 0.28 : 0;
+    this.fillLight.intensity = enabled ? 0.62 : 0.46;
+    this.fillLight.diffuse.set(enabled ? 0.76 : 0.66, enabled ? 0.84 : 0.72, enabled ? 0.96 : 0.88);
+    this.fillLight.groundColor.set(enabled ? 0.24 : 0.09, enabled ? 0.28 : 0.1, enabled ? 0.34 : 0.12);
+    this.rimLight.intensity = enabled ? 0.5 : 0;
     this.rimLight.setEnabled(enabled);
   }
 
@@ -1113,6 +1108,8 @@ export class ArenaEngine {
     // replaces that instance — carry the callback over or the zoom slider
     // silently stops syncing after the first between-round arena resize.
     const prevOnZoomChange = this.camera ? this.camera.onZoomChange : null;
+    const prevNavigation = this.camera?.getNavigationState?.();
+    const prevOnNavigationChange = this.camera?.onNavigationChange;
     this.ready = false;
     try {
       this.dispose();
@@ -1123,6 +1120,10 @@ export class ArenaEngine {
       if (prevOnZoomChange && this.camera) this.camera.onZoomChange = prevOnZoomChange;
       if (prevZoom) this.setZoom(prevZoom);
       if (prevFollow) this.followBot(prevFollow);
+      if (this.camera) {
+        this.camera.onNavigationChange = prevOnNavigationChange;
+        this.camera.restoreNavigationState?.(prevNavigation);
+      }
     } catch (err) {
       console.error('[Arena] scene rebuild failed:', err);
     } finally {
@@ -1154,6 +1155,8 @@ export class ArenaEngine {
     const prevFollow = this.camera ? this.camera.followId : null;
     const prevZoom = this.camera ? this.camera.zoom : null;
     const prevOnZoomChange = this.camera ? this.camera.onZoomChange : null;
+    const prevNavigation = this.camera?.getNavigationState?.();
+    const prevOnNavigationChange = this.camera?.onNavigationChange;
     this.ready = false;
     try {
       this.intermissionDirector = null; // detach: the show must outlive the scene
@@ -1166,6 +1169,10 @@ export class ArenaEngine {
       if (prevOnZoomChange && this.camera) this.camera.onZoomChange = prevOnZoomChange;
       if (prevZoom) this.setZoom(prevZoom);
       if (prevFollow) this.followBot(prevFollow);
+      if (this.camera) {
+        this.camera.onNavigationChange = prevOnNavigationChange;
+        this.camera.restoreNavigationState?.(prevNavigation);
+      }
       return true;
     } catch (err) {
       console.error('[Arena] intermission stage resize failed:', err);
@@ -1363,6 +1370,7 @@ export class ArenaEngine {
       intermissionActive: this.intermissionDirector?.active === true,
       arenaSize: [this.arenaWidth, this.arenaHeight],
       safeViewport: this._safeViewport ? { ...this._safeViewport } : null,
+      camera: this.camera?.getNavigationState?.() || null,
       resources,
       bots,
       bounty: {

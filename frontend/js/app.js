@@ -267,6 +267,15 @@ function setupControls(engine) {
   }
 
   const autoPanBtn = document.getElementById('auto-pan');
+  if (engine.camera) {
+    const syncNavigation = ({ autoPan, followId }) => {
+      autoPanBtn?.classList.toggle('active', autoPan);
+      autoPanBtn?.setAttribute('aria-pressed', String(autoPan));
+      if (followSelect && !followId) followSelect.value = '';
+    };
+    engine.camera.onNavigationChange = syncNavigation;
+    syncNavigation(engine.camera);
+  }
   if (autoPanBtn) {
     autoPanBtn.addEventListener('click', () => {
       const active = autoPanBtn.classList.toggle('active');

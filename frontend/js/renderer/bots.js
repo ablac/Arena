@@ -447,6 +447,15 @@ export class BotRenderer {
     if (chassisLit !== this._chassisLit) {
       this._chassisLit = chassisLit;
       setForgeChassisLighting(this.scene, chassisLit);
+      for (const entry of this.entries.values()) {
+        forEachForgeStatusMaterial(entry, material => {
+          const resting = chassisLit ? material._forgeLitRestEmissive : material._forgeUnlitRestEmissive;
+          if (!resting) return;
+          material._forgeRestEmissive.copyFrom(resting);
+          if (entry.isAlive) material.emissiveColor.copyFrom(resting);
+        });
+        if (entry.botData) this._updateStatusEffects(entry, entry.botData, now);
+      }
     }
 
     if (now >= this._bodyFormLODRefreshAt || this._bodyFormLODSelectedBotId !== this.selectedBotId) {

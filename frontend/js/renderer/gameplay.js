@@ -977,12 +977,12 @@ export class GameplayRenderer {
 
     if (!this.bountyGroup || this.bountyGroup.ring.isDisposed()) {
       const ring = B.MeshBuilder.CreateTorus('bountyRing', {
-        diameter: 20, thickness: 1.5, tessellation: 32,
+        diameter: 12, thickness: 0.45, tessellation: 40,
       }, this.scene);
       const mat = new B.StandardMaterial('bountyMat', this.scene);
       mat.diffuseColor = B.Color3.Black();
-      mat.emissiveColor = new B.Color3(1.0, 0.85, 0.0);
-      mat.alpha = 0.85;
+      mat.emissiveColor = new B.Color3(0.95, 0.64, 0.12);
+      mat.alpha = 0.72;
       mat.disableLighting = true;
       ring.material = mat;
       ring.isPickable = false;
@@ -1001,7 +1001,7 @@ export class GameplayRenderer {
       sparkle.color1 = new B.Color4(1, 0.85, 0.2, 0.8);
       sparkle.color2 = new B.Color4(1, 0.95, 0.6, 0.6);
       sparkle.colorDead = new B.Color4(0.6, 0.45, 0.05, 0);
-      sparkle.minSize = 2; sparkle.maxSize = 5;
+      sparkle.minSize = 0.7; sparkle.maxSize = 1.8;
       sparkle.minLifeTime = 0.4; sparkle.maxLifeTime = 0.9;
       sparkle.minEmitPower = 1; sparkle.maxEmitPower = 4;
       sparkle.gravity = new B.Vector3(0, -6, 0);
@@ -1086,7 +1086,7 @@ export class GameplayRenderer {
       g.curX += (tx - g.curX) * lerp;
       g.curZ += (tz - g.curZ) * lerp;
     }
-    g.ring.position.set(g.curX, 25 + Math.sin(this._tick * 0.06) * 3, g.curZ);
+    g.ring.position.set(g.curX, 25 + Math.sin(this._tick * 0.06) * 0.65, g.curZ);
     g.ring.rotation.y += 0.4 * d;
     g.ring.visibility = 1;
     if (g.sparkle) {
@@ -1094,7 +1094,7 @@ export class GameplayRenderer {
       g.sparkle.emitter.x = g.curX;
       g.sparkle.emitter.y = 23;
       g.sparkle.emitter.z = g.curZ;
-      g.sparkle.emitRate = 18;
+      g.sparkle.emitRate = 7;
     }
   }
 

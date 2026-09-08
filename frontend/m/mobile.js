@@ -465,6 +465,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     controller.setAutoPan(autoPanOn && !followId);
     if (followId) controller.followBot(followId);
+    controller.onNavigationChange = ({ autoPan, followId: cameraFollowId }) => {
+      autoPanOn = autoPan;
+      ui.fabAutoPan.classList.toggle('active', autoPan);
+      ui.fabAutoPan.setAttribute('aria-pressed', String(autoPan));
+      if (!cameraFollowId && followId) {
+        followId = null;
+        followName = '';
+        ui.fabFollow.hidden = true;
+        ui.fabFollowName.textContent = '';
+        rosterCache = '';
+        rosterRows.forEach(row => row.el.classList.remove('following'));
+      }
+    };
   }
   tuneCameraIfNew();
 
