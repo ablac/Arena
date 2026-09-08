@@ -38,6 +38,26 @@ assert.ok(Math.abs(projected.z - 1000) < 1e-8);
 const taller = frameWorldTarget(1000, 1000, 100, 0, 500, -Math.PI / 2,
   {canvasHeight: 2000, fov: Math.PI / 2, beta: Math.PI / 4});
 assert.ok(Math.abs(taller.x - 950) < 1e-8, 'viewport height controls world units per pixel');
+// Independent forward projection: express the subject in the camera's basis,
+// then apply the perspective divide. This checks the inverse ground-ray fit
+// for vertical offsets and camera orbits, including views below the deck.
+for (const alpha of [-Math.PI / 2, 0.3, 2]) {
+  for (const beta of [0.3, 0.8, 1.2, 2.1]) {
+    const radius = 900, height = 812, fov = 0.8, ox = -43, oy = -12;
+    const target = frameWorldTarget(500, 700, ox, oy, radius, alpha, {canvasHeight:height, fov, beta});
+    const ca = Math.cos(alpha), sa = Math.sin(alpha), cb = Math.cos(beta), sb = Math.sin(beta);
+    const subject = [500 - target.x - radius * ca * sb, -radius * cb, 700 - target.z - radius * sa * sb];
+    const dot = (a, b) => a.reduce((sum, value, i) => sum + value * b[i], 0);
+    const depth = dot(subject, [-ca * sb, -cb, -sa * sb]);
+    const right = dot(subject, [-sa, 0, ca]);
+    const up = dot(subject, [-ca * cb, sb, -sa * cb]);
+    const pixelsPerUnit = height / (2 * Math.tan(fov / 2) * depth);
+    assert.ok(Math.abs(right * pixelsPerUnit - ox) < 1e-8);
+    assert.ok(Math.abs(-up * pixelsPerUnit - oy) < 1e-8);
+  }
+}
+assert.deepEqual(frameWorldTarget(500, 700, 50, 0, 900, 0,
+  {canvasHeight:812, fov:0.8, beta:Math.PI / 2}), {x:500, z:700}, 'horizon view stays finite and centered');
 
 // Exercise the public controller and actual input handlers with only the
 // browser/3D host substituted. Focus policy itself is imported above.

@@ -171,6 +171,15 @@ test(`the world still paints after a non-integer hourglass rebuild (${variant.na
   expect(pixels.litFraction, `framebuffer readback ${JSON.stringify(pixels)}`).toBeGreaterThan(0.05);
 
   if (variant.name === 'mobile') {
+    const headerLayout = await page.evaluate(() => {
+      const header = document.getElementById('topbar').getBoundingClientRect();
+      return ['tb-round', 'tb-mode', 'tb-alive'].map(id => {
+        const rect = document.getElementById(id).getBoundingClientRect();
+        return {id, inside: rect.left >= header.left && rect.right <= header.right &&
+          rect.top >= header.top && rect.bottom <= header.bottom};
+      });
+    });
+    expect(headerLayout.every(item => item.inside), JSON.stringify(headerLayout)).toBe(true);
     // Wait for the default shot to settle with both selected opponents inside
     // the space left by the real mobile controls, not just inside the canvas.
     const combatFrame = () => page.evaluate(async () => {
