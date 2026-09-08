@@ -180,6 +180,14 @@ test(`the world still paints after a non-integer hourglass rebuild (${variant.na
       });
     });
     expect(headerLayout.every(item => item.inside), JSON.stringify(headerLayout)).toBe(true);
+    send({type: 'service_status', revision: 99, maintenance: null,
+      broadcast: {id: 99, severity: 'info', message: 'Arena visual preview'}});
+    await expect(page.locator('#service-status-banner')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => {
+      const header = document.getElementById('topbar').getBoundingClientRect();
+      const notice = document.getElementById('service-status-banner').getBoundingClientRect();
+      return notice.top >= header.bottom + 4;
+    })).toBe(true);
     // Wait for the default shot to settle with both selected opponents inside
     // the space left by the real mobile controls, not just inside the canvas.
     const combatFrame = () => page.evaluate(async () => {

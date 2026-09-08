@@ -5,7 +5,7 @@ import '../js/babylon-runtime.js?v=20260810d';
 import {
   MOBILE_SAFE_VIEWPORT_REGIONS,
   observeArenaSafeViewport,
-} from '../js/safe-viewport.js?v=20260718b';
+} from '../js/safe-viewport.js?v=20260907p';
 import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from '../js/sign-in.js?v=20260905u';
 
 /**
@@ -393,6 +393,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupChatAndDashboard();
   const el = (id) => document.getElementById(id);
   const ui = {
+    topbar: el('topbar'),
+    statusBanner: el('service-status-banner'),
     conn: el('tb-conn'),
     round: el('tb-round'),
     mode: el('tb-mode'),
@@ -415,6 +417,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     panelKills: el('panel-kills'),
     panelRanks: el('panel-ranks'),
   };
+
+  // Header rows can wrap as match metadata changes. Place notices from the
+  // actual layout and reuse the existing viewport observer for later changes.
+  function positionServiceNotice() {
+    const top = `${Math.ceil(ui.topbar.getBoundingClientRect().bottom + 8)}px`;
+    if (ui.statusBanner.style.top !== top) ui.statusBanner.style.top = top;
+  }
+  positionServiceNotice();
 
   // ---------- 3D engine ----------
   const canvas = el('arena-canvas');
@@ -439,7 +449,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // live; observing the detached one would report a zero-sized box forever.
   const stopSafeViewport = observeArenaSafeViewport(
     engine.canvas,
-    (viewport) => engine.setSafeViewport(viewport),
+    (viewport) => {
+      positionServiceNotice();
+      engine.setSafeViewport(viewport);
+    },
     MOBILE_SAFE_VIEWPORT_REGIONS,
   );
   window.addEventListener('pagehide', stopSafeViewport, { once: true });

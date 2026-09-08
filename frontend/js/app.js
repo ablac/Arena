@@ -22,7 +22,7 @@ import { reportEngineInitFailure, showArenaRenderFallback } from './render-failu
 
 // Install before anything else so failures during startup are reported too.
 installClientErrorReporting();
-import { observeArenaSafeViewport } from './safe-viewport.js?v=20260718b';
+import { observeArenaSafeViewport } from './safe-viewport.js?v=20260907p';
 import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from './sign-in.js?v=20260905u';
 
 const ARENA_WIDTH = 2000;
