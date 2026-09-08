@@ -73,7 +73,7 @@
 - [x] Mark assembly complete before any test execution.
 - [x] Run focused environment, camera, character and settings regressions, syntax and Babylon runtime validation.
 - [x] Run all CI frontend/SDK checks and Go vet/tests; diagnose rather than suppress failures.
-- [ ] Run real browser scenes for phone/desktop maps, quality off/on, combat camera/manual override, all chassis/forms and cosmetic clone lifecycle. Compare screenshots with the captured baseline.
+- [x] Run real browser scenes for phone/desktop maps, quality off/on, combat camera/manual override, all chassis/forms and cosmetic clone lifecycle. Compare screenshots with the captured baseline.
 - [x] Obtain independent exact-head review and resolve material findings.
 - [ ] Commit final docs and source, run the protected local integration controller with matching review evidence, verify its receipt and cleanup.
 - [ ] Update the existing Arena unreleased changelog and finish task logs. Return visible comparison and concise outcome with honest limitations.

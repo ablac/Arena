@@ -169,5 +169,66 @@ test(`the world still paints after a non-integer hourglass rebuild (${variant.na
 
   await page.screenshot({ path: testInfo.outputPath(`live-conditions-${variant.name}.png`) });
   expect(pixels.litFraction, `framebuffer readback ${JSON.stringify(pixels)}`).toBeGreaterThan(0.05);
+
+  if (variant.name === 'mobile') {
+    // Wait for the default shot to settle with both selected opponents inside
+    // the space left by the real mobile controls, not just inside the canvas.
+    const combatFrame = () => page.evaluate(async () => {
+      const {computeSafeViewport, MOBILE_SAFE_VIEWPORT_REGIONS} = await import('/js/safe-viewport.js');
+      const B = window.BABYLON, scene = B.EngineStore.LastCreatedScene, engine = scene.getEngine();
+      const canvas = document.getElementById('arena-canvas').getBoundingClientRect();
+      const regions = MOBILE_SAFE_VIEWPORT_REGIONS.flatMap(spec => [...document.querySelectorAll(spec.selector)]
+        .map(element => ({side: spec.side, rect: element.getBoundingClientRect(),
+          visible: !element.hidden && element.getClientRects().length > 0 && getComputedStyle(element).display !== 'none'})));
+      const safe = computeSafeViewport(canvas, regions);
+      const labels = ['bot-0', 'bot-1'].map(id => {
+        const mesh = scene.getMeshByName(`world-hud-name-${id}`);
+        if (!mesh) return null;
+        const point = B.Vector3.Project(mesh.getAbsolutePosition(), B.Matrix.Identity(), scene.getTransformMatrix(),
+          scene.activeCamera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight()));
+        return {x: point.x * canvas.width / engine.getRenderWidth(), y: point.y * canvas.height / engine.getRenderHeight()};
+      });
+      return {safe, labels, radius: scene.activeCamera.radius, visible: labels.every(point => point &&
+        point.x >= safe.left && point.x <= canvas.width - safe.right &&
+        point.y >= safe.top && point.y <= canvas.height - safe.bottom)};
+    });
+    await expect.poll(async () => {
+      const frame = await combatFrame();
+      return frame.visible ? 'visible' : JSON.stringify(frame);
+    }).toBe('visible');
+    await page.screenshot({path: testInfo.outputPath('polish-mobile-combat.png')});
+    const autoPan = page.locator('#fab-autopan');
+    await expect(autoPan).toHaveAttribute('aria-pressed', 'true');
+    await page.locator('#sheet-grip').click();
+    await page.locator('.p-row[data-bot-id="bot-0"]').click();
+    await expect(page.locator('#fab-follow-off')).toBeVisible();
+    await expect(autoPan).toHaveAttribute('aria-pressed', 'false');
+    await autoPan.click();
+    await expect(page.locator('#fab-follow-off')).toBeHidden();
+    await expect(autoPan).toHaveAttribute('aria-pressed', 'true');
+
+    await page.locator('#arena-canvas').dispatchEvent('pointerdown', {
+      pointerId: 17, pointerType: 'touch', clientX: 180, clientY: 150, button: 0,
+    });
+    await page.locator('#arena-canvas').dispatchEvent('pointerup', {pointerId: 17, pointerType: 'touch'});
+    await expect(autoPan).toHaveAttribute('aria-pressed', 'false');
+    await autoPan.click();
+    await page.locator('#fab-zoom-in').click();
+    const chosenRadius = await page.evaluate(() => {
+      window.__polishCameraBeforeRebuild = window.BABYLON.EngineStore.LastCreatedScene.activeCamera;
+      return window.__polishCameraBeforeRebuild.radius;
+    });
+    const next = liveState(960, true);
+    next.arena_size = [SIZE + 120, SIZE + 120];
+    send(next);
+    await expect.poll(() => page.evaluate(() =>
+      window.BABYLON.EngineStore.LastCreatedScene.activeCamera !== window.__polishCameraBeforeRebuild)).toBe(true);
+    const frame = await frameIdNow();
+    await expect.poll(frameIdNow).toBeGreaterThan(frame + 3);
+    const restoredRadius = await page.evaluate(() => window.BABYLON.EngineStore.LastCreatedScene.activeCamera.radius);
+    expect(restoredRadius).toBeCloseTo(chosenRadius, 4);
+    await expect(autoPan).toHaveAttribute('aria-pressed', 'true');
+    await page.evaluate(() => { delete window.__polishCameraBeforeRebuild; });
+  }
 });
 }

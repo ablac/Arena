@@ -16,13 +16,28 @@ const MAX_BETA = Math.PI; // full orbit — can go under the arena
 const PAN_SPEED = 8;
 
 /** Translate a desired screen-space focal offset into the camera's XZ target. */
-export function frameWorldTarget(x, z, offsetX, offsetY, radius, alpha) {
-  const scale = radius / 500;
+export function frameWorldTarget(x, z, offsetX, offsetY, radius, alpha, projection = null) {
+  let dx, dy;
+  if (projection && Number.isFinite(projection.canvasHeight) && projection.canvasHeight > 0 &&
+      Number.isFinite(projection.fov) && Number.isFinite(projection.beta)) {
+    // Intersect the desired screen ray with the ground plane. A fixed
+    // world-units-per-pixel factor over-shifts the shot on narrow screens.
+    const tangent = Math.tan(projection.fov / 2);
+    const cosB = Math.cos(projection.beta), sinB = Math.sin(projection.beta);
+    const nx = 2 * offsetX * tangent / projection.canvasHeight;
+    const ny = -2 * offsetY * tangent / projection.canvasHeight;
+    const denominator = cosB - sinB * ny;
+    // Near the horizon a ground intersection can lie behind the camera.
+    if (Math.abs(denominator) < 0.05 || cosB / denominator <= 0) return {x, z};
+    dx = radius * cosB * nx / denominator;
+    dy = -radius * ny / denominator;
+  } else {
+    dx = offsetX * radius / 500;
+    dy = offsetY * radius / 500;
+  }
   // ArcRotate's authored view uses the same target-plane mapping as grab-pan:
   // at alpha=-PI/2 a target move toward world -X places the focal point on
   // screen-right. Real-browser projection tests lock this non-obvious axis.
-  const dx = offsetX * scale;
-  const dy = offsetY * scale;
   const cosA = Math.cos(alpha);
   const sinA = Math.sin(alpha);
   return {
@@ -100,6 +115,7 @@ export class CameraController {
       viewport.focalOffsetY || 0,
       this.camera.radius,
       this.camera.alpha,
+      {canvasHeight: viewport.canvasHeight, fov: this.camera.fov, beta: this.camera.beta},
     );
   }
 

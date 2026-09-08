@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { chooseCombatFrame, combatFrameRadius } from '../frontend/js/renderer/camera-framing.js';
-import { CameraController } from '../frontend/js/renderer/camera.js';
+import { CameraController, frameWorldTarget } from '../frontend/js/renderer/camera.js';
 import { ARENA_GRADE, applyArenaGrade } from '../frontend/js/renderer/scene-look.js';
 
 const bot = (id, x, z, extra = {}) => ({ bot_id: id, position: [x, z], is_alive: true, ...extra });
@@ -29,6 +29,15 @@ assert.ok(combatFrameRadius(300, wide) > combatFrameRadius(30, wide));
 for (const span of [0, 20, 5000, NaN, Infinity]) {
   assert.ok(Number.isFinite(combatFrameRadius(span, wide, NaN)));
 }
+// At a vertical field of view of 90 degrees and 1000px canvas height, a
+// 500-unit radius makes one horizontal pixel equal one ground unit.
+const projected = frameWorldTarget(1000, 1000, 100, 0, 500, -Math.PI / 2,
+  {canvasHeight: 1000, fov: Math.PI / 2, beta: Math.PI / 4});
+assert.ok(Math.abs(projected.x - 900) < 1e-8);
+assert.ok(Math.abs(projected.z - 1000) < 1e-8);
+const taller = frameWorldTarget(1000, 1000, 100, 0, 500, -Math.PI / 2,
+  {canvasHeight: 2000, fov: Math.PI / 2, beta: Math.PI / 4});
+assert.ok(Math.abs(taller.x - 950) < 1e-8, 'viewport height controls world units per pixel');
 
 // Exercise the public controller and actual input handlers with only the
 // browser/3D host substituted. Focus policy itself is imported above.
