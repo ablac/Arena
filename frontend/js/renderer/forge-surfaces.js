@@ -77,9 +77,12 @@ function registerForgeSurface(material, scene) {
     if (scene.onDisposeObservable?.addOnce) {
       const unsubscribe = onSettingsChange(() => {
         for (const item of materials) {
+          const wasFrozen = item.isFrozen === true;
           item.unfreeze();
           syncForgeSurface(item);
-          item.freeze();
+          // Bot-owned armor needs live color/alpha uploads for damage,
+          // stun and death. Only restore a pre-existing static freeze.
+          if (wasFrozen) item.freeze();
         }
       });
       scene.onDisposeObservable.addOnce(() => { unsubscribe(); materials.clear(); });

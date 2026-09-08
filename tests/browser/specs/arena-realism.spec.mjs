@@ -199,6 +199,13 @@ test('glass arena and moving combatants paint at overview and close range', { ta
   const restored = await sceneHealth(page);
   expect(restored.invalid).toEqual([]);
   expect(restored.textures).toBeLessThanOrEqual(baseline.textures);
+  const armor = await page.evaluate(() => {
+    const scene = window.BABYLON.EngineStore.LastCreatedScene;
+    const materials = scene.materials.filter(material => material.name.startsWith('forge-accent-'));
+    return materials.map(material => ({ name: material.name, frozen: material.isFrozen }));
+  });
+  expect(armor.length).toBeGreaterThan(0);
+  expect(armor.every(material => !material.frozen), JSON.stringify(armor)).toBe(true);
   await capture(page, testInfo, 'realism-close-quality-restored');
 
   // Exercise the production material-clone paths with actual GPU textures.
