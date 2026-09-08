@@ -5,7 +5,7 @@ import '../js/babylon-runtime.js?v=20260810d';
 import {
   MOBILE_SAFE_VIEWPORT_REGIONS,
   observeArenaSafeViewport,
-} from '../js/safe-viewport.js?v=20260718b';
+} from '../js/safe-viewport.js?v=20260907p';
 import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from '../js/sign-in.js?v=20260905u';
 
 /**
@@ -17,12 +17,13 @@ import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from '
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260907b';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260907p';
 import { Minimap } from '../js/renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, appPath, wsURL } from '../js/paths.js?v=20260710a';
 import { handleServiceStatus, initServiceStatus } from '../js/service-status.js?v=20260810c';
 import { installClientErrorReporting } from '../js/client-errors.js?v=20260903c';
+import { reportEngineInitFailure, showArenaRenderFallback } from '../js/render-failure.js?v=20260907a';
 
 // Install before anything else so failures during startup are reported too.
 installClientErrorReporting();
@@ -392,6 +393,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupChatAndDashboard();
   const el = (id) => document.getElementById(id);
   const ui = {
+    topbar: el('topbar'),
+    statusBanner: el('service-status-banner'),
     conn: el('tb-conn'),
     round: el('tb-round'),
     mode: el('tb-mode'),
@@ -415,6 +418,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     panelRanks: el('panel-ranks'),
   };
 
+  // Header rows can wrap as match metadata changes. Place notices from the
+  // actual layout and reuse the existing viewport observer for later changes.
+  function positionServiceNotice() {
+    const top = `${Math.ceil(ui.topbar.getBoundingClientRect().bottom + 8)}px`;
+    if (ui.statusBanner.style.top !== top) ui.statusBanner.style.top = top;
+  }
+  positionServiceNotice();
+
   // ---------- 3D engine ----------
   const canvas = el('arena-canvas');
   const engine = new ArenaEngine(canvas, {
@@ -424,7 +435,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     await engine.init();
     console.log('[Mobile] Arena engine initialized');
   } catch (err) {
+    // Same silent outage as the desktop entrypoint, and this is the shell where
+    // the weakest GPUs actually land: the throw is caught, so window.onerror
+    // never fires and client-errors.js never sees it, while the spectator gets a
+    // black stage under a live sheet with nothing to explain it.
     console.error('[Mobile] Engine init failed:', err);
+    reportEngineInitFailure(err, 'mobile.arenaEngine.init');
+    showArenaRenderFallback(err);
   }
   // engine.canvas, not the element read above: a failed WebGPU init replaces
   // the canvas, because an element that has answered getContext('webgpu') can
@@ -432,15 +449,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   // live; observing the detached one would report a zero-sized box forever.
   const stopSafeViewport = observeArenaSafeViewport(
     engine.canvas,
-    (viewport) => engine.setSafeViewport(viewport),
+    (viewport) => {
+      positionServiceNotice();
+      engine.setSafeViewport(viewport);
+    },
     MOBILE_SAFE_VIEWPORT_REGIONS,
   );
   window.addEventListener('pagehide', stopSafeViewport, { once: true });
 
-  // Camera state that must survive dynamic arena-size scene rebuilds
-  // (ArenaEngine recreates its CameraController; zoom/follow are restored
-  // by the engine itself, pinch tuning and auto-pan are ours to reapply).
-  let autoPanOn = true;
+  // The engine restores navigation during rebuilds; bind the replacement
+  // controller to the mobile controls without re-enabling automatic zoom.
+  let autoPanOn = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches !== true;
   let followId = null;
   let followName = '';
   let lastCameraRef = null;
@@ -456,8 +475,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       // across the 80..1800 radius range without touching camera.js.
       cam.pinchDeltaPercentage = 0.01;
     }
-    controller.setAutoPan(autoPanOn && !followId);
-    if (followId) controller.followBot(followId);
+    controller.onNavigationChange = ({ autoPan, followId: cameraFollowId }) => {
+      autoPanOn = autoPan;
+      ui.fabAutoPan.classList.toggle('active', autoPan);
+      ui.fabAutoPan.setAttribute('aria-pressed', String(autoPan));
+      if (!cameraFollowId && followId) {
+        followId = null;
+        followName = '';
+        ui.fabFollow.hidden = true;
+        ui.fabFollowName.textContent = '';
+        rosterCache = '';
+        rosterRows.forEach(row => row.el.classList.remove('following'));
+      }
+    };
+    controller.onNavigationChange(controller.getNavigationState());
   }
   tuneCameraIfNew();
 
@@ -502,10 +533,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   ui.fabAutoPan.classList.toggle('active', autoPanOn);
   ui.fabAutoPan.addEventListener('click', () => {
-    autoPanOn = !autoPanOn;
-    ui.fabAutoPan.classList.toggle('active', autoPanOn);
-    if (autoPanOn && followId) setFollow(null);
-    else engine.setAutoPan(autoPanOn);
+    const enabled = !autoPanOn;
+    if (enabled && followId) setFollow(null);
+    engine.setAutoPan(enabled);
   });
 
   ui.fabMinimap.addEventListener('click', () => {

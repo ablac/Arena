@@ -5,22 +5,34 @@
  * @module renderer/engine
  */
 
-import { CameraController } from './camera.js?v=20260718b';
-import { BotRenderer } from './bots.js?v=20260907b';
-import { EnvironmentRenderer } from './environment.js?v=20260907r';
-import { ObstacleRenderer } from './obstacles.js?v=20260907r';
-import { IntermissionDirector } from './intermission-director.js?v=20260907b';
+import { CameraController } from './camera.js?v=20260907p';
+import { BotRenderer } from './bots.js?v=20260907p';
+import { EnvironmentRenderer } from './environment.js?v=20260907p';
+import { ObstacleRenderer } from './obstacles.js?v=20260907p';
+import { IntermissionDirector } from './intermission-director.js?v=20260907p';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
 import { TrailRenderer } from './trails.js?v=20260907b';
 import { ProjectileRenderer } from './projectiles.js?v=20260711a';
-import { GameplayRenderer } from './gameplay.js?v=20260718i';
+import { GameplayRenderer } from './gameplay.js?v=20260907p';
 import { getState, isEnabled, onSettingsChange } from '../settings.js';
+import { ARENA_GRADE, applyArenaGrade } from './scene-look.js?v=20260907p';
 
 // Bot positions are smoothed via exponential lerp each frame,
 // so no tick-interval-based alpha is needed.
 
 const WEBGPU_PROBE_TIMEOUT_MS = 1500;
+
+/*
+ * How long the WebGPU path may spend fetching the GLSL->WGSL toolchain before
+ * we give up on it and use WebGL instead. See prepareGLSLTranspilerWithin.
+ *
+ * Generous on purpose: glslang.wasm and twgsl.wasm are ~2.7MB together over a
+ * third-party CDN, and demoting a slow phone that would have got there costs it
+ * the backend that runs this scene more cheaply. It only has to be shorter than
+ * "forever", which is what the unbounded path actually does.
+ */
+const GLSL_TRANSPILER_TIMEOUT_MS = 8000;
 
 /**
  * Dynamic mode grading (issue #183c): eases the existing pipeline's
@@ -59,14 +71,7 @@ class GradingController {
   damagePulse() { this._damageT = 0.4; }
 
   _reset(ip) {
-    ip.exposure = 1.0;
-    ip.contrast = 1.1;
-    ip.vignetteWeight = 1.6;
-    if (ip.vignetteColor) {
-      ip.vignetteColor.r = 0;
-      ip.vignetteColor.g = 0;
-      ip.vignetteColor.b = 0.05;
-    }
+    applyArenaGrade(ip);
     this._active = false;
   }
 
@@ -92,16 +97,16 @@ class GradingController {
       return;
     }
     this._active = true;
-    ip.exposure = 1.0 - 0.05 * this._sd - 0.04 * this._lobby + this._winBoost;
-    ip.contrast = 1.1 + 0.08 * this._sd - 0.05 * this._lobby;
-    ip.vignetteWeight = 1.6 + 0.4 * this._sd + 0.5 * damage;
+    ip.exposure = ARENA_GRADE.exposure - 0.05 * this._sd - 0.04 * this._lobby + this._winBoost;
+    ip.contrast = ARENA_GRADE.contrast + 0.08 * this._sd - 0.05 * this._lobby;
+    ip.vignetteWeight = ARENA_GRADE.vignetteWeight + 0.4 * this._sd + 0.5 * damage;
     if (ip.vignetteColor) {
       // Base (0,0,0.05) -> sudden-death red (0.25,0.02,0.04); the damage
       // pulse borrows the same red so both reads stay coherent.
       const red = Math.min(1, this._sd + damage * 0.8);
-      ip.vignetteColor.r = 0.25 * red;
-      ip.vignetteColor.g = 0.02 * red;
-      ip.vignetteColor.b = 0.05 + (0.04 - 0.05) * red;
+      ip.vignetteColor.r = 0.008 + 0.242 * red;
+      ip.vignetteColor.g = 0.015 + 0.005 * red;
+      ip.vignetteColor.b = 0.035 + 0.005 * red;
     }
   }
 }
@@ -123,6 +128,71 @@ export async function webGPUAvailableWithin(B, timeoutMs = WEBGPU_PROBE_TIMEOUT_
         timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
       }),
     ]));
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
+
+/**
+ * Make sure this WebGPU engine can actually compile the scene's GLSL shaders,
+ * within a bounded time, and fail loudly if it cannot.
+ *
+ * environment.js authors the skybox (`spaceVertexShader`/`spaceFragmentShader`)
+ * and the energy floor (`energyFloorVertexShader`/`energyFloorFragmentShader`)
+ * as GLSL `ShaderMaterial`s. Babylon's core materials ship WGSL for WebGPU, but
+ * a GLSL ShaderMaterial does not: compiling one on WebGPU needs glslang and
+ * twgsl, which Babylon fetches at RUNTIME from `cdn.babylonjs.com` — the reason
+ * that host is in the production CSP's script-src and connect-src.
+ *
+ * That fetch is lazy and, in the vendored bundle, unbounded and unrejectable:
+ *
+ *     prepareGlslangAndTintAsync() {
+ *       return this._workingGlslangAndTintPromise || (
+ *         this._workingGlslangAndTintPromise = new Promise((resolve) => {
+ *           this._initGlslangAsync(...).then((g) => {
+ *             ...initTwgsl(...).then(() => { ...; resolve(); })
+ *           })
+ *         }))
+ *     }
+ *
+ * The executor takes `resolve` only. There is no `reject` and no `.catch`, so
+ * if the CDN is blocked, filtered, throttled or down, that promise stays
+ * PENDING FOR THE LIFE OF THE PAGE. It is awaited from
+ * `_preparePipelineContextAsync`, so the skybox and floor effects simply never
+ * become ready: no throw, no uncaptured GPU error, a healthy frame rate, a live
+ * HUD and a live kill feed over a black arena.
+ *
+ * That is the same symptom the bloom containment ladder was built for, but the
+ * ladder cannot see this one — it arms on `uncapturederror`, and a device that
+ * is never asked to do the work never errors. This is also why `?webgpu=0` has
+ * always looked like a cure: WebGL consumes that GLSL directly and never asks
+ * the CDN for anything.
+ *
+ * So put a clock on that fetch and give the failure somewhere to go. Rejecting
+ * is the contract; `_watchGLSLTranspiler` turns the rejection into the same
+ * WebGL fallback the containment ladder's backend rung already performs.
+ *
+ * This does not block startup: see `_watchGLSLTranspiler` for why. On a client
+ * whose CDN is reachable nothing here changes what is fetched or when, and no
+ * fallback can fire, because the promise resolves.
+ */
+export async function prepareGLSLTranspilerWithin(engine, timeoutMs = GLSL_TRANSPILER_TIMEOUT_MS) {
+  // Absent on WebGL, and on any Babylon that stops needing a transpiler; both
+  // mean there is nothing to wait for.
+  if (!engine || typeof engine.prepareGlslangAndTintAsync !== 'function') return;
+  let timer = null;
+  try {
+    await Promise.race([
+      // Guarded: a future build may reject here rather than hang, and an
+      // unhandled rejection inside a race is still a rejection we want.
+      Promise.resolve().then(() => engine.prepareGlslangAndTintAsync()),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`GLSL transpiler unavailable after ${timeoutMs}ms`)),
+          Math.max(0, timeoutMs),
+        );
+      }),
+    ]);
   } finally {
     if (timer !== null) clearTimeout(timer);
   }
@@ -491,8 +561,7 @@ export class ArenaEngine {
       pipeline.imageProcessingEnabled = true;
       pipeline.imageProcessing.toneMappingEnabled = true;
       pipeline.imageProcessing.toneMappingType = B.ImageProcessingConfiguration.TONEMAPPING_ACES;
-      pipeline.imageProcessing.exposure = 1.0;
-      pipeline.imageProcessing.contrast = 1.1;
+      applyArenaGrade(pipeline.imageProcessing);
       // Bloom: the scene is built almost entirely from emissive materials and
       // additive particles (trims, rings, trails, explosions) but nothing glowed.
       // High threshold so only genuine highlights bloom; ACES keeps them controlled.
@@ -502,13 +571,12 @@ export class ArenaEngine {
       // contained failure come straight back at the next round boundary.
       pipeline.bloomEnabled = !this._bloomBroken;
       pipeline.bloomThreshold = 0.75;
-      pipeline.bloomWeight = 0.3;
+      pipeline.bloomWeight = 0.22;
       pipeline.bloomKernel = 48;
       pipeline.bloomScale = 0.5;
       // Subtle vignette frames the arena on a big screen.
       pipeline.imageProcessing.vignetteEnabled = true;
-      pipeline.imageProcessing.vignetteWeight = 1.6;
-      pipeline.imageProcessing.vignetteColor = new B.Color4(0, 0, 0.05, 0);
+      pipeline.imageProcessing.vignetteColor = new B.Color4(0.008, 0.015, 0.035, 0);
     }
     this.pipeline = pipeline;
 
@@ -629,6 +697,37 @@ export class ArenaEngine {
     this._resizeHandler = () => engine.resize();
     window.addEventListener('resize', this._resizeHandler);
     this.ready = true;
+    // Last, because it can decide to tear this scene down again.
+    this._watchGLSLTranspiler(engine);
+  }
+
+  /**
+   * Escalate to WebGL if the GLSL->WGSL toolchain never arrives.
+   *
+   * Deliberately NOT awaited by init(). glslang.wasm and twgsl.wasm are ~2.7MB
+   * together, so blocking startup on them would hold the whole scene back for
+   * seconds on a slow connection to fix a problem that only some clients have.
+   * Babylon would fetch them in the background anyway; this only puts a clock on
+   * that fetch and gives the failure somewhere to go.
+   *
+   * Reuses the backend rung of the containment ladder, including its
+   * `_webGPUFallbackPending` latch, so this and the GPU error channel cannot
+   * both tear down the same engine.
+   * @private
+   */
+  _watchGLSLTranspiler(engine) {
+    if (!engine || typeof engine.prepareGlslangAndTintAsync !== 'function') return;
+    prepareGLSLTranspilerWithin(engine).catch((err) => {
+      // A rebuild since this was armed means the engine below is gone and this
+      // verdict is about a scene that no longer exists.
+      if (this.engine !== engine || this._webGPUFallbackPending) return;
+      console.warn('[Arena] GLSL transpiler unavailable on WebGPU; falling back to WebGL', err);
+      globalThis.__arenaReportError?.('gpu-transpiler', err, {
+        source: 'engine.prepareGlslangAndTint', stage: 'backend',
+      });
+      this._webGPUFallbackPending = true;
+      this._fallBackToWebGL();
+    });
   }
 
   /**
@@ -805,7 +904,7 @@ export class ArenaEngine {
   /** @private */
   _addLights() {
     const B = window.BABYLON;
-    const dir = new B.DirectionalLight('sun', new B.Vector3(-0.4, -1, 0.3), this.scene);
+    const dir = new B.DirectionalLight('sun', new B.Vector3(-0.45, -0.85, 0.6), this.scene);
     dir.position = new B.Vector3(0, 80, -40);
     dir.intensity = 0.82;
     dir.diffuse = new B.Color3(1, 0.95, 0.85);
@@ -821,7 +920,7 @@ export class ArenaEngine {
 
     // A single non-shadowing rim gives alloy edges depth without another
     // shadow map or post-process pass. The sun remains the only caster light.
-    const rim = new B.DirectionalLight('arenaRim', new B.Vector3(0.65, -0.35, -0.55), this.scene);
+    const rim = new B.DirectionalLight('arenaRim', new B.Vector3(0.7, -0.45, -0.5), this.scene);
     rim.diffuse = new B.Color3(0.35, 0.62, 1.0);
     rim.specular = new B.Color3(0.45, 0.68, 1.0);
     this.rimLight = rim;
@@ -832,11 +931,14 @@ export class ArenaEngine {
   _applySculptedLighting() {
     if (!this.sunLight || !this.fillLight || !this.rimLight) return;
     const enabled = isEnabled('rendering', 'sculptedLighting');
-    this.sunLight.intensity = enabled ? 1.08 : 0.82;
-    const specular = enabled ? 0.64 : 0.34;
+    this.sunLight.intensity = enabled ? 1.35 : 0.82;
+    this.sunLight.diffuse.set(1, enabled ? 0.91 : 0.95, enabled ? 0.78 : 0.85);
+    const specular = enabled ? 0.86 : 0.34;
     this.sunLight.specular.set(specular, specular, specular);
-    this.fillLight.intensity = enabled ? 0.40 : 0.46;
-    this.rimLight.intensity = enabled ? 0.28 : 0;
+    this.fillLight.intensity = enabled ? 0.62 : 0.46;
+    this.fillLight.diffuse.set(enabled ? 0.76 : 0.66, enabled ? 0.84 : 0.72, enabled ? 0.96 : 0.88);
+    this.fillLight.groundColor.set(enabled ? 0.24 : 0.09, enabled ? 0.28 : 0.1, enabled ? 0.34 : 0.12);
+    this.rimLight.intensity = enabled ? 0.5 : 0;
     this.rimLight.setEnabled(enabled);
   }
 
@@ -1006,6 +1108,8 @@ export class ArenaEngine {
     // replaces that instance — carry the callback over or the zoom slider
     // silently stops syncing after the first between-round arena resize.
     const prevOnZoomChange = this.camera ? this.camera.onZoomChange : null;
+    const prevNavigation = this.camera?.getNavigationState?.();
+    const prevOnNavigationChange = this.camera?.onNavigationChange;
     this.ready = false;
     try {
       this.dispose();
@@ -1016,6 +1120,10 @@ export class ArenaEngine {
       if (prevOnZoomChange && this.camera) this.camera.onZoomChange = prevOnZoomChange;
       if (prevZoom) this.setZoom(prevZoom);
       if (prevFollow) this.followBot(prevFollow);
+      if (this.camera) {
+        this.camera.onNavigationChange = prevOnNavigationChange;
+        this.camera.restoreNavigationState?.(prevNavigation);
+      }
     } catch (err) {
       console.error('[Arena] scene rebuild failed:', err);
     } finally {
@@ -1047,6 +1155,8 @@ export class ArenaEngine {
     const prevFollow = this.camera ? this.camera.followId : null;
     const prevZoom = this.camera ? this.camera.zoom : null;
     const prevOnZoomChange = this.camera ? this.camera.onZoomChange : null;
+    const prevNavigation = this.camera?.getNavigationState?.();
+    const prevOnNavigationChange = this.camera?.onNavigationChange;
     this.ready = false;
     try {
       this.intermissionDirector = null; // detach: the show must outlive the scene
@@ -1059,6 +1169,10 @@ export class ArenaEngine {
       if (prevOnZoomChange && this.camera) this.camera.onZoomChange = prevOnZoomChange;
       if (prevZoom) this.setZoom(prevZoom);
       if (prevFollow) this.followBot(prevFollow);
+      if (this.camera) {
+        this.camera.onNavigationChange = prevOnNavigationChange;
+        this.camera.restoreNavigationState?.(prevNavigation);
+      }
       return true;
     } catch (err) {
       console.error('[Arena] intermission stage resize failed:', err);
@@ -1256,6 +1370,7 @@ export class ArenaEngine {
       intermissionActive: this.intermissionDirector?.active === true,
       arenaSize: [this.arenaWidth, this.arenaHeight],
       safeViewport: this._safeViewport ? { ...this._safeViewport } : null,
+      camera: this.camera?.getNavigationState?.() || null,
       resources,
       bots,
       bounty: {

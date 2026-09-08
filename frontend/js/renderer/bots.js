@@ -6,7 +6,7 @@
  * @module renderer/bots
  */
 
-import { createBotEntry, disposeBotEntry } from './bot-body.js?v=20260907b';
+import { createBotEntry, disposeBotEntry } from './bot-body.js?v=20260907p';
 import {
   forgeContactDelay,
   updateForgeCharacter,
@@ -14,9 +14,9 @@ import {
   triggerForgeDodge,
   triggerForgeHit,
   triggerForgeShove,
-} from './character-anims.js?v=20260907b';
-import {setForgeChassisLighting, updateForgeCharacterLOD} from './character-rig.js?v=20260907b';
-import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260907b';
+} from './character-anims.js?v=20260907p';
+import {setForgeChassisLighting, updateForgeCharacterLOD} from './character-rig.js?v=20260907p';
+import { applyBotCosmetics, disposeBotCosmetics } from './cosmetics.js?v=20260907p';
 import {bodyFormKeyForBot} from './body-form-roster.js?v=20260714e';
 import {
   hideWorldTaunt,
@@ -447,6 +447,15 @@ export class BotRenderer {
     if (chassisLit !== this._chassisLit) {
       this._chassisLit = chassisLit;
       setForgeChassisLighting(this.scene, chassisLit);
+      for (const entry of this.entries.values()) {
+        forEachForgeStatusMaterial(entry, material => {
+          const resting = chassisLit ? material._forgeLitRestEmissive : material._forgeUnlitRestEmissive;
+          if (!resting) return;
+          material._forgeRestEmissive.copyFrom(resting);
+          if (entry.isAlive) material.emissiveColor.copyFrom(resting);
+        });
+        if (entry.botData) this._updateStatusEffects(entry, entry.botData, now);
+      }
     }
 
     if (now >= this._bodyFormLODRefreshAt || this._bodyFormLODSelectedBotId !== this.selectedBotId) {

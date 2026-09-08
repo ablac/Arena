@@ -195,6 +195,9 @@ jobs:
           node scripts/test-body-form-renderer.mjs
           node scripts/test-character-animations.mjs
           node scripts/test-forge-surfaces.mjs
+          node scripts/test-camera-framing.mjs
+          node scripts/test-environment-polish.mjs
+          node scripts/test-forge-polish.mjs
           node scripts/test-glass-deck.mjs
           node scripts/test-mech-geometry.mjs
           node scripts/test-character-renderer-integration.mjs
@@ -216,6 +219,9 @@ jobs:
           node scripts/test-engine-webgpu-fallback.mjs
           node scripts/test-rendering-safety-guardrails.mjs
           node scripts/test-bloom-failure-latch.mjs
+          node scripts/test-gpu-error-escalation.mjs
+          node scripts/test-glsl-transpiler-timeout.mjs
+          node scripts/test-engine-init-failure-surface.mjs
           node scripts/test-spectator-startup-budget.mjs
           node scripts/test-trail-budget.mjs
           node scripts/test-cosmetic-trails.mjs

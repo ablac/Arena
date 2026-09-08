@@ -7,7 +7,7 @@ import './babylon-runtime.js?v=20260810d';
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260907b';
+import { ArenaEngine } from './renderer/engine.js?v=20260907p';
 import { HudRenderer } from './renderer/hud.js?v=20260810c';
 import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';
@@ -18,10 +18,11 @@ import { initSettingsPanel } from './settings-panel.js';
 import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';
 import { handleServiceStatus } from './service-status.js?v=20260810c';
 import { installClientErrorReporting } from './client-errors.js?v=20260903c';
+import { reportEngineInitFailure, showArenaRenderFallback } from './render-failure.js?v=20260907a';
 
 // Install before anything else so failures during startup are reported too.
 installClientErrorReporting();
-import { observeArenaSafeViewport } from './safe-viewport.js?v=20260718b';
+import { observeArenaSafeViewport } from './safe-viewport.js?v=20260907p';
 import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from './sign-in.js?v=20260905u';
 
 const ARENA_WIDTH = 2000;
@@ -99,7 +100,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     await arenaEngine.init();
     console.log('[App] Arena engine initialized');
   } catch (err) {
+    // This is the worst outcome the page has, and until now it was also the
+    // quietest one. `console.error` was the whole response: the spectator got a
+    // black rectangle under a working HUD and a working kill feed with no
+    // explanation, and because the throw is CAUGHT here, window.onerror never
+    // fired, so client-errors.js never reported it either. A total rendering
+    // outage therefore left no user-facing message and no server-side trace,
+    // which is exactly why "the arena does not render for some people" had no
+    // cause attached to it.
     console.error('[App] Engine init failed:', err);
+    reportEngineInitFailure(err, 'app.arenaEngine.init');
+    showArenaRenderFallback(err);
   }
   // arenaEngine.canvas, not the element read above: a failed WebGPU init
   // replaces the canvas, because an element that has answered getContext
@@ -256,6 +267,15 @@ function setupControls(engine) {
   }
 
   const autoPanBtn = document.getElementById('auto-pan');
+  if (engine.camera) {
+    const syncNavigation = ({ autoPan, followId }) => {
+      autoPanBtn?.classList.toggle('active', autoPan);
+      autoPanBtn?.setAttribute('aria-pressed', String(autoPan));
+      if (followSelect && !followId) followSelect.value = '';
+    };
+    engine.camera.onNavigationChange = syncNavigation;
+    syncNavigation(engine.camera);
+  }
   if (autoPanBtn) {
     autoPanBtn.addEventListener('click', () => {
       const active = autoPanBtn.classList.toggle('active');
