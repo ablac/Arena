@@ -29,7 +29,7 @@ import {isEnabled} from '../settings.js';
 const _sceneResources = new WeakMap();
 
 /** Lit-mode emissive floor (fraction of diffuse) — see forge-weapons.js. */
-const LIT_EMISSIVE_FLOOR = 0.45;
+const LIT_EMISSIVE_FLOOR = 0.12;
 
 // Separate enter/exit distances prevent rapid camera movement near the
 // boundary from flipping an entire crowd between detail levels each frame.
@@ -75,14 +75,18 @@ function sharedMaterial(scene, name, diffuse, emissive, specular) {
 function litChassisMaterial(scene, name, diffuse, unlitEmissive, specular) {
   const B = window.BABYLON;
   const material = new B.StandardMaterial(name, scene);
-  material.diffuseColor = diffuse;
+  material.diffuseColor = diffuse.clone();
+  material._forgeUnlitDiffuse = diffuse;
+  material._forgeLitDiffuse = name.includes('graphite')
+    ? new B.Color3(0.13, 0.16, 0.20) : new B.Color3(0.34, 0.39, 0.44);
+  const litDiffuse = material._forgeLitDiffuse;
   material.specularColor = specular;
   material.backFaceCulling = true;
   material.emissiveColor = unlitEmissive.clone();
   material._forgeLitEmissive = new B.Color3(
-    diffuse.r * LIT_EMISSIVE_FLOOR,
-    diffuse.g * LIT_EMISSIVE_FLOOR,
-    diffuse.b * LIT_EMISSIVE_FLOOR,
+    litDiffuse.r * LIT_EMISSIVE_FLOOR,
+    litDiffuse.g * LIT_EMISSIVE_FLOOR,
+    litDiffuse.b * LIT_EMISSIVE_FLOOR,
   );
   material._forgeUnlitEmissive = unlitEmissive;
   applyForgeSurface(material, scene, name.includes('graphite') ? 'graphite' : 'gunmetal');
@@ -168,7 +172,7 @@ function getResources(scene) {
     'forge-graphite-shared',
     new B.Color3(0.28, 0.36, 0.50),
     new B.Color3(0.18, 0.24, 0.36),
-    new B.Color3(0.40, 0.46, 0.54),
+    new B.Color3(0.16, 0.18, 0.21),
   );
   const gunmetal = litChassisMaterial(
     scene,
@@ -437,8 +441,17 @@ export function createForgeCharacter(bot, scene, options = {}) {
   });
   bodyMat.backFaceCulling = true;
   headMat.backFaceCulling = true;
-  bodyMat._forgeRestEmissive = bodyMat.emissiveColor.clone();
-  headMat._forgeRestEmissive = headMat.emissiveColor.clone();
+  // Keep the former self-lit palette available for the live quality switch.
+  // BotRenderer uses the chosen rest value when clearing damage/status tint.
+  for (const [material, floor] of [[bodyMat, 0.12], [headMat, 0.56]]) {
+    material._forgeUnlitRestEmissive = material.emissiveColor.clone();
+    material._forgeLitRestEmissive = material.diffuseColor.scale(floor);
+    material._forgeRestEmissive = (isEnabled('rendering', 'characterLighting')
+      ? material._forgeLitRestEmissive : material._forgeUnlitRestEmissive).clone();
+    material.emissiveColor.copyFrom(material._forgeRestEmissive);
+  }
+  bodyMat._forgeSurfaceLitOnly = true;
+  applyForgeSurface(bodyMat, scene, 'paint');
 
   const root = new B.TransformNode(`forge-root-${id}`, scene);
   // Forge's authored face (visor, chest core, toes, and weapon presentation)
