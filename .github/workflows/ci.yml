@@ -195,6 +195,9 @@ jobs:
           node scripts/test-body-form-renderer.mjs
           node scripts/test-character-animations.mjs
           node scripts/test-forge-surfaces.mjs
+          node scripts/test-camera-framing.mjs
+          node scripts/test-environment-polish.mjs
+          node scripts/test-forge-polish.mjs
           node scripts/test-glass-deck.mjs
           node scripts/test-mech-geometry.mjs
           node scripts/test-character-renderer-integration.mjs

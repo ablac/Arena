@@ -39,6 +39,10 @@ existing saved preferences still win. Surface textures, the warm/cool lighting
 pair and secondary bot motion each have a live Rendering toggle. Disabling
 secondary motion retains locomotion and combat, and reduced motion suppresses
 the extra weight shifts too. Structural glass stays visible with ambience off.
+The polished character finish uses restrained ambient emission so the stage
+lights reveal metal edges and painted armor. Turning character lighting off
+restores the legacy self-lit colors. Surface toggles preserve the mutable
+materials used for damage, stun, dodge and death feedback.
 
 The settings panel UI (`frontend/js/settings-panel.js`) renders itself
 entirely from `SETTINGS_SCHEMA` - adding an entry to the schema is enough to

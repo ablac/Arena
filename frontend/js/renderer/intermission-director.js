@@ -48,10 +48,10 @@
  */
 
 import { buildBoundaryContours, buildWallGeometry, contourNormals, resolveEarcut, WALL_HEIGHT } from './map-walls.js?v=20260718g';
-import { PILLAR_HEIGHT, composeObstacleLayout, appendObstacleBoxes, appendRoofDetail } from './obstacles.js?v=20260907r';
+import { PILLAR_HEIGHT, composeObstacleLayout, appendObstacleBoxes, appendRoofDetail } from './obstacles.js?v=20260907p';
 import { buildClusterTrimGeometry } from './obstacle-clusters.js?v=20260718g';
 import { parseColor } from './utils.js';
-import { inheritForgeSurface } from './forge-surfaces.js';
+import { inheritForgeSurface } from './forge-surfaces.js?v=20260907p';
 import { isEnabled, onSettingsChange } from '../settings.js';
 
 /* ------------------------------------------------------------------------ */
@@ -369,7 +369,7 @@ function easeInQuad(t) { const u = clamp01(t); return u * u; }
 /* ------------------------------------------------------------------------ */
 
 export class IntermissionDirector {
-  /** @param {import('./engine.js?v=20260907b').ArenaEngine} engine */
+  /** @param {import('./engine.js?v=20260907p').ArenaEngine} engine */
   constructor(engine) {
     this.engine = engine;
     /** @type {Object|null} live show state; null = inert */

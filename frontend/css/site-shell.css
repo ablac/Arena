@@ -6,6 +6,11 @@
   --shell-safe-bottom: env(safe-area-inset-bottom, 0px);
   --shell-safe-left: env(safe-area-inset-left, 0px);
   --shell-header-height: 72px;
+  --spectator-surface: linear-gradient(155deg, rgba(27, 43, 57, 0.9), rgba(10, 20, 31, 0.88));
+  --spectator-edge: rgba(159, 197, 220, 0.3);
+  --spectator-ink: #f0f6fc;
+  --spectator-muted: #b7c8d8;
+  --spectator-highlight: #93e5fa;
   /* Width reserved for the right-edge rail menu (classic sideways rails are
      ~44px wide + 18px inset). Minimap, header padding, and drawer widths key
      off this. */
@@ -131,8 +136,8 @@ summary {
 .arena-shell::before {
   z-index: 2;
   background:
-    linear-gradient(180deg, rgba(2, 7, 12, 0.28), transparent 25%, transparent 72%, rgba(2, 7, 12, 0.35)),
-    linear-gradient(90deg, rgba(2, 7, 12, 0.18), transparent 22%, transparent 78%, rgba(2, 7, 12, 0.22));
+    linear-gradient(180deg, rgba(2, 7, 12, 0.1), transparent 20%, transparent 82%, rgba(2, 7, 12, 0.14)),
+    linear-gradient(90deg, rgba(2, 7, 12, 0.06), transparent 18%, transparent 84%, rgba(2, 7, 12, 0.08));
 }
 
 .arena-shell::after {
@@ -345,10 +350,10 @@ summary {
   width: min(760px, calc(100% - var(--shell-dock-width) - 410px));
   padding: 8px;
   flex-wrap: nowrap;
-  border-color: rgba(126, 166, 207, 0.2);
-  border-radius: 20px;
-  background: rgba(4, 10, 17, 0.78);
-  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.34);
+  border-color: var(--spectator-edge);
+  border-radius: 16px;
+  background: var(--spectator-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(225, 243, 255, 0.07);
   backdrop-filter: blur(18px);
   transform: translateX(-50%);
 }
@@ -379,10 +384,10 @@ summary {
   height: min(42dvh, 390px);
   min-height: 260px;
   padding: 14px;
-  border-color: rgba(126, 166, 207, 0.18);
-  border-radius: 24px;
-  background: rgba(4, 10, 17, 0.82);
-  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.34);
+  border-color: var(--spectator-edge);
+  border-radius: 18px;
+  background: var(--spectator-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(225, 243, 255, 0.07);
   backdrop-filter: blur(18px);
   view-transition-name: arena-telemetry-panel;
 }
@@ -443,7 +448,7 @@ summary {
   border: 1px solid rgba(126, 166, 207, 0.24);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
-  color: var(--text-secondary);
+  color: var(--spectator-muted);
   cursor: pointer;
   font: 600 0.62rem var(--font-mono);
   letter-spacing: 0.08em;
@@ -742,6 +747,154 @@ body.site-cinema-mode .arena-controls {
   transform: none;
 }
 
+/* Spectator instrument finish. Keep geometry and state selectors below in
+   charge of layout; these surfaces remain legible over every arena palette. */
+.hud-round {
+  background: var(--spectator-surface);
+  border-color: var(--spectator-edge);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(225, 243, 255, 0.07);
+}
+
+.hud-round::after {
+  display: none;
+}
+
+.hud-round,
+.arena-sidebar,
+.arena-controls {
+  --text-muted: var(--spectator-muted);
+  --text-soft: #d1dfea;
+  --text-primary: var(--spectator-ink);
+}
+
+.hud-overline,
+.arena-sidebar-kicker {
+  color: var(--spectator-highlight);
+  text-shadow: none;
+}
+
+.hud-title,
+.hud-metric-value {
+  color: var(--spectator-ink);
+  text-shadow: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-metric {
+  border-radius: 9px;
+  border-color: rgba(159, 197, 220, 0.16);
+  background: rgba(184, 219, 243, 0.04);
+}
+
+.hud-metric-label {
+  color: var(--spectator-muted);
+}
+
+.hud-collapse-btn,
+.sidebar-collapse-btn {
+  border-color: var(--spectator-edge);
+  color: var(--spectator-muted);
+  background: rgba(184, 219, 243, 0.06);
+}
+
+.arena-tabs {
+  border-color: rgba(159, 197, 220, 0.14);
+  border-radius: 12px;
+  background: rgba(4, 12, 21, 0.24);
+}
+
+.arena-tab {
+  border-radius: 8px;
+}
+
+.arena-tab.active {
+  color: #edfbff;
+  border-color: rgba(147, 229, 250, 0.5);
+  background: rgba(94, 194, 224, 0.17);
+  box-shadow: inset 0 -2px 0 rgba(147, 229, 250, 0.64);
+  text-shadow: none;
+}
+
+.arena-tab-content {
+  border-color: transparent;
+  border-radius: 10px;
+  background: rgba(4, 12, 21, 0.18);
+}
+
+.arena-tab-panel {
+  padding: 10px;
+}
+
+.killfeed-entry {
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  border-color: rgba(159, 197, 220, 0.15);
+  background: rgba(184, 219, 243, 0.045);
+}
+
+.killfeed-entry .killer { color: #93e5fa; }
+.killfeed-entry .victim { color: #ffa49e; }
+.killfeed-entry .weapon { letter-spacing: 0.03em; }
+
+.arena-controls .control-group {
+  border-color: transparent;
+  border-radius: 10px;
+  background: transparent;
+}
+
+.arena-controls select {
+  color-scheme: dark;
+  border-color: var(--spectator-edge);
+  background: #142638;
+  color: var(--spectator-ink);
+}
+
+.arena-controls input[type="range"] {
+  accent-color: var(--spectator-highlight);
+}
+
+.arena-control-btn {
+  border-color: var(--spectator-edge);
+  border-radius: 10px;
+  background: rgba(184, 219, 243, 0.07);
+  color: var(--spectator-ink);
+  box-shadow: none;
+}
+
+.arena-control-btn:hover {
+  border-color: var(--spectator-highlight);
+  background: rgba(94, 194, 224, 0.17);
+}
+
+.arena-control-btn.active {
+  color: #edfbff;
+  border-color: rgba(147, 229, 250, 0.6);
+  background: rgba(94, 194, 224, 0.22);
+  box-shadow: inset 0 -2px 0 rgba(147, 229, 250, 0.64);
+}
+
+.site-live-pill {
+  color: #d1dfea;
+  border-color: var(--spectator-edge);
+  background: rgba(17, 32, 46, 0.86);
+}
+
+.site-command-dock .onboarding-rail,
+.site-command-dock .settings-gear-btn {
+  color: #d1dfea;
+  border-color: var(--spectator-edge);
+  background: rgba(17, 32, 46, 0.9);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.18);
+}
+
+.site-command-dock .onboarding-rail:hover,
+.site-command-dock .settings-gear-btn:hover {
+  color: #edfbff;
+  border-color: var(--spectator-highlight);
+  background: rgba(28, 53, 70, 0.96);
+}
+
 @media (max-width: 1100px) {
   :root {
     --shell-dock-width: 64px;
@@ -863,7 +1016,7 @@ body.site-cinema-mode .arena-controls {
     padding: 9px;
     overflow-y: auto;
     border-radius: 14px;
-    background: linear-gradient(180deg, rgba(8, 15, 24, 0.62), rgba(6, 11, 18, 0.68));
+    background: var(--spectator-surface);
     font-size: 0.66rem;
   }
 
@@ -972,8 +1125,8 @@ body.site-cinema-mode .arena-controls {
     border-bottom: 0;
     border-left: 0;
     border-radius: 24px 24px 0 0;
-    background: rgba(4, 10, 17, 0.96);
-    box-shadow: 0 -24px 70px rgba(0, 0, 0, 0.46);
+    background: rgba(15, 28, 41, 0.97);
+    box-shadow: 0 -12px 36px rgba(0, 0, 0, 0.28);
     pointer-events: none;
     transform: translateY(105%);
     transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);

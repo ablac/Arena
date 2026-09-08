@@ -6,7 +6,7 @@
  */
 
 import { makeMat } from './utils.js';
-import { GlassDeck, createGlassPolish, deckRandom } from './glass-deck.js';
+import { GlassDeck, createGlassPolish, deckRandom } from './glass-deck.js?v=20260907p';
 import { isEnabled } from '../settings.js';
 
 const ZONE_RING_SEGMENTS = 64;
@@ -24,8 +24,8 @@ const ZONE_RING_BASE_ALPHA = 0.7;
  *  - floorPatch: canvas energy-patch gradient stops, two RGBs (0-255)
  */
 const DEFAULT_MAP_PALETTE = Object.freeze({
-  obstacleBody: { diffuse: [0.07, 0.085, 0.11], emissive: [0.015, 0.03, 0.05] },
-  obstacleTrim: [0.08, 0.34, 0.62],
+  obstacleBody: { diffuse: [0.1775, 0.19625, 0.2275], emissive: [0.015, 0.03, 0.05] },
+  obstacleTrim: [0.0352, 0.1496, 0.2728],
   wallTrim: [0.24, 0.72, 1.0],
   swirl: [0.04, 0.14, 0.34],
   floorBase: [[10, 20, 38], [6, 12, 22]],
@@ -36,8 +36,8 @@ const DEFAULT_MAP_PALETTE = Object.freeze({
 const MAP_PALETTES = Object.freeze({
   square: DEFAULT_MAP_PALETTE,
   circle: Object.freeze({ // ice cyan
-    obstacleBody: { diffuse: [0.065, 0.09, 0.115], emissive: [0.012, 0.034, 0.052] },
-    obstacleTrim: [0.06, 0.40, 0.58],
+    obstacleBody: { diffuse: [0.17125, 0.2025, 0.23375], emissive: [0.012, 0.034, 0.052] },
+    obstacleTrim: [0.0264, 0.176, 0.2552],
     wallTrim: [0.20, 0.80, 0.95],
     swirl: [0.03, 0.16, 0.33],
     floorBase: [[8, 22, 38], [5, 13, 22]],
@@ -45,8 +45,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[30, 130, 255], [70, 190, 255]],
   }),
   hexagon: Object.freeze({ // gold-accented navy
-    obstacleBody: { diffuse: [0.085, 0.082, 0.10], emissive: [0.032, 0.026, 0.04] },
-    obstacleTrim: [0.52, 0.40, 0.10],
+    obstacleBody: { diffuse: [0.19625, 0.1925, 0.215], emissive: [0.032, 0.026, 0.04] },
+    obstacleTrim: [0.2288, 0.176, 0.044],
     wallTrim: [1.0, 0.81, 0.33],
     swirl: [0.10, 0.10, 0.24],
     floorBase: [[16, 17, 32], [9, 10, 20]],
@@ -54,8 +54,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[120, 100, 220], [230, 190, 90]],
   }),
   diamond: Object.freeze({ // silvered white-blue
-    obstacleBody: { diffuse: [0.08, 0.09, 0.115], emissive: [0.024, 0.03, 0.045] },
-    obstacleTrim: [0.34, 0.44, 0.58],
+    obstacleBody: { diffuse: [0.19, 0.2025, 0.23375], emissive: [0.024, 0.03, 0.045] },
+    obstacleTrim: [0.1496, 0.1936, 0.2552],
     wallTrim: [0.72, 0.86, 1.0],
     swirl: [0.08, 0.13, 0.30],
     floorBase: [[13, 20, 34], [8, 12, 22]],
@@ -63,8 +63,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[80, 130, 240], [150, 190, 255]],
   }),
   cross: Object.freeze({ // ember orange accents
-    obstacleBody: { diffuse: [0.09, 0.08, 0.095], emissive: [0.036, 0.024, 0.03] },
-    obstacleTrim: [0.55, 0.26, 0.08],
+    obstacleBody: { diffuse: [0.2025, 0.19, 0.20875], emissive: [0.036, 0.024, 0.03] },
+    obstacleTrim: [0.242, 0.1144, 0.0352],
     wallTrim: [1.0, 0.54, 0.24],
     swirl: [0.13, 0.09, 0.22],
     floorBase: [[17, 15, 28], [10, 9, 18]],
@@ -72,8 +72,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[150, 90, 200], [255, 150, 80]],
   }),
   caves: Object.freeze({ // warm amber/rust
-    obstacleBody: { diffuse: [0.105, 0.085, 0.068], emissive: [0.046, 0.028, 0.014] },
-    obstacleTrim: [0.58, 0.28, 0.08],
+    obstacleBody: { diffuse: [0.22125, 0.19625, 0.175], emissive: [0.046, 0.028, 0.014] },
+    obstacleTrim: [0.2552, 0.1232, 0.0352],
     wallTrim: [1.0, 0.62, 0.22],
     swirl: [0.15, 0.09, 0.11],
     floorBase: [[24, 17, 12], [13, 10, 8]],
@@ -81,8 +81,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[200, 110, 50], [255, 170, 90]],
   }),
   donut: Object.freeze({ // magenta ring-world
-    obstacleBody: { diffuse: [0.095, 0.07, 0.105], emissive: [0.038, 0.018, 0.044] },
-    obstacleTrim: [0.48, 0.10, 0.44],
+    obstacleBody: { diffuse: [0.20875, 0.1775, 0.22125], emissive: [0.038, 0.018, 0.044] },
+    obstacleTrim: [0.2112, 0.044, 0.1936],
     wallTrim: [1.0, 0.36, 0.86],
     swirl: [0.15, 0.05, 0.26],
     floorBase: [[20, 10, 27], [12, 7, 17]],
@@ -90,8 +90,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[180, 60, 230], [255, 120, 220]],
   }),
   islands: Object.freeze({ // aqua/teal
-    obstacleBody: { diffuse: [0.06, 0.095, 0.10], emissive: [0.012, 0.038, 0.038] },
-    obstacleTrim: [0.06, 0.42, 0.38],
+    obstacleBody: { diffuse: [0.165, 0.20875, 0.215], emissive: [0.012, 0.038, 0.038] },
+    obstacleTrim: [0.0264, 0.1848, 0.1672],
     wallTrim: [0.24, 1.0, 0.82],
     swirl: [0.03, 0.18, 0.26],
     floorBase: [[7, 24, 28], [5, 14, 18]],
@@ -99,8 +99,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[40, 190, 170], [90, 240, 210]],
   }),
   rooms: Object.freeze({ // slate/steel
-    obstacleBody: { diffuse: [0.085, 0.095, 0.11], emissive: [0.028, 0.033, 0.042] },
-    obstacleTrim: [0.24, 0.32, 0.42],
+    obstacleBody: { diffuse: [0.19625, 0.20875, 0.2275], emissive: [0.028, 0.033, 0.042] },
+    obstacleTrim: [0.1056, 0.1408, 0.1848],
     wallTrim: [0.60, 0.72, 0.86],
     swirl: [0.07, 0.11, 0.21],
     floorBase: [[14, 18, 27], [9, 11, 18]],
@@ -108,8 +108,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[70, 110, 190], [130, 165, 220]],
   }),
   spiral: Object.freeze({ // violet
-    obstacleBody: { diffuse: [0.085, 0.075, 0.115], emissive: [0.032, 0.022, 0.052] },
-    obstacleTrim: [0.30, 0.15, 0.56],
+    obstacleBody: { diffuse: [0.19625, 0.18375, 0.23375], emissive: [0.032, 0.022, 0.052] },
+    obstacleTrim: [0.132, 0.066, 0.2464],
     wallTrim: [0.62, 0.42, 1.0],
     swirl: [0.11, 0.06, 0.30],
     floorBase: [[16, 12, 32], [10, 8, 20]],
@@ -354,12 +354,14 @@ export class EnvironmentRenderer {
           float daylight = max(dot(normal, lightDir), 0.0);
           // Fractal coastlines and wind-stretched cloud wisps avoid the
           // hard cellular spots of a single high-frequency noise sample.
-          float continent = fbm(normal * 5.0 + vec3(8.0, 2.0, 5.0));
-          float land = smoothstep(0.49, 0.56, continent);
-          float curl = noise3(normal * 7.0 + vec3(2.0, 9.0, 4.0));
-          vec3 cloudCoord = normal * vec3(26.0, 44.0, 26.0)
-            + vec3(curl * 3.5, 0.0, curl * 2.0);
-          float clouds = smoothstep(0.48, 0.69, fbm(cloudCoord));
+          float continent = fbm(normal * 2.8 + vec3(8.0, 2.0, 5.0));
+          float land = smoothstep(0.48, 0.58, continent);
+          // Large weather systems, stretched along latitude, with a curved
+          // flow field. Avoid a high-frequency blanket of evenly sized spots.
+          float curl = noise3(normal * 3.5 + vec3(2.0, 9.0, 4.0));
+          vec3 cloudCoord = normal * vec3(7.0, 19.0, 7.0)
+            + vec3(curl * 2.4, normal.x * normal.z * 3.0, curl * 1.6);
+          float clouds = smoothstep(0.47, 0.66, fbm(cloudCoord));
           vec3 ocean = mix(vec3(0.009, 0.032, 0.065), vec3(0.035, 0.064, 0.055), land);
           vec3 surface = mix(ocean, vec3(0.26, 0.32, 0.37), clouds * 0.65);
           float limb = pow(1.0 - max(dot(normal, -dir), 0.0), 3.0);
@@ -796,10 +798,9 @@ export class EnvironmentRenderer {
   }
 
   /**
-   * @private Bake the floor deck canvas: palette-tinted gradient + speckles +
-   * energy patches (the pre-#182 look, hues parametrized), then soft-edged
-   * darkened rects under each obstacle footprint — cheap baked contact
-   * shadows that ground the merged pillars. Runs at round build only.
+   * @private Bake the glass tint, broad reflection cues and pane seams,
+   * then soft-edged darkening under each obstacle footprint. These contact
+   * shadows ground the merged pillars. Runs at round build only.
    */
   _paintFloor() {
     if (!this._floorCanvas || !this._floorTex) return;
@@ -809,45 +810,55 @@ export class EnvironmentRenderer {
     ctx.clearRect(0, 0, 1024, 1024);
 
     const [baseCenter, baseMid] = palette.floorBase;
-    const grad = ctx.createRadialGradient(512, 512, 90, 512, 512, 640);
-    grad.addColorStop(0, `rgba(${baseCenter[0]},${baseCenter[1]},${baseCenter[2]},0.35)`);
-    grad.addColorStop(0.55, `rgba(${baseMid[0]},${baseMid[1]},${baseMid[2]},0.2)`);
-    grad.addColorStop(1, 'rgba(2,4,8,0.05)');
+    // Store a stable optical tint in RGB; material alpha controls the clear
+    // view through the deck. Almost-black canvas RGB multiplied by dark
+    // diffuse/emissive colors previously erased every surface cue.
+    const tint = (rgb, lift) => rgb.map((v) => Math.min(255, v + lift)).join(',');
+    const grad = ctx.createRadialGradient(420, 360, 60, 512, 512, 720);
+    grad.addColorStop(0, `rgb(${tint(baseCenter, 62)})`);
+    grad.addColorStop(0.65, `rgb(${tint(baseMid, 42)})`);
+    grad.addColorStop(1, `rgb(${tint(baseMid, 32)})`);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 1024, 1024);
 
-    const sp = palette.floorSpeckle;
-    for (let i = 0; i < 2600; i++) {
-      const x = random() * 1024;
-      const y = random() * 1024;
-      const r = 0.6 + random() * 2.2;
-      const a = 0.018 + random() * 0.05;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${Math.min(255, sp[0] + (random() * 50 | 0))},${Math.min(255, sp[1] + (random() * 60 | 0))},${sp[2]},${a.toFixed(3)})`;
-      ctx.fill();
+    // Broad, stationary softbox reflections establish one continuous glass
+    // surface. These are baked finish cues, not extra lights/render targets.
+    for (const [x, y, radius, opacity] of [[275, 310, 430, 0.32], [815, 790, 360, 0.18]]) {
+      const reflection = ctx.createRadialGradient(x, y, 0, x, y, radius);
+      reflection.addColorStop(0, `rgba(187,214,229,${opacity})`);
+      reflection.addColorStop(0.4, `rgba(164,200,220,${opacity * 0.45})`);
+      reflection.addColorStop(1, 'rgba(164,200,220,0)');
+      ctx.fillStyle = reflection;
+      ctx.fillRect(0, 0, 1024, 1024);
     }
-
-    const [patchA, patchB] = palette.floorPatch;
-    for (let i = 0; i < 26; i++) {
-      const x = random() * 1024;
-      const y = random() * 1024;
-      const w = 80 + random() * 180;
-      const h = 40 + random() * 110;
-      const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(w, h));
-      g.addColorStop(0, `rgba(${patchA[0]},${patchA[1]},${patchA[2]},0.08)`);
-      g.addColorStop(0.45, `rgba(${patchB[0]},${patchB[1]},${patchB[2]},0.03)`);
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x - w, y - h, w * 2, h * 2);
+    // Four broad panels per axis; hairline seams keep the scale readable
+    // without introducing the old luminous checkerboard.
+    ctx.lineWidth = 1;
+    for (const t of [256, 512, 768]) {
+      ctx.strokeStyle = 'rgba(10,25,34,0.3)';
+      ctx.beginPath();
+      ctx.moveTo(t, 22); ctx.lineTo(t, 1002);
+      ctx.moveTo(22, t); ctx.lineTo(1002, t);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(184,219,231,0.16)';
+      ctx.beginPath();
+      ctx.moveTo(t + 1, 22); ctx.lineTo(t + 1, 1002);
+      ctx.moveTo(22, t + 1); ctx.lineTo(1002, t + 1);
+      ctx.stroke();
+    }
+    // Low-contrast polish grain replaces the bright dust-like speckles.
+    for (let i = 0; i < 700; i++) {
+      const x = random() * 1024, y = random() * 1024;
+      ctx.fillStyle = `rgba(193,218,233,${0.015 + random() * 0.025})`;
+      ctx.fillRect(x, y, 1 + random() * 3, 0.5);
     }
 
     // Laminated optical glass: hairline inset machining and sparse corner
     // registration marks. These are physical surface finish, not a luminous grid.
-    ctx.strokeStyle = 'rgba(145,206,231,0.14)';
+    ctx.strokeStyle = 'rgba(145,206,231,0.3)';
     ctx.lineWidth = 0.8;
     ctx.strokeRect(14, 14, 996, 996);
-    ctx.strokeStyle = 'rgba(145,206,231,0.06)';
+    ctx.strokeStyle = 'rgba(145,206,231,0.14)';
     ctx.strokeRect(21, 21, 982, 982);
     for (const x of [35, 989]) {
       for (const y of [35, 989]) {
@@ -909,8 +920,8 @@ export class EnvironmentRenderer {
       }
     }
 
-    // The source is translucent. Clear the destination before repainting so
-    // old obstacle shadows and palette tints cannot accumulate between rounds.
+    // Clear the destination before repainting so old obstacle shadows and
+    // palette tints cannot accumulate between rounds.
     const target = this._floorTex.getContext();
     target.clearRect(0, 0, 1024, 1024);
     target.drawImage(this._floorCanvas, 0, 0);
@@ -935,16 +946,18 @@ export class EnvironmentRenderer {
 
     const mat = new B.StandardMaterial('floorMat', this.scene);
     mat.diffuseTexture = floorTex;
-    mat.emissiveTexture = floorTex;
-    mat.diffuseColor = new B.Color3(0.12, 0.18, 0.28);
-    mat.emissiveColor = new B.Color3(0.08, 0.14, 0.24);
+    // StandardMaterial adds an emissive texture to its lighting result;
+    // use the same finish through diffuse only to keep the glass reflective.
+    mat.emissiveTexture = null;
+    mat.diffuseColor = new B.Color3(0.55, 0.64, 0.72);
+    mat.emissiveColor = new B.Color3(0.10, 0.14, 0.19);
     mat.specularColor = new B.Color3(0.62, 0.76, 0.88);
-    mat.specularPower = 160;
+    mat.specularPower = 84;
     this._glassPolish = createGlassPolish(this.scene);
     mat.specularTexture = this._glassPolish;
-    // Tight directional highlights show the optical polish. This uses the
+    // Broad directional highlights show the optical polish. This uses the
     // shipped StandardMaterial runtime; no extra refraction render pass.
-    mat.alpha = 0.29;
+    mat.alpha = 0.44;
     mat.backFaceCulling = false;
 
     ground.material = mat;
@@ -981,7 +994,7 @@ export class EnvironmentRenderer {
         float dist = length(p);
         float swirl = 0.5 + 0.5 * sin((dist * 16.0 - time * 0.8) + sin(vUV.x * 5.5 + time * 0.16) * 1.5);
         float cloud = 0.5 + 0.5 * sin(vUV.x * 9.0 + time * 0.1) * sin(vUV.y * 7.0 - time * 0.14);
-        float basin = smoothstep(0.92, 0.12, dist);
+        float basin = 1.0 - smoothstep(0.12, 0.92, dist);
         float edge = smoothstep(0.3, 0.5, abs(vUV.x - 0.5)) + smoothstep(0.3, 0.5, abs(vUV.y - 0.5));
 
         float energy = basin * (swirl * 0.06 + cloud * 0.03);

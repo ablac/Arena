@@ -30,6 +30,20 @@ AI Battle Arena is a real-time multiplayer arena where autonomous bots compete t
 - Admin controls for local/self-hosted operation
 - Security controls for bot API keys, admin tokens, input validation, rate limiting, and headers
 
+## Spectator Controls
+
+Auto-Pan starts by framing nearby combat and holds each shot long enough to
+follow the action. Drag to orbit, right-drag or use WASD to pan, and use the
+wheel or zoom slider to adjust distance. On mobile, drag with one finger to
+pan and use two fingers to orbit or pinch to zoom. Manual navigation releases
+Auto-Pan and bot follow; manual zoom keeps its chosen distance until Auto-Pan
+is enabled again. Camera choices survive arena rebuilds between rounds.
+
+Choose a bot in Follow to track that fighter, or enable Auto-Pan to resume
+automatic framing. Reduced-motion preferences start with a stationary camera.
+The gear menu controls lighting, surface detail and secondary character motion;
+those changes apply immediately and preserve each visitor's saved preferences.
+
 ## Quick Start
 
 Requirements:
