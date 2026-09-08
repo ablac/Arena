@@ -10,7 +10,9 @@ const SIZE = 128;
 const sceneMaterials = new WeakMap();
 
 export function syncForgeSurface(material) {
-  const texture = isEnabled('rendering', 'surfaceDetail') ? material._forgeSurfaceTexture : null;
+  const texture = isEnabled('rendering', 'surfaceDetail')
+    && (!material._forgeSurfaceLitOnly || isEnabled('rendering', 'characterLighting'))
+    ? material._forgeSurfaceTexture : null;
   material.diffuseTexture = texture || null;
   // StandardMaterial adds emissiveTexture RGB to emissiveColor; a neutral
   // map there becomes a white light source. The default fragment shader
@@ -42,7 +44,8 @@ export function forgeSurface(scene, finish) {
       const weave = ((Math.floor(x / 4) + Math.floor(y / 4)) & 1) ? 5 : -5;
       const value = finish === 'graphite'
         ? 226 + weave + hash * 8
-        : finish === 'steel' ? 240 + grain + hash * 6 : 232 + grain + hash * 8;
+        : finish === 'steel' ? 240 + grain + hash * 6
+          : finish === 'paint' ? 246 + hash * 4 : 232 + grain + hash * 8;
       const i = (y * SIZE + x) * 4;
       pixels.data[i] = pixels.data[i + 1] = pixels.data[i + 2] = value;
       pixels.data[i + 3] = 255;
@@ -60,7 +63,8 @@ export function forgeSurface(scene, finish) {
 export function applyForgeSurface(material, scene, finish) {
   material._forgeSurfaceTexture = forgeSurface(scene, finish);
   material._forgeSurfaceFinish = finish;
-  material.specularPower = finish === 'steel' ? 96 : finish === 'gunmetal' ? 48 : 24;
+  material.specularPower = finish === 'steel' ? 72 : finish === 'gunmetal' ? 48
+    : finish === 'paint' ? 36 : 18;
   syncForgeSurface(material);
   registerForgeSurface(material, scene);
 }
@@ -102,6 +106,7 @@ export function inheritForgeSurface(clone, original, scene) {
   }
   clone._forgeSurfaceTexture = texture;
   clone._forgeSurfaceFinish = original._forgeSurfaceFinish;
+  clone._forgeSurfaceLitOnly = original._forgeSurfaceLitOnly;
   syncForgeSurface(clone);
   registerForgeSurface(clone, scene);
   return clone;
