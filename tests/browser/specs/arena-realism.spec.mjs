@@ -115,11 +115,28 @@ test('glass arena and moving combatants paint at overview and close range', { ta
   }, realismEffects);
   expect(defaults).toEqual([true, true, true]);
 
+  // The default shot should settle around the winner/scout contest, while
+  // keeping a manual zoom stable and returning control as soon as we orbit.
+  await expect.poll(() => page.evaluate(() => window.__ARENA_TEST__.diagnostics().camera.zoom)).toBeGreaterThan(1.2);
+  expect(await page.evaluate(() => window.__ARENA_TEST__.diagnostics().camera.autoPan)).toBe(true);
+  await capture(page, testInfo, 'polish-auto-combat');
+
   // The wide frame exposes the floating deck edge and surrounding space.
   await page.locator('#zoom-slider').fill('0.4');
   await page.locator('#zoom-slider').dispatchEvent('input');
   await nextFrame(page);
+  expect(await page.evaluate(() => window.__ARENA_TEST__.diagnostics().camera.zoom)).toBe(0.4);
   await capture(page, testInfo, 'realism-wide-default');
+
+  const canvasBox = await page.locator('#arena-canvas').boundingBox();
+  const safe = await page.evaluate(() => window.__ARENA_TEST__.diagnostics().safeViewport);
+  const pointer = { x: canvasBox.x + safe.left + 60, y: canvasBox.y + safe.top + 60 };
+  await page.mouse.move(pointer.x, pointer.y);
+  await page.mouse.down();
+  await page.mouse.move(pointer.x + 12, pointer.y + 4);
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.__ARENA_TEST__.diagnostics().camera.autoPan)).toBe(false);
+  await expect(page.locator('#auto-pan')).not.toHaveClass(/active/);
 
   await page.locator('#follow-bot').selectOption('winner');
   await page.locator('#zoom-slider').fill('5');

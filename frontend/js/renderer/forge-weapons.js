@@ -10,7 +10,7 @@
  */
 
 import { isEnabled } from '../settings.js';
-import {applyForgeSurface, syncForgeSurface} from './forge-surfaces.js';
+import {applyForgeSurface, syncForgeSurface} from './forge-surfaces.js?v=20260907p';
 import {beveledBox, profileHull} from './mech-geometry.js';
 
 const _sceneResources = new WeakMap();

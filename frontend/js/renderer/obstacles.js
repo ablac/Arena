@@ -23,7 +23,7 @@
  */
 
 import { isEnabled } from '../settings.js';
-import { applyForgeSurface } from './forge-surfaces.js';
+import { applyForgeSurface } from './forge-surfaces.js?v=20260907p';
 import { MapWallsRenderer, buildWallGeometry, resolveEarcut } from './map-walls.js?v=20260718g';
 import { clusterObstacles, computeClusterOutline, buildClusterTrimGeometry } from './obstacle-clusters.js?v=20260718g';
 
@@ -213,11 +213,11 @@ export class ObstacleRenderer {
     const palette = this._env && this._env.getPalette ? this._env.getPalette() : null;
     if (!palette) return;
     this._mat.unfreeze();
-    this._mat.diffuseColor.set(...palette.obstacleBody.diffuse.map((v) => v * 1.25 + 0.09));
+    this._mat.diffuseColor.set(...palette.obstacleBody.diffuse);
     this._mat.emissiveColor.set(...palette.obstacleBody.emissive);
     this._mat.freeze();
     this._edgeMat.unfreeze();
-    this._edgeMat.emissiveColor.set(...palette.obstacleTrim.map((v) => v * 0.44));
+    this._edgeMat.emissiveColor.set(...palette.obstacleTrim);
     this._edgeMat.freeze();
   }
 

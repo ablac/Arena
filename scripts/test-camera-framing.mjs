@@ -57,6 +57,13 @@ assert.deepEqual(replacement.getNavigationState(), state, 'scene rebuild preserv
 replacement.setZoom(NaN);
 assert.equal(replacement.zoom, state.zoom);
 controller.dispose(); replacement.dispose();
+window.matchMedia = () => ({matches:true});
+const reduced = new CameraController(scene, canvas, 2000, 2000);
+reduced.updateBotPositions(field);
+reduced._tick();
+assert.equal(reduced.autoPan, false, 'reduced motion starts with a stationary camera');
+assert.equal(reduced.camera.radius, 800);
+reduced.dispose();
 delete globalThis.window;
 
 const ip = {exposure:0.5,contrast:2,vignetteWeight:4,vignetteColor:{r:1,g:0,b:0}};

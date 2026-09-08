@@ -6,7 +6,7 @@
  */
 
 import { makeMat } from './utils.js';
-import { GlassDeck, createGlassPolish, deckRandom } from './glass-deck.js';
+import { GlassDeck, createGlassPolish, deckRandom } from './glass-deck.js?v=20260907p';
 import { isEnabled } from '../settings.js';
 
 const ZONE_RING_SEGMENTS = 64;
@@ -24,8 +24,8 @@ const ZONE_RING_BASE_ALPHA = 0.7;
  *  - floorPatch: canvas energy-patch gradient stops, two RGBs (0-255)
  */
 const DEFAULT_MAP_PALETTE = Object.freeze({
-  obstacleBody: { diffuse: [0.07, 0.085, 0.11], emissive: [0.015, 0.03, 0.05] },
-  obstacleTrim: [0.08, 0.34, 0.62],
+  obstacleBody: { diffuse: [0.1775, 0.19625, 0.2275], emissive: [0.015, 0.03, 0.05] },
+  obstacleTrim: [0.0352, 0.1496, 0.2728],
   wallTrim: [0.24, 0.72, 1.0],
   swirl: [0.04, 0.14, 0.34],
   floorBase: [[10, 20, 38], [6, 12, 22]],
@@ -36,8 +36,8 @@ const DEFAULT_MAP_PALETTE = Object.freeze({
 const MAP_PALETTES = Object.freeze({
   square: DEFAULT_MAP_PALETTE,
   circle: Object.freeze({ // ice cyan
-    obstacleBody: { diffuse: [0.065, 0.09, 0.115], emissive: [0.012, 0.034, 0.052] },
-    obstacleTrim: [0.06, 0.40, 0.58],
+    obstacleBody: { diffuse: [0.17125, 0.2025, 0.23375], emissive: [0.012, 0.034, 0.052] },
+    obstacleTrim: [0.0264, 0.176, 0.2552],
     wallTrim: [0.20, 0.80, 0.95],
     swirl: [0.03, 0.16, 0.33],
     floorBase: [[8, 22, 38], [5, 13, 22]],
@@ -45,8 +45,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[30, 130, 255], [70, 190, 255]],
   }),
   hexagon: Object.freeze({ // gold-accented navy
-    obstacleBody: { diffuse: [0.085, 0.082, 0.10], emissive: [0.032, 0.026, 0.04] },
-    obstacleTrim: [0.52, 0.40, 0.10],
+    obstacleBody: { diffuse: [0.19625, 0.1925, 0.215], emissive: [0.032, 0.026, 0.04] },
+    obstacleTrim: [0.2288, 0.176, 0.044],
     wallTrim: [1.0, 0.81, 0.33],
     swirl: [0.10, 0.10, 0.24],
     floorBase: [[16, 17, 32], [9, 10, 20]],
@@ -54,8 +54,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[120, 100, 220], [230, 190, 90]],
   }),
   diamond: Object.freeze({ // silvered white-blue
-    obstacleBody: { diffuse: [0.08, 0.09, 0.115], emissive: [0.024, 0.03, 0.045] },
-    obstacleTrim: [0.34, 0.44, 0.58],
+    obstacleBody: { diffuse: [0.19, 0.2025, 0.23375], emissive: [0.024, 0.03, 0.045] },
+    obstacleTrim: [0.1496, 0.1936, 0.2552],
     wallTrim: [0.72, 0.86, 1.0],
     swirl: [0.08, 0.13, 0.30],
     floorBase: [[13, 20, 34], [8, 12, 22]],
@@ -63,8 +63,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[80, 130, 240], [150, 190, 255]],
   }),
   cross: Object.freeze({ // ember orange accents
-    obstacleBody: { diffuse: [0.09, 0.08, 0.095], emissive: [0.036, 0.024, 0.03] },
-    obstacleTrim: [0.55, 0.26, 0.08],
+    obstacleBody: { diffuse: [0.2025, 0.19, 0.20875], emissive: [0.036, 0.024, 0.03] },
+    obstacleTrim: [0.242, 0.1144, 0.0352],
     wallTrim: [1.0, 0.54, 0.24],
     swirl: [0.13, 0.09, 0.22],
     floorBase: [[17, 15, 28], [10, 9, 18]],
@@ -72,8 +72,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[150, 90, 200], [255, 150, 80]],
   }),
   caves: Object.freeze({ // warm amber/rust
-    obstacleBody: { diffuse: [0.105, 0.085, 0.068], emissive: [0.046, 0.028, 0.014] },
-    obstacleTrim: [0.58, 0.28, 0.08],
+    obstacleBody: { diffuse: [0.22125, 0.19625, 0.175], emissive: [0.046, 0.028, 0.014] },
+    obstacleTrim: [0.2552, 0.1232, 0.0352],
     wallTrim: [1.0, 0.62, 0.22],
     swirl: [0.15, 0.09, 0.11],
     floorBase: [[24, 17, 12], [13, 10, 8]],
@@ -81,8 +81,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[200, 110, 50], [255, 170, 90]],
   }),
   donut: Object.freeze({ // magenta ring-world
-    obstacleBody: { diffuse: [0.095, 0.07, 0.105], emissive: [0.038, 0.018, 0.044] },
-    obstacleTrim: [0.48, 0.10, 0.44],
+    obstacleBody: { diffuse: [0.20875, 0.1775, 0.22125], emissive: [0.038, 0.018, 0.044] },
+    obstacleTrim: [0.2112, 0.044, 0.1936],
     wallTrim: [1.0, 0.36, 0.86],
     swirl: [0.15, 0.05, 0.26],
     floorBase: [[20, 10, 27], [12, 7, 17]],
@@ -90,8 +90,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[180, 60, 230], [255, 120, 220]],
   }),
   islands: Object.freeze({ // aqua/teal
-    obstacleBody: { diffuse: [0.06, 0.095, 0.10], emissive: [0.012, 0.038, 0.038] },
-    obstacleTrim: [0.06, 0.42, 0.38],
+    obstacleBody: { diffuse: [0.165, 0.20875, 0.215], emissive: [0.012, 0.038, 0.038] },
+    obstacleTrim: [0.0264, 0.1848, 0.1672],
     wallTrim: [0.24, 1.0, 0.82],
     swirl: [0.03, 0.18, 0.26],
     floorBase: [[7, 24, 28], [5, 14, 18]],
@@ -99,8 +99,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[40, 190, 170], [90, 240, 210]],
   }),
   rooms: Object.freeze({ // slate/steel
-    obstacleBody: { diffuse: [0.085, 0.095, 0.11], emissive: [0.028, 0.033, 0.042] },
-    obstacleTrim: [0.24, 0.32, 0.42],
+    obstacleBody: { diffuse: [0.19625, 0.20875, 0.2275], emissive: [0.028, 0.033, 0.042] },
+    obstacleTrim: [0.1056, 0.1408, 0.1848],
     wallTrim: [0.60, 0.72, 0.86],
     swirl: [0.07, 0.11, 0.21],
     floorBase: [[14, 18, 27], [9, 11, 18]],
@@ -108,8 +108,8 @@ const MAP_PALETTES = Object.freeze({
     floorPatch: [[70, 110, 190], [130, 165, 220]],
   }),
   spiral: Object.freeze({ // violet
-    obstacleBody: { diffuse: [0.085, 0.075, 0.115], emissive: [0.032, 0.022, 0.052] },
-    obstacleTrim: [0.30, 0.15, 0.56],
+    obstacleBody: { diffuse: [0.19625, 0.18375, 0.23375], emissive: [0.032, 0.022, 0.052] },
+    obstacleTrim: [0.132, 0.066, 0.2464],
     wallTrim: [0.62, 0.42, 1.0],
     swirl: [0.11, 0.06, 0.30],
     floorBase: [[16, 12, 32], [10, 8, 20]],

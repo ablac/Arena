@@ -9,10 +9,11 @@ function livingPosition(bot) {
 }
 
 function idOf(bot) { return String(bot.bot_id ?? bot.id ?? ''); }
+function attacking(bot) { return ['attack', 'special'].includes(bot.action || bot.last_action); }
 
 function pairFrame(a, b, selectedAt) {
   const distance = Math.hypot(a.position[0] - b.position[0], a.position[1] - b.position[1]);
-  const attack = [a, b].some(bot => ['attack', 'special'].includes(bot.action || bot.last_action));
+  const attack = attacking(a) || attacking(b);
   const ids = [idOf(a), idOf(b)].sort();
   return {
     ids, selectedAt,
@@ -27,7 +28,7 @@ function pairFrame(a, b, selectedAt) {
  * Called only for state snapshots, not every rendered frame. */
 export function chooseCombatFrame(bots, previous = null, now = 0) {
   const alive = (Array.isArray(bots) ? bots : []).filter(livingPosition);
-  alive.sort((a, b) => idOf(a).localeCompare(idOf(b)));
+  alive.sort((a, b) => a.position[0] - b.position[0] || idOf(a).localeCompare(idOf(b)));
   if (!alive.length) return null;
   if (alive.length === 1) {
     const bot = alive[0];
@@ -37,15 +38,22 @@ export function chooseCombatFrame(bots, previous = null, now = 0) {
 
   let best = null;
   let current = null;
+  if (previous?.ids?.length === 2) {
+    const a = alive.find(bot => idOf(bot) === previous.ids[0]);
+    const b = alive.find(bot => idOf(bot) === previous.ids[1]);
+    if (a && b && !(Number(a.team) > 0 && a.team === b.team)) current = pairFrame(a, b, now);
+  }
   for (let i = 0; i < alive.length; i++) {
     for (let j = i + 1; j < alive.length; j++) {
       const a = alive[i], b = alive[j];
+      // X separation is a lower bound on score even with the attack bonus.
+      // Prune distant pairs and allocate a frame only for an improved shot.
+      if (best && (b.position[0] - a.position[0]) * 0.8 > best.score) break;
       // FFA uses team0; only a positive shared team rules a pair out.
       if (Number(a.team) > 0 && a.team === b.team) continue;
-      const candidate = pairFrame(a, b, now);
-      if (!best || candidate.score < best.score) best = candidate;
-      if (previous?.ids?.length === 2 && candidate.ids[0] === previous.ids[0] &&
-          candidate.ids[1] === previous.ids[1]) current = candidate;
+      const score = Math.hypot(a.position[0] - b.position[0], a.position[1] - b.position[1]) *
+        (attacking(a) || attacking(b) ? 0.8 : 1);
+      if (!best || score < best.score) best = pairFrame(a, b, now);
     }
   }
   // A surviving team can still be watched after its opponents are gone.

@@ -6,7 +6,7 @@
  * @module renderer/camera
  */
 
-import { chooseCombatFrame, combatFrameRadius } from './camera-framing.js';
+import { chooseCombatFrame, combatFrameRadius } from './camera-framing.js?v=20260907p';
 
 const DEFAULT_ALPHA = -Math.PI / 2;
 const DEFAULT_BETA = 1.0;

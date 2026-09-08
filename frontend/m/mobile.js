@@ -17,7 +17,7 @@ import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from '
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260907b';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260907p';
 import { Minimap } from '../js/renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, appPath, wsURL } from '../js/paths.js?v=20260710a';
@@ -444,10 +444,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   );
   window.addEventListener('pagehide', stopSafeViewport, { once: true });
 
-  // Camera state that must survive dynamic arena-size scene rebuilds
-  // (ArenaEngine recreates its CameraController; zoom/follow are restored
-  // by the engine itself, pinch tuning and auto-pan are ours to reapply).
-  let autoPanOn = true;
+  // The engine restores navigation during rebuilds; bind the replacement
+  // controller to the mobile controls without re-enabling automatic zoom.
+  let autoPanOn = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches !== true;
   let followId = null;
   let followName = '';
   let lastCameraRef = null;
@@ -463,8 +462,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       // across the 80..1800 radius range without touching camera.js.
       cam.pinchDeltaPercentage = 0.01;
     }
-    controller.setAutoPan(autoPanOn && !followId);
-    if (followId) controller.followBot(followId);
     controller.onNavigationChange = ({ autoPan, followId: cameraFollowId }) => {
       autoPanOn = autoPan;
       ui.fabAutoPan.classList.toggle('active', autoPan);
@@ -478,6 +475,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         rosterRows.forEach(row => row.el.classList.remove('following'));
       }
     };
+    controller.onNavigationChange(controller.getNavigationState());
   }
   tuneCameraIfNew();
 
@@ -522,10 +520,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   ui.fabAutoPan.classList.toggle('active', autoPanOn);
   ui.fabAutoPan.addEventListener('click', () => {
-    autoPanOn = !autoPanOn;
-    ui.fabAutoPan.classList.toggle('active', autoPanOn);
-    if (autoPanOn && followId) setFollow(null);
-    else engine.setAutoPan(autoPanOn);
+    const enabled = !autoPanOn;
+    if (enabled && followId) setFollow(null);
+    engine.setAutoPan(enabled);
   });
 
   ui.fabMinimap.addEventListener('click', () => {

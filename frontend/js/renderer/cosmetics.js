@@ -9,8 +9,8 @@
 
 import { isEnabled, onSettingsChange } from '../settings.js';
 import { makeMat, parseColor } from './utils.js';
-import { applyForgeSurface, inheritForgeSurface } from './forge-surfaces.js';
-import {applyForgeLightingMode} from './forge-weapons.js';
+import { applyForgeSurface, inheritForgeSurface } from './forge-surfaces.js?v=20260907p';
+import {applyForgeLightingMode} from './forge-weapons.js?v=20260907p';
 import {beveledBox, profileHull} from './mech-geometry.js';
 import {bodyFormForAsset} from './body-form-roster.js?v=20260714e';
 

@@ -12,15 +12,15 @@
 
 import {beveledBox, profileHull} from './mech-geometry.js';
 import {parseColor, makeMat} from './utils.js';
-import {applyForgeSurface} from './forge-surfaces.js';
+import {applyForgeSurface} from './forge-surfaces.js?v=20260907p';
 import {getCharacterProfile} from './character-roster.js?v=20260907b';
-import {ForgeAnimState} from './character-anims.js?v=20260907b';
+import {ForgeAnimState} from './character-anims.js?v=20260907p';
 import {
   applyForgeLightingMode,
   createForgeWeapon,
   disposeForgeWeapon,
   setForgeWeaponLighting,
-} from './forge-weapons.js?v=20260907b';
+} from './forge-weapons.js?v=20260907p';
 import {bodyFormForAsset} from './body-form-roster.js?v=20260714e';
 import {buildBodyFormGeometry, createBodyFormFarProxy} from './body-form-geometry.js?v=20260907b';
 import {createWorldBotHud, disposeWorldBotHud} from './world-hud.js?v=20260718o';

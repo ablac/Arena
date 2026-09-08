@@ -5,18 +5,18 @@
  * @module renderer/engine
  */
 
-import { CameraController } from './camera.js?v=20260718b';
-import { BotRenderer } from './bots.js?v=20260907b';
-import { EnvironmentRenderer } from './environment.js?v=20260907r';
-import { ObstacleRenderer } from './obstacles.js?v=20260907r';
-import { IntermissionDirector } from './intermission-director.js?v=20260907b';
+import { CameraController } from './camera.js?v=20260907p';
+import { BotRenderer } from './bots.js?v=20260907p';
+import { EnvironmentRenderer } from './environment.js?v=20260907p';
+import { ObstacleRenderer } from './obstacles.js?v=20260907p';
+import { IntermissionDirector } from './intermission-director.js?v=20260907p';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
 import { TrailRenderer } from './trails.js?v=20260907b';
 import { ProjectileRenderer } from './projectiles.js?v=20260711a';
-import { GameplayRenderer } from './gameplay.js?v=20260718i';
+import { GameplayRenderer } from './gameplay.js?v=20260907p';
 import { getState, isEnabled, onSettingsChange } from '../settings.js';
-import { ARENA_GRADE, applyArenaGrade } from './scene-look.js';
+import { ARENA_GRADE, applyArenaGrade } from './scene-look.js?v=20260907p';
 
 // Bot positions are smoothed via exponential lerp each frame,
 // so no tick-interval-based alpha is needed.

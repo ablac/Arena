@@ -57,7 +57,7 @@ export function loadPinnedBabylon({windowObject = defaultWindow(), documentObjec
 }
 
 async function defaultPreviewClassLoader() {
-  const module = await import('../js/shop-preview.js?v=20260907b');
+  const module = await import('../js/shop-preview.js?v=20260907p');
   if (typeof module.CosmeticShopPreview !== 'function') {
     throw new Error('The Arena cosmetic preview module is unavailable');
   }
