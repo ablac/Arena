@@ -188,21 +188,23 @@ export class ObstacleRenderer {
   /** @private Create shared materials (default-palette hues; retinted per map). */
   _initMaterials() {
     const B = window.BABYLON;
-    // Dark alloy body with restrained cool highlights.
+    // Satin alloy retains dark joints but catches the shared broad key light.
     this._mat = new B.StandardMaterial('obsMat', this.scene);
-    this._mat.diffuseColor = new B.Color3(0.07, 0.085, 0.11);
+    this._mat.diffuseColor = new B.Color3(0.18, 0.20, 0.24);
     this._mat.emissiveColor = new B.Color3(0.015, 0.03, 0.05);
-    this._mat.specularColor = new B.Color3(0.24, 0.30, 0.40);
+    this._mat.specularColor = new B.Color3(0.44, 0.49, 0.56);
     applyForgeSurface(this._mat, this.scene, 'gunmetal');
     this._mat.backFaceCulling = false;
     this._mat.freeze();
 
     // Cleaner edge accent, less debug-neon.
     this._edgeMat = new B.StandardMaterial('obsEdgeMat', this.scene);
-    this._edgeMat.diffuseColor = B.Color3.Black();
-    this._edgeMat.emissiveColor = new B.Color3(0.08, 0.34, 0.62);
-    this._edgeMat.disableLighting = true;
-    this._edgeMat.alpha = 0.58;
+    this._edgeMat.diffuseColor = new B.Color3(0.34, 0.41, 0.48);
+    this._edgeMat.specularColor = new B.Color3(0.64, 0.72, 0.79);
+    this._edgeMat.specularPower = 76;
+    this._edgeMat.emissiveColor = new B.Color3(0.035, 0.15, 0.27);
+    this._edgeMat.disableLighting = false;
+    this._edgeMat.alpha = 0.86;
     this._edgeMat.freeze();
   }
 
@@ -211,11 +213,11 @@ export class ObstacleRenderer {
     const palette = this._env && this._env.getPalette ? this._env.getPalette() : null;
     if (!palette) return;
     this._mat.unfreeze();
-    this._mat.diffuseColor.set(...palette.obstacleBody.diffuse);
+    this._mat.diffuseColor.set(...palette.obstacleBody.diffuse.map((v) => v * 1.25 + 0.09));
     this._mat.emissiveColor.set(...palette.obstacleBody.emissive);
     this._mat.freeze();
     this._edgeMat.unfreeze();
-    this._edgeMat.emissiveColor.set(...palette.obstacleTrim);
+    this._edgeMat.emissiveColor.set(...palette.obstacleTrim.map((v) => v * 0.44));
     this._edgeMat.freeze();
   }
 
