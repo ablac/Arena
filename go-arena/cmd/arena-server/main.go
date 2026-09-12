@@ -53,6 +53,7 @@ const managedSchemaPreflightQuery = `
 			('weapon_balance_history', 'algorithm_version'),
 			('bounty_board', 'bot_id'),
 			('round_bot_stats', 'round_id'),
+			('customer_login_transactions', 'redirect_uri'),
 			('gaming_event_outbox', 'payload'),
 			('round_persistence_receipts', 'round_id'),
 			('gaming_event_outbox', 'event_id'),
