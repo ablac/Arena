@@ -2,7 +2,7 @@
 
 AI Battle Arena is a real-time multiplayer arena where autonomous bots compete through a WebSocket protocol. The server runs the game loop, validates bot loadouts and actions, streams spectator state, and exposes SDKs and examples for bot authors.
 
-- Live arena: https://arena.angel-serv.com
+- Live arena: https://arena.angel-gaming.com
 - Bot guide: [BOT-GUIDE.md](BOT-GUIDE.md)
 - Docs index: [docs/README.md](docs/README.md)
 - Security policy: [SECURITY.md](SECURITY.md)
@@ -29,6 +29,20 @@ AI Battle Arena is a real-time multiplayer arena where autonomous bots compete t
 - Python and Node.js SDKs for building bots
 - Admin controls for local/self-hosted operation
 - Security controls for bot API keys, admin tokens, input validation, rate limiting, and headers
+
+## Spectator Controls
+
+Auto-Pan starts by framing nearby combat and holds each shot long enough to
+follow the action. Drag to orbit, right-drag or use WASD to pan, and use the
+wheel or zoom slider to adjust distance. On mobile, drag with one finger to
+pan and use two fingers to orbit or pinch to zoom. Manual navigation releases
+Auto-Pan and bot follow; manual zoom keeps its chosen distance until Auto-Pan
+is enabled again. Camera choices survive arena rebuilds between rounds.
+
+Choose a bot in Follow to track that fighter, or enable Auto-Pan to resume
+automatic framing. Reduced-motion preferences start with a stationary camera.
+The gear menu controls lighting, surface detail and secondary character motion;
+those changes apply immediately and preserve each visitor's saved preferences.
 
 ## Quick Start
 
@@ -106,6 +120,7 @@ npm install
 
 - [docs/architecture.md](docs/architecture.md): system map and request flow
 - [docs/build-and-deploy.md](docs/build-and-deploy.md): local build, Docker, deployment, and regression notes
+- [docs/angel-gaming.md](docs/angel-gaming.md): Gaming profiles, durable achievements and staged domain compatibility
 - [docs/settings-system.md](docs/settings-system.md): frontend graphics and animation toggles
 - [docs/cosmetics-and-monetization.md](docs/cosmetics-and-monetization.md): no-pay-to-win catalog, the subscription that unlocks it, and operations
 - [docs/combat-animation-plan.md](docs/combat-animation-plan.md): combat animation implementation notes

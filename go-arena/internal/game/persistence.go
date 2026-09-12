@@ -19,9 +19,15 @@ var (
 	botStatsPersistenceMu    sync.Mutex
 	botStatsPersistenceEpoch atomic.Uint64
 	pendingBotStatsDeltas    = make(map[string]db.BotStatsDelta)
+	pendingRoundStats        = make(map[string]pendingRoundStatsBatch)
 	applyBotStatsDeltas      = db.ApplyBotStatsDeltas
 	insertRoundBotStats      = db.InsertRoundBotStatsBatch
 )
+
+type pendingRoundStatsBatch struct {
+	roundNumber int
+	rows        []db.RoundBotStatsRow
+}
 
 // PersistBotStatsFromSnapshot saves accumulated round stats using pre-copied
 // stat snapshots. This avoids data races because the snapshot values are
@@ -37,6 +43,7 @@ func PersistBotStatsFromSnapshot(ctx context.Context, snaps []BotStatsSnapshot, 
 		queueBotStatsDeltaLocked(botStatsDeltaFromSnapshot(snap, winnerID, finalizeRound))
 	}
 	flushBotStatsDeltasLocked(ctx)
+	flushRoundStatsLocked(ctx)
 }
 
 func botStatsDeltaFromSnapshot(snap BotStatsSnapshot, winnerID string, finalizeRound bool) db.BotStatsDelta {
@@ -176,10 +183,58 @@ func PersistRoundBotStats(ctx context.Context, epoch uint64, roundID string, rou
 			Won:             bot.BotID == winnerID,
 		})
 	}
-	// Single multi-row insert: one DB round trip per round end instead of one
-	// per bot, and a shorter botStatsPersistenceMu hold.
-	if err := insertRoundBotStats(ctx, roundID, roundNumber, rows); err != nil {
-		slog.Error("persist: failed to insert round bot stats", "bots", len(rows), "round_id", roundID, "round", roundNumber, "error", err)
+	// Preserve the first captured result until its entire stats/outbox write is
+	// acknowledged. An uncertain commit is safe because the database receipt
+	// rejects replay of the same durable round ID.
+	if _, exists := pendingRoundStats[roundID]; !exists && len(rows) > 0 {
+		pendingRoundStats[roundID] = pendingRoundStatsBatch{roundNumber: roundNumber, rows: rows}
+	}
+	flushRoundStatsLocked(ctx)
+}
+
+func flushRoundStatsLocked(ctx context.Context) {
+	ids := make([]string, 0, len(pendingRoundStats))
+	for id := range pendingRoundStats {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		left, right := pendingRoundStats[ids[i]].roundNumber, pendingRoundStats[ids[j]].roundNumber
+		if left == right {
+			return ids[i] < ids[j]
+		}
+		return left < right
+	})
+	for index, id := range ids {
+		if index >= 10 || ctx.Err() != nil {
+			return
+		}
+		batch := pendingRoundStats[id]
+		writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err := insertRoundBotStats(writeCtx, id, batch.roundNumber, batch.rows)
+		cancel()
+		if err != nil {
+			slog.Error("persist: round result queued for retry", "round_id", id, "round", batch.roundNumber, "bots", len(batch.rows))
+			return
+		}
+		delete(pendingRoundStats, id)
+	}
+}
+
+// RunRoundStatsPersistence retries even when the arena is idle and no more
+// snapshots arrive. Before the first successful database write this queue is
+// memory-only; the durable receipt, stats and Gaming outbox commit together.
+func RunRoundStatsPersistence(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			botStatsPersistenceMu.Lock()
+			flushRoundStatsLocked(ctx)
+			botStatsPersistenceMu.Unlock()
+		}
 	}
 }
 

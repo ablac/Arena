@@ -151,8 +151,10 @@ if (focus === 'all' || focus === 'body') {
     for (const part of anatomicalParts) {
       const mesh = entry._forgeMeshes.find(candidate => candidate.name.startsWith(part));
       assert.ok(mesh, `${entry.profile.weapon} ${part} must remain part of the high-detail body`);
-      assert.ok(guaranteedLuminance(mesh) >= 0.15,
-        `${mesh.name} needs enough shared emissive contrast to remain visible in the dark arena`);
+      assert.ok(luminance(mesh.material.diffuseColor) >= 0.10,
+        `${mesh.name} must retain a readable reflective base under the broader stage lights`);
+      assert.ok(guaranteedLuminance(mesh) >= luminance(mesh.material.diffuseColor) * 0.119,
+        `${mesh.name} must retain the subtle 12% ambient floor for unlit faces`);
       // Issue #181: chassis materials are sun/hemi-lit for depth, but the
       // emissive floor above still guarantees the minimum silhouette, and the
       // legacy self-lit look must remain restorable for the
@@ -244,8 +246,10 @@ if (focus === 'all' || focus === 'weapon') {
       const meshes = entry.weapon._forgeMeshes.filter(candidate => candidate.name.startsWith(part));
       assert.ok(meshes.length > 0, `${entry.profile.weapon} requires visible geometry for ${part}`);
       for (const mesh of meshes) {
-        assert.ok(guaranteedLuminance(mesh) >= 0.12,
-          `${mesh.name} must not disappear and leave detached weapon pieces`);
+        assert.ok(luminance(mesh.material.diffuseColor) >= 0.10,
+          `${mesh.name} needs a readable reflective base`);
+        assert.ok(guaranteedLuminance(mesh) >= luminance(mesh.material.diffuseColor) * 0.119,
+          `${mesh.name} must retain the 12% ambient floor between direct highlights`);
         if (mesh.material.name.startsWith('forge-weapon-')) {
           // Issue #181: weapon silhouettes are lit like the chassis; the
           // emissive floor asserted above keeps the dark-sector guarantee.

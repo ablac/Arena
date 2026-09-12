@@ -54,9 +54,9 @@ func buildBotSetupResponse() map[string]interface{} {
 		}
 
 		resp := map[string]interface{}{
-			"api_base_url":            "https://arena.angel-serv.com",
-			"websocket_url":           "wss://arena.angel-serv.com/ws/bot",
-			"spectator_websocket_url": "wss://arena.angel-serv.com/ws/spectator",
+			"api_base_url":            "https://arena.angel-gaming.com",
+			"websocket_url":           "wss://arena.angel-gaming.com/ws/bot",
+			"spectator_websocket_url": "wss://arena.angel-gaming.com/ws/spectator",
 
 			// ── Getting Started ─────────────────────────────────
 			"getting_started": []map[string]interface{}{
@@ -64,7 +64,7 @@ func buildBotSetupResponse() map[string]interface{} {
 				{"step": 2, "title": "Configure Your Bot (optional)", "description": "PUT to /api/v1/bot/config with X-Arena-Key header to set your bot name, avatar color, and default loadout."},
 				{"step": 3, "title": "Claim Your Bot (optional)", "description": "Sign in with a verified email at /dashboard/, then prove the generated key once through POST /api/v1/account/bots. Claiming links the existing bot to your account for cosmetics; it does not replace the key."},
 				{"step": 4, "title": "Fetch the Map (optional)", "description": "GET /api/v1/arena/map to pre-fetch terrain via REST. During intermission, features_pending is true: terrain and shape are ready, game_mode is omitted, and feature arrays/overlays are empty until round_start. Fetch again after round_start for pads, hazards, and objectives."},
-				{"step": 5, "title": "Connect via WebSocket", "description": "Connect to wss://arena.angel-serv.com/ws/bot?key=YOUR_API_KEY — you will receive a 'connected' message with arena info."},
+				{"step": 5, "title": "Connect via WebSocket", "description": "Connect to wss://arena.angel-gaming.com/ws/bot?key=YOUR_API_KEY — you will receive a 'connected' message with arena info."},
 				{"step": 6, "title": "Select Loadout", "description": "Send a 'select_loadout' message choosing your weapon, stat allocation, and fallback behavior. You have 10 seconds."},
 				{"step": 7, "title": "Receive Ticks", "description": "The server sends 'tick' messages at " + fmt.Sprintf("%d", c.TickRate) + " Hz with your state, nearby entities, and safe zone info."},
 				{"step": 8, "title": "Send Actions", "description": "Each tick, send an 'action' message with your chosen action (move, attack, dodge, etc). One action per tick."},
@@ -137,7 +137,7 @@ func buildBotSetupResponse() map[string]interface{} {
 					"note":                "A short overflow is dropped and reported without a strike; sustained floods escalate to protocol strikes.",
 				},
 				"connection_flow": []string{
-					"1. Connect to wss://arena.angel-serv.com/ws/bot?key=YOUR_API_KEY",
+					"1. Connect to wss://arena.angel-gaming.com/ws/bot?key=YOUR_API_KEY",
 					"2. Receive 'connected' message with arena config and available weapons",
 					"3. Send 'select_loadout' message with weapon, stats, and fallback behavior",
 					"4. Receive 'loadout_confirmed' message with your derived stats",
@@ -339,8 +339,8 @@ func buildBotSetupResponse() map[string]interface{} {
 			// ── Example Bot ─────────────────────────────────────
 			"example_bot_python": `import asyncio, json, os, websockets
 
-API_BASE = "https://arena.angel-serv.com"
-WS_URL = "wss://arena.angel-serv.com/ws/bot"
+API_BASE = "https://arena.angel-gaming.com"
+WS_URL = "wss://arena.angel-gaming.com/ws/bot"
 
 async def main():
     # Step 1: Use a saved key, or generate one without creating an account.

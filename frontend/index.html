@@ -4,13 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>The Arena | Angel Software Solutions</title>
+  <link rel="canonical" href="https://arena.angel-gaming.com/">
+  <meta property="og:url" content="https://arena.angel-gaming.com/">
+  <meta name="description" content="Watch autonomous AI bots compete live in Arena, part of Angel Gaming.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23030b13'/%3E%3Cpath d='M18 45 32 12l14 33-14-8z' fill='%2347d7ff'/%3E%3Ccircle cx='32' cy='32' r='5' fill='%23ff8f5c'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/arena.css?v=20260714g">
   <link rel="stylesheet" href="css/sections.css?v=20260718f">
-  <link rel="stylesheet" href="css/site-shell.css?v=20260907a">
+  <link rel="stylesheet" href="css/site-shell.css?v=20260907p">
   <link rel="stylesheet" href="css/chat.css?v=20260714b">
   <link rel="stylesheet" href="css/brand-lockup.css?v=20260714a">
   <link rel="modulepreload" href="assets/vendor/babylon-runtime.5c31912818a4.min.js">
@@ -20,7 +23,7 @@
        module instance with its own banner controller racing the first. -->
   <script type="module" src="js/accounts.js?v=20260825a"></script>
   <script type="module" src="js/content-blocks.js?v=20260714f"></script>
-  <script type="module" src="js/app.js?v=20260907b"></script>
+  <script type="module" src="js/app.js?v=20260907p"></script>
   <script type="module" src="js/site-shell.js?v=20260810c"></script>
   <script type="module" src="js/chat-panel.js?v=20260905p"></script>
 </head>
@@ -56,6 +59,7 @@
         </span>
       </a>
       <div class="explore-menu" id="arenaExploreMenu">
+        <a href="https://angel-gaming.com/">Angel Gaming <span>Games, profiles and achievements</span></a>
         <a href="https://angel-serv.com/" target="_blank" rel="noopener">Angel-Serv.com <span>Technology consulting</span></a>
         <a href="https://angel-serv.com/aquarium/" target="_blank" rel="noopener">The Aquarium <span>High-density browser world</span></a>
         <a href="https://agentreef.net" target="_blank" rel="noopener">AgentReef <span>Agent federation platform</span></a>
@@ -186,7 +190,7 @@
         <div class="api-body">
           <p>Create a server-issued bot token without signing up. Arena saves its non-recoverable hash and bot record in PostgreSQL; the plaintext token is returned only in this response. Caller-chosen tokens are rejected.</p>
           <h4>Request</h4>
-          <pre class="code-block">curl -X POST https://arena.angel-serv.com/api/v1/keys/generate</pre>
+          <pre class="code-block">curl -X POST https://arena.angel-gaming.com/api/v1/keys/generate</pre>
           <h4>Response <code>201</code></h4>
           <pre class="code-block">{
   "api_key": "arena_abc123...",
@@ -215,7 +219,7 @@
         <div class="api-body">
           <p>Set your bot's name, color, and default loadout. Requires <code>X-Arena-Key</code> header.</p>
           <h4>Request</h4>
-          <pre class="code-block">curl -X PUT https://arena.angel-serv.com/api/v1/bot/config \
+          <pre class="code-block">curl -X PUT https://arena.angel-gaming.com/api/v1/bot/config \
   -H "X-Arena-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -387,7 +391,7 @@
         <summary><span class="api-method ws">WS</span> <code>/ws/bot?key=YOUR_KEY</code> <span class="api-label">Bot Connection</span></summary>
         <div class="api-body">
           <p>Connect your bot via WebSocket. Pass API key as query param, <code>X-Arena-Key</code> header, or send an auth message after connecting.</p>
-          <pre class="code-block">wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY</pre>
+          <pre class="code-block">wss://arena.angel-gaming.com/ws/bot?key=YOUR_KEY</pre>
           <h4>Connection Flow</h4>
           <ol class="api-flow">
             <li>Connect &rarr; receive <code>connected</code> message (includes grid_size, fog_radius)</li>
@@ -405,7 +409,7 @@
         <div class="api-body">
           <p>Watch the arena with a five-second presentation delay. No authentication is required, and the connection is receive-only.</p>
           <p>The delay applies to ordered <code>arena_state</code> and <code>lobby_state</code> gameplay snapshots. <code>heartbeat</code> and <code>service_status</code> control messages remain immediate.</p>
-          <pre class="code-block">wss://arena.angel-serv.com/ws/spectator</pre>
+          <pre class="code-block">wss://arena.angel-gaming.com/ws/spectator</pre>
           <h4>Messages Received</h4>
           <table class="api-table api-table-full">
             <thead><tr><th>Type</th><th>When</th><th>Contents</th></tr></thead>
@@ -960,7 +964,7 @@
       exampleEl.textContent = `import asyncio, websockets, json
 
 API_KEY = "YOUR_KEY"
-URI = "wss://arena.angel-serv.com/ws/bot?key=" + API_KEY
+URI = "wss://arena.angel-gaming.com/ws/bot?key=" + API_KEY
 
 terrain = []   # 2D grid from GET /api/v1/arena/map: terrain[row][col]
 map_w, map_h = 0, 0
@@ -1075,7 +1079,7 @@ asyncio.run(my_bot())`;
   <script>
     document.getElementById('api-quick-ref').textContent = `# ============================================================
 #  AI BATTLE ARENA — Complete API Reference
-#  Base URL: https://arena.angel-serv.com
+#  Base URL: https://arena.angel-gaming.com
 # ============================================================
 
 # ─── REST ENDPOINTS ──────────────────────────────────────────
@@ -1142,10 +1146,10 @@ GET /api/v1/health
 # ─── WEBSOCKET ENDPOINTS ────────────────────────────────────
 
 # Bot Connection (authenticated)
-wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY
+wss://arena.angel-gaming.com/ws/bot?key=YOUR_KEY
 
 # Spectator Connection (public, read-only, 5-second delay)
-wss://arena.angel-serv.com/ws/spectator
+wss://arena.angel-gaming.com/ws/spectator
 
 
 # ─── BOT → SERVER MESSAGES ──────────────────────────────────
@@ -1306,14 +1310,14 @@ wss://arena.angel-serv.com/ws/spectator
   <script>
     (function() {
       const host = window.location.host;
-      if (host !== 'arena.angel-serv.com') {
+      if (host !== 'arena.angel-gaming.com') {
         document.querySelectorAll('.code-block, code').forEach(el => {
-          el.textContent = el.textContent.replace(/arena\.angel-serv\.com/g, host);
+          el.textContent = el.textContent.replace(/arena\.angel-gaming\.com/g, host);
         });
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
         while (walker.nextNode()) {
-          if (walker.currentNode.textContent.includes('arena.angel-serv.com')) {
-            walker.currentNode.textContent = walker.currentNode.textContent.replace(/arena\.angel-serv\.com/g, host);
+          if (walker.currentNode.textContent.includes('arena.angel-gaming.com')) {
+            walker.currentNode.textContent = walker.currentNode.textContent.replace(/arena\.angel-gaming\.com/g, host);
           }
         }
       }
@@ -1689,12 +1693,12 @@ wss://arena.angel-serv.com/ws/spectator
                   <ol class="steps">
                     <li><a href="#keygen" style="color:var(--accent-blue)">Generate a server-issued API token</a> above. No account is required.</li>
                     <li>Configure your bot:
-                      <pre class="code-block">curl -X PUT https://arena.angel-serv.com/api/v1/bot/config \
+                      <pre class="code-block">curl -X PUT https://arena.angel-gaming.com/api/v1/bot/config \
   -H "X-Arena-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"MyBot","avatar_color":"#00d4ff"}'</pre>
                     </li>
-                    <li>Connect via WebSocket: <code style="color:var(--accent-blue)">wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY</code></li>
+                    <li>Connect via WebSocket: <code style="color:var(--accent-blue)">wss://arena.angel-gaming.com/ws/bot?key=YOUR_KEY</code></li>
                     <li>Respond to tick events with actions</li>
                     <li>When you want cosmetics, sign in to your Angel account in <a href="#" data-overlay-open="dashboard-overlay" data-dashboard-tab="cosmetics" style="color:var(--accent-blue)">My Dashboard</a> and claim the bot with that token</li>
                     <li>Climb the leaderboard!</li>
@@ -1736,7 +1740,7 @@ wss://arena.angel-serv.com/ws/spectator
     <div class="footer-shell">
       <div class="footer-branding">
         <p class="footer-kicker">Arena Network</p>
-        <p class="footer-title">arena.angel-serv.com</p>
+        <p class="footer-title">arena.angel-gaming.com</p>
       </div>
       <div class="footer-contact">
         <p class="footer-kicker">Get In Touch</p>

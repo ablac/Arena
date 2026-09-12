@@ -7,11 +7,36 @@
  * @module renderer/cosmetics
  */
 
-import { isEnabled } from '../settings.js';
+import { isEnabled, onSettingsChange } from '../settings.js';
 import { makeMat, parseColor } from './utils.js';
-import { applyForgeSurface, inheritForgeSurface } from './forge-surfaces.js';
+import { applyForgeSurface, inheritForgeSurface } from './forge-surfaces.js?v=20260907p';
+import {applyForgeLightingMode} from './forge-weapons.js?v=20260907p';
 import {beveledBox, profileHull} from './mech-geometry.js';
 import {bodyFormForAsset} from './body-form-roster.js?v=20260714e';
+
+// One listener per scene; disposed/replaced clones leave the set immediately.
+const lightingClones = new WeakMap();
+function registerWeaponLighting(material, scene) {
+  let materials = lightingClones.get(scene);
+  if (!materials) {
+    materials = new Set();
+    lightingClones.set(scene, materials);
+    if (scene.onDisposeObservable?.addOnce) {
+      const unsubscribe = onSettingsChange(() => {
+        const lit = isEnabled('rendering', 'characterLighting');
+        for (const clone of materials) {
+          clone.unfreeze();
+          applyForgeLightingMode(clone, lit);
+          if (!lit) clone.disableLighting = clone._forgeLegacyDisableLighting;
+          clone.freeze();
+        }
+      });
+      scene.onDisposeObservable.addOnce(() => { unsubscribe(); materials.clear(); });
+    }
+  }
+  materials.add(material);
+  material.onDisposeObservable?.addOnce(() => { materials.delete(material); });
+}
 
 const ALLOWED = {
   bot_skin: new Set(['standard', 'neon_grid', 'carbon_armor']),
@@ -117,14 +142,14 @@ function collectionMaterials(state, asset, bot, scene, slot) {
   };
   const material = (role, color, finish, emissiveFactor) => {
     const mat = cosmeticMaterial(state, `cosmetic-${slot}-${role}-${bot.bot_id}`, scene,
-      parseColor(color), {emissiveFactor, specular: parseColor(palette.secondary)});
+      parseColor(color), {emissiveFactor, specular: parseColor(finish === 'graphite' ? '#26303a' : '#9da8b3')});
     mat.unfreeze();
     applyForgeSurface(mat, scene, finish);
     mat.freeze();
     return mat;
   };
   return {
-    shell: material('shell', palette.primary, 'gunmetal', 0.08),
+    shell: material('shell', palette.primary, 'paint', 0.035),
     edge: material('edge', palette.secondary, 'steel', 0.025),
     joint: material('joint', palette.dark || '#17222c', 'graphite', 0.035),
     light: material('light', palette.accent, 'steel', 0.72),
@@ -369,11 +394,28 @@ function applyWeaponFinish(state, asset, entry, bot, scene) {
     if (typeof clone.unfreeze === 'function') clone.unfreeze();
     inheritForgeSurface(clone, original, scene);
     // Preserve dark mechanical joints and bright cutting edges under a finish.
-    const base = original.diffuseColor;
+    const base = original._forgeLitDiffuse || original.diffuseColor;
     const brightness = base ? (base.r + base.g + base.b) / 3 : 0.5;
-    clone.diffuseColor = tint.scale(0.38 + Math.min(0.62, brightness));
-    clone.emissiveColor = glow.scale(emissiveFactor * (brightness < 0.16 ? 0.18 : 1));
-    clone.specularColor = specular.clone();
+    const finish = original._forgeSurfaceFinish;
+    const joint = finish === 'graphite';
+    // Keep rubber/graphite dark and cutting edges largely neutral. Tint belongs
+    // on the housing, otherwise a finish turns every component into one color.
+    clone.diffuseColor = joint ? base.clone() : finish === 'steel'
+      ? base.scale(0.72).add(tint.scale(0.18))
+      : tint.scale(0.38 + Math.min(0.42, brightness));
+    clone.emissiveColor = glow.scale(emissiveFactor * (joint ? 0.025 : finish === 'steel' ? 0.15 : 0.45));
+    clone.specularColor = joint ? original.specularColor.clone() : specular.scale(0.72);
+    clone._forgeLitDiffuse = clone.diffuseColor.clone();
+    clone._forgeLitEmissive = clone.emissiveColor.clone();
+    const legacyBase = original._forgeUnlitDiffuse || original.diffuseColor;
+    const legacyBrightness = (legacyBase.r + legacyBase.g + legacyBase.b) / 3;
+    clone._forgeUnlitDiffuse = tint.scale(0.38 + Math.min(0.62, legacyBrightness));
+    clone._forgeUnlitEmissive = glow.scale(emissiveFactor * (legacyBrightness < 0.16 ? 0.18 : 1));
+    clone._forgeLegacyDisableLighting = !!original._forgeUnlitEmissive || original.disableLighting;
+    const lit = isEnabled('rendering', 'characterLighting');
+    applyForgeLightingMode(clone, lit);
+    if (!lit) clone.disableLighting = clone._forgeLegacyDisableLighting;
+    registerWeaponLighting(clone, scene);
     clone.freeze();
     mesh.material = clone;
     state.weaponSwaps.push({ mesh, original, clone });

@@ -5,9 +5,9 @@
 The AI Battle Arena is a competitive platform where developers build autonomous bots that fight in real-time battle royale matches. Bots connect via WebSocket, select loadouts, and receive game state ticks. No manual control — fully algorithmic combat.
 
 ## Quick Start
-1. Visit https://arena.angel-serv.com to watch live matches
-2. Generate a server-issued token with Get Started or `POST https://arena.angel-serv.com/api/v1/keys/generate` (empty body, no account required, plaintext returned once)
-3. Connect via WebSocket: `wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY`
+1. Visit https://arena.angel-gaming.com to watch live matches
+2. Generate a server-issued token with Get Started or `POST https://arena.angel-gaming.com/api/v1/keys/generate` (empty body, no account required, plaintext returned once)
+3. Connect via WebSocket: `wss://arena.angel-gaming.com/ws/bot?key=YOUR_KEY`
 4. Send loadout, receive ticks, send actions
 5. To equip cosmetics later, sign in with an Angel account in My Dashboard and claim the existing bot with `POST /api/v1/account/bots` using that token once; paid cosmetics are included with the Arena subscription held in that account
 
@@ -116,6 +116,6 @@ position, hp, max_hp, speed, weapon, weapon_ready, cooldown_remaining, is_alive,
 - `GET|PUT /api/v1/bot/cosmetics` — List or equip owned cosmetics (X-Arena-Key)
 
 ## Links
-- Live Arena: https://arena.angel-serv.com
+- Live Arena: https://arena.angel-gaming.com
 - GitHub: https://github.com/Angel-Software-Solutions-LLC/Arena
 - Support: https://buymeacoffee.com/ablac

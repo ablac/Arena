@@ -15,6 +15,8 @@ class FakeColor3 {
   constructor(r, g, b) { this.r = r; this.g = g; this.b = b; }
   clone() { return new FakeColor3(this.r, this.g, this.b); }
   scale(value) { return new FakeColor3(this.r * value, this.g * value, this.b * value); }
+  copyFrom(color) { Object.assign(this, {r:color.r, g:color.g, b:color.b}); return this; }
+  add(color) { return new FakeColor3(this.r + color.r, this.g + color.g, this.b + color.b); }
   static White() { return new FakeColor3(1, 1, 1); }
 }
 
@@ -90,7 +92,7 @@ rendererSource = rendererSource
     `from '${new URL('../frontend/js/renderer/mech-geometry.js', import.meta.url).href}';`)
   .replace("from './forge-surfaces.js';",
     `from '${new URL('../frontend/js/renderer/forge-surfaces.js', import.meta.url).href}';`)
-  .replace(/import \{ isEnabled \} from '[^']+';\r?\n/, "const isEnabled = () => true;\n")
+  .replace(/import \{ isEnabled, onSettingsChange \} from '[^']+';\r?\n/, "const isEnabled = () => true; const onSettingsChange = () => () => {};\n")
   .replace(/import \{ makeMat, parseColor \} from '[^']+';\r?\n/, `
     const parseColor = value => {
       const hex = String(value || '#000000').replace('#', '');
@@ -102,6 +104,8 @@ rendererSource = rendererSource
     /from '\.\/body-form-roster\.js[^']*';/,
     `from '${bodyFormRosterURL}';`,
   );
+rendererSource = rendererSource.replace(/from '([.][^']+)'/g, (_, path) =>
+  `from '${new URL(path, new URL('../frontend/js/renderer/cosmetics.js', import.meta.url)).href}'`);
 const renderer = await import(dataModule(rendererSource));
 
 assert.equal(renderer.resolveCosmeticAsset('bot_skin', 'neon_grid').key, 'neon_grid', 'legacy visuals must stay supported');

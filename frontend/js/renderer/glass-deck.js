@@ -2,6 +2,7 @@
 
 /** Structural glass detailing. All geometry stays below the playable y=0 plane. */
 export function glassDeckParts(width, depth) {
+  if (!Number.isFinite(width) || !Number.isFinite(depth) || width <= 0 || depth <= 0) return [];
   const thickness = Math.min(width, depth) * 0.012;
   const rim = Math.min(width, depth) * 0.006;
   const parts = [];
@@ -27,6 +28,17 @@ export function glassDeckParts(width, depth) {
       parts.push({ kind: 'metal', x, y: -thickness * 1.5,
         z: depth * t, width: rim * 10, height: rim * 1.6, depth: rim * 1.3 });
     }
+  }
+  // Thin load-bearing rails align with the pane seams. The center remains
+  // open: these occupy less than two percent of the deck area and join the
+  // existing metal batch rather than adding meshes or draw calls.
+  for (const t of [0.25, 0.75]) {
+    parts.push(
+      { kind: 'metal', x: width * t, y: -thickness * 1.15, z: depth / 2,
+        width: rim * 0.45, height: thickness * 0.45, depth: depth - rim * 4 },
+      { kind: 'metal', x: width / 2, y: -thickness * 1.15, z: depth * t,
+        width: width - rim * 4, height: thickness * 0.45, depth: rim * 0.45 },
+    );
   }
   return parts;
 }
@@ -65,15 +77,15 @@ export class GlassDeck {
     this.meshes = [];
     this.materials = [];
     const glass = new B.StandardMaterial('deckEdgeGlassMat', scene);
-    glass.diffuseColor = new B.Color3(0.07, 0.16, 0.22);
+    glass.diffuseColor = new B.Color3(0.12, 0.25, 0.32);
     glass.emissiveColor = new B.Color3(0.018, 0.052, 0.07);
     glass.specularColor = new B.Color3(0.7, 0.85, 0.95);
     glass.specularPower = 128;
     glass.alpha = 0.52;
     glass.backFaceCulling = true;
     const metal = new B.StandardMaterial('deckFrameMat', scene);
-    metal.diffuseColor = new B.Color3(0.09, 0.13, 0.19);
-    metal.emissiveColor = new B.Color3(0.007, 0.014, 0.025);
+    metal.diffuseColor = new B.Color3(0.19, 0.24, 0.30);
+    metal.emissiveColor = new B.Color3(0.015, 0.024, 0.037);
     metal.specularColor = new B.Color3(0.42, 0.5, 0.62);
     metal.specularPower = 72;
     const trim = new B.StandardMaterial('deckEdgeLightMat', scene);
