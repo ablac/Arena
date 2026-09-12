@@ -37,6 +37,7 @@ func EnsureCustomerLoginTransactionsSchema(ctx context.Context) error {
 			popup BOOLEAN NOT NULL,
 			expires_at TIMESTAMPTZ NOT NULL
 		)`,
+		`ALTER TABLE customer_login_transactions ADD COLUMN IF NOT EXISTS redirect_uri TEXT NOT NULL DEFAULT ''`,
 		`CREATE INDEX IF NOT EXISTS idx_customer_login_transactions_expires
 			ON customer_login_transactions (expires_at)`,
 	}
@@ -50,6 +51,7 @@ func EnsureCustomerLoginTransactionsSchema(ctx context.Context) error {
 
 // CustomerLoginTransaction is one in-flight sign-in, as stored.
 type CustomerLoginTransaction struct {
+	RedirectURI          string
 	BrowserBindingDigest []byte
 	Nonce                string
 	PKCEVerifier         string
@@ -62,16 +64,16 @@ type CustomerLoginTransaction struct {
 // Accounts. stateHash and bindingDigest are SHA-256 digests, never the values.
 func InsertCustomerLoginTransaction(
 	ctx context.Context, stateHash, bindingDigest []byte,
-	nonce, pkceVerifier, returnTo string, popup bool, expiresAt time.Time,
+	nonce, pkceVerifier, returnTo string, popup bool, expiresAt time.Time, redirectURI string,
 ) error {
 	if Pool == nil {
 		return ErrNoDatabase
 	}
 	_, err := Pool.Exec(ctx,
 		`INSERT INTO customer_login_transactions
-		   (state_hash, browser_binding_digest, nonce, pkce_verifier, return_to, popup, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		stateHash, bindingDigest, nonce, pkceVerifier, returnTo, popup, expiresAt,
+		   (state_hash, browser_binding_digest, nonce, pkce_verifier, return_to, popup, expires_at, redirect_uri)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		stateHash, bindingDigest, nonce, pkceVerifier, returnTo, popup, expiresAt, redirectURI,
 	)
 	if err != nil {
 		return fmt.Errorf("InsertCustomerLoginTransaction: %w", err)
@@ -97,9 +99,9 @@ func ConsumeCustomerLoginTransaction(ctx context.Context, stateHash []byte) (Cus
 	err := Pool.QueryRow(ctx,
 		`DELETE FROM customer_login_transactions
 		  WHERE state_hash = $1 AND expires_at > NOW()
-		 RETURNING browser_binding_digest, nonce, pkce_verifier, return_to, popup, expires_at`,
+		 RETURNING browser_binding_digest, nonce, pkce_verifier, return_to, popup, expires_at, redirect_uri`,
 		stateHash,
-	).Scan(&txn.BrowserBindingDigest, &txn.Nonce, &txn.PKCEVerifier, &txn.ReturnTo, &txn.Popup, &txn.ExpiresAt)
+	).Scan(&txn.BrowserBindingDigest, &txn.Nonce, &txn.PKCEVerifier, &txn.ReturnTo, &txn.Popup, &txn.ExpiresAt, &txn.RedirectURI)
 	switch {
 	case err == nil:
 		return txn, true, nil

@@ -100,13 +100,24 @@ continues to serve. Preserve TLS and WebSocket upgrade headers. Add a scoped
 Cloudflare RUM-disable rule for `arena.angel-gaming.com`, matching the existing
 old-host rule; do not widen Arena's CSP to permit injected analytics.
 
-Before switching the configured callback, allow both old and new callback URLs
-at Accounts. Because OAuth state and customer sessions are host-only cookies,
-login initiation must use the same host as its configured callback. Retain
-old in-flight `/account/callback` and `/arena/account/callback` traffic through
-its ten-minute transaction window; sequence the callback switch accordingly.
-Visitors establish a new Arena-origin session through Accounts. Never copy or
-share cookies across domains, and preserve existing durable account ownership.
+Allow both old and new callback URLs at Accounts first. Keep
+`ARENA_CUSTOMER_OIDC_REDIRECT_URI=https://arena.angel-serv.com/account/callback`
+and add
+`ARENA_CUSTOMER_OIDC_ADDITIONAL_REDIRECT_URIS=https://arena.angel-gaming.com/account/callback`.
+The explicit allowlist selects a literal callback by the actual request Host
+and trusted transport scheme. Forwarded Host is never trusted. Each new sign-in
+persists its selected callback with the single-use, browser-bound transaction;
+the callback must arrive on that exact host/path and the token exchange uses
+the persisted URI. Old transactions lacking the additive `redirect_uri` field
+use the primary old callback, so in-flight sign-ins survive the cutover.
+Run the owner migration before deploying; managed startup checks this column.
+
+Cookies remain host-only. Visitors establish an Arena session on each origin
+through Accounts; no cookies or account ownership are copied across domains.
+Do not remove an allowed callback or change the primary legacy fallback during
+the ten-minute sign-in transaction window. Optional prefixed callbacks must be
+explicitly listed, and every accepted callback must be HTTPS with exactly
+`/account/callback` or `/arena/account/callback` and no query/fragment/userinfo.
 
 Once new-origin sign-in and gameplay pass live checks, redirect only ordinary
 GET/HEAD browser pages at `arena.angel-serv.com` to the same path and query at
