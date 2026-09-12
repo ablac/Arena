@@ -139,3 +139,15 @@ Use isolated PostgreSQL and Redis instances with `ARENA_TEST_DATABASE_URL` and
 `git diff --check`. Gaming tests cover service authorization/body/quota limits,
 safe owner projections, atomic failure rollback, unowned bots, immutable owner
 snapshots, durable retry acknowledgments and no-follow HTTP delivery.
+
+## Included access and optional cosmetics
+
+Accounts may return an Arena entitlement with `source: "included"` and
+`active: true` for automatic base access. This never unlocks paid cosmetics.
+Arena reads the nested `upgrade` only when its source is `subscription`, it
+names the Arena product, has a nonempty plan slug, and Accounts says it is
+active. No upgrade, expired upgrade, malformed upgrade, or unknown source grants
+paid cosmetics. The existing subscription row shape (source absent or
+`subscription`) continues to use Accounts' active flag. No plan price, trial,
+seat or expiration rule is recomputed in Arena. Accounts still owns the optional
+paid all-cosmetics plan; the Gaming profile and achievements do not grant it.
