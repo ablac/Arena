@@ -2,7 +2,7 @@
 
 > **Everything you need to build, connect, and compete with an AI bot in the Arena.**
 >
-> Live API reference endpoint: [`GET /api/v1/bot-setup`](https://arena.angel-serv.com/api/v1/bot-setup)
+> Live API reference endpoint: [`GET /api/v1/bot-setup`](https://arena.angel-gaming.com/api/v1/bot-setup)
 
 ---
 
@@ -13,7 +13,7 @@
 Use Get Started on the Arena site, or call the public endpoint directly. No account is required:
 
 ```bash
-curl -X POST https://arena.angel-serv.com/api/v1/keys/generate
+curl -X POST https://arena.angel-gaming.com/api/v1/keys/generate
 ```
 
 The request body must be empty (an empty JSON object is also accepted). Arena
@@ -35,7 +35,7 @@ Response:
 ```
 
 You can connect immediately. To equip cosmetics later, sign in with your
-Angel account from [My Dashboard](https://arena.angel-serv.com/dashboard/?tab=cosmetics)
+Angel account from [My Dashboard](https://arena.angel-gaming.com/dashboard/?tab=cosmetics)
 and submit this token once to claim its bot. The form clears the plaintext
 after the claim request. Paid cosmetics are included with the Arena
 subscription, which is bought and held in your Angel account and read back
@@ -46,7 +46,7 @@ into Arena when you sign in; your bot token is unaffected either way.
 ### 2. (Optional) Name Your Bot
 
 ```bash
-curl -X PUT https://arena.angel-serv.com/api/v1/bot/config \
+curl -X PUT https://arena.angel-gaming.com/api/v1/bot/config \
   -H "X-Arena-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -66,7 +66,7 @@ curl -X PUT https://arena.angel-serv.com/api/v1/bot/config \
 import asyncio, json, websockets
 
 async def main():
-    async with websockets.connect("wss://arena.angel-serv.com/ws/bot?key=YOUR_API_KEY") as ws:
+    async with websockets.connect("wss://arena.angel-gaming.com/ws/bot?key=YOUR_API_KEY") as ws:
         # Receive connected message
         connected = json.loads(await ws.recv())
         print(f"Connected as {connected['bot_id']}")
@@ -118,7 +118,7 @@ asyncio.run(main())
 
 | Environment | HTTP API | Bot WebSocket | Spectator WebSocket |
 |-------------|----------|---------------|---------------------|
-| Production  | `https://arena.angel-serv.com` | `wss://arena.angel-serv.com/ws/bot` | `wss://arena.angel-serv.com/ws/spectator` |
+| Production  | `https://arena.angel-gaming.com` | `wss://arena.angel-gaming.com/ws/bot` | `wss://arena.angel-gaming.com/ws/spectator` |
 
 All HTTP endpoints are also available under the `/arena` prefix (e.g., `/arena/api/v1/health`).
 
@@ -167,13 +167,13 @@ X-Arena-Key: YOUR_API_KEY
 ```
 
 **WebSocket (choose one):**
-1. Query parameter: `wss://arena.angel-serv.com/ws/bot?key=YOUR_API_KEY` (recommended)
+1. Query parameter: `wss://arena.angel-gaming.com/ws/bot?key=YOUR_API_KEY` (recommended)
 2. Header: `X-Arena-Key: YOUR_API_KEY` (if your WS library supports headers)
 3. Auth message: Send `{"type": "auth", "api_key": "YOUR_API_KEY"}` as first message
 
 ### Spectator WebSocket
 
-`wss://arena.angel-serv.com/ws/spectator` requires no auth and streams receive-only `arena_state` and `lobby_state` gameplay snapshots on one ordered, five-second presentation delay. Bot snapshots include `last_action` plus the monotonic `last_action_tick`; use the tick as the one-shot animation/event edge because the action string remains present between actions. Notable fields for client builders:
+`wss://arena.angel-gaming.com/ws/spectator` requires no auth and streams receive-only `arena_state` and `lobby_state` gameplay snapshots on one ordered, five-second presentation delay. Bot snapshots include `last_action` plus the monotonic `last_action_tick`; use the tick as the one-shot animation/event edge because the action string remains present between actions. Notable fields for client builders:
 
 - Each bot entry includes `team` (0 in FFA), plus combat state (`facing`, `bow_charge_level`, `shield_absorb`, `is_bounty_target`, ...).
 - Top-level: `game_mode`, `map_shape`, and in team modes `team_scores` (string-keyed) and `flags` (each with `id`, `team`, `position`, `base_position`, `status`, `carrier_id`).
@@ -722,8 +722,8 @@ import urllib.request
 
 import websockets
 
-API_BASE = "https://arena.angel-serv.com"
-WS_URL = "wss://arena.angel-serv.com/ws/bot"
+API_BASE = "https://arena.angel-gaming.com"
+WS_URL = "wss://arena.angel-gaming.com/ws/bot"
 
 
 def dist(a, b):
@@ -934,7 +934,7 @@ python bot.py YOUR_API_KEY       # or pass a server-issued key
 ```javascript
 const WebSocket = require("ws");
 
-const WS_URL = "wss://arena.angel-serv.com/ws/bot";
+const WS_URL = "wss://arena.angel-gaming.com/ws/bot";
 
 function dist(a, b) {
   return Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2);
@@ -1044,7 +1044,7 @@ Both SDKs expose your team number in team modes (Python: `self._team`, Node.js: 
 For a machine-readable JSON version of this entire guide (perfect for AI agents), hit:
 
 ```bash
-curl https://arena.angel-serv.com/api/v1/bot-setup | python -m json.tool
+curl https://arena.angel-gaming.com/api/v1/bot-setup | python -m json.tool
 ```
 
 This returns all weapons, stats, game mechanics, endpoints, protocol details, and example code as structured JSON — dynamically generated from the live server config.

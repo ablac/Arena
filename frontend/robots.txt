@@ -12,4 +12,4 @@ Disallow: /arena/api/
 Disallow: /arena/ws/
 Disallow: /arena/admin/
 
-Sitemap: https://arena.angel-serv.com/sitemap.xml
+Sitemap: https://arena.angel-gaming.com/sitemap.xml

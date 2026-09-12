@@ -35,7 +35,7 @@ function serviceStatusFingerprint(status) {
  */
 export default class ArenaBot {
   /** @param {string} apiKey  @param {string} [serverUrl] */
-  constructor(apiKey, serverUrl = 'wss://arena.angel-serv.com/ws/bot') {
+  constructor(apiKey, serverUrl = 'wss://arena.angel-gaming.com/ws/bot') {
     this.apiKey = apiKey;
     this.serverUrl = serverUrl;
     /** @type {WebSocket|null} */ this.ws = null;
