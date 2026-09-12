@@ -17,6 +17,7 @@ import (
 	"arena-server/internal/config"
 	"arena-server/internal/db"
 	"arena-server/internal/game"
+	"arena-server/internal/gaming"
 	"arena-server/internal/security"
 	"arena-server/internal/ws"
 
@@ -52,6 +53,12 @@ const managedSchemaPreflightQuery = `
 			('weapon_balance_history', 'algorithm_version'),
 			('bounty_board', 'bot_id'),
 			('round_bot_stats', 'round_id'),
+			('gaming_event_outbox', 'payload'),
+			('gaming_event_outbox', 'event_id'),
+			('gaming_event_outbox', 'attempts'),
+			('gaming_event_outbox', 'next_attempt_at'),
+			('gaming_event_outbox', 'delivered_at'),
+			('gaming_event_outbox', 'last_status'),
 			('round_bot_stats', 'weapon'),
 			('round_bot_stats', 'longest_life_secs'),
 			('round_bot_stats', 'shots_fired'),
@@ -226,6 +233,11 @@ func main() {
 		if err := api.LoadPersistedGameConfigOverrides(ctx); err != nil {
 			slog.Warn("failed to load persisted admin game config", "error", err)
 		}
+	}
+
+	// Durable achievement delivery runs independently of gameplay.
+	if db.Pool != nil && config.C.GamingOrigin != "" {
+		go gaming.Run(ctx, config.C.GamingOrigin, config.C.GamingServiceKey)
 	}
 
 	// Initialise Redis for rate limiting. General routes degrade gracefully;

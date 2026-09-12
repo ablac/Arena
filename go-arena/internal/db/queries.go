@@ -303,6 +303,9 @@ func EnsureCoreSchema(ctx context.Context) error {
 	if err := EnsureChatSchema(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema chat: %w", err)
 	}
+	if err := EnsureGamingSchema(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema gaming: %w", err)
+	}
 
 	return nil
 }
@@ -477,7 +480,7 @@ func InsertRoundBotStatsBatch(ctx context.Context, roundID string, roundNumber i
 		wons[i] = row.Won
 	}
 	_, err := Pool.Exec(ctx, `
-		INSERT INTO round_bot_stats
+		WITH inserted AS (INSERT INTO round_bot_stats
 			(round_id, round_number, bot_id, bot_name, weapon, kills, deaths,
 			 damage_dealt, damage_taken, longest_life_secs, shots_fired,
 			 shots_hit, pickups, distance, elo, won)
@@ -490,10 +493,19 @@ func InsertRoundBotStatsBatch(ctx context.Context, roundID string, roundNumber i
 			$13::int[], $14::double precision[], $15::int[], $16::boolean[]
 		) AS u(bot_id, bot_name, weapon, kills, deaths, damage_dealt,
 			 damage_taken, longest_life_secs, shots_fired, shots_hit, pickups,
-			 distance, elo, won)`,
+			 distance, elo, won)
+		RETURNING round_id,bot_id,kills,deaths,won,created_at)
+		INSERT INTO gaming_event_outbox(event_id,payload)
+		SELECT s.round_id || ':' || s.bot_id,jsonb_build_object(
+		 'eventId',s.round_id || ':' || s.bot_id,'issuer',a.oidc_issuer,'subject',a.oidc_subject,
+		 'occurredAt',to_char(s.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+		 'type','round.completed','facts',jsonb_build_object('won',s.won,'kills',s.kills,'deaths',s.deaths,'botId',s.bot_id))
+		FROM inserted s JOIN account_bot_links l ON l.bot_id=s.bot_id JOIN customer_accounts a ON a.id=l.account_id
+		WHERE $17 AND a.oidc_issuer='https://accounts.angel-serv.com' AND a.oidc_subject IS NOT NULL
+		ON CONFLICT(event_id) DO NOTHING`,
 		roundID, roundNumber,
 		botIDs, botNames, weapons, kills, deaths, dmgDealt, dmgTaken,
-		lifeSecs, shotsFired, shotsHit, pickups, distances, elos, wons,
+		lifeSecs, shotsFired, shotsHit, pickups, distances, elos, wons, config.C.GamingOrigin != "",
 	)
 	if err != nil {
 		return fmt.Errorf("InsertRoundBotStatsBatch: %w", err)

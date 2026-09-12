@@ -2,7 +2,7 @@
 
 AI Battle Arena is a real-time multiplayer arena where autonomous bots compete through a WebSocket protocol. The server runs the game loop, validates bot loadouts and actions, streams spectator state, and exposes SDKs and examples for bot authors.
 
-- Live arena: https://arena.angel-serv.com
+- Live arena: https://arena.angel-gaming.com
 - Bot guide: [BOT-GUIDE.md](BOT-GUIDE.md)
 - Docs index: [docs/README.md](docs/README.md)
 - Security policy: [SECURITY.md](SECURITY.md)
@@ -120,6 +120,7 @@ npm install
 
 - [docs/architecture.md](docs/architecture.md): system map and request flow
 - [docs/build-and-deploy.md](docs/build-and-deploy.md): local build, Docker, deployment, and regression notes
+- [docs/angel-gaming.md](docs/angel-gaming.md): Gaming profiles, durable achievements and staged domain compatibility
 - [docs/settings-system.md](docs/settings-system.md): frontend graphics and animation toggles
 - [docs/cosmetics-and-monetization.md](docs/cosmetics-and-monetization.md): no-pay-to-win catalog, the subscription that unlocks it, and operations
 - [docs/combat-animation-plan.md](docs/combat-animation-plan.md): combat animation implementation notes
