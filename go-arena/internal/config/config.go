@@ -421,11 +421,14 @@ type Config struct {
 	// dangerous — that a public customer login must never mint an
 	// admin-authorized session — is now decided per sign-in by the verified
 	// platform-administrator claim, and by nothing else.
-	CustomerOIDCEnabled      bool   `envconfig:"ARENA_CUSTOMER_OIDC_ENABLED" default:"false"`
-	CustomerOIDCIssuer       string `envconfig:"ARENA_CUSTOMER_OIDC_ISSUER" default:""`
-	CustomerOIDCClientID     string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_ID" default:""`
-	CustomerOIDCClientSecret string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_SECRET" default:""`
-	CustomerOIDCRedirectURI  string `envconfig:"ARENA_CUSTOMER_OIDC_REDIRECT_URI" default:""`
+	CustomerOIDCEnabled                bool   `envconfig:"ARENA_CUSTOMER_OIDC_ENABLED" default:"false"`
+	GamingOrigin                       string `envconfig:"ANGEL_GAMING_ORIGIN" default:""`
+	GamingServiceKey                   string `envconfig:"ANGEL_GAMING_SERVICE_KEY" default:""`
+	CustomerOIDCIssuer                 string `envconfig:"ARENA_CUSTOMER_OIDC_ISSUER" default:""`
+	CustomerOIDCClientID               string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_ID" default:""`
+	CustomerOIDCClientSecret           string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_SECRET" default:""`
+	CustomerOIDCAdditionalRedirectURIs string `envconfig:"ARENA_CUSTOMER_OIDC_ADDITIONAL_REDIRECT_URIS" default:""`
+	CustomerOIDCRedirectURI            string `envconfig:"ARENA_CUSTOMER_OIDC_REDIRECT_URI" default:""`
 	// 720h (30 days) with sliding renewal on use (see customerSessionTTL in
 	// customer_oidc.go): a visitor who returns at least once within any
 	// 30-day window never has to sign back in, while an abandoned or stolen
@@ -799,6 +802,12 @@ func Load() {
 	}
 	if err := ValidateCosmeticsConfig(C); err != nil {
 		slog.Error("invalid cosmetics configuration", "error", err)
+		panic(err)
+	}
+	if _, err := CustomerOIDCRedirectURIs(C); err != nil {
+		panic(err)
+	}
+	if err := ValidateGamingConfig(C); err != nil {
 		panic(err)
 	}
 	slog.Info("config loaded",

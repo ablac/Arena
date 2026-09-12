@@ -79,6 +79,7 @@ type CustomerSession struct {
 }
 
 type customerOIDCTransaction struct {
+	RedirectURI          string
 	ExpiresAt            time.Time
 	BrowserBindingDigest [sha256.Size]byte
 	Nonce                string
@@ -93,6 +94,7 @@ type customerOIDCTransaction struct {
 
 type CustomerOIDCHandler struct {
 	oauth2Config *oauth2.Config
+	redirectURIs []string
 	verifier     *oidc.IDTokenVerifier
 	issuer       string
 	// See config.CustomerLinkLegacyByEmail. False means no sign-in carries an
@@ -150,10 +152,16 @@ func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *
 	if !cfg.CustomerOIDCEnabled {
 		return nil
 	}
+	redirectURIs, err := config.CustomerOIDCRedirectURIs(*cfg)
+	if err != nil {
+		slog.Error("invalid customer OIDC callback configuration")
+		return nil
+	}
 	h := &CustomerOIDCHandler{
-		sessions:  make(map[string]*CustomerSession),
-		states:    make(map[string]customerOIDCTransaction),
-		authority: authority,
+		redirectURIs: redirectURIs,
+		sessions:     make(map[string]*CustomerSession),
+		states:       make(map[string]customerOIDCTransaction),
+		authority:    authority,
 	}
 	activeCustomerOIDCMu.Lock()
 	activeCustomerOIDC = h
@@ -352,7 +360,7 @@ func safeCustomerReturnTo(r *http.Request) string {
 func (h *CustomerOIDCHandler) rememberLoginTransaction(ctx context.Context, state string, txn customerOIDCTransaction) {
 	stateHash := sha256.Sum256([]byte(state))
 	err := db.InsertCustomerLoginTransaction(ctx, stateHash[:], txn.BrowserBindingDigest[:],
-		txn.Nonce, txn.PKCEVerifier, txn.ReturnTo, txn.Popup, txn.ExpiresAt)
+		txn.Nonce, txn.PKCEVerifier, txn.ReturnTo, txn.Popup, txn.ExpiresAt, txn.RedirectURI)
 	if err == nil {
 		return
 	}
@@ -384,6 +392,7 @@ func (h *CustomerOIDCHandler) claimLoginTransaction(
 			return customerOIDCTransaction{}, false
 		}
 		txn := customerOIDCTransaction{
+			RedirectURI:  stored.RedirectURI,
 			ExpiresAt:    stored.ExpiresAt,
 			Nonce:        stored.Nonce,
 			PKCEVerifier: stored.PKCEVerifier,
@@ -412,11 +421,17 @@ func (h *CustomerOIDCHandler) LoginHandler(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusServiceUnavailable, "customer OIDC login is not configured")
 		return
 	}
+	oauthConfig, ok := h.loginOAuthConfig(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "unrecognized login origin")
+		return
+	}
 	state := generateToken(32)
 	browserBinding := generateToken(32)
 	pkceVerifier := generateToken(32)
 	nonce := generateToken(32)
 	txn := customerOIDCTransaction{
+		RedirectURI:          oauthConfig.RedirectURL,
 		ExpiresAt:            time.Now().Add(customerStateTTL),
 		BrowserBindingDigest: sha256.Sum256([]byte(browserBinding)),
 		Nonce:                nonce,
@@ -434,7 +449,7 @@ func (h *CustomerOIDCHandler) LoginHandler(w http.ResponseWriter, r *http.Reques
 		Secure:   secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 	})
-	authURL := h.oauth2Config.AuthCodeURL(state,
+	authURL := oauthConfig.AuthCodeURL(state,
 		oauth2.S256ChallengeOption(pkceVerifier),
 		oauth2.SetAuthURLParam("nonce", nonce),
 	)
@@ -458,6 +473,11 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	clearCustomerCookie(w, r, customerStateCookieName)
 	if !validState {
 		http.Error(w, "invalid or expired state parameter", http.StatusBadRequest)
+		return
+	}
+	oauthConfig, ok := h.callbackOAuthConfig(r, txn)
+	if !ok {
+		http.Error(w, "callback origin does not match sign-in", http.StatusBadRequest)
 		return
 	}
 	/*
@@ -496,7 +516,7 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	token, err := h.oauth2Config.Exchange(ctx, code, oauth2.VerifierOption(txn.PKCEVerifier))
+	token, err := oauthConfig.Exchange(ctx, code, oauth2.VerifierOption(txn.PKCEVerifier))
 	if err != nil {
 		slog.Warn("customer OIDC token exchange failed", "error", err)
 		http.Error(w, "token exchange failed", http.StatusBadGateway)

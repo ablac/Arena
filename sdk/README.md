@@ -6,16 +6,16 @@ Build your own battle bot in Python or Node.js!
 
 ### 1. Get an API Key
 
-Open Get Started at [the Arena](https://arena.angel-serv.com) and generate a
+Open Get Started at [the Arena](https://arena.angel-gaming.com) and generate a
 token without signing up, or call:
 
 ```bash
-curl -X POST https://arena.angel-serv.com/api/v1/keys/generate
+curl -X POST https://arena.angel-gaming.com/api/v1/keys/generate
 ```
 
 Arena chooses the token and saves its hash and bot record; the full secret is
 shown only once. Do not invent your own token string. To equip cosmetics
-later, sign in with your Angel account in [My Dashboard](https://arena.angel-serv.com/dashboard/?tab=cosmetics)
+later, sign in with your Angel account in [My Dashboard](https://arena.angel-gaming.com/dashboard/?tab=cosmetics)
 and claim the existing bot with that token; paid cosmetics are included with
 the Arena subscription held in that account.
 
@@ -88,7 +88,7 @@ node my_bot.js YOUR_API_KEY
 
 | Method | Description |
 |--------|-------------|
-| `ArenaBot(api_key, server_url='wss://arena.angel-serv.com/ws/bot')` | Constructor. |
+| `ArenaBot(api_key, server_url='wss://arena.angel-gaming.com/ws/bot')` | Constructor. |
 | `set_loadout(weapon, stats, fallback='aggressive')` | Configure weapon, stat allocation (must total 20), and fallback AI. |
 | `run()` | Connect and run the game loop with auto-reconnect. |
 
