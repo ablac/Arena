@@ -24,7 +24,7 @@ _RECONNECT_BACKOFF_RESET_SECONDS = 30.0
 class ArenaBot:
     """Base class for arena bots. Subclass and override on_tick()."""
 
-    def __init__(self, api_key: str, server_url: str = "wss://arena.angel-serv.com/ws/bot",
+    def __init__(self, api_key: str, server_url: str = "wss://arena.angel-gaming.com/ws/bot",
                  stat_budget: int = 20):
         """Initialize bot with API key."""
         self.api_key = api_key

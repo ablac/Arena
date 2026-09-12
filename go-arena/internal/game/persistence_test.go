@@ -150,8 +150,10 @@ func isolateBotStatsPersistence(t *testing.T) uint64 {
 	previousApply := applyBotStatsDeltas
 	previousInsertRound := insertRoundBotStats
 	previousPending := pendingBotStatsDeltas
+	previousPendingRounds := pendingRoundStats
 	previousEpoch := botStatsPersistenceEpoch.Load()
 	pendingBotStatsDeltas = make(map[string]db.BotStatsDelta)
+	pendingRoundStats = make(map[string]pendingRoundStatsBatch)
 	botStatsPersistenceMu.Unlock()
 
 	t.Cleanup(func() {
@@ -159,6 +161,7 @@ func isolateBotStatsPersistence(t *testing.T) uint64 {
 		applyBotStatsDeltas = previousApply
 		insertRoundBotStats = previousInsertRound
 		pendingBotStatsDeltas = previousPending
+		pendingRoundStats = previousPendingRounds
 		botStatsPersistenceEpoch.Store(previousEpoch)
 		botStatsPersistenceMu.Unlock()
 	})
@@ -422,5 +425,81 @@ func TestRoundBotStatsRejectsPreResetEpoch(t *testing.T) {
 	}
 	if insertedRoundID != "fresh-round" {
 		t.Fatalf("persisted round identity = %q, want fresh-round", insertedRoundID)
+	}
+}
+
+func TestRoundBotStatsRetriesCapturedResultOnNextPersistenceFlush(t *testing.T) {
+	epoch := isolateBotStatsPersistence(t)
+	calls := 0
+	var saved []db.RoundBotStatsRow
+	insertRoundBotStats = func(_ context.Context, roundID string, _ int, rows []db.RoundBotStatsRow) error {
+		calls++
+		if roundID != "retry-round" {
+			t.Fatalf("wrong retry identity %q", roundID)
+		}
+		if calls == 1 {
+			return errors.New("temporary database failure")
+		}
+		saved = append(saved, rows...)
+		return nil
+	}
+	bot := &BotState{BotID: "retry-bot", RoundKills: 3, RoundDeaths: 1}
+	PersistRoundBotStats(context.Background(), epoch, "retry-round", 1, map[string]*BotState{bot.BotID: bot}, bot.BotID)
+	bot.RoundKills = 99 // A new round must never mutate the queued capture.
+	PersistBotStatsFromSnapshot(context.Background(), nil, "", false)
+	if calls != 2 || len(saved) != 1 || saved[0].Kills != 3 || !saved[0].Won {
+		t.Fatalf("result was lost or mutated: calls=%d saved=%+v", calls, saved)
+	}
+	PersistBotStatsFromSnapshot(context.Background(), nil, "", false)
+	if calls != 2 {
+		t.Fatalf("committed snapshot retained: calls=%d", calls)
+	}
+}
+
+func TestRoundStatsRetrySurvivesFailedResetButNotSuccessfulReset(t *testing.T) {
+	epoch := isolateBotStatsPersistence(t)
+	calls := 0
+	insertRoundBotStats = func(context.Context, string, int, []db.RoundBotStatsRow) error { calls++; return errors.New("offline") }
+	bot := &BotState{BotID: "retry-bot", RoundKills: 3}
+	PersistRoundBotStats(context.Background(), epoch, "retry-round", 1, map[string]*BotState{bot.BotID: bot}, "")
+	engine := &GameEngine{Bots: map[string]*BotState{bot.BotID: bot}}
+	if err := engine.ResetLeaderboard(context.Background(), func(context.Context) error { return errors.New("reset offline") }); err == nil {
+		t.Fatal("failed reset accepted")
+	}
+	PersistBotStatsFromSnapshot(context.Background(), nil, "", false)
+	if calls != 2 {
+		t.Fatalf("failed reset lost retry: %d", calls)
+	}
+	if err := engine.ResetLeaderboard(context.Background(), func(context.Context) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	PersistBotStatsFromSnapshot(context.Background(), nil, "", false)
+	if calls != 2 {
+		t.Fatalf("successful reset resurrected old round: %d", calls)
+	}
+}
+
+func TestRoundStatsRetryRunsWhileArenaIsIdle(t *testing.T) {
+	epoch := isolateBotStatsPersistence(t)
+	calls := 0
+	persisted := make(chan struct{}, 1)
+	insertRoundBotStats = func(context.Context, string, int, []db.RoundBotStatsRow) error {
+		calls++
+		if calls == 1 {
+			return errors.New("temporary outage")
+		}
+		persisted <- struct{}{}
+		return nil
+	}
+	bot := &BotState{BotID: "idle-bot", RoundKills: 1}
+	PersistRoundBotStats(context.Background(), epoch, "idle-round", 1, map[string]*BotState{bot.BotID: bot}, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); RunRoundStatsPersistence(ctx) }()
+	t.Cleanup(func() { cancel(); <-stopped })
+	select {
+	case <-persisted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("idle retry loop never persisted the queued result")
 	}
 }

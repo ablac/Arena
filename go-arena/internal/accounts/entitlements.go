@@ -38,16 +38,28 @@ var ErrUnauthorized = errors.New("accounts entitlements: token rejected")
 // Entitlement is one row of the contract's `entitlements[]`: the account's
 // standing on one product.
 //
-// `Active` is the whole answer. Accounts computes it from the subscription
+// For subscription rows, `Active` is the answer. Accounts computes it from the subscription
 // status, the trial and paid periods, a staff time-box and the account's own
 // standing, and Arena has no business re-deriving any of that from `Status`
 // — the day the rule on the Accounts side changes, a consumer that recomputed
 // it would silently disagree. `Status` is carried for logs only.
 type Entitlement struct {
+	Source      string               `json:"source"`
+	Upgrade     *SubscriptionUpgrade `json:"upgrade"`
+	ProductID   string               `json:"productId"`
+	ProductSlug string               `json:"productSlug"`
+	PlanSlug    string               `json:"planSlug"`
+	Status      string               `json:"status"`
+	Active      bool                 `json:"active"`
+}
+
+// SubscriptionUpgrade is the optional paid tier on an included product. It
+// cannot recursively carry another upgrade or inherit the free base's Active.
+type SubscriptionUpgrade struct {
+	Source      string `json:"source"`
 	ProductID   string `json:"productId"`
 	ProductSlug string `json:"productSlug"`
 	PlanSlug    string `json:"planSlug"`
-	Status      string `json:"status"`
 	Active      bool   `json:"active"`
 }
 
@@ -96,11 +108,24 @@ func (s *Snapshot) ArenaEntitlement() (Entitlement, bool) {
 	return found, present
 }
 
-// ArenaSubscriptionActive is the one bit the rest of Arena acts on: an
-// Arena entitlement is present and Accounts says it is active right now.
+// ArenaSubscriptionActive grants paid cosmetics, not access to the included
+// base game. Accounts remains authoritative for the paid tier's active flag.
 func (s *Snapshot) ArenaSubscriptionActive() bool {
 	entitlement, ok := s.ArenaEntitlement()
-	return ok && entitlement.Active
+	if !ok {
+		return false
+	}
+	switch entitlement.Source {
+	case "", "subscription":
+		return entitlement.Active // Existing Accounts paid subscription contract.
+	case "included":
+		upgrade := entitlement.Upgrade
+		return upgrade != nil && upgrade.Source == "subscription" && upgrade.Active &&
+			strings.TrimSpace(upgrade.PlanSlug) != "" &&
+			(Entitlement{ProductID: upgrade.ProductID, ProductSlug: upgrade.ProductSlug}).IsArena()
+	default:
+		return false
+	}
 }
 
 // Client reads one endpoint with one bearer token.

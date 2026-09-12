@@ -196,6 +196,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	}
 
 	r.Route("/api/v1", func(api chi.Router) {
+		api.Post("/gaming/profile", newGamingProfileHandler(config.C.GamingServiceKey, db.GetGamingProfile).ServeHTTP)
 		// Health check (public).
 		api.Get("/health", healthHandler(engine))
 
