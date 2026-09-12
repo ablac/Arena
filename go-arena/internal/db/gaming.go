@@ -62,7 +62,10 @@ func EnsureGamingSchema(ctx context.Context) error {
  event_id TEXT PRIMARY KEY,payload JSONB NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
  attempts INTEGER NOT NULL DEFAULT 0,next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
  delivered_at TIMESTAMPTZ,last_status INTEGER NOT NULL DEFAULT 0);
- CREATE INDEX IF NOT EXISTS idx_gaming_outbox_pending ON gaming_event_outbox(next_attempt_at,event_id) WHERE delivered_at IS NULL`)
+ CREATE INDEX IF NOT EXISTS idx_gaming_outbox_pending ON gaming_event_outbox(next_attempt_at,event_id) WHERE delivered_at IS NULL;
+ CREATE TABLE IF NOT EXISTS round_persistence_receipts(
+ round_id TEXT PRIMARY KEY REFERENCES rounds(id) ON DELETE CASCADE,
+ persisted_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`)
 	return err
 }
 

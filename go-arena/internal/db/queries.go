@@ -480,7 +480,10 @@ func InsertRoundBotStatsBatch(ctx context.Context, roundID string, roundNumber i
 		wons[i] = row.Won
 	}
 	_, err := Pool.Exec(ctx, `
-		WITH inserted AS (INSERT INTO round_bot_stats
+		WITH accepted AS (
+		 INSERT INTO round_persistence_receipts(round_id) VALUES($1)
+		 ON CONFLICT(round_id) DO NOTHING RETURNING round_id
+		), inserted AS (INSERT INTO round_bot_stats
 			(round_id, round_number, bot_id, bot_name, weapon, kills, deaths,
 			 damage_dealt, damage_taken, longest_life_secs, shots_fired,
 			 shots_hit, pickups, distance, elo, won)
@@ -494,6 +497,7 @@ func InsertRoundBotStatsBatch(ctx context.Context, roundID string, roundNumber i
 		) AS u(bot_id, bot_name, weapon, kills, deaths, damage_dealt,
 			 damage_taken, longest_life_secs, shots_fired, shots_hit, pickups,
 			 distance, elo, won)
+		CROSS JOIN accepted
 		RETURNING round_id,bot_id,kills,deaths,won,created_at)
 		INSERT INTO gaming_event_outbox(event_id,payload)
 		SELECT s.round_id || ':' || s.bot_id,jsonb_build_object(

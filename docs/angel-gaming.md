@@ -17,7 +17,7 @@ must be HTTPS without a path, credentials, query or fragment. Invalid partial
 configuration fails startup. A service restart is required after configuration.
 
 Run the existing owner migration before deploying this server. The additive
-`gaming_event_outbox` schema is mandatory even when delivery is disabled; the
+`gaming_event_outbox` and `round_persistence_receipts` schemas are mandatory even when delivery is disabled; the
 managed runtime preflight checks it. Retain this table on rollback. An older
 server can continue writing Arena results, but cannot emit new Gaming events.
 
@@ -39,11 +39,27 @@ and never contain account IDs, private names, email, API keys or tokens.
 
 ## Durable authoritative round events
 
-The production per-round batch insert writes Arena stats and its Gaming outbox
-in one PostgreSQL statement. It snapshots each bot's current verified owner
+The production per-round batch insert writes a round receipt, Arena stats and
+its Gaming outbox in one PostgreSQL statement. A receipt keyed by the durable
+round ID prevents duplicate statistics after an uncertain commit acknowledgment.
+Each call captures the complete result for one round. It snapshots each bot's current verified owner
 through `account_bot_links`; unowned bots and non-Accounts identities produce
 no event. The engine's existing leaderboard reset epoch and straddling-round
 exclusions remain unchanged. No browser or bot-supplied award IDs are accepted.
+
+A failed producer write retains its immutable captured round result in memory.
+The next regular persistence flush or an independent five-second retry loop
+retries it, even while the arena is idle. Each database attempt has a five-second
+timeout. A successful leaderboard reset clears pending pre-reset captures;
+a failed reset retains them. The owner is the verified owner at the first
+successful database persistence, not an earlier owner at the instant of combat.
+
+This memory retry queue does not survive a process crash before its first
+successful database write. A crash combined with a database outage can lose
+that uncommitted round, as can the existing earlier round-creation failure
+path. After the receipt/stats/outbox transaction commits, queued delivery
+survives restart and repeats safely through hub idempotency. No filesystem spool
+or historical ownership reconstruction is introduced by this integration.
 
 The sender posts to `/api/integrations/arena/events` on the configured hub with
 the game-specific bearer. Its body contains:

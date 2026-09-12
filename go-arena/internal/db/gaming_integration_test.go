@@ -45,6 +45,15 @@ func TestPostgresGamingSnapshotRetryAndAtomicRollback(t *testing.T) {
 	if err = InsertRoundBotStatsBatch(ctx, "round-one", 1, []RoundBotStatsRow{{BotID: "owned-bot", Kills: 3, Deaths: 1, Won: true}, {BotID: "guest-bot", Kills: 2}}); err != nil {
 		t.Fatal(err)
 	}
+	// A commit may succeed even when its acknowledgment is lost. Replaying the
+	// same production batch must not count the bots or recreate events twice.
+	if err = InsertRoundBotStatsBatch(ctx, "round-one", 1, []RoundBotStatsRow{{BotID: "owned-bot", Kills: 3, Deaths: 1, Won: true}, {BotID: "guest-bot", Kills: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	var roundRows int
+	if err = Pool.QueryRow(ctx, `SELECT COUNT(*) FROM round_bot_stats WHERE round_id='round-one'`).Scan(&roundRows); err != nil || roundRows != 2 {
+		t.Fatalf("ambiguous commit duplicated stats: %d %v", roundRows, err)
+	}
 	profile, err := GetGamingProfile(ctx, "https://accounts.angel-serv.com", "subject-one")
 	if err != nil || len(profile.Bots) != 1 || profile.PublicUsername == nil || *profile.PublicUsername != alias {
 		t.Fatalf("profile: %+v %v", profile, err)

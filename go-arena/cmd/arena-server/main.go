@@ -54,6 +54,7 @@ const managedSchemaPreflightQuery = `
 			('bounty_board', 'bot_id'),
 			('round_bot_stats', 'round_id'),
 			('gaming_event_outbox', 'payload'),
+			('round_persistence_receipts', 'round_id'),
 			('gaming_event_outbox', 'event_id'),
 			('gaming_event_outbox', 'attempts'),
 			('gaming_event_outbox', 'next_attempt_at'),
@@ -236,6 +237,9 @@ func main() {
 	}
 
 	// Durable achievement delivery runs independently of gameplay.
+	if db.Pool != nil {
+		go game.RunRoundStatsPersistence(ctx)
+	}
 	if db.Pool != nil && config.C.GamingOrigin != "" {
 		go gaming.Run(ctx, config.C.GamingOrigin, config.C.GamingServiceKey)
 	}

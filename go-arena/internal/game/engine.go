@@ -2893,6 +2893,7 @@ func (e *GameEngine) ResetLeaderboard(ctx context.Context, reset func(context.Co
 	// the epoch before knowing the outcome would throw away stat deltas the
 	// DB still holds.
 	pendingBotStatsDeltas = make(map[string]db.BotStatsDelta)
+	clear(pendingRoundStats)
 	botStatsPersistenceEpoch.Add(1)
 	return nil
 }
