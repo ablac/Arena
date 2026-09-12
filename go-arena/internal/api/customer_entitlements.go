@@ -38,8 +38,9 @@ import (
  *     and it needs Arena's service client provisioned and the outbox signature
  *     scheme, neither of which exists yet.
  *
- * What is read is one bit: the `entitlements[]` row for the Arena product and
- * its `active` flag. Arena sells nothing per item any more, so there is no
+ * What is read is one paid-cosmetics bit: a legacy Arena subscription row
+ * uses its `active` flag; an included base row uses only its verified Arena
+ * subscription upgrade's `active` flag. Included access alone grants no paid look. Arena sells nothing per item any more, so there is no
  * purchase ledger to reconcile — the flag is written on the account and every
  * paid cosmetic is unlocked or hidden by it at read time.
  */
