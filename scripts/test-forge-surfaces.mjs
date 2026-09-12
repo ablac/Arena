@@ -27,8 +27,11 @@ assert.equal(graphite.uploads, 1, 'Surface uploads once, with no frame updates')
 const secondScene = {};
 assert.deepEqual(forgeSurface(secondScene, 'graphite').pixels, graphite.pixels, 'Surface is deterministic across scenes');
 assert.notDeepEqual(forgeSurface(scene, 'steel').pixels, graphite.pixels);
-const material = {unfreeze() {}, freeze() {}, disableLighting: true, emissiveColor: {r: 0.18, g: 0.24, b: 0.36}};
+const material = {isFrozen: false, unfreeze() { this.isFrozen = false; }, freeze() { this.isFrozen = true; },
+  disableLighting: true, emissiveColor: {r: 0.18, g: 0.24, b: 0.36}};
 applyForgeSurface(material, scene, 'graphite');
+const staticMaterial = {...material, isFrozen: true};
+applyForgeSurface(staticMaterial, scene, 'steel');
 assert.equal(material.diffuseTexture, graphite);
 assert.ok(material.emissiveTexture === null, 'Grayscale detail must not add white emission');
 assert.deepEqual(material.emissiveColor, {r: 0.18, g: 0.24, b: 0.36}, 'Authored dark-sector color stays intact');
@@ -37,6 +40,8 @@ syncForgeSurface(material);
 assert.ok(material.diffuseTexture === graphite, 'Lit mode keeps diffuse grain');
 assert.ok(material.emissiveTexture === null, 'Lit mode must not add white emission');
 setEffect('rendering', 'surfaceDetail', false);
+assert.equal(material.isFrozen, false, 'A settings toggle must keep status-feedback materials mutable');
+assert.equal(staticMaterial.isFrozen, true, 'Shared static surfaces retain their frozen render optimization');
 assert.ok(material.diffuseTexture === null, 'Detail disables diffuse map');
 assert.ok(material.emissiveTexture === null, 'Detail disables emissive map');
 setEffect('rendering', 'surfaceDetail', true);

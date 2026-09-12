@@ -24,7 +24,7 @@ import { wsURL } from './js/paths.js?v=20260710a';
 const log = (msg) => document.getElementById('log').textContent += msg + '\n';
 log('--- Module loading ---');
 try {
-  const { ArenaEngine } = await import('./js/renderer/engine.js?v=20260907b');
+  const { ArenaEngine } = await import('./js/renderer/engine.js?v=20260907p');
   log('✅ ArenaEngine imported');
   const canvas = document.getElementById('arena-canvas');
   const engine = new ArenaEngine(canvas, { arenaWidth: 2000, arenaHeight: 2000 });

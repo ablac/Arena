@@ -25,11 +25,11 @@ assert.match(cosmeticsSource, /forceEnabled/,
   'cosmetic application must expose an explicit shop-preview override');
 assert.doesNotMatch(botBodySource, /swordsman-body\.js|weapons\.js|animations\.js/,
   'the Shop entry path must not load retired character systems');
-assert.match(previewSource, /bot-body\.js\?v=20260907b/);
-assert.match(previewSource, /cosmetics\.js\?v=20260907b/);
+assert.match(previewSource, /bot-body\.js\?v=20260907p/);
+assert.match(previewSource, /cosmetics\.js\?v=20260907p/);
 assert.doesNotMatch(previewSource, /swordsman-anims\.js|updateSwordsmanAnim|isSwordsman/,
   'preview must execute only the Forge presentation path');
-assert.match(previewSource, /character-anims\.js\?v=20260907b/,
+assert.match(previewSource, /character-anims\.js\?v=20260907p/,
   'preview must use the allocation-stable Forge animation module');
 assert.match(previewSource, /trails\.js\?v=20260907b/,
   'preview must use the same bounded cosmetic trail renderer as the live arena');
@@ -46,6 +46,8 @@ class FakeColor3 {
   constructor(r, g, b) { this.r = r; this.g = g; this.b = b; }
   clone() { return new FakeColor3(this.r, this.g, this.b); }
   scale(value) { return new FakeColor3(this.r * value, this.g * value, this.b * value); }
+  copyFrom(color) { Object.assign(this, {r:color.r, g:color.g, b:color.b}); return this; }
+  add(color) { return new FakeColor3(this.r + color.r, this.g + color.g, this.b + color.b); }
   static White() { return new FakeColor3(1, 1, 1); }
 }
 class FakeMaterial {
@@ -106,7 +108,7 @@ let isolatedCosmeticsSource = cosmeticsSource
     `from '${new URL('../frontend/js/renderer/mech-geometry.js', import.meta.url).href}';`)
   .replace("from './forge-surfaces.js';",
     `from '${new URL('../frontend/js/renderer/forge-surfaces.js', import.meta.url).href}';`)
-  .replace(/import \{ isEnabled \} from '[^']+';\r?\n/, 'const isEnabled = () => false;\n')
+  .replace(/import \{ isEnabled, onSettingsChange \} from '[^']+';\r?\n/, 'const isEnabled = () => false; const onSettingsChange = () => () => {};\n')
   .replace(/import \{ makeMat, parseColor \} from '[^']+';\r?\n/, `
     const parseColor = value => {
       const hex = String(value || '#000000').replace('#', '');
@@ -118,6 +120,8 @@ let isolatedCosmeticsSource = cosmeticsSource
     /from '\.\/body-form-roster\.js[^']*';/,
     `from '${bodyFormRosterURL}';`,
   );
+isolatedCosmeticsSource = isolatedCosmeticsSource.replace(/from '([.][^']+)'/g, (_, path) =>
+  `from '${new URL(path, new URL('../frontend/js/renderer/cosmetics.js', import.meta.url)).href}'`);
 const cosmetics = await import(dataModule(isolatedCosmeticsSource));
 const originalWeaponMaterial = new FakeMaterial('weapon-original');
 const weaponMesh = new FakeNode('blade');

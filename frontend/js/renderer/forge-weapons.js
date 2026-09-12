@@ -10,7 +10,7 @@
  */
 
 import { isEnabled } from '../settings.js';
-import {applyForgeSurface, syncForgeSurface} from './forge-surfaces.js';
+import {applyForgeSurface, syncForgeSurface} from './forge-surfaces.js?v=20260907p';
 import {beveledBox, profileHull} from './mech-geometry.js';
 
 const _sceneResources = new WeakMap();
@@ -21,7 +21,7 @@ const _sceneResources = new WeakMap();
  * chassis: even a face no light reaches renders at floor brightness, while
  * sun/hemi shading models the lit faces on top of it.
  */
-const LIT_EMISSIVE_FLOOR = 0.45;
+const LIT_EMISSIVE_FLOOR = 0.12;
 
 /**
  * Apply lit or legacy self-lit mode to a shared Forge material. Both emissive
@@ -30,6 +30,9 @@ const LIT_EMISSIVE_FLOOR = 0.45;
  */
 export function applyForgeLightingMode(material, lit) {
   material.disableLighting = !lit;
+  if (material._forgeLitDiffuse) {
+    material.diffuseColor.copyFrom(lit ? material._forgeLitDiffuse : material._forgeUnlitDiffuse);
+  }
   syncForgeSurface(material);
   material.emissiveColor.copyFrom(
     lit ? material._forgeLitEmissive : material._forgeUnlitEmissive);
@@ -38,7 +41,11 @@ export function applyForgeLightingMode(material, lit) {
 function sharedMaterial(scene, name, diffuse, unlitEmissive, specular) {
   const B = window.BABYLON;
   const material = new B.StandardMaterial(name, scene);
-  material.diffuseColor = diffuse;
+  material.diffuseColor = diffuse.clone();
+  material._forgeUnlitDiffuse = diffuse;
+  material._forgeLitDiffuse = name.endsWith('steel') ? new B.Color3(0.56, 0.59, 0.62)
+    : name.endsWith('cable') ? new B.Color3(0.09, 0.12, 0.15) : new B.Color3(0.20, 0.25, 0.30);
+  const litDiffuse = material._forgeLitDiffuse;
   material.specularColor = specular;
   material.backFaceCulling = true;
   // Sun/hemi-lit with an emissive floor (issue #181): the floor keeps the
@@ -47,9 +54,9 @@ function sharedMaterial(scene, name, diffuse, unlitEmissive, specular) {
   // so the characterLighting toggle can restore the legacy self-lit look.
   material.emissiveColor = unlitEmissive.clone();
   material._forgeLitEmissive = new B.Color3(
-    diffuse.r * LIT_EMISSIVE_FLOOR,
-    diffuse.g * LIT_EMISSIVE_FLOOR,
-    diffuse.b * LIT_EMISSIVE_FLOOR,
+    litDiffuse.r * LIT_EMISSIVE_FLOOR,
+    litDiffuse.g * LIT_EMISSIVE_FLOOR,
+    litDiffuse.b * LIT_EMISSIVE_FLOOR,
   );
   material._forgeUnlitEmissive = unlitEmissive;
   applyForgeSurface(material, scene, name.endsWith('steel') ? 'steel'

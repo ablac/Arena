@@ -135,6 +135,7 @@ export function observeArenaSafeViewport(canvas, onChange, regionSpecs = DESKTOP
 
 export const MOBILE_SAFE_VIEWPORT_REGIONS = [
   { side: 'top', selector: '#topbar' },
+  { side: 'top', selector: '#service-status-banner' },
   { side: 'right', selector: '#fabs' },
   { side: 'left', selector: '#minimap-box' },
   { side: 'bottom', selector: '#sheet' },

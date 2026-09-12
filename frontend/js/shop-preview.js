@@ -1,8 +1,8 @@
 'use strict';
 
-import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260907b';
-import { applyBotCosmetics, disposeBotCosmetics } from './renderer/cosmetics.js?v=20260907b';
-import { updateForgeCharacter } from './renderer/character-anims.js?v=20260907b';
+import { createBotEntry, disposeBotEntry } from './renderer/bot-body.js?v=20260907p';
+import { applyBotCosmetics, disposeBotCosmetics } from './renderer/cosmetics.js?v=20260907p';
+import { updateForgeCharacter } from './renderer/character-anims.js?v=20260907p';
 import { TrailRenderer } from './renderer/trails.js?v=20260907b';
 import {bodyFormKeyForBot} from './renderer/body-form-roster.js?v=20260714e';
 import {isEnabled} from './settings.js';

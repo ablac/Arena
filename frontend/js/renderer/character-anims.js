@@ -304,7 +304,14 @@ function applyAttackPose(pose, weapon, t) {
   if (t < ready) { from = 0; to = 1; blend = smooth(t / ready); }
   else if (t < contact) { from = 1; to = 2; blend = smooth((t - ready) / (contact - ready)); }
   else if (t < settle) { from = 2; to = 3; blend = smooth((t - contact) / (settle - contact)); }
-  else { from = 3; to = 0; blend = smooth((t - settle) / (1 - settle)); }
+  else {
+    from = 3; to = 0;
+    const recovery = clamp01((t - settle) / (1 - settle));
+    // Recover most of the reach early, then ease the heavy joints back into
+    // guard. Endpoints and all anticipation/contact/follow-through keys stay
+    // exact; no new pose offset can leak into the next attack.
+    blend = smooth(1 - (1 - recovery) * (1 - recovery));
+  }
   const frames = STRIKES[key];
   for (const channel of frames) {
     const start = from ? channel[from] : 0;
@@ -448,8 +455,8 @@ export function sampleForgePose(
     applyStep(pose, (phase + 0.5) % 1, gaitScale, false, carry);
     if (secondary) {
       const load = Math.sin(state.gaitPhase);
-      pose[P.bodyY] += (Math.cos(state.gaitPhase * 2) - 1) * 0.16 * gaitScale;
-      pose[P.bodyRoll] += load * 0.036 * gaitScale;
+      pose[P.bodyY] += (Math.cos(state.gaitPhase * 2) - 1) * 0.21 * gaitScale;
+      pose[P.bodyRoll] += load * 0.026 * gaitScale;
       pose[P.bodyYaw] -= load * 0.075 * gaitScale * carry;
       pose[P.hipYaw] += load * 0.13 * gaitScale;
       pose[P.headYaw] += load * 0.035 * gaitScale * carry;

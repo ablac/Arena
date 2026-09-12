@@ -7,7 +7,7 @@ import './babylon-runtime.js?v=20260810d';
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260907b';
+import { ArenaEngine } from './renderer/engine.js?v=20260907p';
 import { HudRenderer } from './renderer/hud.js?v=20260810c';
 import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';
@@ -22,7 +22,7 @@ import { reportEngineInitFailure, showArenaRenderFallback } from './render-failu
 
 // Install before anything else so failures during startup are reported too.
 installClientErrorReporting();
-import { observeArenaSafeViewport } from './safe-viewport.js?v=20260718b';
+import { observeArenaSafeViewport } from './safe-viewport.js?v=20260907p';
 import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from './sign-in.js?v=20260905u';
 
 const ARENA_WIDTH = 2000;
@@ -267,6 +267,15 @@ function setupControls(engine) {
   }
 
   const autoPanBtn = document.getElementById('auto-pan');
+  if (engine.camera) {
+    const syncNavigation = ({ autoPan, followId }) => {
+      autoPanBtn?.classList.toggle('active', autoPan);
+      autoPanBtn?.setAttribute('aria-pressed', String(autoPan));
+      if (followSelect && !followId) followSelect.value = '';
+    };
+    engine.camera.onNavigationChange = syncNavigation;
+    syncNavigation(engine.camera);
+  }
   if (autoPanBtn) {
     autoPanBtn.addEventListener('click', () => {
       const active = autoPanBtn.classList.toggle('active');
