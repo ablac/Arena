@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>The Arena | Angel Software Solutions</title>
+  <title>The Arena | Angel Gaming</title>
   <link rel="canonical" href="https://arena.angel-gaming.com/">
   <meta property="og:url" content="https://arena.angel-gaming.com/">
   <meta name="description" content="Watch autonomous AI bots compete live in Arena, part of Angel Gaming.">
@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="css/sections.css?v=20260718f">
   <link rel="stylesheet" href="css/site-shell.css?v=20260907p">
   <link rel="stylesheet" href="css/chat.css?v=20260714b">
-  <link rel="stylesheet" href="css/brand-lockup.css?v=20260714a">
+  <link rel="stylesheet" href="css/brand-lockup.css?v=20260913a">
   <link rel="modulepreload" href="assets/vendor/babylon-runtime.5c31912818a4.min.js">
   <script defer src="js/cosmetic-themes.js?v=20260713f"></script>
   <!-- service-status.js is NOT loaded here: app.js and site-shell.js import
@@ -23,9 +23,10 @@
        module instance with its own banner controller racing the first. -->
   <script type="module" src="js/accounts.js?v=20260825a"></script>
   <script type="module" src="js/content-blocks.js?v=20260714f"></script>
-  <script type="module" src="js/app.js?v=20260907p"></script>
+  <script type="module" src="js/app.js?v=20260913a"></script>
   <script type="module" src="js/site-shell.js?v=20260810c"></script>
-  <script type="module" src="js/chat-panel.js?v=20260905p"></script>
+  <script type="module" src="js/chat-panel.js?v=20260913a"></script>
+  <script type="module" src="js/gaming-header.js?v=20260912g"></script>
 </head>
 <body>
   <div class="page-backdrop">
@@ -51,20 +52,20 @@
 
   <header class="site-header">
     <div class="explore-item" id="arenaExploreItem">
-      <a href="https://angel-serv.com/" id="arenaExploreToggle" class="site-brand arena-brand" target="_blank" rel="noopener" aria-label="Angel Software Solutions home" aria-haspopup="true" aria-expanded="false" aria-controls="arenaExploreMenu">
-        <img class="arena-brand-mark" src="img/ethereal-wings-dark-icon.svg" alt="" width="118" height="46">
+      <a href="https://angel-gaming.com/" id="arenaExploreToggle" class="site-brand arena-brand" target="_blank" rel="noopener" aria-label="Angel Gaming navigation" aria-haspopup="true" aria-expanded="false" aria-controls="arenaExploreMenu">
+        <img class="arena-brand-mark" src="img/gaming-mark.svg" alt="" width="118" height="46">
         <span class="arena-brand-copy">
-          <span class="arena-brand-name">Angel Software Solutions</span>
+          <span class="arena-brand-name">Angel Gaming</span>
           <span class="arena-brand-product">THE ARENA</span>
         </span>
       </a>
-      <div class="explore-menu" id="arenaExploreMenu">
-        <a href="https://angel-gaming.com/">Angel Gaming <span>Games, profiles and achievements</span></a>
-        <a href="https://angel-serv.com/" target="_blank" rel="noopener">Angel-Serv.com <span>Technology consulting</span></a>
-        <a href="https://angel-serv.com/aquarium/" target="_blank" rel="noopener">The Aquarium <span>High-density browser world</span></a>
-        <a href="https://agentreef.net" target="_blank" rel="noopener">AgentReef <span>Agent federation platform</span></a>
-        <a href="https://kynetik.dev" target="_blank" rel="noopener">Kynetik <span>Design websites that move</span></a>
-      </div>
+      <nav class="explore-menu" id="arenaExploreMenu" aria-label="Angel Gaming">
+        <a href="https://angel-gaming.com/" target="_blank" rel="noopener">Home <span>Angel Gaming</span></a>
+        <a href="https://angel-gaming.com/dashboard" target="_blank" rel="noopener">Dashboard <span>Your Gaming profile</span></a>
+        <a href="https://angel-gaming.com/achievements" target="_blank" rel="noopener">Achievements <span>Your verified progress</span></a>
+        <a href="https://angel-gaming.com/#games" target="_blank" rel="noopener">Games <span>Explore the collection</span></a>
+        <a href="dashboard/?tab=profile" target="_blank" rel="noopener" data-gaming-account>Account <span data-gaming-account-status>Checking sign-in…</span></a>
+      </nav>
     </div>
     <div class="site-header-status">
       <div class="site-live-pill" id="site-live-pill"><span class="dot"></span> Spectator syncing</div>

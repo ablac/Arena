@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Cosmetic Shop | The Arena | Angel Software Solutions</title>
+  <title>Cosmetic Shop | The Arena | Angel Gaming</title>
   <meta name="description" content="Preview Arena cosmetic sets and particle trails on a full-size bot, inspect every included item, and see what one Arena subscription unlocks for every bot you link.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23030b13'/%3E%3Cpath d='M18 45 32 12l14 33-14-8z' fill='%2347d7ff'/%3E%3Ccircle cx='32' cy='32' r='5' fill='%23ff8f5c'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -12,10 +12,11 @@
   <link rel="stylesheet" href="../css/arena.css?v=20260714g">
   <link rel="stylesheet" href="../css/shop.css?v=20260902a">
   <link rel="stylesheet" href="../css/site-footer.css?v=20260823a">
-  <link rel="stylesheet" href="../css/brand-lockup.css?v=20260714a">
+  <link rel="stylesheet" href="../css/brand-lockup.css?v=20260913a">
   <link rel="modulepreload" href="../assets/vendor/babylon-runtime.5c31912818a4.min.js">
   <script defer src="../js/cosmetic-themes.js?v=20260713f"></script>
   <script type="module" src="../js/cosmetics-shop.js?v=20260907p"></script>
+  <script type="module" src="../js/gaming-header.js?v=20260912g"></script>
 </head>
 <body class="shop-page">
   <script>
@@ -60,19 +61,20 @@
 
   <header class="shop-site-header">
     <div class="explore-item" id="arenaExploreItem">
-      <a href="https://angel-serv.com/" id="arenaExploreToggle" class="site-brand arena-brand" target="_blank" rel="noopener" aria-label="Angel Software Solutions home" aria-haspopup="true" aria-expanded="false" aria-controls="arenaExploreMenu">
-        <img class="arena-brand-mark" src="../img/ethereal-wings-dark-icon.svg" alt="" width="118" height="46">
+      <a href="https://angel-gaming.com/" id="arenaExploreToggle" class="site-brand arena-brand" target="_blank" rel="noopener" aria-label="Angel Gaming navigation" aria-haspopup="true" aria-expanded="false" aria-controls="arenaExploreMenu">
+        <img class="arena-brand-mark" src="../img/gaming-mark.svg" alt="" width="118" height="46">
         <span class="arena-brand-copy">
-          <span class="arena-brand-name">Angel Software Solutions</span>
+          <span class="arena-brand-name">Angel Gaming</span>
           <span class="arena-brand-product">THE ARENA</span>
         </span>
       </a>
-      <div class="explore-menu" id="arenaExploreMenu">
-        <a href="https://angel-serv.com/" target="_blank" rel="noopener">Angel-Serv.com <span>Technology consulting</span></a>
-        <a href="https://angel-serv.com/aquarium/" target="_blank" rel="noopener">The Aquarium <span>High-density browser world</span></a>
-        <a href="https://agentreef.net" target="_blank" rel="noopener">AgentReef <span>Agent federation platform</span></a>
-        <a href="https://kynetik.dev" target="_blank" rel="noopener">Kynetik <span>Design websites that move</span></a>
-      </div>
+      <nav class="explore-menu" id="arenaExploreMenu" aria-label="Angel Gaming">
+        <a href="https://angel-gaming.com/" target="_blank" rel="noopener">Home <span>Angel Gaming</span></a>
+        <a href="https://angel-gaming.com/dashboard" target="_blank" rel="noopener">Dashboard <span>Your Gaming profile</span></a>
+        <a href="https://angel-gaming.com/achievements" target="_blank" rel="noopener">Achievements <span>Your verified progress</span></a>
+        <a href="https://angel-gaming.com/#games" target="_blank" rel="noopener">Games <span>Explore the collection</span></a>
+        <a href="../dashboard/?tab=profile" target="_blank" rel="noopener" data-gaming-account>Account <span data-gaming-account-status>Checking sign-in…</span></a>
+      </nav>
     </div>
     <nav class="shop-site-nav" aria-label="Shop navigation">
       <a href="../">Live Arena</a>

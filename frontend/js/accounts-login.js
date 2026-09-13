@@ -141,11 +141,9 @@ function loginURL({ popup, returnTo }) {
 /**
  * Start a sign-in.
  *
- * Opens the popup and resolves when it reports back. Falls back to a full-page
- * redirect when the popup cannot be opened — which is not an error state: a
- * blocker firing is ordinary, and the redirect is the same flow taking the
- * long way round. The promise never rejects; a caller only needs to know
- * whether to re-read the session.
+ * Opens the popup and resolves when it reports back. If the browser blocks
+ * it, rejects with a retry message while preserving the current game page.
+ * Callers display the message beside their existing sign-in control.
  *
  * @param {{returnTo?: string}} [options]
  * @returns {Promise<boolean>} true when a sign-in completed in the popup.
@@ -160,9 +158,7 @@ export function signInWithAccounts(options = {}) {
   }
 
   if (!popup) {
-    // Blocked, or opened in a browser that will not. Same flow, one window.
-    window.location.assign(loginURL({ popup: false, returnTo }));
-    return Promise.resolve(false);
+    return Promise.reject(new Error('Allow popups for Arena, then try signing in again.'));
   }
 
   try {

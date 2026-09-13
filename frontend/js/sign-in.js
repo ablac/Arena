@@ -18,8 +18,8 @@
  * known session from `startSessionSync` (which every page already runs) and
  * reads it synchronously at press time. The one fetch here is the fallback
  * for a press that arrives before that first read has landed, which is rare
- * and degrades to `accounts-login.js`'s own same-window redirect rather than
- * to a dead click.
+ * and may need a retry if the browser blocks the popup. The current game
+ * page stays open while the caller displays the retry message.
  *
  * Consent is not a step in the flow
  * ---------------------------------
@@ -40,7 +40,7 @@
 
 import { fetchAccountSession, startSessionSync } from './account-session.js?v=20260905u';
 import { ensureConsent } from './consent-gate.js?v=20260714a';
-import { signInWithAccounts } from './accounts-login.js?v=20260905u';
+import { signInWithAccounts } from './accounts-login.js?v=20260913a';
 
 /** The one sentence Arena says when it cannot reach Angel Accounts at all. */
 export const NOT_CONFIGURED_MESSAGE =
@@ -117,7 +117,7 @@ export function isSignedOut() {
  * Start a sign-in.
  *
  * @param {{returnTo?: string, refresh?: boolean}} [options]
- * @returns {Promise<{status: 'signed-in'|'closed'|'declined'|'unconfigured'|'already-signed-in', message?: string}>}
+ * @returns {Promise<{status: 'signed-in'|'closed'|'declined'|'unconfigured'|'already-signed-in'|'blocked', message?: string}>}
  */
 export function startSignIn(options = {}) {
   if (inFlight) return inFlight;
@@ -141,7 +141,12 @@ async function runSignIn({ returnTo = '', refresh = false } = {}) {
     return { status: 'already-signed-in' };
   }
 
-  const signedIn = await signInWithAccounts({ returnTo });
+  let signedIn;
+  try {
+    signedIn = await signInWithAccounts({ returnTo });
+  } catch (error) {
+    return { status: 'blocked', message: error.message || 'Allow popups for Arena, then try signing in again.' };
+  }
   // Whatever the window reported. It resolves false for a window closed by
   // hand, and that window may still have completed the sign-in on its way
   // out — the server is what decides, not the popup.
@@ -149,4 +154,20 @@ async function runSignIn({ returnTo = '', refresh = false } = {}) {
   listeners.forEach(listener => listener(known));
   if (known?.authenticated) return { status: 'signed-in' };
   return { status: signedIn ? 'signed-in' : 'closed' };
+}
+
+/** Show a blocked-popup message in the current game, beside its navigation. */
+export function showSignInNotice(message = '') {
+  let notice = document.getElementById('account-signin-notice');
+  if (!notice && message) {
+    notice = document.createElement('p');
+    notice.id = 'account-signin-notice';
+    notice.className = 'account-signin-notice';
+    notice.setAttribute('role', 'alert');
+    (document.querySelector('.site-header, #topbar') || document.body).appendChild(notice);
+  }
+  if (notice) {
+    notice.textContent = message;
+    notice.hidden = !message;
+  }
 }
