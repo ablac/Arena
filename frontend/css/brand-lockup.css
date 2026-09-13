@@ -21,13 +21,13 @@
   transition: color 180ms ease, text-shadow 180ms ease;
 }
 
-/* Same rendered size as the angel-serv.com header mark. */
+/* Compact Gaming wings keep the two-line game identity readable. */
 .arena-brand-mark {
-  width: 118px;
+  width: 70px;
   height: 46px;
   flex: none;
   object-fit: contain;
-  filter: drop-shadow(0 0 14px rgba(201, 185, 138, 0.16));
+  filter: drop-shadow(0 0 14px rgba(155, 122, 245, 0.16));
 }
 
 .arena-brand-copy {
@@ -165,7 +165,7 @@ body:not(.dashboard-embedded) #app {
 }
 
 #tb-brand .arena-brand-mark {
-  width: 72px;
+  width: 44px;
   height: 28px;
 }
 
@@ -185,7 +185,7 @@ body:not(.dashboard-embedded) #app {
   }
 
   .arena-brand-mark {
-    width: 96px;
+    width: 58px;
     height: 38px;
   }
 
