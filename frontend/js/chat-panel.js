@@ -571,7 +571,7 @@ function initChatPanel(cfg) {
    */
   watermark.querySelector('.chat-watermark-btn').addEventListener('click', async () => {
     const result = await startSignIn();
-    if (result.status === 'unconfigured') setStatus(result.message, 'warn');
+    if (result?.message) setStatus(result.message, 'warn');
   });
 
   // Both the dashboard (in its own iframe) and this panel post to the same

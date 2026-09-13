@@ -13,7 +13,7 @@ import vm from 'node:vm';
  * What is checked here is the part that is easy to get wrong and impossible to
  * see in a screenshot: that the popup is opened directly by the press, that
  * the message it waits for is checked for origin *and* source, that a blocked
- * popup still signs somebody in, and that nothing sensitive crosses the
+ * popup preserves the game and offers a retry, and that nothing sensitive crosses the
  * window boundary.
  */
 
@@ -113,7 +113,7 @@ assert.match(
 const sizerSource = login
   .replace(/^import .*$/gm, '')
   .replace(/notifySessionChanged\(\);/g, '');
-const {popupSize} = await import(
+const {popupSize, signInWithAccounts} = await import(
   `data:text/javascript;base64,${Buffer.from(sizerSource).toString('base64')}`
 );
 
@@ -142,11 +142,26 @@ assert.deepEqual(popupSize(), {width: 600, height: 800},
 delete globalThis.screen;
 assert.match(login, /popup=1/, 'and the server is told this is a popup so it lands on the right page');
 
-assert.match(
-  login,
-  /if \(!popup\) \{[\s\S]*window\.location\.assign\(loginURL\(\{ ?popup: false/,
-  'a blocked popup falls back to the same flow in one window',
-);
+// Execute the real blocked-popup branch: it may report an error, but cannot
+// navigate the opener or start a same-window authorization flow.
+globalThis.screen = {availWidth: 1920, availHeight: 1080};
+globalThis.apiPath = (path) => path;
+const attempted = [];
+globalThis.window = {
+  screenX: 0, screenY: 0, innerWidth: 1200, innerHeight: 900,
+  location: {href: 'https://arena.angel-gaming.com/', assign() { assert.fail('must preserve the game page'); }},
+  open(url) { attempted.push(url); return null; },
+};
+await assert.rejects(signInWithAccounts(), /Allow popups for Arena/);
+assert.equal(attempted.length, 1);
+assert.equal(new URL(attempted[0]).origin, 'https://arena.angel-gaming.com');
+assert.equal(new URL(attempted[0]).searchParams.get('popup'), '1');
+window.open = () => { throw new Error('blocked'); };
+await assert.rejects(signInWithAccounts(), /Allow popups for Arena/);
+assert.doesNotMatch(login, /window\.location\.(assign|replace)/, 'the helper never navigates the opener');
+delete globalThis.window;
+delete globalThis.screen;
+delete globalThis.apiPath;
 
 /* --------------------------------------------------- what crosses the gap */
 

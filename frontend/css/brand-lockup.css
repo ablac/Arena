@@ -218,3 +218,23 @@ body:not(.dashboard-embedded) #app {
     transition-duration: 0.01ms;
   }
 }
+
+/* A blocked sign-in popup leaves the game and its current controls in place. */
+.account-signin-notice {
+  position: fixed;
+  z-index: 1000;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 32px));
+  margin: 0;
+  padding: 12px 16px;
+  border: 1px solid rgba(166, 141, 231, 0.5);
+  border-radius: 10px;
+  background: #151321;
+  color: #f1ebff;
+  font: 14px/1.5 var(--arena-brand-font);
+  text-shadow: none;
+  pointer-events: none;
+}

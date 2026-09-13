@@ -23,7 +23,7 @@ import { reportEngineInitFailure, showArenaRenderFallback } from './render-failu
 // Install before anything else so failures during startup are reported too.
 installClientErrorReporting();
 import { observeArenaSafeViewport } from './safe-viewport.js?v=20260907p';
-import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from './sign-in.js?v=20260905u';
+import { isSignedOut, signInAvailability, startSignIn, showSignInNotice, watchSignInState } from './sign-in.js?v=20260905u';
 
 const ARENA_WIDTH = 2000;
 const ARENA_HEIGHT = 2000;
@@ -633,22 +633,27 @@ function setupOverlays() {
    *
    * Only from a real press. `?dash_open=1` and the Shop iframe's
    * `ArenaOpenDashboard` are not user gestures, and a window opened without
-   * one is a window the browser blocks -- which would fall back to a
-   * full-page redirect nobody asked for. Those paths keep opening the drawer,
+   * one is a window the browser blocks. Those paths keep opening the drawer,
    * where the sign-in control still is.
    *
-   * And whatever the sign-in does -- completed, closed, declined, or not
-   * configured on this Arena at all -- the drawer opens afterwards. There is
-   * no outcome where the press does nothing, the "not configured" message
-   * still has somewhere to appear, and the API key path bot operators need is
-   * behind it either way.
+   * Completed, closed and declined flows open the drawer afterwards. A blocked
+   * popup displays an in-page retry message and keeps the game visible. An
+   * unconfigured Arena opens the drawer with its existing configuration message
+   * and API key path for bot operators.
    */
   const openDashboardFromPress = (options) => {
     if (!isSignedOut() || signInAvailability() !== 'available') {
       openDashboardOverlay(options);
       return;
     }
-    startSignIn().finally(() => openDashboardOverlay(options));
+    showSignInNotice();
+    startSignIn().then((result) => {
+      if (result.status === 'blocked') {
+        showSignInNotice(result.message);
+        return;
+      }
+      openDashboardOverlay(options);
+    });
   };
 
   openButtons.forEach((button) => {
@@ -681,8 +686,11 @@ function setupOverlays() {
   document.querySelectorAll('[data-arena-signin]').forEach((control) => {
     control.addEventListener('click', async (event) => {
       event.preventDefault();
+      showSignInNotice();
       const result = await startSignIn();
-      if (result.status === 'unconfigured') {
+      if (result.status === 'blocked') {
+        showSignInNotice(result.message);
+      } else if (result.status === 'unconfigured') {
         openDashboardOverlay({});
       }
     });

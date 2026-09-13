@@ -6,7 +6,7 @@ import {
   MOBILE_SAFE_VIEWPORT_REGIONS,
   observeArenaSafeViewport,
 } from '../js/safe-viewport.js?v=20260907p';
-import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from '../js/sign-in.js?v=20260905u';
+import { isSignedOut, signInAvailability, startSignIn, showSignInNotice, watchSignInState } from '../js/sign-in.js?v=20260905u';
 
 /**
  * Mobile spectator shell — full-viewport 3D stage, floating top bar,
@@ -318,8 +318,8 @@ function setupLazyFrameOverlay(overlayId, fabId, { interceptPress } = {}) {
  * The mobile half of app.js's openDashboardFromPress, and for the same
  * reason: the Dashboard drawer is how somebody signs in here too, and it used
  * to open on a screen asking which of two ways they wanted. A signed-out
- * press starts the Accounts window itself; the drawer opens after it, whatever
- * the window did, so nothing about the press can dead-end.
+ * press starts the Accounts window itself. A blocked popup shows a retry
+ * message in the game; other outcomes open the drawer afterwards.
  *
  * Returns false -- "not handled, open normally" -- whenever the session is
  * still unknown or sign-in is not configured on this Arena, because a window
@@ -327,7 +327,14 @@ function setupLazyFrameOverlay(overlayId, fabId, { interceptPress } = {}) {
  */
 function interceptDashboardPressForSignIn(open) {
   if (!isSignedOut() || signInAvailability() !== 'available') return false;
-  startSignIn().finally(open);
+  showSignInNotice();
+  startSignIn().then((result) => {
+    if (result.status === 'blocked') {
+      showSignInNotice(result.message);
+      return;
+    }
+    open();
+  });
   return true;
 }
 
