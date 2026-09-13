@@ -39,7 +39,7 @@ source = source
   .replace("import { apiPath, wsURL } from './paths.js?v=20260710a';", "const apiPath = (path) => path; const wsURL = (path) => path;")
   .replace("import { openProfilePopup, updateProfilePopupUsername } from './profile-popup.js?v=20260905p';", 'const openProfilePopup = () => {}; const updateProfilePopupUsername = () => {};')
   .replace(
-    "import { startSignIn, watchSignInState } from './sign-in.js?v=20260905u';",
+    "import { startSignIn, watchSignInState } from './sign-in.js?v=20260913a';",
     'const startSignIn = async () => ({status: \'closed\'}); const watchSignInState = () => {};',
   );
 

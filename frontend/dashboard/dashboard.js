@@ -294,7 +294,7 @@ async function startAccountLogin() {
     button.textContent = 'Waiting for Angel Accounts...';
   }
   try {
-    const {signInWithAccounts} = await import('../js/accounts-login.js?v=20260905u');
+    const {signInWithAccounts} = await import('../js/accounts-login.js?v=20260913a');
     await signInWithAccounts({returnTo: accountReturnPath()});
     // Re-read the session whatever the popup reported. It resolves false for a
     // window closed by hand, and that window may still have completed the
@@ -330,7 +330,7 @@ async function refreshAccountEntitlements() {
   accountEntitlementsBusy = true;
   renderAccountCosmetics();
   try {
-    const {signInWithAccounts} = await import('../js/accounts-login.js?v=20260905u');
+    const {signInWithAccounts} = await import('../js/accounts-login.js?v=20260913a');
     await signInWithAccounts({returnTo: accountReturnPath()});
   } catch (error) {
     accountViewError = error?.message || 'Could not reach Angel Accounts.';
@@ -736,7 +736,7 @@ async function refreshPublicUsername(button) {
   button.disabled = true;
   button.textContent = 'Refreshing...';
   try {
-    const {signInWithAccounts} = await import('../js/accounts-login.js?v=20260905u');
+    const {signInWithAccounts} = await import('../js/accounts-login.js?v=20260913a');
     await signInWithAccounts({returnTo: accountReturnPath()});
     await initializeAccountMode();
     await refreshAccountProfile();

@@ -36,6 +36,7 @@ const state = {
   session: null,
   consent: true,
   popupResolves: true,
+  popupRejects: false,
   syncs: 0,
   emit: null,
 };
@@ -69,6 +70,7 @@ const probe = globalThis.__arenaSignInProbe;
 export function signInWithAccounts(options) {
   probe.calls.push('open');
   probe.lastOptions = options;
+  if (probe.popupRejects) return Promise.reject(new Error('Allow popups for Arena, then try signing in again.'));
   return Promise.resolve(probe.popupResolves);
 }
 `);
@@ -84,6 +86,7 @@ const reset = (session) => {
   state.session = session;
   state.consent = true;
   state.popupResolves = true;
+  state.popupRejects = false;
   state.syncs = 0;
 };
 
@@ -199,6 +202,36 @@ const abandonedResult = await abandoned.startSignIn();
 assert.equal(abandonedResult.status, 'closed',
   'and a window genuinely closed without signing in reports exactly that');
 
+/* ------------------ a blocked popup reports a retry and releases the guard */
+
+reset(SIGNED_OUT);
+const blocked = await load('blocked');
+blocked.watchSignInState(() => {});
+state.popupRejects = true;
+state.calls = [];
+const blockedResult = await blocked.startSignIn();
+assert.equal(blockedResult.status, 'blocked');
+assert.match(blockedResult.message, /Allow popups for Arena/);
+assert.deepEqual(state.calls, ['consent', 'open'], 'a blocked window starts no session refresh or navigation');
+state.popupRejects = false;
+state.session = SIGNED_IN;
+assert.equal((await blocked.startSignIn()).status, 'signed-in', 'the existing control can retry after the blocker is removed');
+
+const notices = [];
+globalThis.document = {
+  getElementById: () => notices[0] || null,
+  createElement: () => ({setAttribute(key, value) { this[key] = value; }}),
+  querySelector: () => ({appendChild(node) { notices.push(node); }}),
+};
+blocked.showSignInNotice(blockedResult.message);
+assert.equal(notices.length, 1);
+assert.equal(notices[0].role, 'alert');
+assert.equal(notices[0].textContent, blockedResult.message);
+assert.equal(notices[0].hidden, false);
+blocked.showSignInNotice();
+assert.equal(notices[0].hidden, true, 'a retry clears the old inline message');
+delete globalThis.document;
+
 /* ----------------------------------------- the callers, and what they do */
 
 const app = read('frontend/js/app.js');
@@ -217,8 +250,8 @@ assert.match(
 );
 assert.match(
   app,
-  /startSignIn\(\)\.finally\(\(\) => openDashboardOverlay\(options\)\)/,
-  'and whatever the sign-in does, the drawer still opens -- no press does nothing',
+  /startSignIn\(\)\.then\(\(result\) => \{\s*if \(result.status === 'blocked'\) \{\s*showSignInNotice\(result.message\);\s*return;\s*\}\s*openDashboardOverlay\(options\);/,
+  'a blocked popup displays a retry message while preserving the game; other outcomes open the drawer',
 );
 // Deep links and the Shop iframe are not user gestures. They must keep using
 // the plain open, or the window they trigger is a window the browser blocks.
@@ -237,7 +270,7 @@ assert.doesNotMatch(chat, /function openDashboard\(/, 'the chat panel no longer 
 assert.doesNotMatch(chat, /fab-dashboard/, 'nor reaches for the mobile drawer button');
 assert.match(chat, /chat-watermark-btn'\)\.addEventListener\('click', async \(\) => \{\s*const result = await startSignIn\(\);/,
   'the watermark press starts the flow directly');
-assert.match(chat, /if \(result\.status === 'unconfigured'\) setStatus\(result\.message/,
+assert.match(chat, /if \(result\?\.message\) setStatus\(result\.message/,
   'and an Arena without Accounts says so on the line the reader is already watching');
 assert.doesNotMatch(chat, /import \{ startSessionSync \}/,
   'the panel shares sign-in.js\'s session watch rather than starting a second poll');
@@ -246,7 +279,31 @@ assert.doesNotMatch(chat, /import \{ startSessionSync \}/,
 assert.match(mobile, /interceptPress: interceptDashboardPressForSignIn/, 'the mobile Dashboard FAB intercepts too');
 assert.match(mobile, /if \(!isSignedOut\(\) \|\| signInAvailability\(\) !== 'available'\) return false;/,
   'with the same refusal to guess');
-assert.match(mobile, /startSignIn\(\)\.finally\(open\)/, 'and the same guarantee that the drawer opens after');
+assert.match(mobile, /startSignIn\(\)\.then\(\(result\) => \{\s*if \(result.status === 'blocked'\) \{\s*showSignInNotice\(result.message\);\s*return;\s*\}\s*open\(\);/, 'mobile also shows a retry in place when blocked');
+
+/* ------------------------------- cached pages load one popup implementation */
+
+// The public edge caches versioned JS/CSS for one year. Every changed parent
+// must request the new dependency URL, including dynamic dashboard imports.
+for (const [path, assets] of [
+  ['frontend/index.html', ['js/app.js', 'js/chat-panel.js', 'css/brand-lockup.css']],
+  ['frontend/m/index.html', ['mobile.js', '../js/chat-panel.js', '../css/brand-lockup.css']],
+  ['frontend/dashboard/index.html', ['./dashboard.js', '../css/brand-lockup.css']],
+  ['frontend/shop/index.html', ['../css/brand-lockup.css']],
+  ['frontend/js/app.js', ['./sign-in.js']],
+  ['frontend/m/mobile.js', ['../js/sign-in.js']],
+  ['frontend/js/chat-panel.js', ['./sign-in.js']],
+  ['frontend/js/sign-in.js', ['./accounts-login.js']],
+  ['frontend/dashboard/dashboard.js', ['../js/accounts-login.js']],
+]) {
+  const source = read(path);
+  for (const asset of assets) {
+    const matches = source.matchAll(new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[?]v=(\\w+)', 'g'));
+    const versions = [...matches].map(match => match[1]);
+    assert.ok(versions.length > 0, `${path} loads ${asset}`);
+    assert.ok(versions.every(version => version === '20260913a'), `${path} must refresh every ${asset} import`);
+  }
+}
 
 /* ------------------------------------- the screen that used to be in the way */
 
