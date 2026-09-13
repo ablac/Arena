@@ -6,7 +6,7 @@ import {
   MOBILE_SAFE_VIEWPORT_REGIONS,
   observeArenaSafeViewport,
 } from '../js/safe-viewport.js?v=20260907p';
-import { isSignedOut, signInAvailability, startSignIn, showSignInNotice, watchSignInState } from '../js/sign-in.js?v=20260905u';
+import { isSignedOut, signInAvailability, startSignIn, showSignInNotice, watchSignInState } from '../js/sign-in.js?v=20260913a';
 
 /**
  * Mobile spectator shell — full-viewport 3D stage, floating top bar,

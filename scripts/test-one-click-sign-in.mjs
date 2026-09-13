@@ -281,6 +281,30 @@ assert.match(mobile, /if \(!isSignedOut\(\) \|\| signInAvailability\(\) !== 'ava
   'with the same refusal to guess');
 assert.match(mobile, /startSignIn\(\)\.then\(\(result\) => \{\s*if \(result.status === 'blocked'\) \{\s*showSignInNotice\(result.message\);\s*return;\s*\}\s*open\(\);/, 'mobile also shows a retry in place when blocked');
 
+/* ------------------------------- cached pages load one popup implementation */
+
+// The public edge caches versioned JS/CSS for one year. Every changed parent
+// must request the new dependency URL, including dynamic dashboard imports.
+for (const [path, assets] of [
+  ['frontend/index.html', ['js/app.js', 'js/chat-panel.js', 'css/brand-lockup.css']],
+  ['frontend/m/index.html', ['mobile.js', '../js/chat-panel.js', '../css/brand-lockup.css']],
+  ['frontend/dashboard/index.html', ['./dashboard.js', '../css/brand-lockup.css']],
+  ['frontend/shop/index.html', ['../css/brand-lockup.css']],
+  ['frontend/js/app.js', ['./sign-in.js']],
+  ['frontend/m/mobile.js', ['../js/sign-in.js']],
+  ['frontend/js/chat-panel.js', ['./sign-in.js']],
+  ['frontend/js/sign-in.js', ['./accounts-login.js']],
+  ['frontend/dashboard/dashboard.js', ['../js/accounts-login.js']],
+]) {
+  const source = read(path);
+  for (const asset of assets) {
+    const matches = source.matchAll(new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[?]v=(\\w+)', 'g'));
+    const versions = [...matches].map(match => match[1]);
+    assert.ok(versions.length > 0, `${path} loads ${asset}`);
+    assert.ok(versions.every(version => version === '20260913a'), `${path} must refresh every ${asset} import`);
+  }
+}
+
 /* ------------------------------------- the screen that used to be in the way */
 
 assert.doesNotMatch(dashboardHTML, /class="login-choice secondary"/,

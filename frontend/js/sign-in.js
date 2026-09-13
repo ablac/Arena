@@ -40,7 +40,7 @@
 
 import { fetchAccountSession, startSessionSync } from './account-session.js?v=20260905u';
 import { ensureConsent } from './consent-gate.js?v=20260714a';
-import { signInWithAccounts } from './accounts-login.js?v=20260905u';
+import { signInWithAccounts } from './accounts-login.js?v=20260913a';
 
 /** The one sentence Arena says when it cannot reach Angel Accounts at all. */
 export const NOT_CONFIGURED_MESSAGE =

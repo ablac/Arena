@@ -15,7 +15,7 @@
 
 import { apiPath, wsURL } from './paths.js?v=20260710a';
 import { openProfilePopup, updateProfilePopupUsername } from './profile-popup.js?v=20260905p';
-import { startSignIn, watchSignInState } from './sign-in.js?v=20260905u';
+import { startSignIn, watchSignInState } from './sign-in.js?v=20260913a';
 
 const OVERLAY_ID = 'chat-overlay';
 // Discord-style grouping: consecutive messages from the same sender within
